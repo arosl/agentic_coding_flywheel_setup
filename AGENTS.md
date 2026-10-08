@@ -1,6 +1,6 @@
 # Agentic Coding Flywheel Setup (ACFS): agent instructions
 
-This repository is a fork of upstream ACFS ([Dicklesworthstone/agentic_coding_flywheel_setup](https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)). ACFS takes a beginner from "I have a laptop" to an Ubuntu VPS set up for agentic coding. It has three parts, all driven by one manifest, `acfs.manifest.yaml`: a wizard website (`apps/web/`), a one-line, idempotent Bash installer (`install.sh` and `scripts/`), and an onboarding TUI (`packages/onboard/`). The fork changes the toolset: herdr instead of tmux, ntm and wezterm_automata, and no Docker (Incus is planned). `README.md`, "About this fork", says what else differs.
+This repository is a fork of upstream ACFS ([Dicklesworthstone/agentic_coding_flywheel_setup](https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)). ACFS takes a beginner from "I have a laptop" to an Ubuntu VPS set up for agentic coding. It has three parts, all driven by one manifest, `acfs.manifest.yaml`: a wizard website (`apps/web/`), a one-line, idempotent Bash installer (`install.sh` and `scripts/`), and an onboarding TUI (`packages/onboard/`). The fork changes the toolset: herdr instead of ntm, wezterm_automata and ACFS's tmux workspace, and no Docker (Incus is planned). `README.md`, "About this fork", says what else differs.
 
 This file is also `CLAUDE.md` (a symlink), so every agent reads the same instructions. It is the fork's own file, not upstream's: see "Upstream sync" under "Project rules".
 
@@ -77,11 +77,11 @@ Everything in `scripts/generated/` is generated from the manifest: the category 
 
 ## Scope
 
-The fork tracks upstream ACFS and changes its toolset: herdr instead of tmux, ntm and wezterm_automata, and no Docker.
+The fork tracks upstream ACFS and changes its toolset: herdr instead of ntm, wezterm_automata and ACFS's tmux workspace, and no Docker.
 
 - **Deploys as:** nothing from this repo. Users run `install.sh` on their own VPS, through the one-liner that fetches it from GitHub, and the fork has no deployment of its own; upstream deploys the wizard website (`apps/web/`) to Vercel.
 - **Deferred** (don't build, don't scaffold): Incus in place of the removed Docker modules and of the Docker-based `tests/vm/`.
-- **Rejected** (2026-10-08; not to be built or reopened): Docker and lazydocker; tmux, ntm and wezterm_automata, which herdr replaces. The reasons: `README.md`, "About this fork".
+- **Rejected** (2026-10-08; not to be built or reopened): Docker and lazydocker; ntm, wezterm_automata, and ACFS's tmux config and `agents` session, which herdr replaces. The reasons: `README.md`, "About this fork".
 
 ## Commands and gates
 
