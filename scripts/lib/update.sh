@@ -1090,15 +1090,7 @@ get_version() {
                 version="unknown"
             fi
             ;;
-        ntm)
-            tool_bin="$(update_binary_path "$tool" 2>/dev/null || true)"
-            if [[ -n "$tool_bin" ]]; then
-                version=$("$tool_bin" version 2>/dev/null | head -1 || echo "unknown")
-            else
-                version="unknown"
-            fi
-            ;;
-        ubs|bv|cass|cm|caam|slb|ru|dcg|apr|pt|xf|jfp|ms|br|rch|giil|csctf|srps|tru|rano|mdwb|s2p|brenner|fsfs|sbh|casr|dsr|asb|aadc|rust_proxy|ee|fmd|pi)
+        herdr|ubs|bv|cass|cm|caam|slb|ru|dcg|apr|pt|xf|jfp|ms|br|rch|giil|csctf|srps|tru|rano|mdwb|s2p|brenner|fsfs|sbh|casr|dsr|asb|aadc|rust_proxy|ee|fmd|pi)
             tool_bin="$(update_binary_path "$tool" 2>/dev/null || true)"
             if [[ -n "$tool_bin" ]]; then
                 version=$("$tool_bin" --version 2>/dev/null | head -1 || echo "unknown")
@@ -3434,7 +3426,6 @@ sync_acfs_deployed() {
 
     local -a file_pairs=(
         # repo-relative-path : deployed-relative-path
-        "acfs/tmux/tmux.conf:tmux/tmux.conf"
         "packages/onboard/onboard.sh:onboard/onboard.sh"
         "scripts/lib/doctor.sh:scripts/lib/doctor.sh"
         "scripts/lib/doctor.sh:bin/acfs"
@@ -3900,7 +3891,7 @@ update_sync_known_installer_urls_from_checksums() {
 update_required_checksum_tools() {
     printf '%s\n' \
         antigravity apr asb atuin br brenner_bot bun bv caam casr cass claude cm csctf dcg dsr \
-        ee fmd fsfs gemini_patch giil grok jfp mcp_agent_mail mdwb ms ntm nvm ohmyzsh omp opencode \
+        ee fmd fsfs gemini_patch giil grok herdr jfp mcp_agent_mail mdwb ms nvm ohmyzsh omp opencode \
         pcr pfr pi pt rano rch ru rust s2p sbh slb srps tru ubs uv xf zoxide
 }
 
@@ -7231,21 +7222,21 @@ update_stack() {
         return 0
     fi
 
-    # Brenner Bot - skip all toolchain deps (NTM, CASS, CM) because ACFS
-    # installs/updates them individually below.  Previously only --skip-cass
-    # was passed, causing brenner's install_toolchain() to redundantly rebuild
-    # NTM and CM from source — a 5+ hour hang on slow machines (fixes #210).
+    # Brenner Bot - skip all toolchain deps (NTM, CASS, CM): ACFS installs no
+    # NTM, and updates CASS and CM individually below.  Previously only
+    # --skip-cass was passed, causing brenner's install_toolchain() to
+    # rebuild NTM and CM from source — a 5+ hour hang on slow machines (fixes #210).
     capture_version_before "brenner"
     run_cmd "Brenner Bot" update_run_verified_installer brenner_bot --skip-ntm --skip-cass --skip-cm
     if capture_version_after "brenner"; then
         update_say "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[brenner]}" "${VERSION_AFTER[brenner]}"
     fi
 
-    # NTM - always install/update (installer is idempotent)
-    capture_version_before "ntm"
-    update_run_verified_installer_or_existing_on_transient "NTM" ntm ntm ntm || true
-    if capture_version_after "ntm"; then
-        update_say "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[ntm]}" "${VERSION_AFTER[ntm]}"
+    # herdr - always install/update (installer is idempotent)
+    capture_version_before "herdr"
+    update_run_verified_installer_or_existing_on_transient "herdr" herdr herdr herdr || true
+    if capture_version_after "herdr"; then
+        update_say "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[herdr]}" "${VERSION_AFTER[herdr]}"
     fi
 
     # minisign (issue #375): the MCP Agent Mail and CAAM installers fail
@@ -8175,7 +8166,7 @@ WHAT EACH CATEGORY UPDATES:
   runtime:  Bun (bun upgrade), Rust (rustup update), uv (uv self update), Go (apt-managed)
   stack:    Agent Flywheel stack tools (verified upstream installers)
             Installs missing tools and updates existing ones automatically:
-            NTM, Agent Mail, Meta Skill, APR, pt, xf, UBS, BV, BR, CASS, CM,
+            herdr, Agent Mail, Meta Skill, APR, pt, xf, UBS, BV, BR, CASS, CM,
             CAAM, SLB, RU, DCG, RCH, GIIL, CSCTF, SRPS, TRU, RANO, MDWB, S2P, Brenner Bot,
             FSFS, SBH, CASR, DSR, ASB, PCR, EE, FMD, PI, PFR
             Exception: JFP requires subscription, only updated if already installed

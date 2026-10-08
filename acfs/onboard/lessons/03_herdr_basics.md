@@ -1,0 +1,116 @@
+# herdr Basics
+
+**Goal:** Never lose work when SSH drops, and see every agent at a glance.
+
+---
+
+## What Is herdr?
+
+herdr is a **terminal workspace manager for coding agents**. It lets you:
+
+1. Keep agents running after you disconnect
+2. Split your terminal into panes, tabs and workspaces
+3. See each agent's state (working, idle, done, blocked) in the sidebar
+
+---
+
+## Essential Commands
+
+### Start or Reattach
+
+```bash
+herdr
+```
+
+The first run starts herdr's server and opens it. Every later run reattaches
+to the same session, with everything still running. ACFS also gives you the
+`agents` alias, which opens herdr from `/data/projects`.
+
+### Detach (Leave Everything Running)
+
+Press: `Ctrl+b` then `q`
+
+Your agents keep working in the background.
+
+---
+
+## The Prefix Key
+
+herdr's prefix key is `Ctrl+b`. Press it, let go, then press the action key.
+
+Press `Ctrl+b` then `?` to see every key binding.
+
+---
+
+## Panes
+
+| Keys | Action |
+|------|--------|
+| `Ctrl+b` then `v` | Split vertically |
+| `Ctrl+b` then `-` | Split horizontally |
+| `Ctrl+b` then `h/j/k/l` | Move between panes |
+| `Ctrl+b` then `z` | Zoom the current pane |
+| `Ctrl+b` then `x` | Close current pane |
+
+---
+
+## Tabs and Workspaces
+
+| Keys | Action |
+|------|--------|
+| `Ctrl+b` then `c` | New tab |
+| `Ctrl+b` then `n` | Next tab |
+| `Ctrl+b` then `p` | Previous tab |
+| `Ctrl+b` then `1-9` | Go to tab number |
+| `Ctrl+b` then `w` | Pick a workspace |
+| `Ctrl+b` then `Shift+n` | New workspace |
+
+A workspace usually holds one project. Its tabs and panes hold your agents and
+your own shell.
+
+---
+
+## Try It Now
+
+```bash
+# Open herdr
+herdr
+
+# Split the screen
+# Press Ctrl+b, then v
+
+# Move to the new pane
+# Press Ctrl+b, then l
+
+# Run something
+ls -la
+
+# Detach
+# Press Ctrl+b, then q
+
+# Reattach: everything is still there
+herdr
+```
+
+---
+
+## Why This Matters for Agents
+
+Your coding agents (Claude, Codex, Antigravity) run in herdr panes. herdr
+detects each agent and shows in the sidebar whether it is working, waiting for
+you, or done. ACFS also installs herdr's integration for each agent it
+supports, which adds session restore or more exact state, depending on the
+agent.
+
+If SSH drops, they keep running. When you reconnect and run `herdr`, they're
+still there!
+
+---
+
+## Next
+
+Now let's meet your coding agents:
+
+```bash
+onboard 4
+```

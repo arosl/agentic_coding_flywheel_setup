@@ -188,8 +188,8 @@ If your organization uses a shared ACFS team profile (`acfs-team-profile.json`):
 
 ## Next
 
-Now let's learn NTM - the tool that orchestrates all these agents:
+Now let's put the agents to work together in the flywheel loop:
 
 ```bash
-onboard 5
+onboard 7
 ```

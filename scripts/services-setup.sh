@@ -2137,7 +2137,7 @@ $(gum style --foreground "$ACFS_TEAL" 'Your ACFS environment is configured!')
 
 $(gum style --foreground "$ACFS_MUTED" 'Next steps:')
 $(gum style --foreground "$ACFS_PRIMARY" '  • Start coding with:') $(gum style --foreground "$ACFS_ACCENT" 'cc') $(gum style --foreground "$ACFS_MUTED" '(Claude Code)')
-$(gum style --foreground "$ACFS_PRIMARY" '  • Create a project:') $(gum style --foreground "$ACFS_ACCENT" 'ntm new myproject')
+$(gum style --foreground "$ACFS_PRIMARY" '  • Open the agent workspace:') $(gum style --foreground "$ACFS_ACCENT" 'herdr')
 $(gum style --foreground "$ACFS_PRIMARY" '  • Run the onboarding:') $(gum style --foreground "$ACFS_ACCENT" 'onboard')
 
 $(gum style --foreground "$ACFS_PINK" --bold '  Happy coding! 🚀')"
@@ -2146,7 +2146,7 @@ $(gum style --foreground "$ACFS_PINK" --bold '  Happy coding! 🚀')"
 
 Next steps:
   • Start coding with: cc (Claude Code)
-  • Create a project session: ntm new myproject
+  • Open the agent workspace: herdr
   • Run the onboarding: onboard
 
 Happy coding!"

@@ -23,7 +23,7 @@ if [[ -n "$TERM" ]] && ! infocmp "$TERM" &>/dev/null; then
 fi
 
 # --- Paths (early) ---
-# Keep PATH free of duplicates: every tmux pane, `exec zsh`, and
+# Keep PATH free of duplicates: every herdr pane, `exec zsh`, and
 # `source ~/.zshrc` re-runs the prepends below, and without this the PATH
 # grows by six entries each time.
 typeset -U path PATH
@@ -84,12 +84,8 @@ plugins=(
   # trj, 1.0-2.3 s across the fleet, and it also overrode the fast handler
   # installed from ~/.zshenv. zsh's built-in "command not found" message is
   # instant; run `command-not-found <cmd>` by hand if you want the apt hint.
-  docker
-  docker-compose
   python
   pip
-  tmux
-  tmuxinator
   systemd
   rsync
   zsh-autosuggestions
@@ -186,7 +182,6 @@ fi
 command -v btop &>/dev/null && alias top='btop'
 command -v nvim &>/dev/null && alias vim='nvim'
 command -v lazygit &>/dev/null && alias lg='lazygit'
-command -v lazydocker &>/dev/null && alias lzd='lazydocker'
 
 # --- Git aliases ---
 alias gs='git status'
@@ -199,13 +194,6 @@ alias gcm='git commit -m'
 alias gca='git commit -a -m'
 alias gb='git branch'
 alias glog='git log --oneline --graph --decorate'
-
-# --- Docker aliases ---
-alias dc='docker compose'
-alias dps='docker ps'
-alias dpsa='docker ps -a'
-alias dimg='docker images'
-alias dex='docker exec -it'
 
 # --- Directory shortcuts ---
 alias dev='cd ~/Development'

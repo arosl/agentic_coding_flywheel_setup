@@ -2294,24 +2294,15 @@ check_shell() {
     # fixers were unreachable (no check ever emitted their ids).
     local managed_zshrc="$runtime_home/.zshrc"
     local managed_acfs_zshrc="$runtime_home/.acfs/zsh/acfs.zshrc"
-    local managed_tmux_conf="$runtime_home/.acfs/tmux/tmux.conf"
 
     if [[ ! -d "$runtime_home/.acfs" ]]; then
         check "config.acfs_zshrc" "ACFS zshrc asset" "skip" "no ~/.acfs directory"
-        check "config.tmux" "ACFS tmux config asset" "skip" "no ~/.acfs directory"
     else
         if [[ -f "$managed_acfs_zshrc" ]]; then
             check "config.acfs_zshrc" "ACFS zshrc asset" "pass"
         else
             check "config.acfs_zshrc" "ACFS zshrc asset" "warn" \
                 "missing ~/.acfs/zsh/acfs.zshrc (alias/PATH loader gone)" \
-                "Run: acfs update   (or: acfs doctor --fix --yes)"
-        fi
-        if [[ -f "$managed_tmux_conf" ]]; then
-            check "config.tmux" "ACFS tmux config asset" "pass"
-        else
-            check "config.tmux" "ACFS tmux config asset" "warn" \
-                "missing ~/.acfs/tmux/tmux.conf" \
                 "Run: acfs update   (or: acfs doctor --fix --yes)"
         fi
     fi
@@ -2881,8 +2872,8 @@ check_stack() {
 
     section "Agent Flywheel stack"
 
-    check_command "stack.ntm" "NTM" "ntm" \
-        "Re-run: $(fix_for_module stack.ntm)"
+    check_command "tools.herdr" "herdr" "herdr" \
+        "Re-run: $(fix_for_module tools.herdr)"
     check_command "stack.slb" "SLB" "slb" \
         "Re-run: $(fix_for_module stack.slb)"
 
@@ -3159,17 +3150,6 @@ check_stack() {
         fi
     fi
 
-    # Check wa (WezTerm Automata) - optional
-    local wa_bin=""
-    wa_bin="$(doctor_binary_path wa 2>/dev/null || true)"
-    if [[ -n "$wa_bin" ]]; then
-        local version
-        version=$(get_version_line "$wa_bin")
-        check "stack.wezterm_automata" "wezterm_automata ($version)" "pass" "installed"
-    else
-        check "stack.wezterm_automata" "wezterm_automata (wa)" "skip" "not installed (optional)"
-    fi
-
     # Check brenner (Brenner Bot) - optional
     local brenner_bin=""
     brenner_bin="$(doctor_binary_path brenner 2>/dev/null || true)"
@@ -3431,11 +3411,11 @@ _is_bespoke_covered() {
         cloud.wrangler|cloud.supabase|cloud.vercel) return 0 ;;
         network.tailscale|network.tailscale.*|network.ssh_keepalive|network.ssh_keepalive.*) return 0 ;;
         # check_stack  (individual stack entries)
-        stack.ntm|stack.slb|stack.mcp_agent_mail|stack.mcp_agent_mail.*) return 0 ;;
+        tools.herdr|stack.slb|stack.mcp_agent_mail|stack.mcp_agent_mail.*) return 0 ;;
         stack.ultimate_bug_scanner|stack.ultimate_bug_scanner.*|stack.beads_viewer) return 0 ;;
         stack.beads_rust|stack.beads_rust.*|stack.cass|stack.cm|stack.cm.*|stack.caam) return 0 ;;
         stack.dcg|stack.dcg.*|stack.ru|stack.meta_skill|stack.meta_skill.*) return 0 ;;
-        stack.brenner_bot|stack.rch|stack.wezterm_automata) return 0 ;;
+        stack.brenner_bot|stack.rch) return 0 ;;
         # check_stack  (acfs nightly timer — bespoke handles D-Bus gracefully)
         acfs.nightly) return 0 ;;
         # check_utilities (bd-2gog)
@@ -4034,9 +4014,6 @@ run_deep_checks() {
     # Cloud CLI checks
     deep_check_cloud
 
-    # tmux responsiveness checks (GitHub issue #20: NTM timeouts / slow tmux)
-    deep_check_tmux_performance
-
     # Network health checks (bead bd-31ps.7.2)
     deep_check_network
 
@@ -4442,77 +4419,6 @@ deep_check_cloud() {
     check_wrangler_auth
     check_supabase_auth
     check_vercel_auth
-}
-
-# Deep check: tmux responsiveness
-# Related: GitHub issue #20 (NTM: "context deadline exceeded")
-deep_check_tmux_performance() {
-    local tmux_bin=""
-
-    if ! tmux_bin="$(doctor_binary_path tmux 2>/dev/null || true)" || [[ -z "$tmux_bin" ]]; then
-        check "deep.tmux.present" "tmux responsiveness" "warn" "tmux not installed" "$(doctor_pkg_install_hint tmux)"
-        return
-    fi
-
-    local timeout_secs=5
-    local warn_threshold_ms=1000
-    local hint="If NTM shows 'context deadline exceeded', tmux may be slow. Try running NTM outside of tmux (fresh SSH session). Diagnose with: time tmux list-sessions; time tmux list-panes -a; ls -la /tmp/tmux-*."
-    if [[ -n "${TMUX:-}" ]]; then
-        hint="You are currently inside tmux. If NTM is timing out, try running it outside tmux (new SSH session). Diagnose with: time tmux list-sessions; time tmux list-panes -a; ls -la /tmp/tmux-*."
-    fi
-
-    _deep_check_tmux_cmd() {
-        local id="$1"
-        local label="$2"
-        shift 2
-
-        local start_ns end_ns elapsed_ms
-        start_ns=$(date +%s%N 2>/dev/null || echo "")
-
-        local output status
-        output=$(run_with_timeout "$timeout_secs" "$label" "$@")
-        status=$?
-
-        end_ns=$(date +%s%N 2>/dev/null || echo "")
-        if [[ "$start_ns" =~ ^[0-9]+$ ]] && [[ "$end_ns" =~ ^[0-9]+$ ]]; then
-            elapsed_ms=$(((end_ns - start_ns) / 1000000))
-        else
-            elapsed_ms=-1
-        fi
-
-        if ((status == 124)); then
-            check_with_timeout_status "$id" "$label" "timeout" "timed out after ${timeout_secs}s" "$hint"
-            return 0
-        fi
-
-        if ((status != 0)); then
-            if echo "$output" | grep -qiE "no server running|failed to connect to server"; then
-                check "$id" "$label (no server)" "pass" "no tmux server running"
-                return 0
-            fi
-
-            local first_line=""
-            first_line="$(printf '%s\n' "$output" | head -n 1)"
-            [[ -z "$first_line" ]] && first_line="tmux command failed"
-            check "$id" "$label" "warn" "$first_line" "$hint"
-            return 0
-        fi
-
-        local label_with_timing="$label"
-        if ((elapsed_ms >= 0)); then
-            label_with_timing="$label (${elapsed_ms}ms)"
-        fi
-
-        if ((elapsed_ms >= 0)) && ((elapsed_ms >= warn_threshold_ms)); then
-            check "$id" "$label_with_timing" "warn" "slow tmux" "$hint"
-        else
-            check "$id" "$label_with_timing" "pass" "ok"
-        fi
-        return 0
-    }
-
-    _deep_check_tmux_cmd "deep.tmux.list_sessions" "tmux list-sessions responsiveness" "$tmux_bin" list-sessions
-    _deep_check_tmux_cmd "deep.tmux.list_panes" "tmux list-panes -a responsiveness" "$tmux_bin" list-panes -a -F '#{pane_id}'
 }
 
 # Deep check: Network health

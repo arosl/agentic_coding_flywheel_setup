@@ -81,7 +81,7 @@ const ROWS: ExampleRow[] = [
     right: {
       // The non-interactive sender is `ntm send <session> ...`.
       pattern: /ntm send myproject/,
-      in: [O("06_ntm_command_palette.md"), L("ntm-palette-lesson.tsx")],
+      in: [L("ntm-palette-lesson.tsx")],
     },
   },
   {
@@ -482,18 +482,4 @@ describe("lesson examples match the installed CLIs", () => {
       });
     }
   }
-});
-
-describe("the ntm palette e2e test does not probe flags the palette lacks (#393)", () => {
-  const script = readFileSync(join(REPO_ROOT, "scripts/test_ntm_palette.sh"), "utf8");
-
-  test("no `ntm palette --list` and no error-swallowing `|| echo` fallback", () => {
-    expect(script).not.toMatch(/ntm palette --list/);
-    expect(script).not.toMatch(/2>\/dev\/null \| wc -l \|\| echo/);
-  });
-
-  test("asserts the subcommand via --help and counts entries in the palette file", () => {
-    expect(script).toMatch(/ntm palette --help/);
-    expect(script).toMatch(/palette_entry_count/);
-  });
 });

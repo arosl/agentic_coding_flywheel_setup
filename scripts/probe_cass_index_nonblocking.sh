@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # CASS initial-indexing non-blocking probe (bead hfdt-gzjai; fix 874a2a30 in
-# acfs/onboard/lessons/05_ntm_core.md).
+# the onboarding lesson that is now acfs/onboard/lessons/07_flywheel_loop.md).
 #
 # THE CLIENT REPORT THIS ANSWERS: "cass install performs an initial indexing
 # that takes a very long time and interrupts the whole setup run." `cass

@@ -73,6 +73,21 @@ brenner session compile --thread-id RS-001
 brenner session publish --thread-id RS-001 --to Claude,Codex
 ```
 
+### Running the Agents in herdr
+
+ACFS installs no ntm, so start the research agents yourself, one per herdr
+pane, and have brenner send the kickoff through Agent Mail only:
+
+```bash
+brenner cockpit start --thread-id RS-001 --sender <YourAgentName> --to Claude,Codex \
+  --role-map <roles> --excerpt-file excerpt.md --question "hypothesis about X" \
+  --skip-ntm --skip-broadcast
+```
+
+An idle agent doesn't read its mail by itself. Tell it to, with a waker if you
+run one, or with `herdr agent prompt <agent> "Read your Agent Mail inbox."`.
+Check brenner's setup with `brenner doctor --skip-ntm`.
+
 ### Session Outputs
 
 Research sessions produce structured artifacts:
@@ -91,7 +106,7 @@ Brenner Bot coordinates with other tools:
 | Tool | Integration |
 |------|-------------|
 | **Agent Mail** | Durable threads between agents in sessions |
-| **NTM** | Spawns parallel agent sessions |
+| **herdr** | Runs the agents side by side |
 | **Beads** | Research tasks can become tracked issues |
 | **CASS** | Session history is searchable |
 

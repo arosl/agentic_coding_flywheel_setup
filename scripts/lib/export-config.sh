@@ -1038,15 +1038,11 @@ get_tool_version() {
         gh)
             version=$(gh --version 2>/dev/null | head -1 | awk '{print $3}' || true)
             ;;
-        docker)
-            version=$(docker --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
-            ;;
         postgresql|psql)
             version=$(psql --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+' | head -1 || true)
             ;;
-        ntm)
-            # ntm uses "ntm version" not --version
-            version=$(ntm version 2>/dev/null | awk '{print $3}' || true)
+        herdr)
+            version=$(herdr --version 2>/dev/null | awk '{print $2}' || true)
             ;;
         cass)
             version=$(cass --version 2>/dev/null | awk '{print $2}' || true)
@@ -1232,7 +1228,7 @@ EOF
     # Core tools
     local tools=(
         "rust" "bun" "uv" "go" "zsh" "tmux" "nvim"
-        "zoxide" "atuin" "fzf" "ripgrep" "gh" "docker" "postgresql"
+        "zoxide" "atuin" "fzf" "ripgrep" "gh" "postgresql"
     )
 
     for tool in "${tools[@]}"; do
@@ -1264,7 +1260,7 @@ EOF
     echo "flywheel_stack:"
 
     # Flywheel tools
-    local stack_tools=("ntm" "cass" "cm" "bv" "br" "dcg" "slb" "caam" "ubs" "rch" "ms" "ru")
+    local stack_tools=("herdr" "cass" "cm" "bv" "br" "dcg" "slb" "caam" "ubs" "rch" "ms" "ru")
     for tool in "${stack_tools[@]}"; do
         local version
         version=$(get_tool_version "$tool")
@@ -1324,7 +1320,7 @@ EOF
 EOF
 
     # Core tools
-    local tools=("rust" "bun" "uv" "go" "zsh" "tmux" "nvim" "zoxide" "atuin" "fzf" "ripgrep" "gh" "docker" "postgresql")
+    local tools=("rust" "bun" "uv" "go" "zsh" "tmux" "nvim" "zoxide" "atuin" "fzf" "ripgrep" "gh" "postgresql")
     first=true
     for tool in "${tools[@]}"; do
         local version
@@ -1372,7 +1368,7 @@ EOF
 EOF
 
     # Flywheel tools
-    local stack_tools=("ntm" "cass" "cm" "bv" "br" "dcg" "slb" "caam" "ubs" "rch" "ms" "ru")
+    local stack_tools=("herdr" "cass" "cm" "bv" "br" "dcg" "slb" "caam" "ubs" "rch" "ms" "ru")
     first=true
     for tool in "${stack_tools[@]}"; do
         local version

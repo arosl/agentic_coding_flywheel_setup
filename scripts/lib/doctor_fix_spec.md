@@ -102,7 +102,6 @@ fix_path_ordering() {
 | Source | Destination |
 |--------|-------------|
 | `acfs/zsh/acfs.zshrc` | `~/.acfs/zsh/acfs.zshrc` |
-| `acfs/tmux/tmux.conf` | `~/.acfs/tmux/tmux.conf` |
 | `VERSION` | `~/.acfs/VERSION` |
 
 **Fix logic**:

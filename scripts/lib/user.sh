@@ -323,11 +323,6 @@ ensure_user() {
 
     # Ensure user is in required groups
     $SUDO usermod -aG sudo "$target" 2>/dev/null || true
-
-    # Docker group (if docker is installed)
-    if getent group docker &>/dev/null; then
-        $SUDO usermod -aG docker "$target" 2>/dev/null || true
-    fi
 }
 
 # Enable passwordless sudo for target user

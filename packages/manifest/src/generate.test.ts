@@ -115,7 +115,7 @@ describe("Generator optional verify parsing", () => {
   });
 
   test("places every module installer in a private generated namespace", () => {
-    expect(toGeneratedFunctionName("stack.ntm")).toBe("acfs_generated_install_stack_ntm");
+    expect(toGeneratedFunctionName("tools.herdr")).toBe("acfs_generated_install_tools_herdr");
     expect(toGeneratedFunctionName("agents.antigravity")).toBe(
       "acfs_generated_install_agents_antigravity",
     );
@@ -1287,7 +1287,7 @@ describe("Generated script headers", () => {
     expect(countMatch).not.toBeNull();
     expect(rawEntries.length).toBe(checksums.size);
     expect(Number(countMatch?.[1])).toBe(checksums.size);
-    expect(checksums.size).toBe(117);
+    expect(checksums.size).toBe(115);
 
     const mandatoryPaths = [
       "install.sh",
@@ -1337,8 +1337,6 @@ describe("Generated script headers", () => {
       "VERSION",
       "acfs.manifest.yaml",
       "acfs/AGENTS.md",
-      "acfs/onboard/docs/ntm/command_palette.md",
-      "acfs/tmux/tmux.conf",
       "acfs/zsh/acfs.zshrc",
       "acfs/zsh/p10k.zsh",
       "scripts/completions/_acfs",

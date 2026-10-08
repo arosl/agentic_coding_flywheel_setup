@@ -1724,9 +1724,8 @@ dispatch_fix() {
         # checkout; an installed tree (~/.acfs/scripts/lib) has no sibling
         # asset directory — there the missing file IS the asset, so route to
         # `acfs update` instead of failing a copy from a bogus path.
-        config.acfs_zshrc|config.tmux)
+        config.acfs_zshrc)
             local cfg_rel="zsh/acfs.zshrc"
-            [[ "$check_id" == "config.tmux" ]] && cfg_rel="tmux/tmux.conf"
             local cfg_src="${SCRIPT_DIR:-}/../../acfs/$cfg_rel"
             if [[ -n "${SCRIPT_DIR:-}" ]] && [[ -f "$cfg_src" ]]; then
                 fix_config_copy "$check_id" "$cfg_src" \
@@ -1749,8 +1748,8 @@ dispatch_fix() {
         stack.mcp_agent_mail*)
             fix_mcp_agent_mail "$check_id"
             ;;
-        stack.ntm)
-            fix_verified_install "$check_id" "ntm" "ntm"
+        tools.herdr)
+            fix_verified_install "$check_id" "herdr" "herdr"
             ;;
         stack.ubs|stack.ultimate_bug_scanner|stack.ultimate_bug_scanner.*)
             fix_verified_install "$check_id" "ubs" "ubs" --easy-mode

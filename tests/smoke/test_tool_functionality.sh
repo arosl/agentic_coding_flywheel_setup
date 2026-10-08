@@ -141,34 +141,6 @@ test_ms_functionality() {
     fi
 }
 
-# wezterm_automata (wa) - check daemon status
-test_wa_functionality() {
-    log "Testing wa (wezterm_automata) functionality..."
-    if ! command -v wa >/dev/null 2>&1; then
-        skip "wa not installed, skipping functionality test"
-        return
-    fi
-
-    # Check daemon status (should work even if daemon not running)
-    local output
-    output=$(wa daemon status 2>&1)
-    local exit_code=$?
-
-    # Daemon status should report something meaningful
-    if [[ "$output" =~ (running|stopped|not.*running|status) ]]; then
-        pass "wa daemon status reports: $(echo "$output" | head -1)"
-    elif [[ $exit_code -eq 0 ]]; then
-        pass "wa daemon status completed"
-    else
-        # Even error is acceptable if it mentions daemon
-        if [[ "$output" =~ daemon ]]; then
-            pass "wa daemon status responded (daemon may not be running)"
-        else
-            fail "wa daemon status failed unexpectedly: $output"
-        fi
-    fi
-}
-
 # rch (remote_compilation_helper) - check status
 test_rch_functionality() {
     log "Testing rch (remote_compilation_helper) functionality..."
@@ -320,25 +292,19 @@ test_dcg_functionality() {
     fi
 }
 
-# ntm - list sessions
-test_ntm_functionality() {
-    log "Testing ntm functionality..."
-    if ! command -v ntm >/dev/null 2>&1; then
-        skip "ntm not installed, skipping functionality test"
+# herdr - integration status (works without a running herdr server)
+test_herdr_functionality() {
+    log "Testing herdr functionality..."
+    if ! command -v herdr >/dev/null 2>&1; then
+        skip "herdr not installed, skipping functionality test"
         return
     fi
 
-    # List sessions
     local output
-    output=$(ntm list 2>&1)
-    local exit_code=$?
-
-    if [[ $exit_code -eq 0 ]]; then
-        pass "ntm list completed successfully"
-    elif [[ "$output" =~ (no.*sessions|empty|not.*found) ]]; then
-        pass "ntm list reports no sessions (acceptable)"
+    if output=$(herdr integration status 2>&1); then
+        pass "herdr integration status completed: $(echo "$output" | grep -c ': current') integration(s) current"
     else
-        fail "ntm list failed: $output"
+        fail "herdr integration status failed: $output"
     fi
 }
 
@@ -462,14 +428,13 @@ main() {
     log "--- Core Tools ---"
     test_br_functionality
     test_ms_functionality
-    test_wa_functionality
     test_rch_functionality
     test_brenner_functionality
     test_bv_functionality
     test_cass_functionality
     test_cm_functionality
     test_dcg_functionality
-    test_ntm_functionality
+    test_herdr_functionality
 
     log ""
     log "--- Utility Tools ---"

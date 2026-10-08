@@ -143,28 +143,24 @@ EOF
     assert_output "rust_proxy 0.1.0"
 }
 
-@test "get_version: detects ntm via version subcommand" {
+@test "get_version: detects herdr via --version" {
     mkdir -p "$HOME/.local/bin"
-    cat > "$HOME/.local/bin/ntm" <<'EOF'
+    cat > "$HOME/.local/bin/herdr" <<'EOF'
 #!/bin/bash
 case "${1:-}" in
-  version)
-    echo "ntm version 1.14.0"
-    ;;
   --version)
-    echo "Error: unknown flag: --version" >&2
-    exit 1
+    echo "herdr 0.9.3"
     ;;
   *)
     exit 2
     ;;
 esac
 EOF
-    chmod +x "$HOME/.local/bin/ntm"
+    chmod +x "$HOME/.local/bin/herdr"
 
-    run get_version "ntm"
+    run get_version "herdr"
     assert_success
-    assert_output "ntm version 1.14.0"
+    assert_output "herdr 0.9.3"
 }
 
 @test "get_version: prefers target runtime binaries when HOME differs" {
@@ -1473,7 +1469,7 @@ EOF
     run grep -F 'run_cmd "DCG Hook" "$dcg_bin" install --force' "$update"
     assert_success
 
-    run grep -F 'update_run_verified_installer_or_existing_on_transient "NTM" ntm ntm ntm' "$update"
+    run grep -F 'update_run_verified_installer_or_existing_on_transient "herdr" herdr herdr herdr' "$update"
     assert_success
 
     run grep -F 'update_run_verified_installer_or_existing_on_transient "Meta Skill" ms ms ms --easy-mode' "$update"
@@ -1961,7 +1957,7 @@ _setup_stack_agent_mail_gate_fixture() {
         esac
         return 0
     }
-    # NTM runs first through this helper; keep it out of the way so the run
+    # herdr runs first through this helper; keep it out of the way so the run
     # reaches the Agent Mail installer failure under test.
     update_run_verified_installer_or_existing_on_transient() { return 0; }
     update_run_verified_installer_with_env() { return 0; }
@@ -8693,7 +8689,6 @@ EOF
     local install_asset_line
     local update_pair
     local -a install_asset_lines=(
-        'install_asset "acfs/tmux/tmux.conf" "$ACFS_HOME/tmux/tmux.conf"'
         'install_asset "packages/onboard/onboard.sh" "$ACFS_HOME/onboard/onboard.sh"'
         'install_asset "scripts/completions/_acfs" "$ACFS_HOME/completions/_acfs"'
         'install_asset "scripts/completions/acfs.bash" "$ACFS_HOME/completions/acfs.bash"'
@@ -8740,7 +8735,6 @@ EOF
         'install_asset "scripts/lib/newproj_screens/$screen" "$ACFS_HOME/scripts/lib/newproj_screens/$screen"'
     )
     local -a update_pairs=(
-        '"acfs/tmux/tmux.conf:tmux/tmux.conf"'
         '"packages/onboard/onboard.sh:onboard/onboard.sh"'
         '"scripts/completions/_acfs:completions/_acfs"'
         '"scripts/completions/acfs.bash:completions/acfs.bash"'
@@ -9331,14 +9325,12 @@ EOF
 
     mkdir -p \
         "$repo_root/acfs/onboard/lessons" \
-        "$repo_root/acfs/tmux" \
         "$repo_root/packages/onboard" \
         "$repo_root/scripts/completions" \
         "$repo_root/scripts/generated" \
         "$repo_root/scripts/lib/newproj_screens" \
         "$deployed_home"
 
-    printf "tmux-runtime\n" > "$repo_root/acfs/tmux/tmux.conf"
     printf "lesson-runtime\n" > "$repo_root/acfs/onboard/lessons/00_welcome.md"
     printf "#!/usr/bin/env bash\nprintf 'onboard-runtime\\n'\n" > "$repo_root/packages/onboard/onboard.sh"
     printf "manifest-runtime\n" > "$repo_root/acfs.manifest.yaml"
@@ -9366,9 +9358,6 @@ EOF
     run sync_acfs_deployed
     assert_success
 
-    run cat "$deployed_home/tmux/tmux.conf"
-    assert_success
-    assert_output "tmux-runtime"
     run cat "$deployed_home/onboard/lessons/00_welcome.md"
     assert_success
     assert_output "lesson-runtime"
@@ -9910,7 +9899,7 @@ EOF
     local block=""
     local finalize_block=""
 
-    block="$(sed -n '/if acfs_use_generated_category "acfs"/,/^    # Copy tmux config/p' "$installer")"
+    block="$(sed -n '/if acfs_use_generated_category "acfs"/,/^    # Install onboard lessons/p' "$installer")"
     finalize_block="$(sed -n '/^finalize()/,/^}$/p' "$installer")"
 
     [[ "$block" == *'acfs_run_generated_category_phase "acfs" "10" || return 1'* ]]
@@ -10587,9 +10576,6 @@ EOF
     run grep -F 'if ! binary_installed "lazygit"; then' "$installer"
     assert_success
 
-    run grep -F 'if ! binary_installed "lazydocker"; then' "$installer"
-    assert_success
-
     run grep -F 'elif psql_bin="$(binary_path psql 2>/dev/null || true)" && [[ -n "$psql_bin" ]]; then' "$installer"
     assert_success
 
@@ -10639,9 +10625,6 @@ EOF
     assert_failure
 
     run grep -F 'if ! command_exists lazygit; then' "$installer"
-    assert_failure
-
-    run grep -F 'if ! command_exists lazydocker; then' "$installer"
     assert_failure
 
     run grep -F 'elif command_exists psql; then' "$installer"
@@ -12753,7 +12736,7 @@ EOF
     run grep -F 'acfs_smoke_install_fix_command agents.claude agents.codex agents.antigravity' "$installer"
     assert_success
 
-    run grep -F 'acfs_smoke_install_fix_command stack.ntm' "$installer"
+    run grep -F 'acfs_smoke_install_fix_command tools.herdr' "$installer"
     assert_success
 
     run grep -F 'acfs_smoke_install_fix_command acfs.onboard' "$installer"
@@ -12762,7 +12745,7 @@ EOF
     run grep -F 'acfs_smoke_install_fix_command stack.mcp_agent_mail' "$installer"
     assert_success
 
-    run grep -F -- '--force-reinstall --only stack.ntm' "$smoke_lib"
+    run grep -F -- '--force-reinstall --only tools.herdr' "$smoke_lib"
     assert_success
 }
 
@@ -12776,7 +12759,7 @@ EOF
     for module in \
         tools.zoxide \
         network.tailscale \
-        stack.ntm \
+        tools.herdr \
         stack.slb \
         stack.ultimate_bug_scanner \
         stack.beads_viewer \
@@ -12803,21 +12786,21 @@ EOF
     ACFS_COMMIT_SHA_FULL="abc1234"
     ACFS_REF_INPUT="feature/test"
 
-    run acfs_smoke_install_fix_command "stack.ntm"
+    run acfs_smoke_install_fix_command "tools.herdr"
     assert_success
     assert_output --partial "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/abc1234/install.sh"
-    assert_output --partial "bash -s -- --yes --force-reinstall --only stack.ntm --ref abc1234"
+    assert_output --partial "bash -s -- --yes --force-reinstall --only tools.herdr --ref abc1234"
 
     unset ACFS_COMMIT_SHA_FULL
     ACFS_REF_INPUT="feature/test"
 
-    run acfs_smoke_install_fix_command "stack.ntm"
+    run acfs_smoke_install_fix_command "tools.herdr"
     assert_success
     assert_output --partial "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/feature/test/install.sh"
-    assert_output --partial "bash -s -- --yes --force-reinstall --only stack.ntm --ref feature/test"
+    assert_output --partial "bash -s -- --yes --force-reinstall --only tools.herdr --ref feature/test"
 
     ACFS_REF_INPUT="main"
-    run acfs_smoke_install_fix_command "stack.ntm"
+    run acfs_smoke_install_fix_command "tools.herdr"
     assert_success
     assert_output --partial "https://agent-flywheel.com/install"
     refute_output --partial "--ref"
@@ -12923,7 +12906,7 @@ EOF
     }
 
     ACFS_MODE="safe --skip-cloud"
-    run build_fix_suggestion "stack.ntm"
+    run build_fix_suggestion "tools.herdr"
     assert_success
     assert_output --partial "--mode vibe"
     refute_output --partial "ACFS_REF="
@@ -12937,10 +12920,10 @@ EOF
 EOF
 
     ACFS_MODE="safe"
-    run build_fix_suggestion "stack.ntm"
+    run build_fix_suggestion "tools.herdr"
     assert_success
     assert_output --partial "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/abc1234/install.sh"
-    assert_output --partial "bash -s -- --yes --force-reinstall --mode safe --only stack.ntm --ref abc1234"
+    assert_output --partial "bash -s -- --yes --force-reinstall --mode safe --only tools.herdr --ref abc1234"
     refute_output --partial "ACFS_REF="
 
     cat > "$fixture_state_file" <<'EOF'
@@ -12949,7 +12932,7 @@ EOF
 }
 EOF
 
-    run build_fix_suggestion "stack.ntm"
+    run build_fix_suggestion "tools.herdr"
     assert_success
     assert_output --partial "curl -fsSL https://agent-flywheel.com/install | bash -s --"
     refute_output --partial "--ref"
@@ -15247,7 +15230,7 @@ write_smoke_fake_binary() {
     assert_success
     assert_output "--help"
 
-    run update_tool_smoke_probe ntm
+    run update_tool_smoke_probe herdr
     assert_success
     assert_output ""
 }

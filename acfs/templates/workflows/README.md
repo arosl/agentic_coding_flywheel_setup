@@ -27,8 +27,8 @@ Check your `checksums.yaml` entry to see the installer path:
 
 ```yaml
 # Root install.sh → use notify-acfs-root.yml
-ntm:
-  url: "https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh"
+dcg:
+  url: "https://raw.githubusercontent.com/Dicklesworthstone/destructive_command_guard/main/install.sh"
 
 # scripts/install.sh → use notify-acfs-scripts.yml
 mcp_agent_mail:

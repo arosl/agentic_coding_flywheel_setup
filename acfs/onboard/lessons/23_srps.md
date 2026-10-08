@@ -76,7 +76,7 @@ Rule types:
 
 ## Integration with Other Tools
 
-- **NTM**: SRPS keeps tmux sessions responsive when agents spawn heavy builds
+- **herdr**: SRPS keeps your agent panes responsive when agents spawn heavy builds
 - **DCG**: Combined safety - DCG prevents destructive commands, SRPS prevents resource exhaustion
 - **SLB**: When SLB launches multiple agents, SRPS prevents them from starving each other
 
@@ -114,7 +114,7 @@ sudo systemctl start ananicy-cpp
 ## Next Steps
 
 Now that SRPS is keeping your system responsive, you can safely:
-- Run multiple agents in parallel with NTM
+- Run multiple agents in parallel in herdr
 - Launch heavy builds without worrying about freezes
 - Focus on your work while background tasks complete
 

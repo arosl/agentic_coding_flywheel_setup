@@ -119,7 +119,7 @@ provenance_default_tools() {
     cat <<'EOF'
 br|br|--version|verified_installer|https://github.com/Dicklesworthstone/beads_rust|br|
 bv|bv|--version|verified_installer|https://github.com/Dicklesworthstone/beads_viewer|bv|
-ntm|ntm|--version|verified_installer|https://github.com/Dicklesworthstone/ntm|ntm|
+herdr|herdr|--version|verified_installer|https://github.com/herdrdev/herdr|herdr|
 rch|rch|--version|verified_installer|https://github.com/Dicklesworthstone/remote_compilation_helper|rch|
 agent_mail|am|--version|verified_installer|https://github.com/Dicklesworthstone/mcp_agent_mail_rust|mcp_agent_mail|
 ubs|ubs|--version|verified_installer|https://github.com/Dicklesworthstone/ultimate_bug_scanner|ubs|

@@ -427,7 +427,7 @@ _acfs_interactive_module_selector_on_tty() {
         echo "   3) minimal      - Lightweight core agentic essentials"
         echo "   4) agents-only  - Only coding agents (Claude Code, Codex, AGY, OpenCode)"
         echo "   5) cloud-only   - Only cloud & deployment CLIs (Wrangler, Supabase, Vercel)"
-        echo "   6) stack-only   - Agent Flywheel coordination tools only (NTM, Mail, UBS, Beads, CASS)"
+        echo "   6) stack-only   - Agent Flywheel coordination tools only (herdr, Mail, UBS, Beads, CASS)"
         echo "   7) custom       - Custom per-module selection / advanced toggles"
         echo "   q) Quit / Abort installation"
         echo ""

@@ -45,7 +45,7 @@ Breaking it down:
 No worries! SSH connections drop sometimes. Just reconnect:
 
 1. On your laptop, run the ssh command again
-2. Your work is safe in tmux (next lesson)
+2. Your work is safe in herdr (next lesson)
 
 ---
 
@@ -91,7 +91,7 @@ Then just type `vps` to connect!
 
 Answer these:
 1. Where does your private key live? (`~/.ssh/acfs_ed25519` on your laptop)
-2. What happens if SSH drops? (Reconnect; tmux saves your work)
+2. What happens if SSH drops? (Reconnect; herdr keeps your work running)
 3. What's the quick way to reconnect? (Use an alias)
 
 ---
@@ -117,7 +117,7 @@ When you see your public key (starts with `ssh-ed25519`), you know the setup wor
 
 ## Next
 
-This is why tmux is essential:
+This is why herdr is essential:
 
 ```bash
 onboard 3

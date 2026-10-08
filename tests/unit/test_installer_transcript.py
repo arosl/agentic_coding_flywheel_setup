@@ -70,10 +70,10 @@ class TranscriptTests(unittest.TestCase):
         script = 'source "$1"; CURRENT_PHASE=stack; CURRENT_PHASE_NAME="Agent Flywheel Stack"; LAST_ERROR="curl: (6) Could not resolve host: private.invalid"; get_error_context'
         context = subprocess.run(["/bin/bash", "-c", script, "fixture", str(ROOT / "scripts/lib/error_tracking.sh")],
                                  capture_output=True, text=True, check=True).stdout
-        code, report = self.invoke(context + "\nGenerated module failed: stack.ntm\nINSTALLATION FAILED\n")
+        code, report = self.invoke(context + "\nGenerated module failed: tools.herdr\nINSTALLATION FAILED\n")
         self.assertEqual(code, 1)
         self.assertEqual(report["phase"], "stack")
-        self.assertEqual(report["module"], "stack.ntm")
+        self.assertEqual(report["module"], "tools.herdr")
         self.assertEqual(report["primary_cause"], "network")
 
     def test_plain_failure_report_phase(self):
@@ -96,7 +96,7 @@ class TranscriptTests(unittest.TestCase):
         self.assertEqual(len(report["findings"]), 1)
 
     def test_new_run_clears_old_module_and_failure(self):
-        code, report = self.invoke("Generated module failed: stack.ntm\n=== ACFS Install Log ===\nhello\n")
+        code, report = self.invoke("Generated module failed: tools.herdr\n=== ACFS Install Log ===\nhello\n")
         self.assertEqual(code, 0)
         self.assertIsNone(report["module"])
         self.assertIsNone(report["primary_cause"])
@@ -251,7 +251,7 @@ class TranscriptTests(unittest.TestCase):
         bin_dir = self.root / "bin"
         bin_dir.mkdir()
         marker = self.root / "poisoned"
-        for name in ("python3", "jq", "ntm", "curl", "find", "cat", "date"):
+        for name in ("python3", "jq", "herdr", "curl", "find", "cat", "date"):
             path = bin_dir / name
             path.write_text('#!/bin/sh\nprintf bad > "' + str(marker) + '"\nexit 91\n')
             path.chmod(0o755)
@@ -274,10 +274,10 @@ class TranscriptTests(unittest.TestCase):
         shutil.copyfile(RESCUE, lib / "rescue.sh")
         shutil.copyfile(ROOT / "scripts/lib/errors.sh", lib / "errors.sh")
         marker = self.root / "executed"
-        (generated / "manifest_index.sh").write_text('touch "' + str(marker) + '"\nACFS_MODULES_IN_ORDER=(\n  "stack.ntm"\n)\n')
-        code, report = self.invoke("Generated module failed: stack.ntm", script=lib / "rescue.sh")
+        (generated / "manifest_index.sh").write_text('touch "' + str(marker) + '"\nACFS_MODULES_IN_ORDER=(\n  "tools.herdr"\n)\n')
+        code, report = self.invoke("Generated module failed: tools.herdr", script=lib / "rescue.sh")
         self.assertEqual(code, 1)
-        self.assertEqual(report["module"], "stack.ntm")
+        self.assertEqual(report["module"], "tools.herdr")
         self.assertFalse(marker.exists())
 
     def test_missing_generated_index_omits_module_not_explanation(self):
@@ -285,7 +285,7 @@ class TranscriptTests(unittest.TestCase):
         lib.mkdir()
         for name in ("rescue.sh", "errors.sh"):
             shutil.copyfile(ROOT / "scripts/lib" / name, lib / name)
-        _, report = self.invoke("Generated module failed: stack.ntm\nchecksum mismatch", script=lib / "rescue.sh")
+        _, report = self.invoke("Generated module failed: tools.herdr\nchecksum mismatch", script=lib / "rescue.sh")
         self.assertIsNone(report["module"])
         self.assertEqual(report["primary_cause"], "checksum")
 

@@ -435,15 +435,17 @@ rg -l -t rust 'unwrap\(' | xargs ast-grep run -l Rust -p '$X.unwrap()' --json
 | `cod` | Codex CLI (OpenAI) - start interactive session |
 | `agy` | Antigravity CLI (Google) - start interactive session (successor to the retired Gemini CLI; `gmi` is kept as an alias for it; pinned to "Gemini 3.8 Flash (High)") |
 
-### Session Management (NTM)
+### Session Management (herdr)
+
+Never run bare `herdr` from an agent: it opens the TUI and blocks.
 
 | Command | Description |
 |---------|-------------|
-| `ntm spawn` | Create multi-agent session |
-| `ntm list` | List active sessions |
-| `ntm attach` | Attach to session |
-| `ntm send` | Send prompt to agents |
-| `ntm palette` | Open command palette |
+| `herdr workspace create --cwd <dir>` | Create a workspace for a project |
+| `herdr agent list` | List agents and their state |
+| `herdr agent read <agent>` | Read an agent's recent output |
+| `herdr agent prompt <agent> "<text>"` | Send a prompt to an agent |
+| `herdr agent wait <agent> --until idle` | Wait for an agent to finish |
 
 ### Safety Tools
 
@@ -512,18 +514,18 @@ rg -l -t rust 'unwrap\(' | xargs ast-grep run -l Rust -p '$X.unwrap()' --json
 
 ---
 
-## Tmux Navigation
+## herdr Navigation
 
-ACFS uses `Ctrl-a` as the tmux prefix (not the default `Ctrl-b`).
+herdr's prefix is `Ctrl-b`.
 
 | Keys | Action |
 |------|--------|
-| `Ctrl-a n` | Next window |
-| `Ctrl-a p` | Previous window |
-| `Ctrl-a [0-9]` | Switch to window N |
-| `Ctrl-a h/j/k/l` | Move between panes |
-| `Ctrl-a z` | Zoom/unzoom current pane |
-| `Ctrl-a d` | Detach session (keeps running) |
+| `Ctrl-b n` | Next tab |
+| `Ctrl-b p` | Previous tab |
+| `Ctrl-b [1-9]` | Switch to tab N |
+| `Ctrl-b h/j/k/l` | Move between panes |
+| `Ctrl-b z` | Zoom/unzoom current pane |
+| `Ctrl-b q` | Detach (agents keep running) |
 
 ---
 

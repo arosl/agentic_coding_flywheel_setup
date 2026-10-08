@@ -77,9 +77,9 @@ teardown() {
 }
 
 @test "hold without expiry is active forever" {
-    acfs_holds_add ntm "current" "ops" "waiting on upstream fix" ""
+    acfs_holds_add herdr "current" "ops" "waiting on upstream fix" ""
 
-    run acfs_holds_active_details ntm
+    run acfs_holds_active_details herdr
     assert_success
     [[ "$output" == *"(expires never)"* ]]
 }
@@ -109,14 +109,14 @@ EOF
 
 @test "remove deletes only the targeted entry" {
     acfs_holds_add br "current" "henry" "why br" ""
-    acfs_holds_add ntm "current" "henry" "why ntm" ""
+    acfs_holds_add herdr "current" "henry" "why herdr" ""
 
     run acfs_holds_remove br
     assert_success
 
     run acfs_holds_lookup br
     assert_failure
-    run acfs_holds_lookup ntm
+    run acfs_holds_lookup herdr
     assert_success
 }
 

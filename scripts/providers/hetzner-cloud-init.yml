@@ -26,7 +26,6 @@ packages:
   - jq
   - ca-certificates
   - unzip
-  - tmux
 
 write_files:
   - path: /var/lib/acfs/cloud-init-install.sh

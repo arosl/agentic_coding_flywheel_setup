@@ -76,7 +76,6 @@ readonly RECOMMENDED_TOOLS=(
     
     # Development tools
     "lazygit"
-    "lazydocker"
     "jq"
     "yq"
     "gh"
@@ -96,10 +95,9 @@ readonly RECOMMENDED_TOOLS=(
     "supabase"
     "vercel"
     "fly"
-    "docker"
-    
+
     # Agent Flywheel stack
-    "ntm"
+    "herdr"
     "mcp_agent_mail"
     "ubs"
     "bv"

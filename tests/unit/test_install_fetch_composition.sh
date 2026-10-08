@@ -145,7 +145,7 @@ fi
 if [[ "$HTTPBIN_OK" == "true" ]]; then
     echo "-- B1: install.sh's own acfs_curl_with_retry() -- the function used by"
     echo "   bootstrap_repo_archive() (the curl|bash archive fetch) and by"
-    echo "   acfs_download_file_and_verify_sha256() (lazygit/lazydocker) --"
+    echo "   acfs_download_file_and_verify_sha256() (lazygit) --"
     echo "   against a URL that ALWAYS returns 429 --"
     b1_out="$TMPROOT/b1_out"
     b1_start=$(date +%s)
@@ -211,33 +211,33 @@ echo "=============================================="
 
 if [[ "$HTTPBIN_OK" == "true" ]]; then
     source_generated_installers
-    declare -f acfs_generated_install_stack_ntm >/dev/null 2>&1 || { echo "FATAL: real acfs_generated_install_stack_ntm not loaded"; exit 2; }
+    declare -f acfs_generated_install_stack_mcp_agent_mail >/dev/null 2>&1 || { echo "FATAL: real acfs_generated_install_stack_mcp_agent_mail not loaded"; exit 2; }
     declare -f acfs_generated_install_stack_meta_skill >/dev/null 2>&1 || { echo "FATAL: real acfs_generated_install_stack_meta_skill not loaded"; exit 2; }
 
     # The one deliberate substitution, and it's a narrower one than before:
-    # only the URL acfs_generated_install_stack_ntm's real verify_checksum() call targets is
+    # only the URL acfs_generated_install_stack_mcp_agent_mail's real verify_checksum() call targets is
     # redirected to the persistent-429 endpoint. Every other line — the
     # verify_checksum call itself, the retry loop inside it, the record/log
     # calls, the return path — is the REAL, unmodified function body.
-    real_ntm_body="$(declare -f acfs_generated_install_stack_ntm)"
-    eval "${real_ntm_body/acfs_generated_install_stack_ntm/__real_acfs_generated_install_stack_ntm}"
-    acfs_generated_install_stack_ntm() {
-        local module_id="stack.ntm"
+    real_am_body="$(declare -f acfs_generated_install_stack_mcp_agent_mail)"
+    eval "${real_am_body/acfs_generated_install_stack_mcp_agent_mail/__real_acfs_generated_install_stack_mcp_agent_mail}"
+    acfs_generated_install_stack_mcp_agent_mail() {
+        local module_id="stack.mcp_agent_mail"
         acfs_require_contract "module:${module_id}" || return 1
         acfs_generated_ensure_selection || return 1
         if ! should_run_module "${module_id}"; then
-            log_info "Skipping stack.ntm (not selected)"
+            log_info "Skipping stack.mcp_agent_mail (not selected)"
             return 0
         fi
-        log_step "Installing stack.ntm"
+        log_step "Installing stack.mcp_agent_mail"
         # Real verify_checksum(), real retry loop, pointed at a URL that will
         # never stop returning 429 — a genuine fetch-exhaustion failure, not
         # a hand-written `return 1`.
-        if ! verify_checksum "https://httpbin.org/status/429" "0000000000000000000000000000000000000000000000000000000000000000" "stack.ntm"; then
-            log_error "stack.ntm: verified installer failed"
+        if ! verify_checksum "https://httpbin.org/status/429" "0000000000000000000000000000000000000000000000000000000000000000" "stack.mcp_agent_mail"; then
+            log_error "stack.mcp_agent_mail: verified installer failed"
             return 1
         fi
-        log_success "stack.ntm installed"
+        log_success "stack.mcp_agent_mail installed"
     }
 
     export ACFS_FORCE_REINSTALL=true
@@ -254,18 +254,18 @@ if [[ "$HTTPBIN_OK" == "true" ]]; then
 
     meta_skill_ran="false"
     grep -q "stack.meta_skill installed" "$category_log" && meta_skill_ran="true"
-    ntm_recorded="false"
-    ntm_recorded_reason=""
+    am_recorded="false"
+    am_recorded_reason=""
     for f in "${ACFS_MODULE_FAILURES[@]:-}"; do
-        [[ "$f" == stack.ntm* ]] && { ntm_recorded="true"; ntm_recorded_reason="$f"; }
+        [[ "$f" == stack.mcp_agent_mail* ]] && { am_recorded="true"; am_recorded_reason="$f"; }
     done
     retries_happened="false"
     grep -qi "retry" "$category_log" && retries_happened="true"
 
     assert "C1. the induced failure really did exhaust retries (took >= 15s, 'Retry' logged in the category run, not an instant return-1)" \
         "$([[ "$c_elapsed" -ge 15 && "$retries_happened" == "true" ]] && echo true || echo false)"
-    assert "C2. stack.ntm's exhausted-fetch failure is recorded (record-and-continue, not silently dropped)" "$ntm_recorded"
-    assert "C3. real acfs_generated_install_stack_meta_skill STILL ran and installed despite stack.ntm's fetch exhausting all retries earlier in the same category loop" "$meta_skill_ran"
+    assert "C2. stack.mcp_agent_mail's exhausted-fetch failure is recorded (record-and-continue, not silently dropped)" "$am_recorded"
+    assert "C3. real acfs_generated_install_stack_meta_skill STILL ran and installed despite stack.mcp_agent_mail's fetch exhausting all retries earlier in the same category loop" "$meta_skill_ran"
     assert "C4. generated category reports aggregate failure after later modules run" "$([[ $category_rc -ne 0 ]] && echo true || echo false)"
 
     DRY_RUN=false
@@ -274,7 +274,7 @@ if [[ "$HTTPBIN_OK" == "true" ]]; then
     print_summary > "$summary_log" 2>&1 || true
 
     names_module="false"
-    grep -q "stack.ntm" "$summary_log" && names_module="true"
+    grep -q "stack.mcp_agent_mail" "$summary_log" && names_module="true"
     says_complete="false"
     grep -q "Installation Complete" "$summary_log" && says_complete="true"
     says_failures="false"
@@ -284,7 +284,7 @@ if [[ "$HTTPBIN_OK" == "true" ]]; then
     leaks_raw_http_status="false"
     grep -q "429" "$summary_log" && leaks_raw_http_status="true"
 
-    assert "C5. print_summary names 'stack.ntm' (not a raw curl exit code)" "$names_module"
+    assert "C5. print_summary names 'stack.mcp_agent_mail' (not a raw curl exit code)" "$names_module"
     assert "C6. print_summary does not claim 'Installation Complete' over the broken run" "$([[ "$says_complete" == "false" ]] && echo true || echo false)"
     assert "C7. print_summary banner reads 'Finished With Failures'" "$says_failures"
     assert "C8. print_summary text does NOT leak curl exit code 22 anywhere" "$([[ "$leaks_raw_curl_code" == "false" ]] && echo true || echo false)"
@@ -295,8 +295,8 @@ if [[ "$HTTPBIN_OK" == "true" ]]; then
     grep -A2 "did not install" "$summary_log" | sed 's/^/   | /'
     echo "   -------------------------------------------------------------"
 
-    assert "C10. stack.ntm's fetch-exhaustion failure now carries a human-meaningful reason ('network'), not just the bare module id" \
-        "$([[ "$ntm_recorded_reason" == "stack.ntm (network)" ]] && echo true || echo false)"
+    assert "C10. stack.mcp_agent_mail's fetch-exhaustion failure now carries a human-meaningful reason ('network'), not just the bare module id" \
+        "$([[ "$am_recorded_reason" == "stack.mcp_agent_mail (network)" ]] && echo true || echo false)"
 
     # -- C11-C13: a DIFFERENT failure cause (real checksum mismatch, not
     # fetch exhaustion) must render with a DIFFERENT reason than C10's
@@ -335,7 +335,7 @@ if [[ "$HTTPBIN_OK" == "true" ]]; then
     assert "C11. a genuine checksum-mismatch failure (stack.cass) sets reason 'checksum'" \
         "$([[ "$cass_failure_reason" == "checksum" ]] && echo true || echo false)"
     assert "C12. the fetch-exhaustion (network, from C10) and checksum-mismatch (checksum) failures produce DIFFERENT reasons — this is the collapse-of-distinct-states bug now fixed" \
-        "$([[ "$ntm_recorded_reason" == "stack.ntm (network)" && "$cass_failure_reason" == "checksum" ]] && echo true || echo false)"
+        "$([[ "$am_recorded_reason" == "stack.mcp_agent_mail (network)" && "$cass_failure_reason" == "checksum" ]] && echo true || echo false)"
 
     leaks_22_v2="false"
     grep -Eq '(^| )22( |$)|exit code 22|curl.*22\b' "$cass_probe_log" && leaks_22_v2="true"

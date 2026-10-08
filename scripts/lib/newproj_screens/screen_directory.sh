@@ -35,7 +35,7 @@ get_default_projects_dir() {
         echo "$HOME/Projects"
     else
         # Fall back to /data/projects (ACFS canonical default) even if it doesn't
-        # exist yet -- the installer creates it. This unifies NTM, newproj, and docs.
+        # exist yet -- the installer creates it. This unifies the workspace, newproj, and docs.
         echo "/data/projects"
     fi
 }

@@ -1137,15 +1137,15 @@ _check_agents() {
     fi
 }
 
-# Check 7: NTM command works
-_check_ntm() {
-    local ntm_bin=""
-    ntm_bin="$(_smoke_binary_path "ntm" 2>/dev/null || true)"
-    if [[ -n "$ntm_bin" ]] && "$ntm_bin" --help >/dev/null 2>&1; then
-        _smoke_pass "NTM: installed"
+# Check 7: herdr command works
+_check_herdr() {
+    local herdr_bin=""
+    herdr_bin="$(_smoke_binary_path "herdr" 2>/dev/null || true)"
+    if [[ -n "$herdr_bin" ]] && "$herdr_bin" --version >/dev/null 2>&1; then
+        _smoke_pass "herdr: installed"
         return 0
     else
-        _smoke_fail "NTM: not found" "Re-run: curl -fsSL https://agent-flywheel.com/install | bash -s -- --yes --force-reinstall --only stack.ntm"
+        _smoke_fail "herdr: not found" "Re-run: curl -fsSL https://agent-flywheel.com/install | bash -s -- --yes --force-reinstall --only tools.herdr"
         return 1
     fi
 }
@@ -1238,7 +1238,7 @@ run_smoke_test() {
     _check_workspace
     _check_languages
     _check_agents
-    _check_ntm
+    _check_herdr
     _check_onboard
 
     echo ""

@@ -19,7 +19,6 @@ fi
 
 # Tool commands for verification
 declare -gA STACK_COMMANDS=(
-    [ntm]="ntm"
     [mcp_agent_mail]="am"
     [ubs]="ubs"
     [bv]="bv"
@@ -46,7 +45,6 @@ declare -gA STACK_COMMANDS=(
 
 # Tool display names
 declare -gA STACK_NAMES=(
-    [ntm]="NTM (Named Tmux Manager)"
     [mcp_agent_mail]="MCP Agent Mail"
     [ubs]="Ultimate Bug Scanner"
     [bv]="Beads Viewer"
@@ -2014,29 +2012,6 @@ _stack_tool_ready() {
 # Individual Tool Installers
 # ============================================================
 
-# Install NTM (Named Tmux Manager)
-# Agent orchestration cockpit
-install_ntm() {
-    local tool="ntm"
-
-    if _stack_is_installed "$tool"; then
-        log_detail "${STACK_NAMES[$tool]} already installed"
-        return 0
-    fi
-
-    log_detail "Installing ${STACK_NAMES[$tool]}..."
-
-    if _stack_run_installer "$tool"; then
-        if _stack_is_installed "$tool"; then
-            log_success "${STACK_NAMES[$tool]} installed"
-            return 0
-        fi
-    fi
-
-    log_warn "${STACK_NAMES[$tool]} installation may have failed"
-    return 1
-}
-
 # Install MCP Agent Mail
 # Agent coordination server
 install_mcp_agent_mail() {
@@ -2614,7 +2589,7 @@ verify_stack() {
 
     log_detail "Verifying Agent Flywheel stack..."
 
-    for tool in ntm mcp_agent_mail ubs bv br cass cm caam slb ru dcg rch pt fsfs sbh casr dsr asb pcr ee fmd pi pfr; do
+    for tool in mcp_agent_mail ubs bv br cass cm caam slb ru dcg rch pt fsfs sbh casr dsr asb pcr ee fmd pi pfr; do
         local cmd="${STACK_COMMANDS[$tool]}"
         local name="${STACK_NAMES[$tool]}"
 
@@ -2642,7 +2617,7 @@ verify_stack_help() {
 
     log_detail "Testing stack tools --help..."
 
-    for tool in ntm mcp_agent_mail ubs bv br cass cm caam slb ru dcg rch pt fsfs sbh casr dsr asb pcr ee fmd pi pfr; do
+    for tool in mcp_agent_mail ubs bv br cass cm caam slb ru dcg rch pt fsfs sbh casr dsr asb pcr ee fmd pi pfr; do
         local cmd="${STACK_COMMANDS[$tool]}"
 
         if _stack_is_installed "$tool"; then
@@ -2665,7 +2640,7 @@ verify_stack_help() {
 get_stack_versions() {
     echo "Agent Flywheel Stack Versions:"
 
-    for tool in ntm mcp_agent_mail ubs bv br cass cm caam slb ru dcg rch pt fsfs sbh casr dsr asb pcr ee fmd pi pfr; do
+    for tool in mcp_agent_mail ubs bv br cass cm caam slb ru dcg rch pt fsfs sbh casr dsr asb pcr ee fmd pi pfr; do
         local cmd="${STACK_COMMANDS[$tool]}"
         local name="${STACK_NAMES[$tool]}"
 
@@ -2685,8 +2660,7 @@ get_stack_versions() {
 install_all_stack() {
     log_step "7/8" "Installing Agent Flywheel stack..."
 
-    # Install in recommended order (original 10 tools)
-    install_ntm
+    # Install in recommended order
     install_mcp_agent_mail
     install_ubs
     install_bv

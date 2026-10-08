@@ -126,8 +126,8 @@ test_minimal_profile_selects_expected_essentials() {
     acfs_apply_profile "minimal"
     acfs_resolve_selection
 
-    # Minimal profile should include essentials like ntm, ubs, beads_rust, claude, codex, agy
-    should_run_module "stack.ntm" || { fail "minimal_profile_selects_expected_essentials" "Missing stack.ntm"; return 1; }
+    # Minimal profile should include essentials like herdr, ubs, beads_rust, claude, codex, agy
+    should_run_module "tools.herdr" || { fail "minimal_profile_selects_expected_essentials" "Missing tools.herdr"; return 1; }
     should_run_module "stack.ultimate_bug_scanner" || { fail "minimal_profile_selects_expected_essentials" "Missing stack.ultimate_bug_scanner"; return 1; }
     should_run_module "stack.beads_rust" || { fail "minimal_profile_selects_expected_essentials" "Missing stack.beads_rust"; return 1; }
     should_run_module "agents.antigravity" || { fail "minimal_profile_selects_expected_essentials" "Missing agents.antigravity"; return 1; }

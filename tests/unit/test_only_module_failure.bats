@@ -95,7 +95,7 @@ _plan_three_requested() {
     _plan_three_requested
     ACFS_MODULE_FAILURES=(
         "utils.aadc (installation failed)"
-        "stack.ntm (installer execution)"
+        "stack.ru (installer execution)"
     )
     acfs_stack_phase_selection_verdict 0
     [[ "$LOGGED_WARNS" == *"1 of 3"* ]]

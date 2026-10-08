@@ -53,7 +53,7 @@ AI coding agents generate large build artifacts, download dependencies, and crea
 
 - Cargo builds filling up /tmp
 - Node modules exhausting disk space
-- Docker images consuming all storage
+- Container images consuming all storage
 - Lost work from out-of-space filesystem errors
 
 ---

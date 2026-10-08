@@ -16,6 +16,16 @@
 > **From zero to fully-configured agentic coding VPS in 30 minutes.**
 > A complete bootstrapping system that transforms a fresh Ubuntu or Arch-based machine into a professional AI-powered development environment.
 
+## About this fork
+
+This is [arosl/agentic_coding_flywheel_setup](https://github.com/arosl/agentic_coding_flywheel_setup), a fork of [Dicklesworthstone's ACFS](https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup). Upstream is the original work. The fork changes what gets installed:
+
+- **herdr replaces tmux, ntm and wa.** Agents run in [herdr](https://herdr.dev) panes. The `tools.herdr` module installs herdr through the checksum-verified installer path, then installs herdr's integration for each agent CLI ACFS installs that herdr supports. ACFS no longer installs ntm (Named Tmux Manager), wa (WezTerm Automata), its tmux configuration or the tmux `agents` session.
+- **No Docker.** ACFS installs no Docker, docker-compose or lazydocker. dsr, which builds through Docker, is off by default.
+- **Incus is planned** wherever a container is needed.
+
+Two things still lean on what the fork removed: tmux stays installed because `acfs services` runs CM and the CASS indexer in a tmux session, and `acfs swarm` and `acfs capacity` still drive ntm, so they report it missing. The rest of this README is upstream's and still mentions ntm, tmux and Docker in places; where it disagrees with this section, this section is right.
+
 <div align="center" style="margin: 1.2em 0;">
   <table>
     <tr>
@@ -70,7 +80,7 @@ The installer is **idempotent**—if interrupted, simply re-run it. It will auto
 **What you get:**
 - Modern shell (zsh + oh-my-zsh + powerlevel10k)
 - All language runtimes (bun, uv/Python, Rust, Go)
-- Agent coordination tools (NTM, MCP Agent Mail, SLB)
+- Agent coordination tools (herdr, MCP Agent Mail, SLB)
 - Cloud CLIs (Vault, Wrangler, Supabase, Vercel)
 - And 20+ more developer tools
 
@@ -175,7 +185,7 @@ flowchart TB
     Generated["scripts/generated/*<br/>source-only libraries/harness + doctor/index/checksum data"]
     Installer["install.sh (production one-liner)"]
     Lib["scripts/lib/*<br/>security / doctor / update / services-setup"]
-    Configs["acfs/*<br/>zshrc + tmux.conf + onboard lessons"]
+    Configs["acfs/*<br/>zshrc + onboard lessons"]
     Checksums["checksums.yaml<br/>sha256 for upstream installers"]
     Tests["tests/vm/test_install_ubuntu.sh<br/>Docker integration test"]
   end
@@ -188,7 +198,7 @@ flowchart TB
     Commands["Commands<br/>acfs doctor / acfs update / acfs services / acfs services-setup / onboard"]
     Tools["Installed tools<br/>bun/uv/rust/go + tmux/rg/gh + vault + ..."]
     Agents["Agent CLIs<br/>claude / codex / agy"]
-    Stack["Stack tools<br/>ntm / mcp_agent_mail / ubs / bv / cass / cm / caam / slb / dcg / ru"]
+    Stack["Stack tools<br/>herdr / mcp_agent_mail / ubs / bv / cass / cm / caam / slb / dcg / ru"]
   end
 
   %% Website guidance flow
@@ -504,8 +514,8 @@ graph TD
     E["Phase 5: Language Runtimes<br/><small>bun, uv, rust, go, nvm</small>"]
     F["Phase 6: AI Agents<br/><small>claude, codex, agy</small>"]
     G["Phase 7: Cloud & Database<br/><small>PostgreSQL, vault, wrangler, supabase, vercel</small>"]
-    H["Phase 8: Flywheel Stack<br/><small>ntm, agent mail, br, bv, ubs, dcg, ru, etc.</small>"]
-    I["Phase 9: Finalize<br/><small>Deploy acfs.zshrc, tmux.conf, agent guide</small>"]
+    H["Phase 8: Flywheel Stack<br/><small>herdr, agent mail, br, bv, ubs, dcg, ru, etc.</small>"]
+    I["Phase 9: Finalize<br/><small>Deploy acfs.zshrc, agent guide</small>"]
     J["Post-install smoke test<br/><small>critical checks; then run acfs doctor</small>"]
 
     A --> B --> C --> D --> E --> F --> G --> H --> I --> J
@@ -703,7 +713,7 @@ a stack kept current by the nightly cannot silently outrun a stale dispatcher.
 | **Agents** | Grok CLI | Re-run verified installer (`GROK_BIN_DIR` pinned to ACFS bin dir) |
 | **Cloud** | Wrangler, Vercel | `bun install -g @latest` |
 | **Cloud** | Supabase | GitHub release tarball (sha256 checksums) |
-| **Stack** | ntm, slb, ubs, dcg, ru, etc. | Re-run upstream installers |
+| **Stack** | herdr, slb, ubs, dcg, ru, etc. | Re-run upstream installers |
 
 ### Options
 
@@ -995,7 +1005,7 @@ Example output:
 ║    cc    → Claude Code (dangerous mode)                       ║
 ║    cod   → Codex CLI (dangerous mode)                         ║
 ║    agy   → Antigravity CLI (Gemini 3.8 Flash High)            ║
-║    ntm   → Named Tmux Manager                                 ║
+║    herdr → Agent workspace                                    ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
 
@@ -1198,7 +1208,7 @@ The [Command Reference](https://agent-flywheel.com/learn/commands) documents eve
 | **Search** | `rg`, `fd`, `sg`, `fzf` |
 | **Git** | `lg`, `gh`, `git-lfs` |
 | **System** | `z`, `bat`, `lsd`, `atuin`, `tmux` |
-| **Stack** | `ntm`, `am`, `br`, `bv`, `cass`, `cm`, `ubs`, `dcg`, `ru`, `rch`, `slb`, `caam` |
+| **Stack** | `herdr`, `am`, `br`, `bv`, `cass`, `cm`, `ubs`, `dcg`, `ru`, `rch`, `slb`, `caam` |
 | **Languages** | `bun`, `uv`, `cargo`, `go` |
 | **Cloud** | `wrangler`, `supabase`, `vercel`, `vault` |
 
@@ -1227,7 +1237,7 @@ RAM (Random Access Memory)
 The [Flywheel page](https://agent-flywheel.com/flywheel) visualizes tool interactions:
 
 ```
-Plan (Beads) ──> Coordinate (Agent Mail) ──> Execute (NTM + Agents)
+Plan (Beads) ──> Coordinate (Agent Mail) ──> Execute (herdr + Agents)
       ^                                              │
       │                                              v
       └──── Remember (CASS Memory) <──── Scan (UBS) ┘
@@ -1528,7 +1538,7 @@ The core suite of tools for professional agentic workflows:
 
 | # | Tool | Command | Description |
 |---|------|---------|-------------|
-| 1 | **Named Tmux Manager** | `ntm` | Agent cockpit—spawn, orchestrate, monitor tmux sessions |
+| 1 | **herdr** | `herdr` | Agent cockpit—workspaces, panes and live agent state |
 | 2 | **MCP Agent Mail** | `am` | Agent coordination via mail-like messaging (Rust rewrite) |
 | 3 | **BeadsRust** | `br` | Dependency-aware issue tracker for agents (Rust implementation) |
 | 4 | **Beads Viewer** | `bv` | Task management TUI with graph analysis |
@@ -1595,7 +1605,7 @@ $ acfs doctor
 ║   ✔ vercel 41.7.6                                             ║
 ║                                                               ║
 ║ Agent Flywheel Stack                                          ║
-║   ✔ ntm 0.3.2                                                 ║
+║   ✔ herdr 0.9.3                                               ║
 ║   ✔ slb 0.2.1                                                 ║
 ║   ✔ ubs 0.1.8                                                 ║
 ║   ✔ bv 0.9.4                                                  ║
@@ -1926,12 +1936,8 @@ A comprehensive zsh configuration that's sourced by `~/.zshrc`:
 | `sudo` | Shell | Double-tap Esc to prefix previous command with sudo |
 | `colored-man-pages` | Shell | Colorized man pages for better readability |
 | `command-not-found` | Shell | Suggests packages when command not found |
-| `docker` | Containers | Docker command completion and aliases |
-| `docker-compose` | Containers | docker-compose completion and aliases |
 | `python` | Lang | Python aliases (pyfind, pyclean, pygrep) |
 | `pip` | Lang | pip completion and cache management |
-| `tmux` | Terminal | tmux aliases (ta, tad, ts, tl, tkss) |
-| `tmuxinator` | Terminal | tmuxinator project completion |
 | `systemd` | System | systemctl aliases (sc-status, sc-start, sc-stop) |
 | `rsync` | Tools | rsync completion and common flag aliases |
 | `zsh-autosuggestions` | UX | Fish-like autosuggestions from history |
@@ -1992,59 +1998,6 @@ ACFS intentionally does not enable Atuin's zsh preexec/precmd integration by
 default. Atuin's searchable CLI remains available as `atuin search`, but the
 automatic shell hook can record every coding-agent command and grow the Atuin
 database fast enough to make shells laggy.
-
-### `~/.acfs/tmux/tmux.conf`
-
-A tmux configuration specifically optimized for NTM and multi-agent workflows:
-
-**Key Bindings:**
-```
-Prefix: Ctrl+a (not Ctrl+b - more ergonomic)
-Split horizontal: |  (preserves working directory)
-Split vertical: -    (preserves working directory)
-Navigate panes: h/j/k/l (vim-style)
-Resize panes: H/J/K/L (repeatable with -r flag)
-Reload config: r
-New window: c (preserves working directory)
-```
-
-**Copy Mode (vim-style):**
-```
-Enter copy mode: prefix + [
-Begin selection: v
-Rectangle selection: r
-Copy and exit: y
-```
-
-**Agent Workflow Optimizations:**
-
-| Setting | Value | Purpose |
-|---------|-------|---------|
-| `history-limit` | 50,000 | Extended scrollback for long agent sessions |
-| `escape-time` | 10ms | Faster key response (reduced from default 500ms) |
-| `focus-events` | on | Enables vim/neovim autoread in agent windows |
-| `detach-on-destroy` | off | NTM compatibility—don't detach when session ends |
-| `monitor-activity` | on | Track agent window activity |
-| `visual-activity` | off | Silent monitoring (no bell) |
-
-**Catppuccin-Inspired Theme:**
-```bash
-# Status bar (top position, less intrusive)
-status-style: bg=#1e1e2e, fg=#cdd6f4
-
-# Session indicator (blue accent)
-status-left: #[fg=#89b4fa,bold] #S
-
-# Active window highlight (pink accent)
-window-status-current-format: #[fg=#f5c2e7,bold] #I:#W
-
-# Pane borders
-pane-border-style: fg=#313244
-pane-active-border-style: fg=#89b4fa  # Blue highlight
-```
-
-**Local Overrides:**
-The config sources `~/.tmux.conf.local` if it exists, allowing personal customizations without modifying ACFS defaults.
 
 ---
 
@@ -2956,8 +2909,6 @@ agentic_coding_flywheel_setup/
 ├── acfs/                         # Files deployed to ~/.acfs/
 │   ├── zsh/
 │   │   └── acfs.zshrc            # Shell configuration
-│   ├── tmux/
-│   │   └── tmux.conf             # Tmux configuration
 │   └── onboard/
 │       ├── onboard.sh            # Onboarding TUI script
 │       └── lessons/              # Tutorial markdown
@@ -2978,12 +2929,10 @@ agentic_coding_flywheel_setup/
 │   │   ├── manifest_index.sh     # Runtime module metadata
 │   │   ├── doctor_checks.sh      # Verification checks
 │   │   └── internal_checksums.sh # Schema-1 critical-script checksum data
-│   ├── providers/                # VPS provider guides
-│   │   ├── ovh.md
-│   │   ├── contabo.md
-│   │   └── hetzner.md
-│   └── sync/
-│       └── sync_ntm_palette.sh   # Sync NTM command palette
+│   └── providers/                # VPS provider guides
+│       ├── ovh.md
+│       ├── contabo.md
+│       └── hetzner.md
 │
 ├── .github/
 │   └── workflows/
@@ -3151,26 +3100,6 @@ curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_f
 # Web E2E tests
 ./tests/web/run_e2e.sh
 ```
-
-### Sync Scripts
-
-Sync scripts keep ACFS documentation aligned with upstream projects:
-
-```bash
-# Sync NTM command palette from upstream
-./scripts/sync/sync_ntm_palette.sh
-
-# Check if update available (without downloading)
-./scripts/sync/sync_ntm_palette.sh --check
-```
-
-**Current Sync Sources:**
-
-| Script | Source | Destination |
-|--------|--------|-------------|
-| `sync_ntm_palette.sh` | NTM repo `command_palette.md` | `acfs/onboard/docs/ntm/` |
-
-All sync scripts use the security library for HTTPS enforcement and content hashing.
 
 ### Website Design System
 
@@ -3598,7 +3527,7 @@ done
 [[ "${ACFS_MODULE_DEFAULT[tools.vault]:-1}" == "1" ]]
 
 # Get installation phase
-printf '%s\n' "${ACFS_MODULE_PHASE[stack.ntm]}"  # 9
+printf '%s\n' "${ACFS_MODULE_PHASE[tools.herdr]}"  # 9
 ```
 
 **Use Cases:**
@@ -4065,11 +3994,11 @@ At the end of installation (or on abort), ACFS generates a structured error repo
     • Stack (5m 20s)
 
   ✗ Failed Phase: Finalize
-    Step: Configuring tmux
-    Error: tmux.conf syntax error on line 42
+    Step: Installing onboard lessons
+    Error: lesson asset not found
 
   Suggested Fix:
-    Check ~/.acfs/tmux/tmux.conf for syntax errors
+    Check your network connection to the ACFS repository
     Then run: curl ... | bash -s -- --yes --mode vibe --resume
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -4482,29 +4411,6 @@ Doctor checks are generated directly from the manifest, so they verify the exact
 
 **Note**: Doctor checks match the manifest verify commands exactly. If a tool was skipped during installation (e.g., using `--mode safe`), the check will fail. This is expected—run `acfs doctor` to see which tools are missing and decide which to install.
 
-### Tmux Configuration Errors
-
-**Symptom**: Tmux won't start or shows config errors.
-
-**Solutions**:
-
-1. **Check syntax**:
-   ```bash
-   tmux source-file ~/.tmux.conf
-   # Will show line number of any errors
-   ```
-
-2. **Reset to ACFS defaults**:
-   ```bash
-   cp ~/.acfs/tmux/tmux.conf ~/.tmux.conf
-   ```
-
-3. **Version mismatch** (old tmux, new config):
-   ```bash
-   tmux -V  # Check version
-   # ACFS config requires tmux 3.0+
-   ```
-
 ### Stack Tools Not Working
 
 **Symptom**: `ntm`, `slb`, `dcg`, etc. not found or erroring.
@@ -4568,7 +4474,7 @@ ts="$(date +%Y%m%d_%H%M%S)"
 [ -d ~/.acfs ] && mv ~/.acfs ~/.acfs.backup."$ts"
 
 # Backup installed configs (optional)
-for f in ~/.zshrc ~/.tmux.conf ~/.p10k.zsh; do
+for f in ~/.zshrc ~/.p10k.zsh; do
   [ -f "$f" ] && mv "$f" "$f".backup."$ts"
 done
 

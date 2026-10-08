@@ -14,7 +14,6 @@ This directory contains documentation for the tools installed by ACFS (Agentic C
 | Document | Tool(s) | Description |
 |----------|---------|-------------|
 | [rch.md](rch.md) | `rch` | Remote compilation helper for build offloading |
-| [wezterm_automata.md](wezterm_automata.md) | `wa` | Terminal automation and orchestration |
 
 ## Research & Knowledge
 
@@ -41,7 +40,7 @@ acfs doctor --json
 ### Tool Categories
 
 - **Required**: br, ms, bv - Core workflow tools
-- **Optional**: rch, wa, brenner - Enhanced development tools
+- **Optional**: rch, brenner - Enhanced development tools
 - **Utilities**: 9 optional utilities for specialized workflows
 
 ## Related Documentation

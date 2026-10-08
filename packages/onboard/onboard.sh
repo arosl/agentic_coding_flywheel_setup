@@ -1032,10 +1032,8 @@ declare -gA LESSON_SUMMARIES=(
     [0]="Understanding the ACFS philosophy|How AI agents fit into development|Your path to productivity"
     [1]="Navigating with pwd, ls, cd|Creating files and directories|Understanding file paths"
     [2]="SSH key-based authentication|Keeping sessions alive|Remote work best practices"
-    [3]="Creating and managing sessions|Window and pane navigation|Session persistence"
+    [3]="Starting and reattaching herdr|Pane, tab and workspace navigation|Agents that keep running"
     [4]="Claude Code (cc) workflow|Codex CLI (cod) basics|Antigravity CLI (agy) overview"
-    [5]="NTM dashboard navigation|Understanding system status|Quick actions and controls"
-    [6]="Using the prompt palette|Common prompts and shortcuts|Customizing your workflow"
     [7]="The agentic development loop|Continuous improvement|Measuring productivity"
     [8]="Keeping tools updated|Staying current with AI agents|Community resources"
     [9]="Multi-repo sync with ru sync|Logical commits via ru commit-sweep|Parallel workflow automation"
@@ -2797,7 +2795,7 @@ show_completion_certificate() {
             "$(gum style --foreground "$ACFS_PINK" "of the Agentic Coding Flywheel Setup tutorial.")" \
             "" \
             "$(gum style --foreground "$ACFS_TEAL" "Curriculum Highlights:")" \
-            "$(gum style --foreground "$ACFS_MUTED" "  • Linux, SSH, tmux, and shell workflow")" \
+            "$(gum style --foreground "$ACFS_MUTED" "  • Linux, SSH, herdr, and shell workflow")" \
             "$(gum style --foreground "$ACFS_MUTED" "  • AI agents, prompts, and local skills")" \
             "$(gum style --foreground "$ACFS_MUTED" "  • Coordination, safety, triage, and memory systems")" \
             "$(gum style --foreground "$ACFS_MUTED" "  • Search, debugging, maintenance, and release tooling")" \
@@ -2820,7 +2818,7 @@ show_completion_certificate() {
         echo -e "  of the Agentic Coding Flywheel Setup tutorial."
         echo ""
         echo -e "${CYAN}${BOLD}  Curriculum Highlights:${NC}"
-        echo -e "    • Linux, SSH, tmux, and shell workflow"
+        echo -e "    • Linux, SSH, herdr, and shell workflow"
         echo -e "    • AI agents, prompts, and local skills"
         echo -e "    • Coordination, safety, triage, and memory systems"
         echo -e "    • Search, debugging, maintenance, and release tooling"
@@ -2974,7 +2972,7 @@ $(gum style --foreground "$ACFS_PINK" --bold "${LESSON_TITLES[$idx]}")"
         echo ""
 
         while true; do
-            # `onboard N` from a non-TTY (Claude Code's Bash tool, ntm spawn,
+            # `onboard N` from a non-TTY (Claude Code's Bash tool, a script,
             # `</dev/null`) hits EOF here; without the guard `read` fails with
             # action="" and this loop re-prompts unboundedly, pegging a core.
             read -rp "$(echo -e "${CYAN}Action:${NC} ")" action || return 0

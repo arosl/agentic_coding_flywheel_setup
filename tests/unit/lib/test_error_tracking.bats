@@ -243,7 +243,7 @@ EOF
         /usr/bin/bash -c '
             set -euo pipefail
             source "$1"
-            ONLY_MODULES=("stack.ntm" "stack.mcp_agent_mail")
+            ONLY_MODULES=("stack.ru" "stack.mcp_agent_mail")
             ONLY_PHASES=("9")
             SKIP_MODULES=("stack.cass")
             NO_DEPS=true
@@ -263,7 +263,7 @@ EOF
     assert_output --partial "--skip-cloud"
     assert_output --partial "--ref $pinned_ref"
     assert_output --partial "--checksums-ref release-checksums"
-    assert_output --partial "--only stack.ntm"
+    assert_output --partial "--only stack.ru"
     assert_output --partial "--only stack.mcp_agent_mail"
     assert_output --partial "--only-phase 9"
     assert_output --partial "--skip stack.cass"

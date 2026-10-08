@@ -149,7 +149,7 @@ br close bd-1234 --reason "Implemented in this session"
 ## Next Steps
 
 - Learn about `bv` for graph visualization
-- Explore `ntm` for multi-agent orchestration
+- Explore `herdr` for running several agents side by side
 - Check `am` (Agent Mail) for agent coordination
 
 ---

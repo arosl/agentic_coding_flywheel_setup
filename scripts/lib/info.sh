@@ -1559,8 +1559,8 @@ info_get_quick_commands() {
 cc|Launch Claude Code
 cod|Launch Codex CLI
 agy|Launch Antigravity CLI, model Gemini 3.8 Flash (High)
-ntm new X|Create tmux session
-ntm attach X|Resume session
+herdr|Start or reattach the agent workspace
+herdr agent list|List agents and their state
 lazygit|Visual git interface
 rg "term"|Search code
 z folder|Jump to folder
@@ -1600,7 +1600,7 @@ info_get_installed_tools_summary() {
 
     # Stack tools
     stack_ok="○"
-    info_binary_exists "ntm" && stack_ok="✓"
+    info_binary_exists "herdr" && stack_ok="✓"
 
     echo "shell:$shell_ok|lang:$lang_ok|agents:$agents_ok|stack:$stack_ok"
 }
@@ -1802,7 +1802,7 @@ info_render_terminal() {
     echo -e "  $shell_icon ${C_DIM}Shell:${C_RESET}     zsh + oh-my-zsh + powerlevel10k"
     echo -e "  $lang_icon ${C_DIM}Languages:${C_RESET} bun, uv, rust, go"
     echo -e "  $agents_icon ${C_DIM}Agents:${C_RESET}    claude, codex, agy"
-    echo -e "  $stack_icon ${C_DIM}Stack:${C_RESET}     ntm, bv, lazygit"
+    echo -e "  $stack_icon ${C_DIM}Stack:${C_RESET}     herdr, bv, lazygit"
 
     if [[ -n "$skipped_tools" ]]; then
         echo -e "  ${C_GRAY}○ Skipped:   $skipped_tools${C_RESET}"
@@ -1871,7 +1871,7 @@ info_render_minimal() {
 
     echo "ACFS @ $hostname ($ip)"
     echo ""
-    echo "Quick commands: cc (Claude), cod (Codex), ntm (sessions)"
+    echo "Quick commands: cc (Claude), cod (Codex), herdr (agent workspace)"
     echo "Run 'acfs info' for full details"
 }
 
@@ -1964,8 +1964,8 @@ info_render_json() {
     {"cmd": "cc", "desc": "Launch Claude Code"},
     {"cmd": "cod", "desc": "Launch Codex CLI"},
     {"cmd": "agy", "desc": "Launch Antigravity CLI, model Gemini 3.8 Flash (High)"},
-    {"cmd": "ntm new X", "desc": "Create tmux session"},
-    {"cmd": "ntm attach X", "desc": "Resume session"},
+    {"cmd": "herdr", "desc": "Start or reattach the agent workspace"},
+    {"cmd": "herdr agent list", "desc": "List agents and their state"},
     {"cmd": "lazygit", "desc": "Visual git interface"},
     {"cmd": "rg term", "desc": "Search code"},
     {"cmd": "z folder", "desc": "Jump to folder"}
@@ -2148,7 +2148,7 @@ EOF
             <div class="grid">
                 <span class="cmd">cc</span><span>Launch Claude Code</span>
                 <span class="cmd">cod</span><span>Launch Codex CLI</span>
-                <span class="cmd">ntm new X</span><span>Create tmux session</span>
+                <span class="cmd">herdr</span><span>Start or reattach the agent workspace</span>
                 <span class="cmd">lazygit</span><span>Visual git interface</span>
             </div>
         </div>

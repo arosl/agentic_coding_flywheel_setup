@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-10-06T09:01:17+00:00
+# checksums.yaml - Auto-generated 2026-10-08T21:56:16+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -90,6 +90,10 @@ installers:
     url: "https://x.ai/cli/install.sh"
     sha256: "7fd6fdc75d9418b2e58356726fcbf1ae849416f773925da07d0ccc7a60d3e791"
 
+  herdr:
+    url: "https://herdr.dev/install.sh"
+    sha256: "bf83668c944cff30b3365eee5a4fe15ff61a4b749ab0c73b98e7a203f70893dd"
+
   jfp:
     url: "https://jeffreysprompts.com/install-cli.sh"
     sha256: "6b82c8d88ad7de4524679cd08406117177f3643b34028b611447fb9c69f4fc4e"
@@ -105,10 +109,6 @@ installers:
   ms:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/meta_skill/main/scripts/install.sh"
     sha256: "5233b2130670b8036643ce414d212fa6b610a10ec5e7cf4961df34a7fec58601"
-
-  ntm:
-    url: "https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh"
-    sha256: "02bb9f87cfe43e899017b5f8172744817ab98ceab2693fe6b4be768f106372f8"
 
   nvm:
     url: "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh"

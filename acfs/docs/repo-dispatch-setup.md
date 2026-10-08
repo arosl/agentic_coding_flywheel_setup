@@ -4,14 +4,14 @@ This document explains how to configure ACFS-owned tool repositories to automati
 
 ## Overview
 
-When an ACFS tool (ntm, dcg, bv, etc.) updates its `install.sh`, ACFS's `checksums.yaml` becomes stale. Currently, ACFS polls every 15 minutes to detect changes. With repo-dispatch hooks, tool repos can **immediately** notify ACFS when installer scripts change, reducing the mismatch window from minutes to seconds.
+When an ACFS tool (br, dcg, bv, etc.) updates its `install.sh`, ACFS's `checksums.yaml` becomes stale. Currently, ACFS polls every 15 minutes to detect changes. With repo-dispatch hooks, tool repos can **immediately** notify ACFS when installer scripts change, reducing the mismatch window from minutes to seconds.
 
 ## Architecture
 
 ```
 ┌──────────────────────┐
 │  Tool Repo           │
-│  (e.g., ntm, dcg)    │
+│  (e.g., br, dcg)     │
 │                      │
 │  Push to install.sh  │
 │         │            │
@@ -52,7 +52,7 @@ When an ACFS tool (ntm, dcg, bv, etc.) updates its `install.sh`, ACFS's `checksu
 
 ### Step 2: Add Secret to Tool Repo
 
-1. Go to your tool repo (e.g., `Dicklesworthstone/ntm`) → Settings → Secrets and variables → Actions
+1. Go to your tool repo (e.g., `Dicklesworthstone/beads_rust`) → Settings → Secrets and variables → Actions
 2. Create a new repository secret:
    - **Name**: `ACFS_REPO_DISPATCH_TOKEN`
    - **Value**: The PAT from Step 1
@@ -123,7 +123,6 @@ Different tools have different installer locations. Adjust the `paths` trigger a
 | cass | `Dicklesworthstone/coding_agent_session_search` | `install.sh` |
 | mcp_agent_mail | `Dicklesworthstone/mcp_agent_mail_rust` | `install.sh` |
 | dcg | `Dicklesworthstone/destructive_command_guard` | `install.sh` |
-| ntm | `Dicklesworthstone/ntm` | `install.sh` |
 | cm | `Dicklesworthstone/cass_memory_system` | `install.sh` |
 | caam | `Dicklesworthstone/coding_agent_account_manager` | `install.sh` |
 | ubs | `Dicklesworthstone/ultimate_bug_scanner` | `install.sh` |

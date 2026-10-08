@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test_agy_ecosystem.sh — full-ecosystem end-to-end for the Antigravity CLI (agy)
-# migration (bead bd-47kjh.9, with the live ntm/spawn slice of bd-47kjh.4.3).
+# migration (bead bd-47kjh.9).
 #
 # Proves, on ONE real agy conversation pinned to "Gemini 3.8 Flash (High)", that
 # every migrated surface recognizes agy together:
@@ -11,8 +11,7 @@
 #   5. caam knows the agy/antigravity account surface
 #   6. dcg guards a destructive command
 #   7. am (mcp_agent_mail) recognizes the agy program identity
-#   8. ntm treats agy as a spawnable agent type + `ntm deps` knows it
-#   9. a migrated, deployed skill drives agy (no operational gmi-as-primary)
+#   8. a migrated, deployed skill drives agy (no operational gmi-as-primary)
 #
 # HARD GATES (fail loudly): the agy round-trip must succeed AND every agy
 # invocation must be on the pinned model (the model guard prints the actual
@@ -130,19 +129,7 @@ else
   agy_e2e_skip "am not on PATH" am_identity
 fi
 
-# --- step 8: ntm treats agy as a spawnable type + deps knows it --------------
-if command -v ntm >/dev/null 2>&1; then
-  NTM_OUT="$(ntm --help 2>&1; timeout 25 ntm deps 2>&1 || true)"
-  if printf '%s' "$NTM_OUT" | grep -qiE 'antigravity|\bagy\b|--agy'; then
-    agy_e2e_pass "ntm recognizes agy as an agent type / dep" ntm_agy
-  else
-    agy_e2e_log warn ntm_agy "msg=ntm help/deps did not name agy on this build"
-  fi
-else
-  agy_e2e_skip "ntm not on PATH" ntm_agy
-fi
-
-# --- step 9: a migrated, deployed skill drives agy (no operational gmi) -------
+# --- step 8: a migrated, deployed skill drives agy (no operational gmi) -------
 SKILL_DIR="$HOME/.claude/skills/open-beads-weighted-tmux-agent-sessions"
 if [[ -f "$SKILL_DIR/SKILL.md" ]]; then
   if grep -qE '\bagy\b' "$SKILL_DIR/SKILL.md" && ! grep -qE -- '--gmi=' "$SKILL_DIR/SKILL.md"; then

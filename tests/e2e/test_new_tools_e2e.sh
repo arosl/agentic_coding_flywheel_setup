@@ -2,7 +2,7 @@
 # E2E Test: Verify expanded new-tool install surface and doctor integration
 #
 # Tests:
-#   - 7 First-class flywheel tools: br, ms, rch, wa, brenner, dcg, ru
+#   - 6 First-class flywheel tools: br, ms, rch, brenner, dcg, ru
 #   - 10 Newly integrated stack tools: fsfs, sbh, casr, dsr, asb, pcr, ee, fmd, pi, pfr
 #   - 9 Utility tools: tru, rust_proxy, rano, xf, mdwb, pt, aadc, s2p, caut
 #   - Integration: acfs doctor, flywheel.ts, br primary command
@@ -248,10 +248,6 @@ test_flywheel_tools() {
             "rch status" \
             "rch --help"
     fi
-
-    # wezterm_automata (wa)
-    log "INFO" "wa" "Testing wezterm_automata (wa)..."
-    test_tool_basic "wezterm_automata" "wa" "false"
 
     # brenner_bot
     log "INFO" "brenner" "Testing brenner_bot..."
@@ -720,7 +716,7 @@ test_integration() {
 
     if [[ -f "$flywheel_file" ]]; then
         local missing_tools=()
-        for tool in br ms rch wa brenner dcg ru tru rust_proxy rano xf mdwb pt aadc s2p caut; do
+        for tool in br ms rch brenner dcg ru tru rust_proxy rano xf mdwb pt aadc s2p caut; do
             if ! command grep -qE "id:\s*[\"']${tool}[\"']" "$flywheel_file"; then
                 missing_tools+=("$tool")
             fi

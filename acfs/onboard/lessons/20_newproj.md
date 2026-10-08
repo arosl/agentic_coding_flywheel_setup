@@ -6,8 +6,8 @@
 
 ## Why Use `acfs newproj`?
 
-When you create a project with `ntm spawn`, you get a tmux session with agents.
-But agents work better when they have:
+You can start agents in any directory in herdr. But agents work better when
+they have:
 
 - **AGENTS.md** - Project-specific guidance for AI agents
 - **Beads (br)** - Local issue tracking for planning and progress
@@ -89,17 +89,17 @@ Creates `~/code/myproject`.
    acfs newproj myapp -i
    ```
 
-2. **Spawn agents:**
+2. **Open herdr:**
    ```bash
-   ntm spawn myapp --cc=2
+   herdr
    ```
 
-3. **Attach and work:**
+3. **Start agents, one per pane, and work:**
    ```bash
-   ntm attach myapp
+   cd /data/projects/myapp && claude
    ```
 
-The key insight: `acfs newproj` prepares the project, `ntm spawn` starts agents.
+The key insight: `acfs newproj` prepares the project, herdr runs the agents.
 
 ---
 
@@ -163,8 +163,8 @@ mv /data/projects/test-project /data/projects/test-project.archived.$(date +%Y%m
 
 ## Next
 
-Ready to spawn agents in your new project:
+Ready to run agents in your new project? Revisit herdr:
 
 ```bash
-onboard 5
+onboard 3
 ```

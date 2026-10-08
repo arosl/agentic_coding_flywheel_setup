@@ -41,8 +41,8 @@ export interface ManifestProvenanceMetadata {
 
 export const manifestProvenance = {
   acfsVersion: "0.10.0",
-  manifestSha256: "1bcbfa0134fc84889e54e0b8e7c8204c2aab2aa58041e999bd0c88bb8abd7ffe",
-  checksumsYamlSha256: "2ecffdfd18d58c9186e6ad02b3f2ed50b64649d665cbee5fc791872bb3bd343d",
+  manifestSha256: "17020e5a69ac59a3a3433f662fdfa8e2e26eccb1159c7f72fe6f739a17848fab",
+  checksumsYamlSha256: "5253c4c21e93619ad35a3f488cedf264cd44485d46ae2e5f86a2dd17f6a57382",
 } as const satisfies ManifestProvenanceMetadata;
 
 export const manifestModules: ManifestModuleMetadata[] = [
@@ -135,21 +135,6 @@ export const manifestModules: ManifestModuleMetadata[] = [
   {
     id: "tools.lazygit",
     description: "Lazygit (apt or binary fallback)",
-    category: "tools",
-    phase: 5,
-    dependencies: [
-      "base.system",
-    ],
-    tags: [
-      "recommended",
-      "cli-modern",
-    ],
-    enabledByDefault: true,
-    optional: false,
-  },
-  {
-    id: "tools.lazydocker",
-    description: "Lazydocker (binary install)",
     category: "tools",
     phase: 5,
     dependencies: [
@@ -514,16 +499,17 @@ export const manifestModules: ManifestModuleMetadata[] = [
     optional: true,
   },
   {
-    id: "stack.ntm",
-    description: "Named tmux manager (agent cockpit)",
-    category: "stack",
+    id: "tools.herdr",
+    description: "herdr terminal workspace manager for coding agents, with its agent integrations",
+    category: "tools",
     phase: 9,
     dependencies: [
-      "cli.modern",
+      "base.system",
       "users.ubuntu",
     ],
     tags: [
       "recommended",
+      "agents",
     ],
     enabledByDefault: true,
     optional: false,
@@ -742,7 +728,6 @@ export const manifestModules: ManifestModuleMetadata[] = [
     phase: 9,
     dependencies: [
       "cli.modern",
-      "stack.ntm",
       "users.ubuntu",
     ],
     tags: [
@@ -781,22 +766,6 @@ export const manifestModules: ManifestModuleMetadata[] = [
       "performance",
     ],
     enabledByDefault: true,
-    optional: true,
-  },
-  {
-    id: "stack.wezterm_automata",
-    description: "WezTerm Automata (wa) - terminal automation and orchestration for AI agents",
-    category: "stack",
-    phase: 9,
-    dependencies: [
-      "lang.rust",
-      "users.ubuntu",
-    ],
-    tags: [
-      "optional",
-      "automation",
-    ],
-    enabledByDefault: false,
     optional: true,
   },
   {
@@ -874,10 +843,10 @@ export const manifestModules: ManifestModuleMetadata[] = [
       "users.ubuntu",
     ],
     tags: [
-      "recommended",
+      "optional",
       "release",
     ],
-    enabledByDefault: true,
+    enabledByDefault: false,
     optional: true,
   },
   {
@@ -1141,14 +1110,14 @@ export const manifestModules: ManifestModuleMetadata[] = [
   },
   {
     id: "acfs.workspace",
-    description: "Agent workspace with tmux session and project folder",
+    description: "Agent workspace in herdr with a starter project folder",
     category: "acfs",
     phase: 10,
     dependencies: [
       "agents.claude",
       "agents.codex",
       "agents.antigravity",
-      "cli.modern",
+      "tools.herdr",
       "users.ubuntu",
     ],
     tags: [
@@ -1250,7 +1219,7 @@ export const manifestSelectionProfiles: ManifestSelectionProfile[] = [
       "agents.claude",
       "agents.codex",
       "agents.antigravity",
-      "stack.ntm",
+      "tools.herdr",
       "stack.mcp_agent_mail",
       "stack.ultimate_bug_scanner",
       "stack.beads_rust",

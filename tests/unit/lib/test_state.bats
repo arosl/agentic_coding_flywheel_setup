@@ -259,7 +259,7 @@ EOF
     ACFS_MANIFEST_INDEX_LOADED=true
     source_lib "install_helpers"
 
-    ONLY_MODULES=("stack.ntm")
+    ONLY_MODULES=("stack.ru")
     ONLY_PHASES=()
     SKIP_MODULES=()
     NO_DEPS=false
@@ -276,8 +276,8 @@ EOF
         echo "cli.modern missing from effective plan"
         return 1
     }
-    [[ " ${ACFS_EFFECTIVE_PLAN[*]} " == *" stack.ntm "* ]] || {
-        echo "stack.ntm missing from effective plan"
+    [[ " ${ACFS_EFFECTIVE_PLAN[*]} " == *" stack.ru "* ]] || {
+        echo "stack.ru missing from effective plan"
         return 1
     }
 
@@ -311,8 +311,8 @@ EOF
         echo "acfs_resolve_selection failed"
         return 1
     }
-    [[ " ${ACFS_EFFECTIVE_PLAN[*]} " == *" stack.ntm "* ]] || {
-        echo "stack.ntm missing from effective plan"
+    [[ " ${ACFS_EFFECTIVE_PLAN[*]} " == *" stack.ru "* ]] || {
+        echo "stack.ru missing from effective plan"
         return 1
     }
     [[ " ${ACFS_EFFECTIVE_PLAN[*]} " == *" lang.bun "* ]] || {
@@ -346,7 +346,7 @@ EOF
     ACFS_MANIFEST_INDEX_LOADED=true
     source_lib "install_helpers"
 
-    ONLY_MODULES=("stack.ntm")
+    ONLY_MODULES=("stack.ru")
     ONLY_PHASES=()
     SKIP_MODULES=()
     NO_DEPS=false

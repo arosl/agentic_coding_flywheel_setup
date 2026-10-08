@@ -352,7 +352,7 @@ acfs_security_init() {
 # Category: acfs
 # Generated modules: 5
 
-# Agent workspace with tmux session and project folder
+# Agent workspace in herdr with a starter project folder
 acfs_generated_install_acfs_workspace() {
     local module_id="acfs.workspace"
     acfs_require_contract "module:${module_id}" || return 1
@@ -400,22 +400,17 @@ printf '%s\n' "" \
   "  ACFS AGENT WORKSPACE - QUICK REFERENCE" \
   "  --------------------------------------" \
   "" \
-  "  RECONNECT AFTER SSH:" \
-  "    tmux attach -t agents    OR just type:  agents" \
+  "  OPEN OR RECONNECT AFTER SSH:" \
+  "    agents          - Start or reattach herdr (it keeps running when you leave)" \
   "" \
-  "  WINDOWS (Ctrl-b + number):" \
-  "    0:welcome  - This instructions window" \
-  "    1:claude   - Claude Code (Anthropic)" \
-  "    2:codex    - Codex CLI (OpenAI)" \
-  "    3:agy      - Antigravity CLI (Google)" \
+  "  HERDR BASICS (prefix is Ctrl-b):" \
+  "    Ctrl-b q        - Detach (agents keep running)" \
+  "    Ctrl-b c        - New tab" \
+  "    Ctrl-b v        - Split the pane" \
+  "    Ctrl-b n/p      - Next/previous tab" \
+  "    Ctrl-b ?        - All key bindings" \
   "" \
-  "  TMUX BASICS:" \
-  "    Ctrl-b d        - Detach (keep session running)" \
-  "    Ctrl-b c        - Create new window" \
-  "    Ctrl-b n/p      - Next/previous window" \
-  "    Ctrl-b [0-9]    - Switch to window number" \
-  "" \
-  "  START AN AGENT:" \
+  "  START AN AGENT (one per pane; herdr shows its state in the sidebar):" \
   "    claude          - Start Claude Code" \
   "    codex           - Start Codex CLI" \
   "    agy             - Start Antigravity CLI" \
@@ -443,46 +438,6 @@ INSTALL_ACFS_WORKSPACE
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: if ! tmux has-session -t \"\$SESSION_NAME\" 2>/dev/null; then (target_user)"
-    else
-        if ! run_as_target_shell <<'INSTALL_ACFS_WORKSPACE'
-# Create tmux session with agent panes (if not already running)
-SESSION_NAME="agents"
-if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-  # Create session with first window for instructions
-  tmux new-session -d -s "$SESSION_NAME" -n "welcome" -c /data/projects/my_first_project
-
-  # Add agent windows
-  tmux new-window -t "$SESSION_NAME" -n "claude" -c /data/projects/my_first_project
-  tmux new-window -t "$SESSION_NAME" -n "codex" -c /data/projects/my_first_project
-  tmux new-window -t "$SESSION_NAME" -n "agy" -c /data/projects/my_first_project
-
-  # Send instructions to welcome window
-  tmux send-keys -t "$SESSION_NAME:welcome" "cat ~/.acfs/workspace-instructions.txt" Enter
-
-  # Select the welcome window
-  tmux select-window -t "$SESSION_NAME:welcome"
-fi
-INSTALL_ACFS_WORKSPACE
-        then
-            log_warn "acfs.workspace: install command failed: if ! tmux has-session -t \"\$SESSION_NAME\" 2>/dev/null; then"
-            # Optional-module failures are warnings on a default install, but a
-            # module the user explicitly named with --only had exactly one job:
-            # propagate the failure instead of reporting phase success (#373).
-            if declare -f acfs_module_explicitly_selected >/dev/null 2>&1 \
-                && acfs_module_explicitly_selected "acfs.workspace"; then
-              log_error "acfs.workspace: explicitly requested via --only; treating optional-module failure as fatal"
-              return 1
-            fi
-            if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "acfs.workspace" "install command failed: if ! tmux has-session -t \"\$SESSION_NAME\" 2>/dev/null; then"
-            elif type -t state_tool_skip >/dev/null 2>&1; then
-              state_tool_skip "acfs.workspace"
-            fi
-            return 0
-        fi
-    fi
-    if [[ "${DRY_RUN:-false}" = "true" ]]; then
         log_info "dry-run: install: if ! acfs_has_active_agents_alias ~/.zshrc.local; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_WORKSPACE'
@@ -502,7 +457,7 @@ if ! acfs_has_active_agents_alias ~/.zshrc.local; then
   touch ~/.zshrc.local 2>/dev/null || true
   echo '' >> ~/.zshrc.local
   echo '# ACFS agents workspace alias' >> ~/.zshrc.local
-  echo 'alias agents="tmux attach -t agents 2>/dev/null || tmux new-session -s agents -c /data/projects"' >> ~/.zshrc.local
+  echo 'alias agents="(cd /data/projects && herdr)"' >> ~/.zshrc.local
 fi
 INSTALL_ACFS_WORKSPACE
         then

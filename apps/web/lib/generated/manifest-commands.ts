@@ -61,6 +61,7 @@ export const manifestCommands: ManifestCommand[] = [
     cliName: "brenner",
     cliAliases: [],
     description: "Brenner Bot - research session manager with hypothesis tracking",
+    commandExample: "brenner cockpit start --skip-ntm --skip-broadcast ...",
     docsUrl: "https://github.com/Dicklesworthstone/brenner_bot",
   },
   {
@@ -181,15 +182,6 @@ export const manifestCommands: ManifestCommand[] = [
     docsUrl: "https://github.com/Dicklesworthstone/meta_skill",
   },
   {
-    moduleId: "stack.ntm",
-    displayName: "Named Tmux Manager",
-    moduleCategory: "stack",
-    cliName: "ntm",
-    cliAliases: [],
-    description: "Named tmux manager (agent cockpit)",
-    docsUrl: "https://github.com/Dicklesworthstone/ntm",
-  },
-  {
     moduleId: "stack.pcr",
     displayName: "Post-Compact Reminder",
     moduleCategory: "stack",
@@ -288,15 +280,6 @@ export const manifestCommands: ManifestCommand[] = [
     description: "UBS bug scanning (easy-mode)",
     commandExample: "ubs file.ts",
     docsUrl: "https://github.com/Dicklesworthstone/ultimate_bug_scanner",
-  },
-  {
-    moduleId: "stack.wezterm_automata",
-    displayName: "WezTerm Automata",
-    moduleCategory: "stack",
-    cliName: "wa",
-    cliAliases: [],
-    description: "WezTerm Automata (wa) - terminal automation and orchestration for AI agents",
-    docsUrl: "https://github.com/Dicklesworthstone/wezterm_automata",
   },
   {
     moduleId: "utils.aadc",

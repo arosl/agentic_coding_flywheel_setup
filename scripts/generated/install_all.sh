@@ -382,7 +382,6 @@ acfs_generated_install_all() {
     acfs_generated_install_cli_modern
     log_section "Category: tools"
     acfs_generated_install_tools_lazygit
-    acfs_generated_install_tools_lazydocker
     log_section "Category: network"
     acfs_generated_install_network_tailscale
     acfs_generated_install_network_ssh_keepalive
@@ -412,8 +411,9 @@ acfs_generated_install_all() {
     acfs_generated_install_cloud_wrangler
     acfs_generated_install_cloud_supabase
     acfs_generated_install_cloud_vercel
+    log_section "Category: tools"
+    acfs_generated_install_tools_herdr
     log_section "Category: stack"
-    acfs_generated_install_stack_ntm
     acfs_generated_install_stack_mcp_agent_mail
     acfs_generated_install_stack_meta_skill
     acfs_generated_install_stack_automated_plan_reviser
@@ -430,7 +430,6 @@ acfs_generated_install_all() {
     acfs_generated_install_stack_ru
     acfs_generated_install_stack_brenner_bot
     acfs_generated_install_stack_rch
-    acfs_generated_install_stack_wezterm_automata
     acfs_generated_install_stack_srps
     acfs_generated_install_stack_frankensearch
     acfs_generated_install_stack_storage_ballast_helper

@@ -53,7 +53,7 @@ setup() {
 @test "record_skipped_tool keeps a specific reason, bounds long verify commands, and dedupes by module" {
     record_skipped_tool "stack.slb" 'verify failed: export PATH="$HOME/go/bin:$PATH" && slb >/dev/null 2>&1 || slb --help >/dev/null 2>&1'
     record_skipped_tool "stack.slb" "verified installer failed"
-    record_skipped_tool "stack.ntm" "verified installer failed"
+    record_skipped_tool "stack.ru" "verified installer failed"
 
     [[ ${#ACFS_OPTIONAL_MODULE_SKIPS[@]} -eq 2 ]]
     [[ "${ACFS_OPTIONAL_MODULE_SKIPS[0]}" == 'stack.slb (verify failed: export PATH="$HOME/go/bin:$PATH" && slb >/dev/null'*'...)' ]]
@@ -61,7 +61,7 @@ setup() {
     local bounded="stack.slb ()"
     (( ${#ACFS_OPTIONAL_MODULE_SKIPS[0]} <= 72 + ${#bounded} ))
     # No categorized reason set: the call-site text is kept verbatim.
-    [[ "${ACFS_OPTIONAL_MODULE_SKIPS[1]}" == "stack.ntm (verified installer failed)" ]]
+    [[ "${ACFS_OPTIONAL_MODULE_SKIPS[1]}" == "stack.ru (verified installer failed)" ]]
 }
 
 @test "record_skipped_tool ignores an empty module id" {

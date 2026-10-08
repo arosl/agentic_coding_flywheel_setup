@@ -64,7 +64,7 @@ fi
 #   "failed_phase": null,                     # Phase where failure occurred (null if no failure)
 #   "failed_step": null,                      # Step where failure occurred (null if no failure)
 #   "failed_error": null,                     # Error message from failure (null if no failure)
-#   "skipped_tools": ["ntm", "bv"],           # Tools user chose to skip
+#   "skipped_tools": ["rch", "bv"],           # Tools user chose to skip
 #   "skipped_phases": ["postgres", "vault"],  # Phases user chose to skip
 #   "phase_durations": {                      # Timing data (seconds per phase)
 #     "user_setup": 12,

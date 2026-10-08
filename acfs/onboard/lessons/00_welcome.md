@@ -31,16 +31,16 @@ Think of your setup like this:
 ```
 Your laptop (cockpit) --SSH--> VPS (the engine room)
                                  |
-                                 +-- tmux sessions (persistence)
+                                 +-- herdr (persistence + the cockpit)
                                  |
                                  +-- coding agents (the workers)
                                  |
-                                 +-- NTM (the orchestrator)
+                                 +-- Agent Mail (coordination)
 ```
 
 Your laptop is just the remote control. The real work happens on the VPS.
 
-If your SSH connection drops? No problem. Your work continues in tmux.
+If your SSH connection drops? No problem. Your work continues in herdr.
 
 ---
 
@@ -48,10 +48,9 @@ If your SSH connection drops? No problem. Your work continues in tmux.
 
 1. **Linux basics** - navigating the filesystem
 2. **SSH fundamentals** - staying connected
-3. **tmux essentials** - persistent sessions
+3. **herdr essentials** - persistent agent workspaces
 4. **Agent commands** - talking to Claude, Codex, and Gemini
-5. **NTM mastery** - orchestrating multiple agents
-6. **The flywheel workflow** - putting it all together
+5. **The flywheel workflow** - putting it all together
 
 ---
 

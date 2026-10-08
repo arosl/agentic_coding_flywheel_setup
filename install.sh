@@ -3832,8 +3832,6 @@ acfs_load_internal_checksums_data() {
         VERSION
         acfs.manifest.yaml
         acfs/AGENTS.md
-        acfs/onboard/docs/ntm/command_palette.md
-        acfs/tmux/tmux.conf
         acfs/zsh/acfs.zshrc
         acfs/zsh/p10k.zsh
         scripts/completions/_acfs
@@ -5782,7 +5780,7 @@ acfs_parse_checksums_content() {
 
 acfs_required_upstream_tools() {
     printf '%s\n' \
-        antigravity atuin bun bv caam cass claude cm dcg gemini_patch mcp_agent_mail ntm ohmyzsh ru rust slb ubs uv zoxide
+        antigravity atuin bun bv caam cass claude cm dcg gemini_patch herdr mcp_agent_mail ohmyzsh ru rust slb ubs uv zoxide
 }
 
 acfs_validate_upstream_checksums() {
@@ -7609,11 +7607,6 @@ normalize_user() {
         try_step "Setting authorized_keys permissions" $SUDO chmod 600 "$TARGET_HOME/.ssh/authorized_keys" || return 1
     fi
 
-    # Add target user to docker group if docker is installed
-    if getent group docker &>/dev/null; then
-        try_step "Adding $TARGET_USER to docker group" $SUDO usermod -aG docker "$TARGET_USER" || true
-    fi
-
     # Enable lingering user sessions so systemctl --user works on fresh VPS installs
     # where the target user has never had an interactive login (no /run/user/<uid>).
     # This must happen BEFORE the stack phase (Phase 8) attempts systemctl --user.
@@ -7693,7 +7686,7 @@ setup_filesystem() {
     done
 
     # Create ACFS directories (as root, then chown)
-    try_step "Creating ACFS directories" $SUDO mkdir -p "$ACFS_HOME"/{zsh,tmux,bin,docs,logs,scripts/lib} || return 1
+    try_step "Creating ACFS directories" $SUDO mkdir -p "$ACFS_HOME"/{zsh,bin,docs,logs,scripts/lib} || return 1
     try_step "Setting ACFS directory ownership" acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$ACFS_HOME" || return 1
     try_step "Creating ACFS log directory" $SUDO mkdir -p "$ACFS_LOG_DIR" || return 1
 
@@ -7709,7 +7702,7 @@ setup_filesystem() {
     acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/scripts" 2>/dev/null || true
 
     # Create user's bin and .bun directories early - many installers need them
-    # This prevents NTM, UBS, CASS, Bun, etc. from creating them as root via sudo
+    # This prevents herdr, UBS, CASS, Bun, etc. from creating them as root via sudo
     try_step "Creating bin directory ($ACFS_BIN_DIR)" acfs_ensure_primary_bin_dir || return 1
     try_step "Creating .bun directory" run_as_target mkdir -p "$TARGET_HOME/.bun" || return 1
 
@@ -8120,7 +8113,7 @@ install_cli_tools() {
         used_generated_network=true
     fi
 
-    # tools phase 5: lazygit, lazydocker — bug #146 audit follow-up
+    # tools phase 5: lazygit — bug #146 audit follow-up
     if acfs_use_generated_category "tools"; then
         log_detail "Using generated installers for tools (phase 5)"
         acfs_run_generated_category_phase "tools" "5" || cli_phase_rc=1
@@ -8239,7 +8232,7 @@ install_cli_tools() {
 
     # Install optional packages - batch install for speed (14→1 package-manager calls)
     if [[ "$ACFS_DISTRO_FAMILY" == "arch" ]]; then
-        local -a arch_optional_pkgs=(lsd eza bat fd btop dust neovim htop tree ncdu httpie entr mtr pv docker docker-compose cosign lazygit lazydocker)
+        local -a arch_optional_pkgs=(lsd eza bat fd btop dust neovim htop tree ncdu httpie entr mtr pv cosign lazygit)
         log_detail "Installing optional pacman packages"
         acfs_arch_pkg_install "${arch_optional_pkgs[@]}" || {
             log_detail "Batch install failed, trying packages individually"
@@ -8248,15 +8241,9 @@ install_cli_tools() {
                 acfs_arch_pkg_install "$pkg" >/dev/null 2>&1 || log_detail "$pkg not available (optional)"
             done
         }
-        # pacman never starts services (unlike docker.io's apt postinst), so
-        # an installed-but-dead docker would make `docker ps` and lazydocker
-        # fail until the user enables it by hand.
-        if pacman -Qq docker &>/dev/null && command_exists systemctl && [[ -d /run/systemd/system ]]; then
-            try_step "Enabling Docker service" $SUDO systemctl enable --now docker.service || log_warn "Docker installed but its service could not be started (optional)"
-        fi
     else
         log_detail "Installing optional apt packages"
-        local optional_pkgs=(lsd eza bat fd-find btop dust neovim htop tree ncdu httpie entr mtr pv docker.io docker-compose-plugin cosign)
+        local optional_pkgs=(lsd eza bat fd-find btop dust neovim htop tree ncdu httpie entr mtr pv cosign)
         # First attempt: batch install all at once (fastest path)
         if ! $SUDO apt-get -o DPkg::Lock::Timeout=120 install -y "${optional_pkgs[@]}" >/dev/null 2>&1; then
             # Fallback: some packages failed, install individually to get what we can
@@ -8314,53 +8301,6 @@ install_cli_tools() {
                 fi
             fi
         fi
-    fi
-
-    # Robust lazydocker install (binary fallback)
-    if ! binary_installed "lazydocker"; then
-        log_detail "Installing lazydocker..."
-        local arch=""
-        case "$(uname -m)" in
-            x86_64) arch="x86_64" ;;
-            aarch64|arm64) arch="arm64" ;;
-        esac
-        if [[ -n "$arch" ]]; then
-            local ld_ver="0.23.3"
-            local ld_url="https://github.com/jesseduffield/lazydocker/releases/download/v${ld_ver}/lazydocker_${ld_ver}_Linux_${arch}.tar.gz"
-            local ld_sha256=""
-            case "$arch" in
-                x86_64) ld_sha256="1f3c7037326973b85cb85447b2574595103185f8ed067b605dd43cc201bc8786" ;;
-                arm64) ld_sha256="ae7bed0309289396d396b8502b2d78d153a4f8ce8add042f655332241e7eac31" ;;
-            esac
-            local ld_tmp=""
-            local mktemp_bin=""
-            mktemp_bin="$(acfs_early_system_binary_path mktemp 2>/dev/null || true)"
-            if [[ -n "$mktemp_bin" ]]; then
-                ld_tmp="$("$mktemp_bin" "${TMPDIR:-/tmp}/acfs-lazydocker.XXXXXX" 2>/dev/null)" || ld_tmp=""
-            fi
-            if [[ -n "$ld_tmp" ]]; then
-                if acfs_download_file_and_verify_sha256 "$ld_url" "$ld_tmp" "$ld_sha256" "lazydocker ${ld_ver} (${arch})"; then
-                    if $SUDO tar -xzf "$ld_tmp" -C /usr/local/bin --no-same-owner --no-same-permissions lazydocker 2>/dev/null; then
-                        $SUDO chmod 0755 /usr/local/bin/lazydocker 2>/dev/null || true
-                        if binary_installed "lazydocker"; then
-                            log_detail "lazydocker installed from GitHub release"
-                        else
-                            log_warn "lazydocker: extracted but binary not found in PATH (skipping)"
-                        fi
-                    else
-                        log_warn "lazydocker: failed to extract tarball (skipping)"
-                    fi
-                fi
-                rm -f "$ld_tmp" 2>/dev/null || true
-            fi
-        fi
-    fi
-
-    # Add user to docker group (only if docker group exists)
-    if getent group docker &>/dev/null; then
-        try_step "Adding $TARGET_USER to docker group" $SUDO usermod -aG docker "$TARGET_USER" || true
-    else
-        log_detail "Docker group not found, skipping group membership"
     fi
 
     # Tailscale VPN for secure remote access (bt5)
@@ -9659,7 +9599,7 @@ install_stack_phase() {
 
     # Install utils.* modules (category: tools, phase: 9) — bug #146 fix
     # Run every category in this phase before deciding the phase result: a
-    # single failing utils.* module must not skip ntm, Agent Mail, the skills
+    # single failing utils.* module must not skip herdr, Agent Mail, the skills
     # installer, br/bv, cass, cm, ... (the `|| return 1` short-circuit did
     # exactly that once category failures started propagating).
     local stack_phase_rc=0
@@ -9680,82 +9620,22 @@ install_stack_phase() {
         return "$stack_phase_rc"
     fi
 
-    # NTM (Named Tmux Manager)
-    if binary_installed "ntm"; then
-        log_detail "NTM already installed"
-    else
-        log_detail "Installing NTM"
-        # The upstream installer can exit non-zero in non-interactive CI while still
-        # successfully installing. Run it best-effort, then verify the binary.
-        local ntm_exit=0
-        acfs_run_verified_upstream_script_as_target "ntm" "bash" --no-shell || ntm_exit=$?
-
-        if _smoke_run_as_target "command -v ntm >/dev/null && ntm --help >/dev/null 2>&1"; then
-            log_success "NTM installed"
-        else
-            log_warn "NTM installation failed (installer exit ${ntm_exit}; ntm not working)"
-        fi
+    # herdr (tools.herdr). Its generated installer has no apt step, so this
+    # legacy (Arch-family) path runs the manifest-mapped installer as-is.
+    local herdr_installer=""
+    local module_func_decl=""
+    module_func_decl="$(declare -p ACFS_MODULE_FUNC 2>/dev/null || true)"
+    if [[ "$module_func_decl" == declare\ -A* ]]; then
+        herdr_installer="${ACFS_MODULE_FUNC[tools.herdr]:-}"
     fi
-
-    # Configure NTM with current model defaults (issue #39)
-    # NTM ships with outdated defaults; create config with current recommended models
-    local ntm_config_dir="$TARGET_HOME/.config/ntm"
-    local ntm_config_file="$ntm_config_dir/config.toml"
-    if binary_installed "ntm"; then
-        if [[ ! -f "$ntm_config_file" ]]; then
-            log_detail "Creating NTM config with current model defaults"
-            run_as_target mkdir -p "$ntm_config_dir" || true
-            # Write config via tee to ensure proper target user ownership (bd-2od5.2.4)
-            # Using tee avoids redirect-as-root issue with heredoc + run_as_target
-            # Config format fixed for proper [models] section (bd-2od5.2.5)
-            if run_as_target tee "$ntm_config_file" > /dev/null << 'NTM_CONFIG_EOF'
-# NTM Configuration - created by ACFS
-# Updated model defaults for ChatGPT Pro and Antigravity accounts
-
-# Base directory for projects (matches ACFS workspace_root)
-projects_base = "/data/projects"
-
-[models]
-# Default models when no specifier given
-default_claude = "claude-fable-5"
-default_codex = "gpt-6-astra"
-default_gemini = "Gemini 3.8 Flash (High)"
-
-[agents]
-# Keep Codex model and effort independent of the installed NTM binary's defaults.
-codex = '{{if .SystemPromptFile}}CODEX_SYSTEM_PROMPT="$(cat {{shellQuote .SystemPromptFile}})" {{end}}codex --dangerously-bypass-approvals-and-sandbox --search -m {{shellQuote (.Model | default "gpt-6-astra")}} -c model_reasoning_effort={{shellQuote (.ReasoningEffort | default "xhigh")}} -c model_reasoning_summary_format=experimental'
-# Route legacy Gemini slots through ACFS's locked Antigravity launcher.
-gemini = "agy-locked{{if .Model}} --model {{shellQuote .Model}}{{end}}"
-NTM_CONFIG_EOF
-            then
-                log_success "NTM config created with current model defaults"
-            else
-                log_warn "Failed to create NTM config"
-            fi
-        else
-            log_detail "NTM config already exists, skipping"
-        fi
-
-        # Install NTM command palette (bd-2od5.2.2)
-        # Provides useful prompts for ntm palette command
-        local ntm_palette_dst="$ntm_config_dir/command_palette.md"
-        if [[ ! -f "$ntm_palette_dst" ]]; then
-            log_detail "Installing NTM command palette"
-            # Ensure config dir exists (install_asset doesn't create parent dirs)
-            run_as_target mkdir -p "$ntm_config_dir" 2>/dev/null || true
-            # Use install_asset for consistency with other assets (works with curl|bash bootstrap)
-            if install_asset "acfs/onboard/docs/ntm/command_palette.md" "$ntm_palette_dst"; then
-                # Fix ownership for target user
-                if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
-                    chown "${TARGET_USER}:${TARGET_USER}" "$ntm_palette_dst" 2>/dev/null || true
-                fi
-                log_success "NTM command palette installed"
-            else
-                log_warn "Failed to install NTM command palette (asset not found)"
-            fi
-        else
-            log_detail "NTM command palette already exists, skipping"
-        fi
+    if [[ ! "$herdr_installer" =~ ^acfs_generated_install_[a-z0-9_]+$ ]] \
+        || ! declare -f "$herdr_installer" >/dev/null 2>&1; then
+        log_error "Manifest-mapped tools.herdr installer is unavailable"
+        ACFS_MODULE_FAILURES+=("tools.herdr (installer unavailable)")
+        stack_phase_rc=1
+    elif ! "$herdr_installer"; then
+        ACFS_MODULE_FAILURES+=("tools.herdr (installer execution)")
+        stack_phase_rc=1
     fi
 
     # MCP Agent Mail
@@ -10631,7 +10511,7 @@ UNIT_EOF
         log_detail "Brenner Bot already installed"
     else
         log_detail "Installing Brenner Bot"
-        try_step "Installing Brenner Bot" acfs_run_verified_upstream_script_as_target "brenner_bot" "bash" --skip-cass || acfs_optional_module_install_failed "brenner_bot" "Brenner Bot"
+        try_step "Installing Brenner Bot" acfs_run_verified_upstream_script_as_target "brenner_bot" "bash" --skip-ntm --skip-cass || acfs_optional_module_install_failed "brenner_bot" "Brenner Bot"
     fi
 
     # Required modules that acfs_optional_module_install_failed recorded above
@@ -10720,21 +10600,6 @@ finalize() {
         acfs_run_generated_category_phase "acfs" "10" || return 1
         log_detail "Generated acfs modules are supplemental; continuing legacy finalize for full runtime deployment parity"
     fi
-
-    # Copy tmux config
-    log_detail "Installing tmux config"
-    try_step "Installing tmux config" install_asset "acfs/tmux/tmux.conf" "$ACFS_HOME/tmux/tmux.conf" || return 1
-    try_step "Setting tmux config ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/tmux/tmux.conf" || return 1
-
-    # Link to target user's tmux.conf if it doesn't exist
-    if [[ ! -f "$TARGET_HOME/.tmux.conf" ]]; then
-        try_step "Linking tmux.conf" run_as_target ln -sf "$ACFS_HOME/tmux/tmux.conf" "$TARGET_HOME/.tmux.conf" || return 1
-    fi
-
-    # Reload tmux config if server is running (fixes #66: prefix key works immediately)
-    # This handles the case where tmux started in an earlier phase before config was deployed
-    # Note: Use $TARGET_HOME, not ~, since ~ expands to the installer's user (often root)
-    run_as_target tmux source-file "$TARGET_HOME/.tmux.conf" 2>/dev/null || true
 
     # Install onboard lessons + command
     log_detail "Installing onboard lessons"
@@ -11241,13 +11106,13 @@ run_smoke_test() {
         ((critical_failed += 1))
     fi
 
-    # 7) ntm command works
-    if _smoke_run_as_target "command -v ntm >/dev/null && ntm --help >/dev/null 2>&1"; then
-        echo "✅ NTM: working" >&2
+    # 7) herdr command works
+    if _smoke_run_as_target "command -v herdr >/dev/null && herdr --version >/dev/null 2>&1"; then
+        echo "✅ herdr: working" >&2
         ((critical_passed += 1))
     else
-        echo "✖ NTM: not working" >&2
-        echo "    Fix: $(acfs_smoke_install_fix_command stack.ntm)" >&2
+        echo "✖ herdr: not working" >&2
+        echo "    Fix: $(acfs_smoke_install_fix_command tools.herdr)" >&2
         ((critical_failed += 1))
     fi
 
@@ -11303,7 +11168,7 @@ run_smoke_test() {
 
     # Non-critical: Stack tools respond to --help
     local stack_help_fail=()
-    local stack_tools=(ntm ubs bv cass cm caam slb)
+    local stack_tools=(ubs bv cass cm caam slb)
     for tool in "${stack_tools[@]}"; do
         # SLB may have issues with --help exit code, try bare command first
         if [[ "$tool" == "slb" ]]; then
@@ -11542,8 +11407,8 @@ ${optional_list_gum}Checksum skips clear once the pin is refreshed: acfs update 
   4. Check everything is working:
      acfs doctor
 
-  5. Start your agent cockpit:
-     ntm"
+  5. Start your agent workspace:
+     herdr"
     else
         next_steps_content="Next steps:
 
@@ -11557,8 +11422,8 @@ ${optional_list_gum}Checksum skips clear once the pin is refreshed: acfs update 
   3. Check everything is working:
      acfs doctor
 
-  4. Start your agent cockpit:
-     ntm"
+  4. Start your agent workspace:
+     herdr"
     fi
 
     local summary_content="Version: $ACFS_VERSION
@@ -11689,8 +11554,8 @@ $summary_content"
             echo -e "     ${BLUE}acfs doctor${NC}"
             echo ""
             ((step_num++))
-            echo "  $step_num. Start your agent cockpit:"
-            echo -e "     ${BLUE}ntm${NC}"
+            echo "  $step_num. Start your agent workspace:"
+            echo -e "     ${BLUE}herdr${NC}"
             echo ""
             echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
             echo ""
@@ -12051,7 +11916,7 @@ main() {
         echo "  - Rust: https://rustup.rs"
         echo "  - uv: https://astral.sh/uv"
         echo "  - Claude Code (native): https://claude.ai/install.sh"
-        echo "  - NTM: https://github.com/Dicklesworthstone/ntm"
+        echo "  - herdr: https://herdr.dev"
         echo "  - MCP Agent Mail: https://github.com/Dicklesworthstone/mcp_agent_mail_rust"
         echo "  - UBS: https://github.com/Dicklesworthstone/ultimate_bug_scanner"
         echo "  - Beads Viewer: https://github.com/Dicklesworthstone/beads_viewer"
@@ -12259,7 +12124,7 @@ main() {
 
         # Skip the post-install smoke test when --only / --only-phase was
         # used: the user asked for a targeted subset, so the full-stack
-        # checks (agents, ntm, onboard, languages, …) will fail by design.
+        # checks (agents, herdr, onboard, languages, …) will fail by design.
         # They can still run `acfs doctor` if they want a broader health check.
         SMOKE_TEST_FAILED=false
         if [[ ${#ONLY_MODULES[@]} -eq 0 ]] && [[ ${#ONLY_PHASES[@]} -eq 0 ]]; then

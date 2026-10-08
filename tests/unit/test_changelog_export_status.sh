@@ -241,7 +241,7 @@ EOF
     write_fake_command "$TEST_TARGET_HOME/.local/bin/gemini" "gemini 1.2.3"
     write_fake_command "$TEST_TARGET_HOME/.local/bin/uv" "uv 0.8.0"
     write_fake_command "$TEST_TARGET_HOME/.local/bin/rustc" "rustc 1.85.0"
-    write_fake_command "$TEST_TARGET_HOME/.local/bin/ntm" "ntm 1.2.3"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/herdr" "herdr 1.2.3"
     write_fake_command "$TEST_TARGET_HOME/.bun/bin/bun" "1.2.3"
     write_fake_command "$TEST_TARGET_HOME/.cargo/bin/cargo" "cargo 1.85.0"
     write_fake_command "$TEST_TARGET_HOME/go/bin/go" "go version go1.24.0 linux/amd64"
@@ -321,7 +321,7 @@ setup_system_state_only_env() {
   "last_updated": "2026-03-10T12:34:56Z",
   "current_phase": { "id": "bootstrap" },
   "current_step": "Installing tools",
-  "skipped_tools": ["ntm", "bv"]
+  "skipped_tools": ["herdr", "bv"]
 }
 EOF
 }
@@ -438,7 +438,7 @@ EOF
     write_fake_command "$TEST_TARGET_HOME/.local/bin/gemini" "gemini 1.2.3"
     write_fake_command "$TEST_TARGET_HOME/.local/bin/uv" "uv 0.8.0"
     write_fake_command "$TEST_TARGET_HOME/.local/bin/rustc" "rustc 1.85.0"
-    write_fake_command "$TEST_TARGET_HOME/.local/bin/ntm" "ntm 1.2.3"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/herdr" "herdr 1.2.3"
     write_fake_command "$TEST_TARGET_HOME/.bun/bin/bun" "1.2.3"
     write_fake_command "$TEST_TARGET_HOME/.cargo/bin/cargo" "cargo 1.85.0"
     write_fake_command "$TEST_TARGET_HOME/go/bin/go" "go version go1.24.0 linux/amd64"
@@ -1050,9 +1050,9 @@ export TARGET_HOME="$target_home"
 export ACFS_BIN_DIR="$target_home/.local/bin"
 # shellcheck source=/dev/null
 source "$STACK_SH"
-STACK_COMMANDS[ntm]="current-shell-only-tool"
+STACK_COMMANDS[herdr]="current-shell-only-tool"
 
-if _stack_is_installed "ntm"; then
+if _stack_is_installed "herdr"; then
     printf 'rc=0\n'
 else
     printf 'rc=%s\n' "$?"
@@ -5089,7 +5089,7 @@ test_doctor_dispatch_keeps_caller_path() {
     # doctor.sh sources the generated doctor_checks.sh, whose header exports
     # root's /usr/sbin:/usr/bin:/sbin:/bin. Leaked into the dispatcher, that
     # PATH made every helper exec'd afterwards (swarm doctor/status, ...)
-    # report per-user tools such as am, br and ntm as unavailable.
+    # report per-user tools such as am, br and herdr as unavailable.
     local work="" fake_bin="" fake_status="" seen_path=""
     setup_mock_env
     work="$TEST_HOME"
@@ -5223,32 +5223,32 @@ test_status_ignores_current_shell_only_binaries() {
         "$TEST_TARGET_HOME/.local/bin/claude" \
         "$TEST_TARGET_HOME/.local/bin/codex" \
         "$TEST_TARGET_HOME/.local/bin/gemini" \
-        "$TEST_TARGET_HOME/.local/bin/ntm"
+        "$TEST_TARGET_HOME/.local/bin/herdr"
 
     write_fake_command "$TEST_FAKE_BIN/claude" "claude 9.9.9"
     write_fake_command "$TEST_FAKE_BIN/codex" "codex 9.9.9"
     write_fake_command "$TEST_FAKE_BIN/agy" "agy 9.9.9"
     write_fake_command "$TEST_FAKE_BIN/gemini" "gemini 9.9.9"
-    write_fake_command "$TEST_FAKE_BIN/ntm" "ntm 9.9.9"
+    write_fake_command "$TEST_FAKE_BIN/herdr" "herdr 9.9.9"
 
     local output=""
     output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_INSTALLED_ACFS" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
         TEST_STATUS_SCRIPT="$STATUS_SH" bash -lc '
             source "$TEST_STATUS_SCRIPT"
             _status_prepare_context
-            printf "claude=%s\ncodex=%s\nagy=%s\ngemini=%s\nntm=%s\n" \
+            printf "claude=%s\ncodex=%s\nagy=%s\ngemini=%s\nherdr=%s\n" \
                 "$(_status_binary_path claude 2>/dev/null || true)" \
                 "$(_status_binary_path codex 2>/dev/null || true)" \
                 "$(_status_binary_path agy 2>/dev/null || true)" \
                 "$(_status_binary_path gemini 2>/dev/null || true)" \
-                "$(_status_binary_path ntm 2>/dev/null || true)"
+                "$(_status_binary_path herdr 2>/dev/null || true)"
         ' 2>/dev/null)
 
     if [[ "$output" != *"$TEST_FAKE_BIN/claude"* ]] \
         && [[ "$output" != *"$TEST_FAKE_BIN/codex"* ]] \
         && [[ "$output" != *"$TEST_FAKE_BIN/agy"* ]] \
         && [[ "$output" != *"$TEST_FAKE_BIN/gemini"* ]] \
-        && [[ "$output" != *"$TEST_FAKE_BIN/ntm"* ]]; then
+        && [[ "$output" != *"$TEST_FAKE_BIN/herdr"* ]]; then
         harness_pass "status ignores current-shell-only binaries"
     else
         harness_fail "status ignores current-shell-only binaries" "$output"
@@ -5305,12 +5305,12 @@ EOF
     rm -f "$TEST_TARGET_HOME/.local/bin/claude"
     rm -f "$TEST_TARGET_HOME/.local/bin/codex"
     rm -f "$TEST_TARGET_HOME/.local/bin/gemini"
-    rm -f "$TEST_TARGET_HOME/.local/bin/ntm"
+    rm -f "$TEST_TARGET_HOME/.local/bin/herdr"
     write_fake_command "$custom_bin/claude" "claude 1.2.3"
     write_fake_command "$custom_bin/codex" "codex 1.2.3"
     write_fake_command "$custom_bin/agy" "agy 1.2.3"
     write_fake_command "$custom_bin/gemini" "gemini 1.2.3"
-    write_fake_command "$custom_bin/ntm" "ntm 1.2.3"
+    write_fake_command "$custom_bin/herdr" "herdr 1.2.3"
 
     local output=""
     output=$(HOME="$TEST_ROOT_HOME" ACFS_BIN_DIR="$TEST_FAKE_BIN" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" bash "$TEST_INSTALLED_ACFS/scripts/lib/status.sh" --json)
@@ -6914,7 +6914,7 @@ test_info_summary_ignores_current_shell_only_binaries() {
     write_fake_command "$TEST_FAKE_BIN/claude" "claude 9.9.9"
     write_fake_command "$TEST_FAKE_BIN/codex" "codex 9.9.9"
     write_fake_command "$TEST_FAKE_BIN/gemini" "gemini 9.9.9"
-    write_fake_command "$TEST_FAKE_BIN/ntm" "ntm 9.9.9"
+    write_fake_command "$TEST_FAKE_BIN/herdr" "herdr 9.9.9"
 
     local output=""
     output=$(HOME="$runtime_home" TARGET_HOME="$target_home" ACFS_BIN_DIR="$target_home/.local/bin" \
@@ -10607,7 +10607,7 @@ test_info_reads_skipped_tools_without_jq() {
             info_get_skipped_tools
         ')
 
-    if [[ "$output" == "ntm, bv" ]]; then
+    if [[ "$output" == "herdr, bv" ]]; then
         harness_pass "info reads skipped tools without jq from system state"
     else
         harness_fail "info reads skipped tools without jq from system state" "$output"

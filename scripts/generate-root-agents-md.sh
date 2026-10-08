@@ -213,7 +213,7 @@ get_version() {
 # --- Build tool table ---
 build_tool_table() {
     local tools=(
-        "ntm:Named Tmux Manager:Multi-agent session orchestration (spawn, kill, send, list)"
+        "herdr:herdr:Terminal workspace for coding agents (workspaces, panes, agent state)"
         "br:Beads Rust:Local-first issue tracker with dependency graphs and JSONL sync"
         "bv:Beads Viewer:Graph-aware task triage and dependency visualization"
         "ru:Repo Updater:Multi-repo git sync, status, and maintenance"
@@ -263,7 +263,6 @@ AGENTS.md, and `.beads/` directory for local issue tracking.
 
 ```
 /data/projects/
-  ntm/                    # Named Tmux Manager (Go)
   beads_rust/             # Issue tracker CLI (Rust)
   coding_agent_session_search/  # Session search (Rust)
   agentic_coding_flywheel_setup/  # VPS setup & scripts (Bash/TS)
@@ -293,11 +292,14 @@ br update BEAD_ID --status in_progress  # Claim task
 
 ### Multi-Agent Session Management
 
+Agents run in herdr panes. Never run bare `herdr` from an agent: it opens the TUI.
+
 ```bash
-ntm spawn PROJECT [--label LABEL] [--cc N]  # Start agent session
-ntm list [--project PROJECT]                 # List sessions
-ntm send SESSION "message"                   # Send to session
-ntm kill SESSION                             # Kill session
+herdr workspace create --cwd /data/projects/PROJECT  # New workspace for a project
+herdr agent list                                     # Agents and their state
+herdr agent read AGENT                               # Recent terminal output
+herdr agent prompt AGENT "message"                   # Send a prompt
+herdr agent wait AGENT --until idle                  # Wait for an agent
 ```
 
 ### Issue Tracking with Beads

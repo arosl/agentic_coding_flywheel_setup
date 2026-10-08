@@ -157,8 +157,6 @@ INTERNAL_CHECKSUM_REQUIRED_PATHS=(
     VERSION
     acfs.manifest.yaml
     acfs/AGENTS.md
-    acfs/onboard/docs/ntm/command_palette.md
-    acfs/tmux/tmux.conf
     acfs/zsh/acfs.zshrc
     acfs/zsh/p10k.zsh
     scripts/completions/_acfs

@@ -19,8 +19,8 @@
 # what this file claims to provide.
 #
 # Test 1 (module failure, shape of a real installer crashing mid-run):
-#   Sources the real install_stack.sh and overrides only acfs_generated_install_stack_ntm
-#   to return 1 immediately (module stack.ntm sits directly before
+#   Sources the real install_stack.sh and overrides only acfs_generated_install_stack_mcp_agent_mail
+#   to return 1 immediately (module stack.mcp_agent_mail sits directly before
 #   stack.meta_skill in the real manifest's "stack" category/phase 9) —
 #   the exact shape a real verified-install failure produces. Everything
 #   else, including acfs_generated_install_stack_meta_skill, runs unmodified in
@@ -111,12 +111,12 @@ run_test_1() {
     export ACFS_HOME ACFS_STATE_FILE
     state_init
 
-    declare -f acfs_generated_install_stack_ntm >/dev/null 2>&1 || { echo "FATAL: real acfs_generated_install_stack_ntm not loaded"; exit 2; }
+    declare -f acfs_generated_install_stack_mcp_agent_mail >/dev/null 2>&1 || { echo "FATAL: real acfs_generated_install_stack_mcp_agent_mail not loaded"; exit 2; }
     declare -f acfs_generated_install_stack_meta_skill >/dev/null 2>&1 || { echo "FATAL: real acfs_generated_install_stack_meta_skill not loaded"; exit 2; }
 
     # The one deliberate fault: shape of "the installer crashed" mid-run.
-    acfs_generated_install_stack_ntm() {
-        log_error "acfs_generated_install_stack_ntm: SIMULATED CRASH (test-injected fault standing in for a real verified-install failure)"
+    acfs_generated_install_stack_mcp_agent_mail() {
+        log_error "acfs_generated_install_stack_mcp_agent_mail: SIMULATED CRASH (test-injected fault standing in for a real verified-install failure)"
         return 1
     }
 
@@ -141,18 +141,18 @@ run_test_1() {
 
     local meta_skill_ran="false"
     grep -q "stack.meta_skill installed" "$category_log" && meta_skill_ran="true"
-    local ntm_recorded="false"
+    local am_recorded="false"
     local f
     for f in "${ACFS_MODULE_FAILURES[@]:-}"; do
-        [[ "$f" == stack.ntm* ]] && ntm_recorded="true"
+        [[ "$f" == stack.mcp_agent_mail* ]] && am_recorded="true"
     done
     local failed_phase=""
     local stack_completed="false"
     failed_phase=$(jq -r '.failed_phase // empty' "$ACFS_STATE_FILE")
     jq -e '.completed_phases | index("stack") != null' "$ACFS_STATE_FILE" >/dev/null && stack_completed=true
 
-    assert "1a. induced stack.ntm failure recorded in ACFS_MODULE_FAILURES" "$ntm_recorded"
-    assert "1b. real acfs_generated_install_stack_meta_skill still ran despite stack.ntm failing earlier in the same category loop" "$meta_skill_ran"
+    assert "1a. induced stack.mcp_agent_mail failure recorded in ACFS_MODULE_FAILURES" "$am_recorded"
+    assert "1b. real acfs_generated_install_stack_meta_skill still ran despite stack.mcp_agent_mail failing earlier in the same category loop" "$meta_skill_ran"
     assert "1c. generated category reports aggregate failure after finishing later modules" "$([[ $category_rc -ne 0 ]] && echo true || echo false)"
     assert "1d. run_phase persists the generated module failure on its enclosing phase" "$([[ "$failed_phase" == "stack" ]] && echo true || echo false)"
     assert "1e. run_phase does not persist the failed stack phase as completed" "$([[ "$stack_completed" == "false" ]] && echo true || echo false)"
@@ -163,13 +163,13 @@ run_test_1() {
     print_summary > "$summary_log" 2>&1 || true
 
     local names_failure="false"
-    grep -q "stack.ntm" "$summary_log" && names_failure="true"
+    grep -q "stack.mcp_agent_mail" "$summary_log" && names_failure="true"
     local says_complete="false"
     grep -q "Installation Complete" "$summary_log" && says_complete="true"
     local says_failures="false"
     grep -q "Finished With Failures" "$summary_log" && says_failures="true"
 
-    assert "2a. print_summary() names the induced failure (stack.ntm)" "$names_failure"
+    assert "2a. print_summary() names the induced failure (stack.mcp_agent_mail)" "$names_failure"
     assert "2b. print_summary() does not claim 'Installation Complete' over a broken run" "$([[ "$says_complete" == "false" ]] && echo true || echo false)"
     assert "2c. print_summary() banner reads 'Finished With Failures'" "$says_failures"
 }
@@ -331,13 +331,13 @@ run_test_3() {
     acfs_report_success_if_clean 42
     assert "D4. clean run emits each success side effect exactly once" "$([[ $completion_calls -eq 1 && $report_calls -eq 1 && $summary_calls -eq 1 && $webhook_calls -eq 1 && $notification_calls -eq 1 ]] && echo true || echo false)"
 
-    ONLY_MODULES=("stack.ntm" "stack.mcp_agent_mail")
+    ONLY_MODULES=("stack.ru" "stack.mcp_agent_mail")
     ONLY_PHASES=("9")
     SKIP_MODULES=("stack.cass")
     NO_DEPS=true
     local resume_hint=""
     resume_hint=$(generate_resume_hint "stack" "MCP Agent Mail")
-    assert "D5. canonical resume keeps repeated --only selectors" "$([[ "$resume_hint" == *"--only stack.ntm"* && "$resume_hint" == *"--only stack.mcp_agent_mail"* ]] && echo true || echo false)"
+    assert "D5. canonical resume keeps repeated --only selectors" "$([[ "$resume_hint" == *"--only stack.ru"* &&"$resume_hint" == *"--only stack.mcp_agent_mail"* ]] && echo true || echo false)"
     assert "D6. canonical resume keeps phase, skip, and dependency selectors" "$([[ "$resume_hint" == *"--only-phase 9"* && "$resume_hint" == *"--skip stack.cass"* && "$resume_hint" == *"--no-deps"* ]] && echo true || echo false)"
 
     local generated_categories=""
@@ -379,7 +379,7 @@ run_test_3() {
     # partial --only result yields 2; a clean run yields 0.
     local exit_status=0
     ACFS_PHASE_FAILURES=("8/9 Stack")
-    ACFS_MODULE_FAILURES=("stack.ntm (installer)")
+    ACFS_MODULE_FAILURES=("stack.ru (installer)")
     SMOKE_TEST_FAILED=false
     ACFS_INSTALL_PARTIAL_FAILURE=0
     exit_status=0; acfs_install_terminal_exit_status || exit_status=$?

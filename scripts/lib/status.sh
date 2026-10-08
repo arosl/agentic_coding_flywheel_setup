@@ -1208,7 +1208,7 @@ status_main() {
     local -a _warnings=()
     local -a _errors=()
     local -a _CORE_TOOLS=(zsh git tmux bun cargo go rg claude)
-    local -a _OPTIONAL_TOOLS=(codex agy gh uv fzf zoxide atuin bat lsd ntm bv br cass cm slb ubs dcg)
+    local -a _OPTIONAL_TOOLS=(codex agy gh uv fzf zoxide atuin bat lsd herdr bv br cass cm slb ubs dcg)
     local _tool_count=0
     local _last_update_ts=""
     local _update_run_ts=""

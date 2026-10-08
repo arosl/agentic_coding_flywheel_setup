@@ -451,17 +451,6 @@ INSTALL_CLI_MODERN
             return 1
         fi
     fi
-    if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: apt-get -o DPkg::Lock::Timeout=120 install -y docker.io docker-compose-plugin || true (root)"
-    else
-        if ! run_as_root_shell <<'INSTALL_CLI_MODERN'
-apt-get -o DPkg::Lock::Timeout=120 install -y docker.io docker-compose-plugin || true
-INSTALL_CLI_MODERN
-        then
-            log_error "cli.modern: install command failed: apt-get -o DPkg::Lock::Timeout=120 install -y docker.io docker-compose-plugin || true"
-            return 1
-        fi
-    fi
 
     # Verify
     if [[ "${DRY_RUN:-false}" = "true" ]]; then

@@ -436,6 +436,8 @@ modules:
     installed_check:
       run_as: current
       command: "command -v rg && command -v tmux && command -v fzf"
+    # tmux is here only for `acfs services` (scripts/lib/acfs-services.sh),
+    # which runs CM and the CASS indexer in a tmux session. Agents run in herdr.
     install:
       - apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep tmux fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync
       - apt-get -o DPkg::Lock::Timeout=120 install -y lsd || true
@@ -445,7 +447,6 @@ modules:
       - apt-get -o DPkg::Lock::Timeout=120 install -y btop || true
       - apt-get -o DPkg::Lock::Timeout=120 install -y dust || true
       - apt-get -o DPkg::Lock::Timeout=120 install -y neovim || true
-      - apt-get -o DPkg::Lock::Timeout=120 install -y docker.io docker-compose-plugin || true
     verify:
       - rg --version
       - tmux -V
@@ -498,42 +499,6 @@ modules:
         rm "$TMP_FILE"
     verify:
       - lazygit --version
-
-  - id: tools.lazydocker
-    description: Lazydocker (binary install)
-    category: tools
-    phase: 5
-    run_as: root
-    optional: false
-    enabled_by_default: true
-    tags: [recommended, cli-modern]
-    dependencies:
-      - base.system
-    installed_check:
-      run_as: current
-      command: "command -v lazydocker"
-    install:
-      - |
-        LD_VER="0.23.3"
-        ARCH=$(uname -m)
-        case "$ARCH" in
-          x86_64) LD_SHA="1f3c7037326973b85cb85447b2574595103185f8ed067b605dd43cc201bc8786" ;;
-          aarch64) LD_SHA="ae7bed0309289396d396b8502b2d78d153a4f8ce8add042f655332241e7eac31" ;;
-          *) echo "Unsupported arch for lazydocker binary: $ARCH"; exit 0 ;;
-        esac
-        
-        LD_URL="https://github.com/jesseduffield/lazydocker/releases/download/v${LD_VER}/lazydocker_${LD_VER}_Linux_${ARCH}.tar.gz"
-        TMP_FILE="$(mktemp "${TMPDIR:-/tmp}/acfs_install.XXXXXX")"
-        trap 'rm -f "$TMP_FILE"' EXIT
-        
-        curl -q -fsSL "$LD_URL" -o "$TMP_FILE"
-        echo "$LD_SHA $TMP_FILE" | sha256sum -c - || { echo "Checksum failed"; rm "$TMP_FILE"; exit 1; }
-        
-        tar -xzf "$TMP_FILE" -C /usr/local/bin lazydocker
-        chmod +x /usr/local/bin/lazydocker
-        rm "$TMP_FILE"
-    verify:
-      - lazydocker --version
 
   # Network tools (still Phase 5)
   - id: network.tailscale
@@ -1718,46 +1683,43 @@ modules:
   # ============================================================
   # PHASE 9: Agent Flywheel stack (all 8 tools)
   # ============================================================
-  - id: stack.ntm
-    description: Named tmux manager (agent cockpit)
-    category: stack
+  - id: tools.herdr
+    description: herdr terminal workspace manager for coding agents, with its agent integrations
+    category: tools
     phase: 9
     run_as: target_user
     optional: false
     enabled_by_default: true
-    tags: [recommended]
-    web:
-      display_name: "Named Tmux Manager"
-      short_name: "NTM"
-      tagline: "Agent cockpit for multi-agent tmux sessions"
-      icon: "layout-grid"
-      color: "#0EA5E9"
-      href: "https://github.com/Dicklesworthstone/ntm"
-      features:
-        - "Named agent panes with type classification"
-        - "Broadcast prompts to agent types"
-        - "Session persistence across reboots"
-        - "Dashboard view of active agents"
-      tech_stack: ["Go", "Bubble Tea", "tmux"]
-      use_cases:
-        - "Running multiple Claude Code agents simultaneously"
-        - "Organizing dev environments by project"
-        - "Managing long-running agent sessions"
-      language: "Go"
-      stars: 69
-      cli_name: "ntm"
+    tags: [recommended, agents]
+    # Phase 9 runs after the phase-7 agents, so the integrations below find
+    # whichever agent CLIs were selected.
     dependencies:
-      - cli.modern
+      - base.system
     installed_check:
       run_as: target_user
-      command: "command -v ntm"
+      command: "command -v herdr"
     verified_installer:
-      tool: ntm
-      runner: bash
-      args: ["--no-shell"]
-    install: []
+      tool: herdr
+      runner: sh
+    install:
+      - |
+        # acfs-summary: install herdr integrations for the installed agent CLIs
+        # <agent CLI>:<herdr integration target>
+        for pair in claude:claude codex:codex agy:antigravity-cli opencode:opencode omp:omp grok:grok; do
+          cli="${pair%%:*}"
+          target="${pair#*:}"
+          command -v "$cli" >/dev/null 2>&1 || continue
+          # herdr refuses when the agent's config directory does not exist yet.
+          if ! herdr integration install "$target"; then
+            echo "herdr: no $target integration yet; start $cli once, then run: herdr integration install $target" >&2
+          fi
+        done
     verify:
-      - ntm --help
+      - herdr --version
+    notes:
+      - "checksums.yaml pins the installer script (herdr.dev/install.sh), not a herdr version"
+      - "The installer installs the stable release named in herdr.dev/latest.json into ~/.local/bin and verifies the binary's sha256 against that manifest"
+      - "An agent whose config directory doesn't exist yet gets no integration; run `herdr integration install <agent>` after its first start"
 
   - id: stack.mcp_agent_mail
     description: Like gmail for coding agents; MCP HTTP server + token; installs beads tools
@@ -2760,8 +2722,7 @@ modules:
       cli_name: "ru"
       command_example: "ru sync --parallel 4"
     dependencies:
-      - cli.modern   # for gh, tmux
-      - stack.ntm    # for session management
+      - cli.modern   # for gh
     installed_check:
       run_as: target_user
       command: "command -v ru"
@@ -2802,6 +2763,7 @@ modules:
       language: "TypeScript"
       stars: 28
       cli_name: "brenner"
+      command_example: "brenner cockpit start --skip-ntm --skip-broadcast ..."
     dependencies:
       - lang.rust
       - stack.cass  # for session search integration
@@ -2812,10 +2774,14 @@ modules:
       tool: brenner_bot
       runner: bash
       url: "https://raw.githubusercontent.com/Dicklesworthstone/brenner_bot/main/install.sh"
-      args: ["--", "--skip-cass"]
+      args: ["--", "--skip-ntm", "--skip-cass"]
     install: []
     verify:
       - brenner --version || brenner --help
+    notes:
+      - "ACFS installs no ntm: start research sessions with `brenner cockpit start --skip-ntm --skip-broadcast` (or `brenner session start`), which only send the Agent Mail kickoff"
+      - "The agents run in herdr panes and read the kickoff from Agent Mail; a waker (or `herdr agent prompt`) tells an idle agent to read its inbox"
+      - "Run `brenner doctor --skip-ntm`, since brenner's doctor checks for ntm by default"
 
   - id: stack.rch
     description: Remote Compilation Helper - transparent build offloading for AI coding agents
@@ -2860,55 +2826,6 @@ modules:
     install: []
     verify:
       - rch --version || rch --help
-
-  - id: stack.wezterm_automata
-    # Superseded by FrankenTerm; kept installable for existing users but no
-    # longer part of the default install (it is also the only module that
-    # compiles from source via cargo).
-    description: WezTerm Automata (wa) - terminal automation and orchestration for AI agents
-    category: stack
-    phase: 9
-    run_as: target_user
-    optional: true
-    enabled_by_default: false
-    tags: [optional, automation]
-    web:
-      display_name: "WezTerm Automata"
-      short_name: "WA"
-      tagline: "Terminal hypervisor for multi-agent automation"
-      icon: "monitor"
-      color: "#06B6D4"
-      href: "https://github.com/Dicklesworthstone/wezterm_automata"
-      features:
-        - "Real-time terminal observation"
-        - "Intelligent pattern detection"
-        - "Robot Mode JSON API"
-        - "Event-driven automation"
-      tech_stack: ["Rust", "WezTerm API", "SQLite FTS5"]
-      use_cases:
-        - "Detecting agent rate limits and errors"
-        - "Coordinating multi-agent workflows"
-        - "Searching across captured terminal sessions"
-      language: "Rust"
-      stars: 42
-      cli_name: "wa"
-    dependencies:
-      - lang.rust
-    installed_check:
-      run_as: target_user
-      command: "command -v wa"
-    install:
-      # No install.sh yet - build from source via cargo
-      - |
-        WA_TMP="$(mktemp -d "${TMPDIR:-/tmp}/wa_build.XXXXXX")"
-        trap 'rm -rf "$WA_TMP"' EXIT
-        cd "$WA_TMP"
-        git clone --depth 1 https://github.com/Dicklesworthstone/wezterm_automata.git .
-        cargo build --release -p wa
-        cp "${CARGO_TARGET_DIR:-target}/release/wa" ~/.cargo/bin/
-        rm -rf "$WA_TMP"
-    verify:
-      - wa --version || wa --help
 
   - id: stack.srps
     description: System Resource Protection Script - ananicy-cpp rules + TUI monitor for responsive dev workstations
@@ -3097,8 +3014,10 @@ modules:
     phase: 9
     run_as: target_user
     optional: true
-    enabled_by_default: true
-    tags: [recommended, release]
+    # dsr builds through nektos/act, which needs Docker, and ACFS installs no
+    # Docker. Opt in only on a host where you provide Docker yourself.
+    enabled_by_default: false
+    tags: [optional, release]
     web:
       display_name: "Doodlestein Self-Releaser"
       short_name: "DSR"
@@ -3122,7 +3041,7 @@ modules:
       command_example: "dsr release ntm 1.2.3"
       lesson_slug: "dsr"
     dependencies:
-      - cli.modern   # for gh, docker
+      - cli.modern   # for gh
     installed_check:
       run_as: target_user
       command: "command -v dsr"
@@ -3963,7 +3882,7 @@ modules:
   # PHASE 10: Finalization (onboard, doctor, verification)
   # ============================================================
   - id: acfs.workspace
-    description: Agent workspace with tmux session and project folder
+    description: Agent workspace in herdr with a starter project folder
     category: acfs
     phase: 10
     run_as: target_user
@@ -3974,7 +3893,7 @@ modules:
       - agents.claude
       - agents.codex
       - agents.antigravity
-      - cli.modern
+      - tools.herdr
     installed_check:
       run_as: target_user
       command: "test -d /data/projects/my_first_project"
@@ -3991,22 +3910,17 @@ modules:
           "  ACFS AGENT WORKSPACE - QUICK REFERENCE" \
           "  --------------------------------------" \
           "" \
-          "  RECONNECT AFTER SSH:" \
-          "    tmux attach -t agents    OR just type:  agents" \
+          "  OPEN OR RECONNECT AFTER SSH:" \
+          "    agents          - Start or reattach herdr (it keeps running when you leave)" \
           "" \
-          "  WINDOWS (Ctrl-b + number):" \
-          "    0:welcome  - This instructions window" \
-          "    1:claude   - Claude Code (Anthropic)" \
-          "    2:codex    - Codex CLI (OpenAI)" \
-          "    3:agy      - Antigravity CLI (Google)" \
+          "  HERDR BASICS (prefix is Ctrl-b):" \
+          "    Ctrl-b q        - Detach (agents keep running)" \
+          "    Ctrl-b c        - New tab" \
+          "    Ctrl-b v        - Split the pane" \
+          "    Ctrl-b n/p      - Next/previous tab" \
+          "    Ctrl-b ?        - All key bindings" \
           "" \
-          "  TMUX BASICS:" \
-          "    Ctrl-b d        - Detach (keep session running)" \
-          "    Ctrl-b c        - Create new window" \
-          "    Ctrl-b n/p      - Next/previous window" \
-          "    Ctrl-b [0-9]    - Switch to window number" \
-          "" \
-          "  START AN AGENT:" \
+          "  START AN AGENT (one per pane; herdr shows its state in the sidebar):" \
           "    claude          - Start Claude Code" \
           "    codex           - Start Codex CLI" \
           "    agy             - Start Antigravity CLI" \
@@ -4014,24 +3928,6 @@ modules:
           "  PROJECT: /data/projects/my_first_project" \
           "  (Rename with: mv /data/projects/my_first_project /data/projects/NEW_NAME)" \
           "" > ~/.acfs/workspace-instructions.txt
-      - |
-        # Create tmux session with agent panes (if not already running)
-        SESSION_NAME="agents"
-        if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-          # Create session with first window for instructions
-          tmux new-session -d -s "$SESSION_NAME" -n "welcome" -c /data/projects/my_first_project
-
-          # Add agent windows
-          tmux new-window -t "$SESSION_NAME" -n "claude" -c /data/projects/my_first_project
-          tmux new-window -t "$SESSION_NAME" -n "codex" -c /data/projects/my_first_project
-          tmux new-window -t "$SESSION_NAME" -n "agy" -c /data/projects/my_first_project
-
-          # Send instructions to welcome window
-          tmux send-keys -t "$SESSION_NAME:welcome" "cat ~/.acfs/workspace-instructions.txt" Enter
-
-          # Select the welcome window
-          tmux select-window -t "$SESSION_NAME:welcome"
-        fi
       - |
         # Add agents alias to zshrc.local if not already present
         acfs_has_active_agents_alias() {
@@ -4049,7 +3945,7 @@ modules:
           touch ~/.zshrc.local 2>/dev/null || true
           echo '' >> ~/.zshrc.local
           echo '# ACFS agents workspace alias' >> ~/.zshrc.local
-          echo 'alias agents="tmux attach -t agents 2>/dev/null || tmux new-session -s agents -c /data/projects"' >> ~/.zshrc.local
+          echo 'alias agents="(cd /data/projects && herdr)"' >> ~/.zshrc.local
         fi
     verify:
       - test -d /data/projects/my_first_project
@@ -4068,8 +3964,9 @@ modules:
         acfs_has_active_agents_alias ~/.zshrc.local || acfs_has_active_agents_alias ~/.zshrc
     notes:
       - "Creates /data/projects/my_first_project as starter project"
-      - "Sets up 'agents' tmux session with windows for each coding agent"
-      - "Adds 'agents' alias for quick reconnection"
+      - "Writes ~/.acfs/workspace-instructions.txt, the herdr quick reference"
+      - "Adds the 'agents' alias, which starts or reattaches herdr from /data/projects"
+      - "Starts no herdr server during install; the first 'agents' starts it"
 
   - id: acfs.onboard
     description: Onboarding TUI tutorial
