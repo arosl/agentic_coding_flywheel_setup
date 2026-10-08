@@ -20,9 +20,9 @@
 
 This is [arosl/agentic_coding_flywheel_setup](https://github.com/arosl/agentic_coding_flywheel_setup), a fork of [Dicklesworthstone's ACFS](https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup). Upstream is the original work. The fork changes what gets installed:
 
-- **herdr replaces tmux, ntm and wa.** Agents run in [herdr](https://herdr.dev) panes. The `tools.herdr` module installs herdr through the checksum-verified installer path, then installs herdr's integration for each agent CLI ACFS installs that herdr supports. ACFS no longer installs ntm (Named Tmux Manager), wa (WezTerm Automata), its tmux configuration or the tmux `agents` session.
-- **No Docker.** ACFS installs no Docker, docker-compose or lazydocker. dsr, which builds through Docker, is off by default.
-- **Incus is planned** wherever a container is needed.
+- **herdr replaces tmux, ntm and wa.** Why: one tool gives the agents persistent panes and workspaces and shows each agent's state, which took three tools before. Agents run in [herdr](https://herdr.dev) panes. The `tools.herdr` module installs herdr through the checksum-verified installer path, then installs herdr's integration for each agent CLI ACFS installs that herdr supports. ACFS no longer installs ntm (Named Tmux Manager), wa (WezTerm Automata), its tmux configuration or the tmux `agents` session.
+- **No Docker.** Why: the fork avoids Docker wherever it can. ACFS installs no Docker, docker-compose or lazydocker. dsr, which builds through Docker, is off by default.
+- **Incus is planned.** Why: where a container is needed, the fork will use Incus instead of Docker, for example for the installer test harness in `tests/vm/`.
 
 Two things still lean on what the fork removed: tmux stays installed because `acfs services` runs CM and the CASS indexer in a tmux session, and `acfs swarm` and `acfs capacity` still drive ntm, so they report it missing. The rest of this README is upstream's and still mentions ntm, tmux and Docker in places; where it disagrees with this section, this section is right.
 
