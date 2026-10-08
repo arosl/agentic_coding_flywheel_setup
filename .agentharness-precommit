@@ -1,0 +1,5 @@
+# Checks for agentharness's shared pre-commit hook (see AGENTS.md, "Commands and gates").
+bash
+typescript
+# The guidance lints CI runs, on the files they scan.
+run AGENTS.md README.md docs/ acfs/ scripts/templates/ scripts/generate-root-agents-md.sh scripts/lib/newproj_agents.sh scripts/lib/policy_lint.sh scripts/tests/lint_rch_offload_policy.sh apps/web/README.md apps/web/components/lessons/ tests/README.md : bash scripts/lib/policy_lint.sh && bash scripts/tests/lint_rch_offload_policy.sh
