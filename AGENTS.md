@@ -9,7 +9,7 @@ How agents work together here currently follows agentharness: the block below an
 <!-- agentharness:begin -->
 ## Shared practices: agentharness
 
-This repo follows **agentharness**, the home of the shared practices for the repos on this host. If the agentharness skill is installed, load it. Otherwise read the pages below in the agentharness repository.
+This repo follows **agentharness**, the home of the shared practices for the repos on this host. Load the agentharness skill: it carries the pages below, each named as `agentharness/docs/<page>`. The host-wide instructions say where agentharness lives, so this block names no host path.
 
 - **The rules every change and every brief here is held to:** `agentharness/docs/code-rules.md`, on how to change code, review it and test it. They apply here in full. Read the page in full before your first change, review or brief, and never write a brief that asks for anything it forbids.
 
@@ -26,7 +26,7 @@ The sections after this block are this project's own rules. Where they're strict
 
 ## Project rules
 
-1. **The repo is public.** No host-specific content goes into a committed file or a commit message: no home-directory paths, hostnames, email addresses, Agent Mail content or credentials. Commits use the GitHub noreply author that the clone already has set. The bead queue stays local for the same reason ("Coordination", "Beads").
+1. **The repo is public.** No host-specific content goes into a committed file or a commit message: no home-directory paths, hostnames, email addresses, Agent Mail content or credentials. Commits use the GitHub noreply author that the clone already has set. The bead queue stays local for the same reason ("Coordination", "Bead export").
 2. **Dates and times.** ISO 8601 everywhere. Instants are stored in UTC and shown in `UTC`. A date-only value stays date-only.
 3. **Upstream sync.** Upstream's own instruction file is read with `git show upstream/main:AGENTS.md`, and never kept in the tree. When an upstream merge conflicts in `AGENTS.md`, keep ours (`git checkout --ours AGENTS.md`). Then read `git diff <merge-base> upstream/main -- AGENTS.md`, and port each new project fact into the section of the same name below, by hand. Never use a `merge=ours` driver: it drops upstream's facts without anyone seeing them. Rules taken from upstream keep upstream's section names, so that a hunk maps to one section.
 4. **`main` only.** Work, branches and merges target `main`. `master` mirrors `main` for legacy install URLs, and only the coordinator pushes it, with `git push origin main main:master`, never forced. Never reference `master` in code or docs.
@@ -107,12 +107,14 @@ The fork tracks upstream ACFS and changes its toolset: herdr instead of ntm, wez
 This is the current way of working: agentharness's wave method, with br, Agent Mail and herdr, as the block above describes. A successor replaces this section and that block. Nothing in the product reads either, with one coupling to keep or change: `scripts/lib/policy_lint.sh` requires this file to mention Agent Mail and file reservations.
 
 - **Staffing:** a wave. `scarletfern` coordinates and never builds; implementation goes to workers it briefs (agentharness `docs/roles.md`)
-- **Agent Mail project key:** the main checkout's absolute path, also from a worktree. Reserve files in Agent Mail before you edit them (`file_reservation_paths`, with the bead id as the reason), and release them when you're done.
+- **Agent Mail project key:** the main checkout's absolute path, from a worktree too; `dirname "$(git rev-parse --path-format=absolute --git-common-dir)"` prints it
+- **Reservations:** reserve files in Agent Mail before you edit them (`file_reservation_paths`, with the bead id as the reason), and release them when you're done.
 - **Worktrees:** `<main checkout>-wt/<herdr name>`, one per agent
 - **Worktree lifetime:** one bead at a time, each on a fresh branch from current `main`; reused only once the merged branch is deleted and nothing is uncommitted, and removed by the integrator after its agent's last bead
 - **herdr workspace:** label `agentic_coding_flywheel_setup`; always pass `--workspace` explicitly
 - **Waker:** `herdr-agent-waker@agentic_coding_flywheel_setup.service`, configured by `~/.config/agentharness/agentic_coding_flywheel_setup.env`
-- **Beads:** change only from the main checkout, by the coordinator (claims) and the integrator (closes). The queue is local-only: `.beads/` is untracked, and its `.gitignore` is `*`. agentharness's `beads` part commits the export, but br writes the local user name and checkout path into every bead, and this repo is public (the operator's ruling, 2026-10-08). So no bead write is ever committed, and a worktree has no `.beads/`.
+- **Beads:** change only from the main checkout, by the coordinator (claims) and the integrator (closes)
+- **Bead export:** kept local, because this repo is public (the operator's ruling, 2026-10-08), and br writes the user name and the checkout path into every exported bead. The only tracked file under `.beads/` is its `.gitignore`, the single line `*`, so no bead write is ever committed.
 - **Priorities:** P0 a broken install or update on users' machines, or a hole in the checksum boundary; P1 what blocks the current wave or the next upstream sync; P2 the fork's other planned work; P3 is the default and P4 conditional, as everywhere (agentharness `docs/primitives.md`)
 - **Review tiers:** PUSH, LIGHT or FULL per bead (agentharness `docs/tiers.md`); the brief states it with the FULL criterion it trips, or none. FULL only on a named criterion, never on doubt. FULL here also covers: a change to what the installer, `acfs update` or the doctor runs unattended on a user's machine; a change to `checksums.yaml`, a verified installer, or `scripts/lib/security.sh`
 
