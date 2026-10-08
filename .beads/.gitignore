@@ -1,0 +1,3 @@
+# The fork keeps its bead queue local: br writes the local user name and
+# checkout path into every bead, and this repo is public (operator, 2026-10-08).
+*
