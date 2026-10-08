@@ -7517,8 +7517,13 @@ update_stack() {
         log_item "skip" "PCR" "not installed (use --force to install)"
     fi
 
-    # DSR (Doodlestein Self-Releaser) - always install/update
-    run_cmd "DSR" update_run_verified_installer dsr --easy-mode
+    # DSR (Doodlestein Self-Releaser) - update only when already installed: it
+    # needs Docker, which ACFS doesn't install, so it is opt-in.
+    if update_binary_exists dsr || [[ "$FORCE_MODE" == "true" ]]; then
+        run_cmd "DSR" update_run_verified_installer dsr --easy-mode
+    else
+        log_item "skip" "DSR" "not installed (opt-in; use --force to install)"
+    fi
 
     # EE (Eidetic Engine) - always install/update
     run_cmd "EE" update_run_verified_installer ee --easy-mode

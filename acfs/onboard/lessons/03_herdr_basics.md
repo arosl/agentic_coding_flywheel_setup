@@ -23,8 +23,7 @@ herdr
 ```
 
 The first run starts herdr's server and opens it. Every later run reattaches
-to the same session, with everything still running. ACFS also gives you the
-`agents` alias, which opens herdr from `/data/projects`.
+to the same session, with everything still running.
 
 ### Detach (Leave Everything Running)
 

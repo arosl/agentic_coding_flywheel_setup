@@ -9620,8 +9620,9 @@ install_stack_phase() {
         return "$stack_phase_rc"
     fi
 
-    # herdr (tools.herdr). Its generated installer has no apt step, so this
-    # legacy (Arch-family) path runs the manifest-mapped installer as-is.
+    # herdr (tools.herdr). This hand-written path is the default on every
+    # distro (and the only one on Arch); it runs the manifest-mapped installer,
+    # which has no apt step, rather than a second copy of it.
     local herdr_installer=""
     local module_func_decl=""
     module_func_decl="$(declare -p ACFS_MODULE_FUNC 2>/dev/null || true)"
@@ -10258,8 +10259,12 @@ UNIT_EOF
         try_step "Installing CASR" acfs_run_verified_upstream_script_as_target "casr" "bash" || acfs_optional_module_install_failed "casr" "CASR"
     fi
 
-    # Doodlestein Self-Releaser (dsr) — modular bash project with verified installer
-    if binary_installed "dsr"; then
+    # Doodlestein Self-Releaser (dsr) — modular bash project with verified installer.
+    # It builds through Docker, which ACFS doesn't install, so the module is off
+    # by default and installs only when the resolved selection includes it.
+    if ! should_run_module "stack.doodlestein_self_releaser"; then
+        log_detail "Skipping DSR (stack.doodlestein_self_releaser is not selected)"
+    elif binary_installed "dsr"; then
         log_detail "DSR already installed"
     else
         log_detail "Installing DSR"

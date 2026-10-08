@@ -1974,6 +1974,61 @@ _setup_stack_agent_mail_gate_fixture() {
     [[ ! -f "$HOME/apr-ran" ]]
 }
 
+@test "update_stack updates dsr only when it is installed or --force is given" {
+    # dsr needs Docker, which ACFS doesn't install, so it is opt-in: update
+    # must not install it on a box that doesn't have it.
+    update_ensure_minisign() { return 0; }
+    QUIET=true
+    VERBOSE=false
+    DRY_RUN=false
+    UPDATE_STACK=true
+    ABORT_ON_FAILURE=false
+    ACFS_UPDATE_RETRY_MAX_ATTEMPTS=1
+    UPDATE_LOG_FILE="$HOME/update.log"
+    SUCCESS_COUNT=0
+    FAIL_COUNT=0
+    SKIP_COUNT=0
+
+    declare -gA KNOWN_INSTALLERS=([mcp_agent_mail]="https://example.test/install-am.sh")
+
+    update_require_security() { return 0; }
+    get_checksum() { printf '%s\n' "abc123"; }
+    verify_checksum() {
+        printf '%s\n' '#!/usr/bin/env bash'
+        printf '%s\n' 'exit 0'
+    }
+    update_target_user() { id -un; }
+    update_target_home() { printf '%s\n' "$HOME"; }
+    update_run_logged_passthrough() { return 0; }
+    update_source_stack_lib() { return 0; }
+    capture_version_before() { :; }
+    capture_version_after() { return 1; }
+    update_binary_exists() { [[ "${1:-}" == "dsr" && "$DSR_INSTALLED" == "true" ]]; }
+    update_run_verified_installer() { printf '%s\n' "${1:-}" >> "$HOME/installer-calls"; }
+    update_run_verified_installer_or_existing_on_transient() { return 0; }
+    update_run_verified_installer_with_env() { return 0; }
+    update_run_slb_verified_install() { return 0; }
+    update_run_fsfs_installer() { return 0; }
+
+    DSR_INSTALLED=false FORCE_MODE=false
+    : > "$HOME/installer-calls"
+    run update_stack
+    run grep -qx dsr "$HOME/installer-calls"
+    assert_failure
+
+    DSR_INSTALLED=true FORCE_MODE=false
+    : > "$HOME/installer-calls"
+    run update_stack
+    run grep -qx dsr "$HOME/installer-calls"
+    assert_success
+
+    DSR_INSTALLED=false FORCE_MODE=true
+    : > "$HOME/installer-calls"
+    run update_stack
+    run grep -qx dsr "$HOME/installer-calls"
+    assert_success
+}
+
 @test "self-update preserves dirty tracked files even when they match upstream history" {
     local temp_root
     local seed_repo

@@ -848,7 +848,7 @@ printf "%s\n" "$doctor_json" | jq -e ".summary.fail == 0 and .summary.warn == 0"
     exit 1
 }
 '
-    run_target_step "post.stack_bins" 'for cmd in am ntm dcg ru cass cm caam slb ubs bv br; do command -v "$cmd" >/dev/null; done'
+    run_target_step "post.stack_bins" 'for cmd in am herdr dcg ru cass cm caam slb ubs bv br; do command -v "$cmd" >/dev/null; done'
     run_target_step "post.dcg_guard" 'dcg test "git reset --hard" 2>&1 | grep -Eqi "deny|block"'
     assert_agent_mail_systemd
     run_target_step "post.nightly_timer" '
