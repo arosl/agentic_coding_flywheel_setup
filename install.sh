@@ -3832,6 +3832,7 @@ acfs_load_internal_checksums_data() {
         VERSION
         acfs.manifest.yaml
         acfs/AGENTS.md
+        acfs/onboard/docs/ntm/command_palette.md
         acfs/zsh/acfs.zshrc
         acfs/zsh/p10k.zsh
         scripts/completions/_acfs
@@ -9646,6 +9647,28 @@ install_stack_phase() {
             acfs_stack_phase_selection_verdict "$stack_failures_before"
         fi
         return "$stack_phase_rc"
+    fi
+
+    # Install the command palette (bd-2od5.2.2)
+    # Provides useful prompts to send with herdr agent prompt
+    local palette_dir="$ACFS_HOME/onboard/docs/ntm"
+    local palette_dst="$palette_dir/command_palette.md"
+    if [[ ! -f "$palette_dst" ]]; then
+        log_detail "Installing command palette"
+        # Ensure the target dir exists (install_asset doesn't create parent dirs)
+        run_as_target mkdir -p "$palette_dir" 2>/dev/null || true
+        # Use install_asset for consistency with other assets (works with curl|bash bootstrap)
+        if install_asset "acfs/onboard/docs/ntm/command_palette.md" "$palette_dst"; then
+            # Fix ownership for target user
+            if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
+                chown "${TARGET_USER}:${TARGET_USER}" "$palette_dst" 2>/dev/null || true
+            fi
+            log_success "Command palette installed"
+        else
+            log_warn "Failed to install command palette (asset not found)"
+        fi
+    else
+        log_detail "Command palette already exists, skipping"
     fi
 
     # MCP Agent Mail
