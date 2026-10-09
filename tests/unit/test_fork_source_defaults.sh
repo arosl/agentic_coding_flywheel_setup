@@ -7,7 +7,11 @@
 # The installer and acfs update choose their source from
 # ACFS_REPO_OWNER, whose default is the fork's owner. An upstream
 # merge can bring back an upstream default or URL without any
-# textual conflict, so this test checks the whole tree, not a diff.
+# textual conflict, so this test checks files, not a diff: the
+# installer and the scripts it runs, every file the installer
+# fetches through $ACFS_RAW (found by reading the installer, so a
+# newly fetched file is checked too), and the install instructions.
+# A listed path that no longer exists fails the test.
 #
 # Each allowed line is listed below by file and a fixed string,
 # never by line number, with the reason it may stay. An entry that
@@ -35,7 +39,19 @@ RUNTIME_FILES=(
     scripts/lib/*.sh
     scripts/generated/*.sh
     scripts/templates/*
+    scripts/completions/*
+    acfs/zsh/*
+    packages/onboard/onboard.sh
 )
+
+# Every file the installer and the scripts it runs fetch through
+# $ACFS_RAW and place on the user's machine.
+INSTALLER_SOURCES=(install.sh acfs.manifest.yaml scripts/lib/*.sh scripts/generated/*.sh)
+mapfile -t RAW_FETCHED < <(
+    grep -hoE 'ACFS_RAW\}?/[A-Za-z0-9_./-]+' "${INSTALLER_SOURCES[@]}" \
+        | sed -E 's#^ACFS_RAW\}?/##' | sort -u
+)
+RUNTIME_FILES+=("${RAW_FETCHED[@]}")
 
 # Install instructions: only a fetch from upstream is flagged, so
 # attribution links to upstream stay allowed.
@@ -52,6 +68,7 @@ ALLOWED=(
     'scripts/lib/security.sh|https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues|an issue link; it fetches nothing'
     'scripts/lib/update.sh|# See: https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues/125|a comment citing the upstream issue behind the code'
     'scripts/lib/gum_ui.sh|github.com/Dicklesworthstone/agentic_coding_flywheel_setup║|attribution in the banner'
+    'acfs/AGENTS.md|[Agentic Coding Flywheel Setup (ACFS)](https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)|attribution in the workspace AGENTS.md template; it fetches nothing'
     'scripts/templates/acfs-nightly-update.service|Documentation=https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup|attribution in a unit file; systemd fetches nothing from it'
     'scripts/templates/acfs-nightly-update.timer|Documentation=https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup|attribution in a unit file; systemd fetches nothing from it'
     'scripts/templates/acfs-upgrade-resume.service|Documentation=https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup|attribution in a unit file; systemd fetches nothing from it'
@@ -90,11 +107,29 @@ check_matches() {
             printf 'FAIL: points at upstream: %s\n' "${match:0:200}"
             failures=$((failures + 1))
         fi
-    done < <(grep -HnE -- "$pattern" "$@" 2>/dev/null)
+    done < <(grep -HnE -- "$pattern" "$@")
 }
 
-check_matches "$RUNTIME_PATTERN" "${RUNTIME_FILES[@]}"
-check_matches "$DOCS_PATTERN" "${DOCS_FILES[@]}"
+# Each listed path must exist: a renamed file, or a glob that matches
+# nothing, would otherwise drop out of the check without a sound.
+runtime_present=()
+docs_present=()
+mapfile -t runtime_listed < <(printf '%s\n' "${RUNTIME_FILES[@]}" | sort -u)
+for path in "${runtime_listed[@]}" "${DOCS_FILES[@]}"; do
+    if [[ ! -f "$path" ]]; then
+        printf 'FAIL: listed path does not exist: %s\n' "$path"
+        failures=$((failures + 1))
+    fi
+done
+for path in "${runtime_listed[@]}"; do
+    [[ -f "$path" ]] && runtime_present+=("$path")
+done
+for path in "${DOCS_FILES[@]}"; do
+    [[ -f "$path" ]] && docs_present+=("$path")
+done
+
+check_matches "$RUNTIME_PATTERN" "${runtime_present[@]}"
+check_matches "$DOCS_PATTERN" "${docs_present[@]}"
 
 for i in "${!ALLOWED[@]}"; do
     if [[ -z "${entry_used[$i]:-}" ]]; then
