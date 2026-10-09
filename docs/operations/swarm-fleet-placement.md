@@ -7,7 +7,7 @@ acfs swarm inventory plan --agents 50 --workload standard --json \
 
 The planner distributes a **target total**, not an additional number of agents
 to launch. It reads the existing v1 inventory; it never connects to hosts,
-launches NTM, claims Beads, sends Agent Mail, or changes RCH/RU configuration.
+launches agents, claims Beads, sends Agent Mail, or changes RCH/RU configuration.
 A successful placement is not proof that a host is currently ready.
 
 ## Placement policy
@@ -56,7 +56,7 @@ acfs swarm plan --agents 20 --workload standard --json
 
 Run that command **on the allocated host**, inspect existing sessions, and
 review its live admission result before deciding whether or how many agents
-to launch with NTM. Do not run every host's command on the controller and do
+to launch in herdr. Do not run every host's command on the controller and do
 not interpret target totals as additional agents. Recorded inventory is not
 live capacity, a reservation, or an authorization token.
 
@@ -92,7 +92,7 @@ shellcheck scripts/lib/swarm_inventory.sh
 The Python tests execute the actual Bash/jq entrypoint with filesystem fixtures.
 They cover eligibility, contradictory limits, duplicate keys, bad timestamps,
 large import/export, workload matching, stable ordering, bounded allocations,
-shortfalls, and inert invalid options. They do not perform live fleet or NTM
+shortfalls, and inert invalid options. They do not perform live fleet or herdr
 acceptance testing.
 
 ## Populate and refresh records from the local machine
@@ -110,7 +110,7 @@ readers and selected workload. It projects CPU, RAM, disk headroom, recommended
 and safe counts into the existing inventory schema and records a UTC observation
 time. The default filesystem is the current user's home; `--disk-path` selects
 an existing project filesystem without including that local path in the output.
-No commands run over SSH; no model, NTM session, RU operation, Beads write, Mail
+No commands run over SSH; no model, herdr workspace, RU operation, Beads write, Mail
 request, or RCH service request is made. Executable availability is not service
 health, authentication, or a live queue admission check.
 

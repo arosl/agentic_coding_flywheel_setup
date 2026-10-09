@@ -5,7 +5,7 @@
 # Reads local swarm simulation/rehearsal artifacts plus optional RCH timing
 # evidence, then explains whether the static capacity assumptions look
 # conservative, aligned, or too aggressive for this host. This command never
-# mutates capacity defaults, RCH, NTM, Beads, or Agent Mail.
+# mutates capacity defaults, RCH, herdr, Beads, or Agent Mail.
 # ============================================================
 
 set -euo pipefail
@@ -29,7 +29,7 @@ Options:
 
 The command is advisory-only. It reads local artifact files and prints a
 calibration report, but it never phones home, changes capacity defaults,
-launches agents, mutates RCH/NTM state, sends Agent Mail, or updates Beads.
+launches agents, mutates RCH/herdr state, sends Agent Mail, or updates Beads.
 EOF
 }
 

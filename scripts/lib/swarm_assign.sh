@@ -4,7 +4,7 @@
 #
 # Reads ready Beads plus optional bv triage JSON, then emits advisory-only
 # per-agent assignment suggestions. This script never marks Beads, sends
-# Agent Mail, claims reservations, launches agents, or mutates RCH/NTM state.
+# Agent Mail, claims reservations, launches agents, or mutates RCH/herdr state.
 # ============================================================
 
 set -euo pipefail
@@ -655,7 +655,7 @@ swarm_assign_emit_markdown() {
     local jq_bin="$2"
 
     printf '# ACFS Swarm Assignment Plan\n\n'
-    printf 'Advisory only: this command did not mark Beads, send Agent Mail, claim reservations, launch agents, or change RCH/NTM state.\n\n'
+    printf 'Advisory only: this command did not mark Beads, send Agent Mail, claim reservations, launch agents, or change RCH/herdr state.\n\n'
 
     "$jq_bin" -r '
         "## Summary\n",

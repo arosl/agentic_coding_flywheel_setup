@@ -342,7 +342,7 @@ through a real shell as an unprivileged process. They round-trip bundles into
 separate repositories, including merges, binary files and SHA-256 history, and
 exercise journal binding, changed snapshots, corrupt transfers, file integrity,
 private publication and bounded capture. Launch admission is a protocol fixture;
-these tests do not claim live SSH/VPS/NTM/provider acceptance.
+these tests do not claim live SSH/VPS/herdr/provider acceptance.
 
 Import tests also construct real collections through the production collector
 and fixed remote program, then exercise actual destination Git. They cover dirty

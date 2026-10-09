@@ -232,6 +232,6 @@ The suite exercises actual controller state, filesystem locking, literal input
 transport, bounded subprocesses and a real unprivileged remote helper against a
 native-protocol fixture. It checks cross-host task/scope conflicts, original
 identity binding, idle slots, all-host preflight, immutable outputs, changed
-artifacts and failure stops. It is not a real SSH, VPS, native NTM or live model
+artifacts and failure stops. It is not a real SSH, VPS, native herdr or live model
 acceptance run. Original fleet helper bytes used locally and transmitted to the
 peer are the same trusted checkout snapshot.

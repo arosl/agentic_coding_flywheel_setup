@@ -24,7 +24,7 @@ This is [arosl/agentic_coding_flywheel_setup](https://github.com/arosl/agentic_c
 - **No Docker.** Why: the fork avoids Docker wherever it can. ACFS installs no Docker, docker-compose or lazydocker. dsr, which builds through Docker, is off by default.
 - **Incus instead of Docker.** Why: where the fork needs a machine or a container, it uses Incus. `scripts/providers/incus.sh` creates an Incus VM, or with `--container` an unprivileged system container, installs ACFS in it and prints how to attach to it as a herdr remote machine, with no VPS to rent ([guide](scripts/providers/incus.md)). Porting the installer test harness in `tests/vm/` to Incus is still planned.
 
-One thing still leans on what the fork removed: `acfs swarm` and `acfs capacity` still drive ntm, so they report it missing. ACFS installs no tmux; `acfs services` runs CM and the CASS indexer as systemd user units. The rest of this README is upstream's and still mentions ntm, tmux and Docker in places; where it disagrees with this section, this section is right.
+Swarm launch, packet delivery and capacity's launch recommendations still target ntm; their herdr ports are in progress. Capacity measurements and inventory probes already report herdr availability. ACFS installs no tmux; `acfs services` runs CM and the CASS indexer as systemd user units. The rest of this README is upstream's and still mentions ntm, tmux and Docker in places; where it disagrees with this section, this section is right.
 
 <div align="center" style="margin: 1.2em 0;">
   <table>
@@ -3690,7 +3690,7 @@ acfs swarm plan --agents 25 --profile balanced --workload standard
 ```
 
 The planner reads the local swarm status and capacity model, incorporates RCH
-queue pressure, active tmux/NTM sessions, Beads in-progress counts, and host
+queue pressure, active herdr agents, Beads in-progress counts, and host
 resource headroom, then prints a pass/warn/fail recommendation. It is advisory
 only: it does not launch agents, mutate Beads, send Agent Mail, force-release
 reservations, or run build commands. JSON output is available with `--json`,
@@ -3709,7 +3709,7 @@ acfs swarm inventory import --input inventory.redacted.json
 The inventory commands are local and advisory. They read or write JSON files,
 preserve unknown fields for future versions, reject sensitive field names such
 as hostnames, IPs, keys, tokens, passwords, and home paths, and never SSH,
-launch NTM, run RU, send Agent Mail, mutate Beads, or change RCH config.
+launch agents, run RU, send Agent Mail, mutate Beads, or change RCH config.
 
 For each agent you plan to launch, generate a bounded startup packet from the
 selected Bead plus current repo instructions and bounded CM/CASS context:
@@ -3719,7 +3719,7 @@ acfs swarm packet --bead bd-1234 --agent-name BlueLake --role implementation
 acfs swarm packet --json --bead bd-1234 --agent-name BlueLake
 ```
 
-The packet is designed for NTM prompt injection. It prioritizes live AGENTS.md,
+The packet is a startup prompt for an agent in a herdr pane. It prioritizes live AGENTS.md,
 README.md, Beads, and Agent Mail state over memory-derived hints, includes drift
 checks, and preserves exact `bv --robot-*`, `br`, Agent Mail MCP, `rch exec --`,
 and UBS workflow guidance. It is read-only: it does not claim work, reserve
@@ -3731,7 +3731,7 @@ Before launching a large real swarm, ACFS can run an offline simulation of the c
 acfs swarm simulate
 ```
 
-The default simulation runs 10, 25, and 50 logical-agent scenarios without launching tmux sessions, model CLIs, Beads mutations, Agent Mail writes, or local CPU-heavy builds. It writes artifacts for each scenario: generated launch plan, telemetry JSON, capacity/resource sample, timing, and pass/fail summary. Treat this as a local readiness harness, not a substitute for provider factory tests on real VPS hosts.
+The default simulation runs 10, 25, and 50 logical-agent scenarios without launching herdr workspaces, model CLIs, Beads mutations, Agent Mail writes, or local CPU-heavy builds. It writes artifacts for each scenario: generated launch plan, telemetry JSON, capacity/resource sample, timing, and pass/fail summary. Treat this as a local readiness harness, not a substitute for provider factory tests on real VPS hosts.
 
 After one or more simulation runs, calibrate the static capacity assumptions
 against those local artifacts:
@@ -3743,7 +3743,7 @@ acfs swarm calibration --json --artifact-dir ./swarm-artifacts --rch-file ./rch-
 
 The calibration report is read-only. It classifies the local evidence as
 conservative, aligned, or too aggressive, handles missing or partial artifacts
-with warnings, and never changes capacity defaults, RCH state, NTM sessions,
+with warnings, and never changes capacity defaults, RCH state, herdr workspaces,
 Beads, or Agent Mail.
 
 ---

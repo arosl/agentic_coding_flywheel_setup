@@ -26,8 +26,7 @@ worker configuration by itself.
   offload and worker queue management.
 - It is not an RU inventory. RU remains responsible for repository sync and
   sweep orchestration.
-- It is not an NTM launcher. NTM remains responsible for creating tmux sessions
-  and panes.
+- It is not an agent launcher. herdr manages agent workspaces and panes.
 - It is not a secrets store. SSH keys, tokens, provider credentials, and private
   hostnames must not be stored in the inventory.
 - It does not replace `acfs capacity`; local capacity output remains the source
@@ -66,7 +65,7 @@ a known sensitive field name.
       "display_name": "Local ACFS host",
       "role": "swarm-controller",
       "status": "active",
-      "manual_tags": ["primary", "ntm"],
+      "manual_tags": ["primary", "herdr"],
       "last_probe_at": "2026-05-08T00:00:00Z",
       "probe_source": "manual",
       "resources": {
@@ -200,16 +199,30 @@ RU remains the multi-repo sync tool. Inventory can mark whether a host is
 appropriate for `ru sync` or `ru commit-sweep`, but it must not run RU commands
 or infer repo paths from RU state.
 
-### NTM
+### herdr
 
-NTM remains the launcher. Inventory can suggest labels and per-host agent counts
+herdr manages the agent workspace. Inventory can suggest labels and per-host agent counts
 that feed an operator command such as:
 
 ```bash
-ntm spawn acfs-main --label swarm-25 --cc=10 --cod=10 --agy=5 --assign --stagger-mode=smart
+acfs agents spawn --workspace WORKSPACE_ID --claude 10 --codex 10 --agy 5 --cwd "$PWD/acfs-main" --dry-run
 ```
 
-The inventory command must not launch NTM sessions.
+The preview makes no herdr calls; `WORKSPACE_ID` can be a placeholder. After
+reviewing it, create the workspace and capture its ID:
+
+```bash
+swarm_workspace="$(herdr workspace create --cwd "$PWD/acfs-main" --label swarm-25 --no-focus | jq -er '.result.workspace.workspace_id')"
+acfs agents spawn --workspace "$swarm_workspace" --claude 10 --codex 10 --agy 5 --cwd "$PWD/acfs-main"
+acfs agents list --workspace "$swarm_workspace"
+```
+
+In a new repository, a Claude Code or Codex folder-trust dialog stops spawn at
+the first agent. Open the repository once in each CLI and choose whether to
+trust it, or add `--trust-folder` to spawn if you explicitly trust it.
+By default, spawn sends the palette's kickoff prompt so each agent picks ready
+Beads; add `--no-prompt` to start agents without assigning work.
+The inventory command must not create workspaces or start agents.
 
 ### Agent Mail And Beads
 
@@ -406,6 +419,6 @@ Create implementation work in separate slices:
 
 Implement the inventory as an advisory local JSON contract first. The first
 code slice should validate and report; import/export and support-bundle capture
-can follow once the schema is pinned. ACFS should keep RCH, RU, NTM, Beads, and
+can follow once the schema is pinned. ACFS should keep RCH, RU, herdr, Beads, and
 Agent Mail as separate tools and use the inventory only to help an operator make
 better launch decisions.

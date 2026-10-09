@@ -104,4 +104,4 @@ remote fixture has published its completion, then verifies inspection and
 continuation without regeneration. The unchanged fixed peer also runs as an
 unprivileged process against real bundle files with no installed native launcher
 or live agents. Transport replies for new native generation remain protocol
-fixtures; these tests do not establish real SSH/VPS/NTM/provider acceptance.
+fixtures; these tests do not establish real SSH/VPS/herdr/provider acceptance.

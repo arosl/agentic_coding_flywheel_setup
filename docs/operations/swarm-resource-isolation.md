@@ -36,7 +36,7 @@ These are recommendations for a future opt-in profile, not current installer beh
 
 | Class | Commands | Proposed controls | Rationale |
 | --- | --- | --- | --- |
-| `acfs-agent.slice` | `claude`, `codex`, `gemini`, `ntm`-spawned interactive agents | `CPUWeight=100`, `IOWeight=100`, `TasksMax=512`, no default `MemoryMax` | Keep agent sessions first-class and avoid killing expensive context-heavy work. |
+| `acfs-agent.slice` | `claude`, `codex`, `gemini`, interactive agents in herdr panes | `CPUWeight=100`, `IOWeight=100`, `TasksMax=512`, no default `MemoryMax` | Keep agent sessions first-class and avoid killing expensive context-heavy work. |
 | `acfs-background.slice` | CASS indexing, maintenance sweeps, update jobs, local analysis that is not user-interactive | `CPUWeight=40`, `IOWeight=50`, optional `MemoryHigh=` from capacity model | Let interactive shells and support services stay responsive under load. |
 | `acfs-local-build.slice` | Local fallback build/test commands when RCH is unavailable | `CPUWeight=60`, `IOWeight=50`, no default `MemoryMax` | Local builds are expensive but should not freeze the host; RCH remains the preferred path. |
 | `acfs-support.slice` | Agent Mail, local dashboards, support-bundle helpers, lightweight telemetry collectors | `CPUWeight=80`, `IOWeight=100`, `TasksMax=256`, optional `MemoryHigh=1G` | Coordination daemons should remain responsive but are not expected to consume large CPU. |
@@ -123,8 +123,9 @@ without sourcing the opt-in snippet also leaves direct agent commands unchanged.
 1. Add optional drop-ins for ACFS-owned user services only, starting with
    `agent-mail.service.d/resource-profile.conf`, after wrapper tests have
    accumulated enough evidence.
-2. Add NTM integration only after direct shell-wrapper tests pass; NTM should
-   receive explicit class hints rather than infer from command strings.
+2. Add launcher integration only after direct shell-wrapper tests pass;
+   `acfs agents spawn` and `acfs swarm launch` should pass explicit class hints
+   rather than infer from command strings.
 3. Consider conservative `MemoryHigh=` recommendations only after capacity
    calibration has measured real high-context agent sessions.
 
