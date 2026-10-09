@@ -1,14 +1,15 @@
-# NTM Command Palette (`command_palette.md`)
+# Command Palette (`command_palette.md`)
 #
-# This file defines the prompts shown in `ntm palette`.
+# This file holds ready-made prompts to send to coding agents running in herdr.
+# It started as ntm's palette; the prompts that called ntm now use herdr,
+# `acfs agents` and Agent Mail instead.
 #
 # Usage:
-#   - `ntm palette [session]` (or press the tmux popup key after `ntm bind`, default: F6)
-#   - In the palette: type to filter, `1-9` quick-select, `Enter` select, `?` for help
-#   - Target selection: press `1-4` to choose recipients (All / Claude / Codex / Gemini)
-#
-# Preview pane:
-#   - Shows targets + prompt metadata (lines/chars) and lightweight warning badges.
+#   - One agent: `herdr agent prompt <herdr name> "<prompt text>"`. The herdr name
+#     is the agent's Agent Mail name in lowercase (`herdr agent list` shows them).
+#   - Several agents: `acfs agents send (--all | --kind K | --name N) "<prompt text>"`.
+#   - New agents: `acfs agents spawn` sends `default_new_agent` as their first prompt.
+#   - Or open this file, copy a prompt and paste it into an agent's pane.
 #
 # Format:
 #   ## Category Name
@@ -19,8 +20,6 @@
 #   - Prefer short, explicit, reversible steps; avoid “do everything”.
 #   - If something is destructive (rm/git reset), make it opt-in and ask for confirmation.
 #   - Include one concrete “next command” when possible.
-#
-# NOTE: Recents/favorites/pinning are planned but may not be available in all builds yet.
 
 ## Analysis & Review
 
@@ -62,24 +61,26 @@ I also want you to do a spectacular job building absolutely world-class UI/UX co
 ## Ensemble
 
 ### ensemble_list | Ensemble Presets (Core)
-Run `ntm ensemble list` and summarize the core presets available. If the output includes advanced/experimental presets, call them out separately and keep the main list core-only.
+An ensemble is a few agents that each answer the same question from a different angle, which you then synthesize. herdr has no preset catalog, so propose one: run `acfs agents list` to see who is already running, then suggest a core lineup of two or three agents for the task at hand (agent kind and the angle each one takes). List larger or more expensive lineups separately and keep the main list core-only.
 
 ### ensemble_run | Ensemble Run (Pick Preset + Prompt)
-Pick the most appropriate ensemble preset for the task at hand, then run a new ensemble session using:
-`ntm ensemble spawn <session> --preset <preset> --question "<question>"`
-If a session name or question is missing, ask for them first.
+Pick the most appropriate lineup for the task at hand (see Ensemble Presets), then start it in this herdr workspace:
+`acfs agents spawn --claude <N> --codex <N> --no-prompt`
+Then send each new agent the question with its own angle:
+`acfs agents send --name <herdr name> "<question> Approach it as: <angle>"`
+If the question is missing, ask for it first.
 
 ### ensemble_status | Ensemble Status
-Run `ntm ensemble status <session>` for the current ensemble session and summarize status counts, assignments, and synthesis readiness.
+Run `acfs agents list` and summarize the ensemble agents: each one's status (working, blocked, idle or done) and the angle it was given. Say whether all of them have finished and the ensemble is ready to synthesize. To wait for one, run `herdr agent wait <herdr name>` (without `--until`, it returns on idle, done or blocked).
 
 ### ensemble_synthesize | Ensemble Synthesize
-Run `ntm ensemble synthesize <session> --format=json` and summarize the synthesized output at a high level.
+For each ensemble agent, collect its answer with `herdr agent read <herdr name> --source recent --lines 200`. Then synthesize: where the answers agree, where they disagree and why, and a recommendation. Summarize the result at a high level.
 
 ### ensemble_modes_core | Ensemble Modes (Core)
-Run `ntm modes list --tier core` and summarize the core reasoning modes most relevant to the current task.
+herdr has no list of reasoning modes. Suggest the three or four angles most useful for the current task (for example first principles, the user's view, an adversarial reviewer, the simplest thing that could work), one line each, to hand out to ensemble agents.
 
 ### ensemble_modes_advanced | Ensemble Modes (Advanced)
-Warning: Advanced modes increase token spend. If approved, run `ntm modes list --tier advanced` and summarize the advanced reasoning modes.
+Warning: advanced angles increase token spend (more agents, longer runs). If approved, suggest further angles for a larger ensemble (for example security, performance, failure modes and migration risk), and say which agent kind suits each.
 
 ## Documentation
 
@@ -139,7 +140,7 @@ Before doing anything else, read ALL of AGENTS.md, then register with MCP Agent 
 
 ### check_project_inbox | Check Project Inbox
 Check the project inbox for any new messages from other agents or the human overseer.
-Run 'ntm mail inbox' to see the full list of messages.
+Use Agent Mail's fetch_inbox tool, or run `am mail inbox --project <project key> --agent <your Agent Mail name>`, to see the full list of messages.
 
 ### start_out_with_agent_mail | Start Out With Agent Mail
 Be sure to check your agent mail and to promptly respond if needed to any messages; then proceed meticulously with your next assigned beads, working on the tasks systematically and meticulously and tracking your progress via beads and agent mail messages. Don't get stuck in "communication purgatory" where nothing is getting done; be proactive about starting tasks that need to be done, but inform your fellow agents via messages when you do so and mark beads appropriately. When you're really not sure what to do, pick the next bead that you can usefully work on and get started. Make sure to acknowledge all communication requests from other agents and that you are aware of all active agents and their names. Use /effort max.
