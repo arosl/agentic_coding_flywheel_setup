@@ -48,7 +48,7 @@ The sections after this block are this project's own rules. Where they're strict
 | Onboarding TUI | `packages/onboard/` |
 | Module manifest | `acfs.manifest.yaml` |
 | Manifest parser and generators | `packages/manifest/` |
-| Files installed to `~/.acfs/` on the VPS. `acfs/AGENTS.md` among them is the template ACFS installs for projects on the VPS: product, not this repo's instructions | `acfs/` |
+| Files installed to `~/.acfs/` on the VPS. `acfs/AGENTS.md` among them is the template ACFS installs for projects on the VPS: product, not this repo's instructions. Start agents from the repo root, never inside `acfs/`: Codex loads every `AGENTS.md` from the root down to where it starts. Whoever sets Claude Code's "Project instructions" to `claude-md-and-agents-md` adds `"claudeMdExcludes": ["**/acfs/AGENTS.md"]` to their own `.claude/settings.local.json` | `acfs/` |
 | Tests: `tests/vm/` (installer in a container), `tests/e2e/`, `tests/unit/`, `tests/smoke/`, `scripts/tests/` (script-level checks), `apps/web/e2e/` (Playwright) | `tests/`, `scripts/tests/`, `apps/web/e2e/` |
 
 The architecture, the manifest system, the installer's phases and modes, and the `acfs` CLI are described in `README.md`.
