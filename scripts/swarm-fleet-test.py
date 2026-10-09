@@ -78,11 +78,11 @@ def executable(path):
         info = parent.lstat()
         sticky = info.st_uid == 0 and stat.S_ISDIR(info.st_mode) and info.st_mode & stat.S_ISVTX
         require(not stat.S_ISLNK(info.st_mode) and info.st_uid in (0, os.geteuid())
-                and (not info.st_mode & 0o022 or sticky), "unsafe_test_executable")
+                and (not fleet.writable_by_others(info) or sticky), "unsafe_test_executable")
     fd = os.open(resolved, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as stream:
         info = os.fstat(stream.fileno())
-        require(stat.S_ISREG(info.st_mode) and not info.st_mode & 0o022
+        require(stat.S_ISREG(info.st_mode) and not fleet.writable_by_others(info)
                 and info.st_uid in (0, os.geteuid()) and os.access(resolved, os.X_OK),
                 "unsafe_test_executable")
         require(0 < info.st_size <= MAX_TREE_BYTES, "test_executable_size_limit")
@@ -303,7 +303,7 @@ def git_snapshot_read(fd, name, limit):
         # Git may refresh index stat data with mode 0644. Its parent is private;
         # permit that normal refresh, never a different owner/link/shared write.
         require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.geteuid()
-                and not info.st_mode & 0o022 and info.st_size <= limit, "unsafe_git_snapshot_file")
+                and not fleet.writable_by_others(info) and info.st_size <= limit, "unsafe_git_snapshot_file")
         raw = stream.read(limit + 1)
         require(len(raw) <= limit, "git_snapshot_file_limit")
         return raw

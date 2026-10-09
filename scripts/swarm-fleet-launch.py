@@ -8,12 +8,15 @@ accepted as permission to spawn. Requires Linux, OpenSSH, and existing ACFS host
 import argparse
 from contextlib import contextmanager
 import fcntl
+import functools
+import grp
 import hashlib
 import ipaddress
 import json
 import math
 import os
 from pathlib import Path
+import pwd
 import re
 import selectors
 import shlex
@@ -47,6 +50,30 @@ class Interrupted(Exception):
 def require(condition, code):
     if not condition:
         raise Refused(code)
+
+
+@functools.lru_cache(maxsize=None)
+def private_group(gid):
+    """True when gid is this user's own private group, the Ubuntu default.
+
+    It must be the user's primary group, named after the user, with no listed
+    members and no other user whose primary group it is. Any failed lookup
+    counts as shared.
+    """
+    try:
+        me = pwd.getpwuid(os.geteuid())
+        group = grp.getgrgid(gid)
+        others = [entry for entry in pwd.getpwall() if entry.pw_gid == gid and entry.pw_uid != me.pw_uid]
+    except (KeyError, OSError):
+        return False
+    return me.pw_gid == gid and group.gr_name == me.pw_name and not group.gr_mem and not others
+
+
+def writable_by_others(info):
+    """World write, or group write for a group other than the user's private one."""
+    if info.st_mode & 0o002:
+        return True
+    return bool(info.st_mode & 0o020) and not private_group(info.st_gid)
 
 
 def encoded(value):
@@ -167,10 +194,11 @@ def directory_fd(path, private=False):
             fd = child
             info = os.fstat(fd)
             sticky_root = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
-            require(info.st_uid in (0, os.geteuid()) and (not info.st_mode & 0o022 or sticky_root),
+            require(info.st_uid in (0, os.geteuid()) and (not writable_by_others(info) or sticky_root),
                     "unsafe_directory")
         info = os.fstat(fd)
-        require(info.st_uid == os.geteuid() and not info.st_mode & (0o077 if private else 0o022),
+        require(info.st_uid == os.geteuid()
+                and not (info.st_mode & 0o077 if private else writable_by_others(info)),
                 "directory_ownership_or_permissions")
         yield fd
     finally:
@@ -187,7 +215,8 @@ def read_at(fd, name, private=True, optional=False):
     with os.fdopen(handle, "rb") as stream:
         info = os.fstat(stream.fileno())
         require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1
-                and info.st_uid == os.geteuid() and not info.st_mode & (0o077 if private else 0o022),
+                and info.st_uid == os.geteuid()
+                and not (info.st_mode & 0o077 if private else writable_by_others(info)),
                 "unsafe_input_file")
         raw = stream.read(LIMIT + 1)
         require(len(raw) <= LIMIT, "input_size_limit")

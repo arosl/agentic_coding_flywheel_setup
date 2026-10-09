@@ -10,11 +10,14 @@ import concurrent.futures
 import copy
 import datetime as dt
 import fcntl
+import functools
+import grp
 import hashlib
 import ipaddress
 import json
 import os
 import pathlib
+import pwd
 import re
 import selectors
 import signal
@@ -40,6 +43,25 @@ class Refused(Exception):
 
 def refuse(code):
     raise Refused(code)
+
+
+# The same rule as swarm-fleet-launch.py's: Ubuntu's default umask 002 makes an
+# operator's files group-writable, which is safe only for their private group.
+@functools.lru_cache(maxsize=None)
+def private_group(gid):
+    try:
+        me = pwd.getpwuid(os.geteuid())
+        group = grp.getgrgid(gid)
+        others = [entry for entry in pwd.getpwall() if entry.pw_gid == gid and entry.pw_uid != me.pw_uid]
+    except (KeyError, OSError):
+        return False
+    return me.pw_gid == gid and group.gr_name == me.pw_name and not group.gr_mem and not others
+
+
+def writable_by_others(info):
+    if info.st_mode & 0o002:
+        return True
+    return bool(info.st_mode & 0o020) and not private_group(info.st_gid)
 
 
 def encoded(value):
@@ -90,7 +112,7 @@ def read_snapshot(path, private=False):
     try:
         before = os.fstat(fd)
         if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or
-                before.st_size > LIMIT or before.st_mode & 0o022 or
+                before.st_size > LIMIT or writable_by_others(before) or
                 (private and (before.st_uid != os.getuid() or before.st_mode & 0o077))):
             refuse("unsafe_input_file")
         data = bytearray()
@@ -341,7 +363,7 @@ def output_parent(path):
             os.close(fd)
             fd = child
         info = os.fstat(fd)
-        if info.st_uid != os.getuid() or info.st_mode & 0o022:
+        if info.st_uid != os.getuid() or writable_by_others(info):
             refuse("output_directory_unsafe")
         try:
             os.stat(target.name, dir_fd=fd, follow_symlinks=False)

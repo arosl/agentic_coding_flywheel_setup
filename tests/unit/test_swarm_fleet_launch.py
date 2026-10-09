@@ -12,7 +12,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "swarm-fleet-launch.py"
@@ -431,6 +433,68 @@ class FilesAndProcessTests(unittest.TestCase):
         self.assertIn("live remote admission", result.stdout)
         result = subprocess.run([sys.executable, "-B", str(SCRIPT), "--ssh", "/tmp/evil"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
+
+
+class PrivateGroupTests(unittest.TestCase):
+    """Group write is accepted only for the user's own private group."""
+    ME = SimpleNamespace(pw_name="alice", pw_uid=1000, pw_gid=1000)
+
+    def setUp(self):
+        fleet.private_group.cache_clear()
+        self.addCleanup(fleet.private_group.cache_clear)
+        self.users = [self.ME, SimpleNamespace(pw_name="bob", pw_uid=1001, pw_gid=1001)]
+        self.groups = {1000: SimpleNamespace(gr_name="alice", gr_mem=[]),
+                       1001: SimpleNamespace(gr_name="bob", gr_mem=[]),
+                       27: SimpleNamespace(gr_name="sudo", gr_mem=["alice"])}
+        for target, replacement in (
+                ("os.geteuid", lambda: self.ME.pw_uid),
+                ("pwd.getpwuid", lambda uid: next(u for u in self.users if u.pw_uid == uid)),
+                ("pwd.getpwall", lambda: list(self.users)),
+                ("grp.getgrgid", self.group)):
+            patcher = patch.object(*self.split(target), side_effect=replacement)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def split(target):
+        module, name = target.split(".")
+        return {"os": fleet.os, "pwd": fleet.pwd, "grp": fleet.grp}[module], name
+
+    def group(self, gid):
+        if gid not in self.groups:
+            raise KeyError(gid)
+        return self.groups[gid]
+
+    @staticmethod
+    def info(mode, gid):
+        return SimpleNamespace(st_mode=stat.S_IFDIR | mode, st_gid=gid)
+
+    def test_private_group_write_is_accepted(self):
+        self.assertFalse(fleet.writable_by_others(self.info(0o775, 1000)))
+        self.assertFalse(fleet.writable_by_others(self.info(0o755, 27)))
+
+    def test_world_write_is_refused_even_in_the_private_group(self):
+        self.assertTrue(fleet.writable_by_others(self.info(0o777, 1000)))
+        self.assertTrue(fleet.writable_by_others(self.info(0o757, 1000)))
+
+    def test_shared_or_foreign_group_write_is_refused(self):
+        self.assertTrue(fleet.writable_by_others(self.info(0o775, 27)))
+        self.assertTrue(fleet.writable_by_others(self.info(0o775, 1001)))
+
+    def test_listed_member_makes_the_group_shared(self):
+        self.groups[1000] = SimpleNamespace(gr_name="alice", gr_mem=["bob"])
+        self.assertTrue(fleet.writable_by_others(self.info(0o775, 1000)))
+
+    def test_another_user_with_the_same_primary_group_makes_it_shared(self):
+        self.users.append(SimpleNamespace(pw_name="carol", pw_uid=1002, pw_gid=1000))
+        self.assertTrue(fleet.writable_by_others(self.info(0o775, 1000)))
+
+    def test_group_not_named_after_the_user_is_refused(self):
+        self.groups[1000] = SimpleNamespace(gr_name="staff", gr_mem=[])
+        self.assertTrue(fleet.writable_by_others(self.info(0o775, 1000)))
+
+    def test_failed_lookup_is_refused(self):
+        self.assertTrue(fleet.writable_by_others(self.info(0o775, 4242)))
 
 
 if __name__ == "__main__":

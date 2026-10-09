@@ -34,11 +34,22 @@ WORK_STATES = ("open", "in_progress", "blocked", "deferred", "closed", "tombston
 # provider, installer, or prompt is executed. Only requested IDs leave the host.
 # Retain the whole directory chain to detect replacement as well as in-place
 # changes while reading the bounded export. mtime is evidence age, not DB sync.
-READ_WORK = r'''import hashlib, json, os, re, stat, sys, time
+READ_WORK = r'''import grp, hashlib, json, os, pwd, re, stat, sys, time
 SCHEMA = "acfs.swarm-fleet-work-snapshot.v1"
 def check(ok):
     if not ok:
         raise ValueError()
+def private_group(gid):
+    # The user's own primary group, named after them, with no other member.
+    try:
+        me = pwd.getpwuid(os.geteuid()); group = grp.getgrgid(gid)
+        others = [e for e in pwd.getpwall() if e.pw_gid == gid and e.pw_uid != me.pw_uid]
+    except (KeyError, OSError):
+        return False
+    return me.pw_gid == gid and group.gr_name == me.pw_name and not group.gr_mem and not others
+def writable_by_others(info):
+    if info.st_mode & 0o002: return True
+    return bool(info.st_mode & 0o020) and not private_group(info.st_gid)
 def unique(pairs):
     result = {}
     for key, value in pairs:
@@ -87,15 +98,15 @@ try:
         fds.append(child)
         info = os.fstat(child)
         sticky = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
-        check(info.st_uid in (0, uid) and (not info.st_mode & 0o022 or sticky))
+        check(info.st_uid in (0, uid) and (not writable_by_others(info) or sticky))
         chain.append((fd, part, info))
         fd = child
-    check(os.fstat(fd).st_uid == uid and not os.fstat(fd).st_mode & 0o022)
+    check(os.fstat(fd).st_uid == uid and not writable_by_others(os.fstat(fd)))
     handle = os.open('issues.jsonl', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
     with os.fdopen(handle, 'rb') as stream:
         before = os.fstat(stream.fileno())
         check(stat.S_ISREG(before.st_mode) and before.st_uid == uid
-              and before.st_nlink == 1 and not before.st_mode & 0o022
+              and before.st_nlink == 1 and not writable_by_others(before)
               and before.st_size <= 16777216)
         wanted, found, seen = set(ids), {}, set()
         total, lines, checksum = 0, 0, hashlib.sha256()

@@ -504,8 +504,13 @@ class RemoteExportTests(unittest.TestCase):
         self.assertLess(time.monotonic() - start, 3)
 
     def test_group_writable_and_hardlinked_exports_are_refused(self):
-        self.path.chmod(0o660)
+        self.path.chmod(0o602)
         self.assertEqual(self.run_reader().returncode, 2)
+        # Group write is refused unless the group is the user's own private one
+        # (Ubuntu's umask 002 default); whether it is depends on this host.
+        self.path.chmod(0o660)
+        private = fleet.private_group(self.path.stat().st_gid)
+        self.assertEqual(self.run_reader().returncode, 0 if private else 2)
         self.path.chmod(0o600)
         os.link(self.path, self.beads / "linked.jsonl")
         self.assertEqual(self.run_reader().returncode, 2)
