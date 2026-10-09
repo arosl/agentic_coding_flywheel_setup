@@ -210,6 +210,30 @@ test.describe
     });
 
     test.describe("RU Navigation", () => {
+      test("desktop hover previews keep the RU button in place", async ({ page, isMobile }) => {
+        test.skip(isMobile, "Hover previews are desktop-only");
+        await page.goto("/flywheel");
+        await page.waitForLoadState("networkidle");
+
+        const ruButton = page.getByRole("button", { name: /^RU\b/i }).filter({ visible: true }).first();
+        await ruButton.scrollIntoViewIfNeeded();
+        const beforeHover = await ruButton.boundingBox();
+        if (!beforeHover) throw new Error("RU button has no bounding box");
+
+        await ruButton.hover();
+        await expect(page.getByRole("button", { name: "Close", exact: true }).filter({ visible: true })).toBeVisible();
+        const tops = await ruButton.evaluate((button) => new Promise<number[]>((resolve) => {
+          const samples: number[] = [];
+          const sample = () => {
+            samples.push(button.getBoundingClientRect().top);
+            if (samples.length === 12) resolve(samples);
+            else requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+        }));
+        for (const top of tops) expect(Math.abs(top - beforeHover.y)).toBeLessThanOrEqual(2);
+      });
+
       test("can navigate from learn to RU lesson page", async ({ page }) => {
         // Mock progress to unlock lessons
         await page.addInitScript(() => {

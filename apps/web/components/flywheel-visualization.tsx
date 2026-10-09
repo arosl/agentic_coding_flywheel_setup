@@ -1713,7 +1713,7 @@ export default function FlywheelVisualization() {
 
       {/* Desktop layout */}
       <div className="hidden lg:grid lg:grid-cols-[1fr_400px] xl:grid-cols-[1fr_440px] gap-10">
-        <div className="flex min-w-0 flex-col items-center justify-center">
+        <div className="flex min-w-0 flex-col items-center justify-start">
           <DesktopVisualization
             tools={uniqueTools}
             selectedToolId={selectedToolId}
