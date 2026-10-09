@@ -1,0 +1,13 @@
+[
+  {
+    "name": "dev",
+    "status": "Stopped",
+    "type": "virtual-machine",
+    "config": {
+      "user.acfs.provider": "incus"
+    },
+    "state": {
+      "network": null
+    }
+  }
+]
