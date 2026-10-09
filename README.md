@@ -1023,7 +1023,7 @@ Parses `~/.acfs/zsh/acfs.zshrc` to show all installed aliases and commands.
 acfs cheatsheet              # List all aliases
 acfs cheatsheet git          # Filter by category or search term
 acfs cheatsheet --category Agents
-acfs cheatsheet --search docker
+acfs cheatsheet --search rg
 acfs cheatsheet --json       # JSON output for tooling
 ```
 
