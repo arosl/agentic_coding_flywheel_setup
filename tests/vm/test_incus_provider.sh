@@ -130,9 +130,10 @@ echo "== IPv6 under the ACL"
 # a global address and a default route show them. The VM's neighbour
 # advertisements go out, as unicast replies to whichever address solicited
 # them, so each range gets a solicitation from the host's address in it. The
-# ping's echo reply is rejected either way, so nothing but an advertisement
-# can confirm the entry: an existing one goes DELAY, then PROBE (about 5 s,
-# then up to 3 probes 1 s apart) and ends REACHABLE, or FAILED without one.
+# ping's echo reply may or may not pass, and Linux doesn't count it as
+# neighbour confirmation either way, so only an advertisement makes the entry
+# REACHABLE: an existing one goes DELAY, then PROBE (about 5 s, then up to 3
+# probes 1 s apart) and ends REACHABLE, or FAILED without one.
 vm_global6="$(vm_ssh "ip -6 -o addr show dev $nic scope global | awk '{split(\$4, a, \"/\"); print a[1]; exit}'" 2>/dev/null || true)"
 vm_link6="$(vm_ssh "ip -6 -o addr show dev $nic scope link | awk '{split(\$4, a, \"/\"); print a[1]; exit}'" 2>/dev/null || true)"
 gateway6="$(vm_ssh "ip -6 route show default | awk '$route_via'" 2>/dev/null || true)"
