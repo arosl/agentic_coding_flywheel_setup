@@ -57,7 +57,18 @@ case "$1 $2" in
         printf '%s' "$4" >"$STUB_DIR/prompt_$3"
         printf '{"id":"cli:agent:prompt","result":{"submitted":true}}\n'
         ;;
-    "agent read") printf 'Do you trust the files in this folder?\n> 1. Yes, continue\n' ;;
+    "agent read")
+        if [[ -e "$STUB_DIR/screen_$3" ]]; then
+            cat "$STUB_DIR/screen_$3"
+        else
+            printf 'Do you trust the files in this folder?\n> 1. Yes, continue\n'
+        fi
+        ;;
+    "agent send-keys") ;;
+    "agent wait")
+        [[ ! -e "$STUB_DIR/wait_fail_$3" ]] || fail_with timeout "agent $3 did not reach the requested state"
+        printf '{"id":"cli:agent:wait","result":{"agent":{"name":"%s","agent_status":"idle"}}}\n' "$3"
+        ;;
     "agent list") cat "$STUB_DIR/list.json" ;;
     *) fail_with unexpected "stub herdr got: $*" ;;
 esac
@@ -167,6 +178,78 @@ check "an agent whose kickoff failed keeps its one identity and is not restarted
 check "it is reported as started, with the prompt failure" \
     test "$(jq -r '.agents[0].status' <<<"$OUT")" = "started; prompt failed: agent_blocked"
 check "the next agent still starts and gets its kickoff" test -s "$STUB_DIR/prompt_betaowl"
+
+# The two folder-trust dialogs as herdr 0.9.3 read them from Claude Code and
+# Codex on 2026-10-09 (acfs-nj9).
+claude_trust_screen() {
+    cat <<'EOF'
+ Accessing workspace:
+
+ /srv/project
+
+ Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from
+ your team). If not, take a moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel
+EOF
+}
+codex_trust_screen() {
+    cat <<'EOF'
+  Folder access
+  /srv/project
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings can run code
+  automatically, even without a model request. Continue only if you trust these files. Your trust decision will be saved.
+› 1. Trust and continue
+  2. Back to Agent Command Center
+  enter continue · esc back
+EOF
+}
+
+reset_stub trustclaude
+touch "$STUB_DIR/not_ready_betaowl"
+claude_trust_screen >"$STUB_DIR/screen_betaowl"
+run_helper spawn --claude 3 --cwd "$WORK/repo" --no-prompt --trust-folder --json
+check "--trust-folder answers Claude's trust dialog and spawn goes on" \
+    test "$RC/$(jq '.agents | length' <<<"$OUT")" = "0/3"
+check "Claude's dialog gets Down then Enter (its default is 'No, exit')" \
+    grep -qx -- "herdr agent send-keys betaowl down enter" "$STUB_DIR/calls"
+check "it then waits for idle or done, not for blocked" \
+    grep -qx -- "herdr agent wait betaowl --until idle --until done --timeout 30000" "$STUB_DIR/calls"
+check "only the agent at the dialog gets keys" test "$(count_calls '^herdr agent send-keys')" -eq 1
+
+reset_stub trustcodex
+touch "$STUB_DIR/not_ready_alphafox"
+codex_trust_screen >"$STUB_DIR/screen_alphafox"
+run_helper spawn --codex 1 --cwd "$WORK/repo" --no-prompt --trust-folder
+check "Codex's trust dialog gets Enter (its default is 'Trust and continue')" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qx -- "herdr agent send-keys alphafox enter" "$2"' _ "$RC" "$STUB_DIR/calls"
+
+reset_stub trustother
+touch "$STUB_DIR/not_ready_alphafox"
+run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt --trust-folder
+check "--trust-folder never answers a dialog it does not recognise" \
+    test "$RC/$(count_calls '^herdr agent send-keys')" = "1/0"
+
+reset_stub trustoff
+touch "$STUB_DIR/not_ready_alphafox"
+claude_trust_screen >"$STUB_DIR/screen_alphafox"
+run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt
+check "without --trust-folder even the trust dialog stops spawn, with a hint" \
+    bash -c '[[ "$1" -ne 0 && "$2" -eq 0 ]] && grep -q -- "--trust-folder answers" <<<"$3"' _ "$RC" "$(count_calls '^herdr agent send-keys')" "$ERR"
+
+reset_stub trustthen
+touch "$STUB_DIR/not_ready_alphafox" "$STUB_DIR/wait_fail_alphafox"
+codex_trust_screen >"$STUB_DIR/screen_alphafox"
+run_helper spawn --codex 2 --cwd "$WORK/repo" --no-prompt --trust-folder --json
+check "a second dialog after the trust answer stops spawn as agent_not_ready" \
+    test "$RC/$(jq -r '.agents[0].status' <<<"$OUT")/$(count_calls '^am agents create')" = "1/agent_not_ready/1"
 
 reset_stub badname
 printf '%s\n' 'Not A Name' >"$STUB_DIR/am_names"

@@ -27,7 +27,7 @@ herdr_agents_usage() {
 Usage:
   acfs agents spawn [--claude N] [--codex N] [--agy N] [--kind KIND [--count N]]...
                     [--workspace ID] [--cwd DIR] [--model MODEL]
-                    [--prompt TEXT | --no-prompt] [--dry-run] [--json]
+                    [--prompt TEXT | --no-prompt] [--trust-folder] [--dry-run] [--json]
   acfs agents send  (--all | --kind KIND | --name NAME)... [--workspace ID]
                     [--wait [--timeout MS]] <prompt>
   acfs agents list  [--workspace ID] [--kind KIND] [--json]
@@ -36,6 +36,9 @@ spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        an Agent Mail identity first; its herdr name is that name lowercased and
        its tab is labelled with it. By default each agent is then sent its
        identity and the command palette's default_new_agent prompt.
+       An agent that stops at a dialog stops spawn. With --trust-folder, the
+       first-run "trust this folder?" dialog of Claude Code or Codex is
+       answered with "trust"; no other dialog ever is.
 send   Prompt every matching agent. A blocked agent (waiting at an approval or
        question) is skipped and reported, never answered.
 list   Show the agents herdr knows about.
@@ -132,9 +135,48 @@ herdr_agents_default_prompt() {
 # spawn
 # ------------------------------------------------------------
 
+# The keys that answer a recognised folder-trust dialog with "trust": $1 is
+# the kind, $2 the visible screen. Claude Code's dialog defaults to "No, exit";
+# Codex's to "Trust and continue". Anything else is not ours to answer.
+herdr_agents_trust_keys() {
+    local kind="$1" screen="$2"
+    case "$kind" in
+        claude)
+            [[ "$screen" == *"Is this a project you created or one you trust?"* ]] || return 1
+            if grep -Eq '❯ *No, exit' <<<"$screen" && grep -Eq '^ *Yes, I trust this folder' <<<"$screen"; then
+                printf 'down enter\n'
+            elif grep -Eq '❯ *Yes, I trust this folder' <<<"$screen"; then
+                printf 'enter\n'
+            else
+                return 1
+            fi
+            ;;
+        codex)
+            [[ "$screen" == *"Trust this folder?"* ]] && grep -Eq '› *1\. Trust and continue' <<<"$screen" || return 1
+            printf 'enter\n'
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+# Answer agent $1's (kind $2) folder-trust dialog, then wait until it is
+# ready. Fails, leaving the agent as it is, when the screen is not exactly
+# that dialog or the agent does not become ready.
+herdr_agents_trust_folder() {
+    local name="$1" kind="$2" keys=""
+    local -a key_list=()
+    herdr_agents_herdr agent read "$name" --source visible --lines 40 || return 1
+    keys="$(herdr_agents_trust_keys "$kind" "$HERDR_AGENTS_OUT")" || return 1
+    read -ra key_list <<<"$keys"
+    herdr_agents_herdr agent send-keys "$name" "${key_list[@]}" || return 1
+    # Not blocked: another dialog after this one stops spawn as usual.
+    herdr_agents_herdr agent wait "$name" --until idle --until "done" --timeout 30000 || return 1
+    herdr_agents_note "trusted the folder for $name ($kind)"
+}
+
 herdr_agents_spawn() {
     local workspace="" cwd="" model="unknown" prompt="" prompt_mode="palette"
-    local dry_run=false json=false
+    local dry_run=false json=false trust_folder=false
     local -a kinds=()
     local pending_kind=""
 
@@ -165,6 +207,7 @@ herdr_agents_spawn() {
             --model) [[ $# -ge 2 ]] || herdr_agents_die "--model needs a value"; model="$2"; shift 2 ;;
             --prompt) [[ $# -ge 2 ]] || herdr_agents_die "--prompt needs a value"; prompt="$2"; prompt_mode="custom"; shift 2 ;;
             --no-prompt) prompt_mode="none"; shift ;;
+            --trust-folder) trust_folder=true; shift ;;
             --dry-run) dry_run=true; shift ;;
             --json) json=true; shift ;;
             -h|--help) herdr_agents_usage; return 0 ;;
@@ -228,9 +271,17 @@ herdr_agents_spawn() {
         pane_id="$(jq -r '.result.root_pane.pane_id // empty' <<<"$HERDR_AGENTS_OUT")"
         [[ -n "$pane_id" ]] || herdr_agents_die "herdr tab create returned no root pane for $mail_name"
 
+        local started=true
         if ! herdr_agents_herdr agent start "$herdr_name" --kind "$kind" --pane "$pane_id"; then
-            # Kept apart: the agent read below resets HERDR_AGENTS_ERR_CODE.
+            started=false
+            # Kept apart: the calls below reset HERDR_AGENTS_ERR_CODE.
             status="$HERDR_AGENTS_ERR_CODE"
+            if [[ "$status" == agent_not_ready && "$trust_folder" == true ]] \
+                && herdr_agents_trust_folder "$herdr_name" "$kind"; then
+                started=true
+            fi
+        fi
+        if [[ "$started" == false ]]; then
             herdr_agents_note "spawn stopped: $kind agent $herdr_name in $pane_id did not start ($status): $HERDR_AGENTS_ERR_MESSAGE"
             if [[ "$status" == agent_not_ready ]]; then
                 herdr_agents_note "  it is waiting at a dialog (a first-run question such as 'Trust this folder?'). Its screen:"
@@ -239,6 +290,8 @@ herdr_agents_spawn() {
                     sed 's/^/    | /' <<<"$HERDR_AGENTS_OUT" >&2
                 fi
                 herdr_agents_note "  answer it in the tab ($tab_id), or with 'herdr agent send-keys $herdr_name', then re-run spawn for the rest"
+                [[ "$trust_folder" == true ]] \
+                    || herdr_agents_note "  (--trust-folder answers the folder-trust dialog only, when you trust --cwd)"
             fi
             results="$(jq -c --arg kind "$kind" --arg name "$mail_name" --arg herdr "$herdr_name" \
                 --arg tab "$tab_id" --arg pane "$pane_id" --arg status "$status" \
