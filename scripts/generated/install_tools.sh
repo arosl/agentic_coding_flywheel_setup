@@ -958,8 +958,12 @@ for pair in claude:claude codex:codex agy:antigravity-cli opencode:opencode omp:
   target="${pair#*:}"
   command -v "$cli" >/dev/null 2>&1 || continue
   # herdr refuses when the agent's config directory does not exist yet.
+  # acfs update retries each target recorded in the pending file.
   if ! herdr integration install "$target"; then
-    echo "herdr: no $target integration yet; start $cli once, then run: herdr integration install $target" >&2
+    echo "herdr: no $target integration yet; start $cli once, and acfs update installs it" >&2
+    pending="$HOME/.acfs/herdr-integrations-pending"
+    mkdir -p "${pending%/*}"
+    grep -qxF "$target" "$pending" 2>/dev/null || printf '%s\n' "$target" >> "$pending"
   fi
 done
 INSTALL_TOOLS_HERDR

@@ -58,9 +58,30 @@ run_step() {
 
     run_step
     [[ "$status" -eq 0 ]]
-    [[ "$output" == *"herdr: no codex integration yet; start codex once, then run: herdr integration install codex"* ]]
+    [[ "$output" == *"herdr: no codex integration yet; start codex once, and acfs update installs it"* ]]
     run cat "$CALLS"
     [[ "$output" == $'integration install claude\nintegration install codex' ]]
+}
+
+@test "a refused integration is recorded once for acfs update to retry" {
+    fake_agent claude
+    fake_agent codex
+    HERDR_REFUSE="codex"
+
+    run_step
+    [[ "$status" -eq 0 ]]
+    run_step
+    [[ "$status" -eq 0 ]]
+    run cat "$BATS_TEST_TMPDIR/.acfs/herdr-integrations-pending"
+    [[ "$output" == "codex" ]]
+}
+
+@test "an accepted integration is not recorded as pending" {
+    fake_agent claude
+
+    run_step
+    [[ "$status" -eq 0 ]]
+    [[ ! -e "$BATS_TEST_TMPDIR/.acfs/herdr-integrations-pending" ]]
 }
 
 @test "no agent CLIs on PATH means no herdr calls" {

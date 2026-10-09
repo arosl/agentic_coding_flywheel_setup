@@ -15932,3 +15932,115 @@ STUBS
     run acfs_strip_url_userinfo "git@github.com:Dicklesworthstone/agentic_coding_flywheel_setup.git"
     assert_output "git@github.com:Dicklesworthstone/agentic_coding_flywheel_setup.git"
 }
+
+# A fake herdr for update_herdr_integrations. `integration status` prints
+# ~/herdr-status; `integration install` records the target and refuses the
+# ones listed in ~/herdr-refuse, as herdr refuses an agent with no config
+# directory.
+#
+# The default status is real `herdr integration status` output from herdr
+# 0.9.3, captured on 2026-10-09 and trimmed to these lines, with the home
+# directory replaced by $HOME. The letta line is the captured
+# "(experimental)" form with its state changed to outdated, to cover that
+# suffix.
+write_fake_herdr_for_integrations() {
+    mkdir -p "$HOME/.local/bin" "$HOME/.acfs"
+    printf '%s\n' \
+      "pi: not installed ($HOME/.pi/agent/extensions/herdr-agent-state.ts)" \
+      "claude: outdated (v8 < v10) ($HOME/.claude/hooks/herdr-agent-state.sh)" \
+      "codex: not installed ($HOME/.codex/herdr-agent-state.sh)" \
+      "opencode: outdated (v10 < v13) ($HOME/.config/opencode/plugins/herdr-agent-state.js)" \
+      "antigravity-cli: not installed ($HOME/.gemini/config/hooks/herdr-agent-state.sh)" \
+      "letta (experimental): outdated (v1 < v2) ($HOME/.letta/hooks/herdr-agent-session.sh)" \
+      > "$HOME/herdr-status"
+    cat > "$HOME/.local/bin/herdr" <<FAKE
+#!/bin/bash
+case "\$1 \$2" in
+  "integration status")
+    cat "$HOME/herdr-status"
+    ;;
+  "integration install")
+    printf '%s\n' "\$3" >> "$HOME/herdr-installs"
+    if grep -qxF "\$3" "$HOME/herdr-refuse" 2>/dev/null; then
+      echo "\$3 config directory not found" >&2
+      exit 1
+    fi
+    ;;
+  *) exit 2 ;;
+esac
+FAKE
+    chmod +x "$HOME/.local/bin/herdr"
+}
+
+@test "update_herdr_integrations retries pending targets and refreshes outdated ones" {
+    write_fake_herdr_for_integrations
+    printf '%s\n' codex antigravity-cli > "$HOME/.acfs/herdr-integrations-pending"
+    printf '%s\n' antigravity-cli > "$HOME/herdr-refuse"
+    DRY_RUN=false
+
+    run update_herdr_integrations
+    assert_success
+
+    # Pending first, then every outdated target; never a target that is
+    # neither (pi).
+    run cat "$HOME/herdr-installs"
+    assert_output $'codex\nantigravity-cli\nclaude\nopencode\nletta'
+    # codex went in; the refused antigravity-cli stays pending.
+    run cat "$HOME/.acfs/herdr-integrations-pending"
+    assert_output "antigravity-cli"
+}
+
+@test "update_herdr_integrations empties the pending file once every target is in" {
+    write_fake_herdr_for_integrations
+    printf '%s\n' codex > "$HOME/.acfs/herdr-integrations-pending"
+    DRY_RUN=false
+
+    run update_herdr_integrations
+    assert_success
+    [[ -f "$HOME/.acfs/herdr-integrations-pending" && ! -s "$HOME/.acfs/herdr-integrations-pending" ]]
+}
+
+@test "update_herdr_integrations installs nothing in dry-run" {
+    write_fake_herdr_for_integrations
+    printf '%s\n' codex > "$HOME/.acfs/herdr-integrations-pending"
+    DRY_RUN=true
+
+    run update_herdr_integrations
+    assert_success
+    [[ ! -e "$HOME/herdr-installs" ]]
+    run cat "$HOME/.acfs/herdr-integrations-pending"
+    assert_output "codex"
+}
+
+@test "update_herdr_integrations ignores pending lines that are not herdr targets" {
+    write_fake_herdr_for_integrations
+    printf '%s\n' 'codex extra' '../x' 'Codex' > "$HOME/.acfs/herdr-integrations-pending"
+    DRY_RUN=false
+
+    run update_herdr_integrations
+    assert_success
+    # Only the outdated refreshes ran.
+    run cat "$HOME/herdr-installs"
+    assert_output $'claude\nopencode\nletta'
+}
+
+@test "update_herdr_integrations makes no install call when nothing is pending or outdated" {
+    write_fake_herdr_for_integrations
+    printf '%s\n' \
+      "pi: not installed ($HOME/.pi/agent/extensions/herdr-agent-state.ts)" \
+      "codex: not installed ($HOME/.codex/herdr-agent-state.sh)" \
+      > "$HOME/herdr-status"
+    DRY_RUN=false
+
+    run update_herdr_integrations
+    assert_success
+    [[ ! -e "$HOME/herdr-installs" ]]
+    [[ ! -e "$HOME/.acfs/herdr-integrations-pending" ]]
+}
+
+@test "update_stack runs update_herdr_integrations right after updating herdr" {
+    local stack
+    stack="$(sed -n '/^update_stack() {$/,/^}$/p' "$PROJECT_ROOT/scripts/lib/update.sh")"
+    run grep -A4 'update_run_verified_installer_or_existing_on_transient "herdr"' <<< "$stack"
+    assert_output --partial "update_herdr_integrations"
+}
