@@ -255,6 +255,7 @@ test_non_https_source_is_refused() {
 
 test_single_backslash_is_refused_by_url_and_path_guards() {
     if ! (
+        # shellcheck source=scripts/lib/offline_artifact_pack.sh
         source "$OFFLINE_PACK_SH"
         source "$REPO_ROOT/scripts/lib/security.sh"
 
@@ -818,6 +819,7 @@ test_uncreatable_output_emits_structured_refusal() {
 
 test_supported_no_target_directory_failure_never_uses_weaker_fallback() {
     if ! (
+        # shellcheck source=scripts/lib/offline_artifact_pack.sh
         source "$OFFLINE_PACK_SH"
         calls=0
         offline_pack_mv_supports_no_target_directory() { return 0; }
@@ -845,6 +847,7 @@ test_bsd_publish_race_is_detected_after_nested_move() {
     printf '{"builder":"racer"}\n' > "$pack_root/manifest.json"
 
     if ! (
+        # shellcheck source=scripts/lib/offline_artifact_pack.sh
         source "$OFFLINE_PACK_SH"
         offline_pack_mv_supports_no_target_directory() { return 1; }
         OFFLINE_PACK_STAGING_ROOT="$staging_root"
