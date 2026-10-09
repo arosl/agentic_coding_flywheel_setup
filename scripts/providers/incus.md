@@ -143,6 +143,7 @@ Untested, because there was no Mac. What should apply:
 ## Known limits
 
 - **The IP isn't pinned.** If the VM's address changes, SSH fails loudly on the host key, through `HostKeyAlias` and strict checking. Re-run the launcher to print the new address.
+- **GitHub's API rate limit is shared.** The install fetches release data from GitHub's API. Without a token, GitHub allows 60 requests an hour per public IP, and every VM on one host reaches GitHub through the host's IP. Several installs in an hour can use it up. On 2026-10-09, a day of test installs from one host did, and the next install failed in its stack phase with 403s and "Failed to fetch version information". The launcher then keeps the VM as an unfinished install. `curl -s https://api.github.com/rate_limit` shows when the limit resets; re-run the launcher after that to resume.
 
 ## Tests
 
