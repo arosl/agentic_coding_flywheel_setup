@@ -40,7 +40,7 @@ high_capacity_status_fixture() {
   "status": "pass",
   "host": {"status": "pass", "duration_ms": 1, "warnings": [], "cpu_count": 128, "load_1m": 4, "mem_total_kb": 268435456, "mem_available_kb": 251658240, "disk_available_kb": 419430400},
   "probes": {
-    "ntm": {"status": "pass", "available": true, "robot_status_ok": true, "tmux_available": true, "tmux_session_count": 2, "tmux_window_count": 8, "duration_ms": 1, "warnings": []},
+    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 2, "agent_count": 2, "duration_ms": 1, "warnings": []},
     "agent_mail": {"status": "pass", "available": true, "healthy": true, "duration_ms": 1, "warnings": []},
     "beads": {"status": "pass", "available": true, "ready_count": 9, "in_progress_count": 0, "open_count": 20, "duration_ms": 1, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "duration_ms": 1, "warnings": []},
@@ -57,7 +57,7 @@ low_capacity_status_fixture() {
   "status": "warn",
   "host": {"status": "warn", "duration_ms": 1, "warnings": ["low memory"], "cpu_count": 2, "load_1m": 1, "mem_total_kb": 4194304, "mem_available_kb": 1048576, "disk_available_kb": 20971520},
   "probes": {
-    "ntm": {"status": "warn", "available": true, "robot_status_ok": false, "tmux_available": true, "tmux_session_count": 0, "tmux_window_count": 0, "duration_ms": 1, "warnings": []},
+    "herdr": {"status": "warn", "available": true, "server_ok": false, "workspace_count": null, "agent_count": null, "duration_ms": 1, "warnings": []},
     "agent_mail": {"status": "warn", "available": false, "healthy": null, "duration_ms": 1, "warnings": []},
     "beads": {"status": "warn", "available": false, "ready_count": null, "in_progress_count": null, "open_count": null, "duration_ms": 1, "warnings": []},
     "bv": {"status": "warn", "available": false, "robot_ok": false, "duration_ms": 1, "warnings": []},

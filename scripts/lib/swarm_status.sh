@@ -24,14 +24,13 @@ HOST_MEM_TOTAL_KB=0
 HOST_MEM_AVAILABLE_KB=0
 HOST_DISK_AVAILABLE_KB=0
 
-NTM_STATUS="warn"
-NTM_WARNINGS=()
-NTM_DURATION_MS=0
-NTM_AVAILABLE=false
-NTM_ROBOT_STATUS_OK=false
-NTM_TMUX_AVAILABLE=false
-NTM_TMUX_SESSION_COUNT="null"
-NTM_TMUX_WINDOW_COUNT="null"
+HERDR_STATUS="warn"
+HERDR_WARNINGS=()
+HERDR_DURATION_MS=0
+HERDR_AVAILABLE=false
+HERDR_SERVER_OK=false
+HERDR_WORKSPACE_COUNT="null"
+HERDR_AGENT_COUNT="null"
 
 AGENT_MAIL_STATUS="warn"
 AGENT_MAIL_WARNINGS=()
@@ -326,51 +325,56 @@ swarm_status_collect_host() {
     HOST_DURATION_MS="$(swarm_status_duration_ms "$start_ms")"
 }
 
-swarm_status_collect_ntm() {
+swarm_status_collect_herdr() {
     local start_ms=""
     start_ms="$(swarm_status_now_ms)"
 
-    local ntm_bin=""
-    local tmux_bin=""
+    local herdr_bin=""
+    local jq_bin=""
     local output=""
+    local count=""
     local exit_status=0
 
-    ntm_bin="$(swarm_status_binary_path ntm 2>/dev/null || true)"
-    if [[ -n "$ntm_bin" ]]; then
-        NTM_AVAILABLE=true
-        output="$(swarm_status_run_with_timeout "$SWARM_STATUS_TIMEOUT" "$ntm_bin" --robot-status)" || exit_status=$?
-        if [[ $exit_status -eq 0 && -n "$output" ]]; then
-            NTM_ROBOT_STATUS_OK=true
-        else
-            NTM_WARNINGS+=("ntm --robot-status failed or timed out")
-        fi
-    else
-        NTM_WARNINGS+=("ntm not found in PATH")
+    herdr_bin="$(swarm_status_binary_path herdr 2>/dev/null || true)"
+    if [[ -z "$herdr_bin" ]]; then
+        HERDR_WARNINGS+=("herdr not found in PATH")
+        HERDR_DURATION_MS="$(swarm_status_duration_ms "$start_ms")"
+        return 0
     fi
 
-    tmux_bin="$(swarm_status_binary_path tmux 2>/dev/null || true)"
-    if [[ -n "$tmux_bin" ]]; then
-        NTM_TMUX_AVAILABLE=true
+    HERDR_AVAILABLE=true
+    jq_bin="$(swarm_status_binary_path jq 2>/dev/null || true)"
+    # `herdr status server` exits 0 with no server running; the list commands
+    # exit 1 with a server_not_running error. Only counts are kept, never
+    # workspace labels or agent names.
+    output="$(swarm_status_run_with_timeout "$SWARM_STATUS_TIMEOUT" "$herdr_bin" workspace list)" || exit_status=$?
+    if [[ $exit_status -eq 0 && -n "$output" ]]; then
+        HERDR_SERVER_OK=true
+        if [[ -n "$jq_bin" ]]; then
+            count="$(printf '%s' "$output" | "$jq_bin" -r '.result.workspaces | length' 2>/dev/null || true)"
+            [[ "$count" =~ ^[0-9]+$ ]] && HERDR_WORKSPACE_COUNT="$count"
+        fi
+    else
+        HERDR_WARNINGS+=("herdr server is not running or timed out")
+    fi
+
+    if [[ "$HERDR_SERVER_OK" == true ]]; then
         exit_status=0
-        output="$(swarm_status_run_with_timeout "$SWARM_STATUS_TIMEOUT" "$tmux_bin" list-sessions -F '#S	#{session_windows}')" || exit_status=$?
+        output="$(swarm_status_run_with_timeout "$SWARM_STATUS_TIMEOUT" "$herdr_bin" agent list)" || exit_status=$?
         if [[ $exit_status -eq 0 && -n "$output" ]]; then
-            NTM_TMUX_SESSION_COUNT="$(printf '%s\n' "$output" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
-            NTM_TMUX_WINDOW_COUNT="$(printf '%s\n' "$output" | awk '{sum += $2} END {print sum + 0}')"
+            if [[ -n "$jq_bin" ]]; then
+                count="$(printf '%s' "$output" | "$jq_bin" -r '.result.agents | length' 2>/dev/null || true)"
+                [[ "$count" =~ ^[0-9]+$ ]] && HERDR_AGENT_COUNT="$count"
+            fi
         else
-            NTM_TMUX_SESSION_COUNT=0
-            NTM_TMUX_WINDOW_COUNT=0
-            NTM_WARNINGS+=("tmux has no listable sessions or timed out")
+            HERDR_WARNINGS+=("herdr agent list failed or timed out")
         fi
-    else
-        NTM_WARNINGS+=("tmux not found in PATH")
     fi
 
-    if [[ "$NTM_AVAILABLE" == true && "$NTM_ROBOT_STATUS_OK" == true ]]; then
-        NTM_STATUS="pass"
-    elif [[ "$NTM_TMUX_AVAILABLE" == true ]]; then
-        NTM_STATUS="warn"
+    if [[ "$HERDR_SERVER_OK" == true && ${#HERDR_WARNINGS[@]} -eq 0 ]]; then
+        HERDR_STATUS="pass"
     fi
-    NTM_DURATION_MS="$(swarm_status_duration_ms "$start_ms")"
+    HERDR_DURATION_MS="$(swarm_status_duration_ms "$start_ms")"
 }
 
 swarm_status_collect_agent_mail() {
@@ -554,15 +558,15 @@ swarm_status_collect_rch() {
 
 swarm_status_collect_all() {
     swarm_status_collect_host
-    swarm_status_collect_ntm
+    swarm_status_collect_herdr
     swarm_status_collect_agent_mail
     swarm_status_collect_beads
     swarm_status_collect_bv
     swarm_status_collect_rch
 
-    SWARM_STATUS_WARNINGS=("${HOST_WARNINGS[@]}" "${NTM_WARNINGS[@]}" "${AGENT_MAIL_WARNINGS[@]}" "${BEADS_WARNINGS[@]}" "${BV_WARNINGS[@]}" "${RCH_WARNINGS[@]}")
+    SWARM_STATUS_WARNINGS=("${HOST_WARNINGS[@]}" "${HERDR_WARNINGS[@]}" "${AGENT_MAIL_WARNINGS[@]}" "${BEADS_WARNINGS[@]}" "${BV_WARNINGS[@]}" "${RCH_WARNINGS[@]}")
 
-    if [[ "$HOST_STATUS" == "fail" || "$NTM_STATUS" == "fail" || "$AGENT_MAIL_STATUS" == "fail" || "$BEADS_STATUS" == "fail" || "$BV_STATUS" == "fail" || "$RCH_STATUS" == "fail" ]]; then
+    if [[ "$HOST_STATUS" == "fail" || "$HERDR_STATUS" == "fail" || "$AGENT_MAIL_STATUS" == "fail" || "$BEADS_STATUS" == "fail" || "$BV_STATUS" == "fail" || "$RCH_STATUS" == "fail" ]]; then
         SWARM_STATUS_OVERALL="fail"
     elif [[ ${#SWARM_STATUS_WARNINGS[@]} -gt 0 ]]; then
         SWARM_STATUS_OVERALL="warn"
@@ -578,10 +582,10 @@ swarm_status_emit_json() {
         return 0
     fi
 
-    local warnings_json host_warnings_json ntm_warnings_json agent_mail_warnings_json beads_warnings_json bv_warnings_json rch_warnings_json
+    local warnings_json host_warnings_json herdr_warnings_json agent_mail_warnings_json beads_warnings_json bv_warnings_json rch_warnings_json
     warnings_json="$(swarm_status_json_array "$jq_bin" "${SWARM_STATUS_WARNINGS[@]}")"
     host_warnings_json="$(swarm_status_json_array "$jq_bin" "${HOST_WARNINGS[@]}")"
-    ntm_warnings_json="$(swarm_status_json_array "$jq_bin" "${NTM_WARNINGS[@]}")"
+    herdr_warnings_json="$(swarm_status_json_array "$jq_bin" "${HERDR_WARNINGS[@]}")"
     agent_mail_warnings_json="$(swarm_status_json_array "$jq_bin" "${AGENT_MAIL_WARNINGS[@]}")"
     beads_warnings_json="$(swarm_status_json_array "$jq_bin" "${BEADS_WARNINGS[@]}")"
     bv_warnings_json="$(swarm_status_json_array "$jq_bin" "${BV_WARNINGS[@]}")"
@@ -599,14 +603,13 @@ swarm_status_emit_json() {
         --argjson host_mem_total_kb "$(swarm_status_json_number "$HOST_MEM_TOTAL_KB")" \
         --argjson host_mem_available_kb "$(swarm_status_json_number "$HOST_MEM_AVAILABLE_KB")" \
         --argjson host_disk_available_kb "$(swarm_status_json_number "$HOST_DISK_AVAILABLE_KB")" \
-        --arg ntm_status "$NTM_STATUS" \
-        --argjson ntm_warnings "$ntm_warnings_json" \
-        --argjson ntm_duration_ms "$(swarm_status_json_number "$NTM_DURATION_MS")" \
-        --argjson ntm_available "$NTM_AVAILABLE" \
-        --argjson ntm_robot_status_ok "$NTM_ROBOT_STATUS_OK" \
-        --argjson ntm_tmux_available "$NTM_TMUX_AVAILABLE" \
-        --argjson ntm_tmux_session_count "$NTM_TMUX_SESSION_COUNT" \
-        --argjson ntm_tmux_window_count "$NTM_TMUX_WINDOW_COUNT" \
+        --arg herdr_status "$HERDR_STATUS" \
+        --argjson herdr_warnings "$herdr_warnings_json" \
+        --argjson herdr_duration_ms "$(swarm_status_json_number "$HERDR_DURATION_MS")" \
+        --argjson herdr_available "$HERDR_AVAILABLE" \
+        --argjson herdr_server_ok "$HERDR_SERVER_OK" \
+        --argjson herdr_workspace_count "$HERDR_WORKSPACE_COUNT" \
+        --argjson herdr_agent_count "$HERDR_AGENT_COUNT" \
         --arg agent_mail_status "$AGENT_MAIL_STATUS" \
         --argjson agent_mail_warnings "$agent_mail_warnings_json" \
         --argjson agent_mail_duration_ms "$(swarm_status_json_number "$AGENT_MAIL_DURATION_MS")" \
@@ -657,15 +660,14 @@ swarm_status_emit_json() {
                 disk_available_kb: $host_disk_available_kb
             },
             probes: {
-                ntm: {
-                    status: $ntm_status,
-                    available: $ntm_available,
-                    robot_status_ok: $ntm_robot_status_ok,
-                    tmux_available: $ntm_tmux_available,
-                    tmux_session_count: $ntm_tmux_session_count,
-                    tmux_window_count: $ntm_tmux_window_count,
-                    duration_ms: $ntm_duration_ms,
-                    warnings: $ntm_warnings
+                herdr: {
+                    status: $herdr_status,
+                    available: $herdr_available,
+                    server_ok: $herdr_server_ok,
+                    workspace_count: $herdr_workspace_count,
+                    agent_count: $herdr_agent_count,
+                    duration_ms: $herdr_duration_ms,
+                    warnings: $herdr_warnings
                 },
                 agent_mail: {
                     status: $agent_mail_status,
@@ -717,7 +719,7 @@ swarm_status_emit_human() {
     echo "ACFS Swarm Status"
     echo "Status: $SWARM_STATUS_OVERALL"
     echo "Host: ${HOST_CPU_COUNT} CPU, ${HOST_MEM_AVAILABLE_KB}/${HOST_MEM_TOTAL_KB} KiB memory available"
-    echo "NTM/tmux: $NTM_STATUS (${NTM_TMUX_SESSION_COUNT} sessions, ${NTM_TMUX_WINDOW_COUNT} windows)"
+    echo "herdr: $HERDR_STATUS (${HERDR_WORKSPACE_COUNT} workspaces, ${HERDR_AGENT_COUNT} agents)"
     echo "Agent Mail: $AGENT_MAIL_STATUS"
     echo "Beads: $BEADS_STATUS (ready=${BEADS_READY_COUNT}, in_progress=${BEADS_IN_PROGRESS_COUNT}, open=${BEADS_OPEN_COUNT})"
     echo "bv: $BV_STATUS"

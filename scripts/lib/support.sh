@@ -2434,45 +2434,40 @@ capture_swarm_timeline_json() {
             '{status: $status, reason: $reason, ready_count: $ready, in_progress_count: $in_progress, open_count: $open, dependency_cycle_count: $dependency_cycles}')"
     fi
 
-    local tmux_bin="" ntm_bin=""
-    local ntm_json='{"status":"skipped","reason":"tmux and ntm not found in PATH"}'
-    local ntm_probe_status="skipped"
-    local ntm_probe_reason="tmux and ntm not found in PATH"
-    tmux_bin="$(support_binary_path_any tmux 2>/dev/null || true)"
-    ntm_bin="$(support_binary_path_any ntm 2>/dev/null || true)"
-    if [[ -n "$tmux_bin" || -n "$ntm_bin" ]]; then
-        local ntm_robot_ok=false
-        local session_count=0
-        local window_count=0
-        local tmux_warning=""
-        local ntm_output=""
-        local tmux_output=""
-        if [[ -n "$ntm_bin" ]] && ntm_output="$(support_run_with_timeout "$SWARM_TIMELINE_TIMEOUT" "$ntm_bin" --robot-status)"; then
-            [[ -n "$ntm_output" ]] && ntm_robot_ok=true
-        fi
-        if [[ -n "$tmux_bin" ]]; then
-            if tmux_output="$(support_run_with_timeout "$SWARM_TIMELINE_TIMEOUT" "$tmux_bin" list-sessions -F '#S	#{session_windows}')"; then
-                session_count="$(printf '%s\n' "$tmux_output" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
-                window_count="$(printf '%s\n' "$tmux_output" | awk '{sum += $2} END {print sum + 0}')"
-            else
-                tmux_warning="tmux has no listable sessions or timed out"
+    local herdr_bin=""
+    local herdr_json='{"status":"skipped","reason":"herdr not found in PATH"}'
+    local herdr_probe_status="skipped"
+    local herdr_probe_reason="herdr not found in PATH"
+    herdr_bin="$(support_binary_path_any herdr 2>/dev/null || true)"
+    if [[ -n "$herdr_bin" ]]; then
+        local herdr_server_ok=false
+        local workspace_count=null
+        local agent_count=null
+        local herdr_output=""
+        local herdr_count=""
+        # Counts only: workspace labels and agent names stay out of the bundle.
+        if herdr_output="$(support_run_with_timeout "$SWARM_TIMELINE_TIMEOUT" "$herdr_bin" workspace list)" && [[ -n "$herdr_output" ]]; then
+            herdr_server_ok=true
+            herdr_count="$(printf '%s' "$herdr_output" | "$jq_bin" -r '.result.workspaces | length' 2>/dev/null || true)"
+            [[ "$herdr_count" =~ ^[0-9]+$ ]] && workspace_count="$herdr_count"
+            if herdr_output="$(support_run_with_timeout "$SWARM_TIMELINE_TIMEOUT" "$herdr_bin" agent list)"; then
+                herdr_count="$(printf '%s' "$herdr_output" | "$jq_bin" -r '.result.agents | length' 2>/dev/null || true)"
+                [[ "$herdr_count" =~ ^[0-9]+$ ]] && agent_count="$herdr_count"
             fi
         fi
-        ntm_probe_status="pass"
-        ntm_probe_reason="NTM/tmux summary collected without session names"
-        if [[ -n "$tmux_warning" && "$ntm_robot_ok" != true ]]; then
-            ntm_probe_status="warn"
-            ntm_probe_reason="$tmux_warning"
+        herdr_probe_status="pass"
+        herdr_probe_reason="herdr summary collected without workspace labels or agent names"
+        if [[ "$herdr_server_ok" != true ]]; then
+            herdr_probe_status="warn"
+            herdr_probe_reason="herdr server is not running or timed out"
         fi
-        ntm_json="$("$jq_bin" -n \
-            --arg status "$ntm_probe_status" \
-            --arg reason "$ntm_probe_reason" \
-            --argjson ntm_available "$( [[ -n "$ntm_bin" ]] && echo true || echo false )" \
-            --argjson ntm_robot_ok "$ntm_robot_ok" \
-            --argjson tmux_available "$( [[ -n "$tmux_bin" ]] && echo true || echo false )" \
-            --argjson sessions "$session_count" \
-            --argjson windows "$window_count" \
-            '{status: $status, reason: $reason, ntm_available: $ntm_available, ntm_robot_status_ok: $ntm_robot_ok, tmux_available: $tmux_available, tmux_session_count: $sessions, tmux_window_count: $windows}')"
+        herdr_json="$("$jq_bin" -n \
+            --arg status "$herdr_probe_status" \
+            --arg reason "$herdr_probe_reason" \
+            --argjson herdr_server_ok "$herdr_server_ok" \
+            --argjson workspaces "$workspace_count" \
+            --argjson agents "$agent_count" \
+            '{status: $status, reason: $reason, herdr_available: true, herdr_server_ok: $herdr_server_ok, workspace_count: $workspaces, agent_count: $agents}')"
     fi
 
     local rch_bin=""
@@ -2551,9 +2546,9 @@ capture_swarm_timeline_json() {
         --argjson beads "$beads_json" \
         --arg beads_probe_status "$beads_probe_status" \
         --arg beads_probe_reason "$beads_probe_reason" \
-        --argjson ntm "$ntm_json" \
-        --arg ntm_probe_status "$ntm_probe_status" \
-        --arg ntm_probe_reason "$ntm_probe_reason" \
+        --argjson herdr "$herdr_json" \
+        --arg herdr_probe_status "$herdr_probe_status" \
+        --arg herdr_probe_reason "$herdr_probe_reason" \
         --argjson rch "$rch_json" \
         --arg rch_probe_status "$rch_probe_status" \
         --arg rch_probe_reason "$rch_probe_reason" \
@@ -2561,13 +2556,13 @@ capture_swarm_timeline_json() {
         '{
             schema_version: 1,
             generated_at: $generated_at,
-            status: ([$telemetry_probe_status, $agent_mail_probe_status, $beads_probe_status, $ntm_probe_status, $rch_probe_status] as $statuses | if (($statuses | index("warn")) or ($statuses | index("skipped"))) then "warn" else "pass" end),
+            status: ([$telemetry_probe_status, $agent_mail_probe_status, $beads_probe_status, $herdr_probe_status, $rch_probe_status] as $statuses | if (($statuses | index("warn")) or ($statuses | index("skipped"))) then "warn" else "pass" end),
             privacy: $privacy,
             probes: [
                 {id: "telemetry", status: $telemetry_probe_status, reason: $telemetry_probe_reason},
                 {id: "agent_mail", status: $agent_mail_probe_status, reason: $agent_mail_probe_reason},
                 {id: "beads", status: $beads_probe_status, reason: $beads_probe_reason},
-                {id: "ntm", status: $ntm_probe_status, reason: $ntm_probe_reason},
+                {id: "herdr", status: $herdr_probe_status, reason: $herdr_probe_reason},
                 {id: "rch", status: $rch_probe_status, reason: $rch_probe_reason},
                 {id: "resource_pressure", status: ($resource_pressure.status // "skipped"), reason: "derived from redacted host metrics"}
             ],
@@ -2575,7 +2570,7 @@ capture_swarm_timeline_json() {
                 telemetry: $telemetry,
                 agent_mail: $agent_mail,
                 beads: $beads,
-                ntm: $ntm,
+                herdr: $herdr,
                 rch: $rch,
                 resource_pressure: $resource_pressure
             }

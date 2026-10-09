@@ -1697,7 +1697,7 @@ info_get_swarm_summary() {
         def count_txt($v): if ($v | type) == "number" then ($v | tostring) else "unknown" end;
         . as $s
         | ($s.status // "unknown") as $status
-        | ($s.probes.ntm // {}) as $ntm
+        | ($s.probes.herdr // {}) as $herdr
         | ($s.probes.beads // {}) as $beads
         | ($s.probes.agent_mail // {}) as $mail
         | ($s.probes.rch // {}) as $rch
@@ -1720,8 +1720,8 @@ info_get_swarm_summary() {
         | [
             $status,
             $next,
-            count_txt($ntm.tmux_session_count),
-            count_txt($ntm.tmux_window_count),
+            count_txt($herdr.workspace_count),
+            count_txt($herdr.agent_count),
             count_txt($ready),
             count_txt($in_progress),
             txt($mail.status),
@@ -1763,9 +1763,9 @@ info_render_terminal() {
     local tools_summary
     tools_summary=$(info_get_installed_tools_summary)
 
-    local swarm_summary swarm_status swarm_next swarm_sessions swarm_windows swarm_ready swarm_in_progress swarm_mail swarm_rch swarm_resource swarm_warnings
+    local swarm_summary swarm_status swarm_next swarm_workspaces swarm_agents swarm_ready swarm_in_progress swarm_mail swarm_rch swarm_resource swarm_warnings
     swarm_summary="$(info_get_swarm_summary)"
-    IFS=$'\t' read -r swarm_status swarm_next swarm_sessions swarm_windows swarm_ready swarm_in_progress swarm_mail swarm_rch swarm_resource swarm_warnings <<< "$swarm_summary"
+    IFS=$'\t' read -r swarm_status swarm_next swarm_workspaces swarm_agents swarm_ready swarm_in_progress swarm_mail swarm_rch swarm_resource swarm_warnings <<< "$swarm_summary"
 
     # Header
     echo -e "${C_CYAN}╭─────────────────────────────────────────────────────────────╮${C_RESET}"
@@ -1812,7 +1812,7 @@ info_render_terminal() {
     # Swarm Operations section
     echo -e "${C_BOLD}Swarm Operations${C_RESET}"
     printf "  %-16s %s\n" "Status:" "$swarm_status"
-    printf "  %-16s sessions=%s windows=%s\n" "NTM/tmux:" "$swarm_sessions" "$swarm_windows"
+    printf "  %-16s workspaces=%s agents=%s\n" "herdr:" "$swarm_workspaces" "$swarm_agents"
     printf "  %-16s ready=%s in_progress=%s\n" "Beads:" "$swarm_ready" "$swarm_in_progress"
     printf "  %-16s Agent Mail=%s RCH=%s\n" "Coordination:" "$swarm_mail" "$swarm_rch"
     printf "  %-16s %s\n" "Resources:" "$swarm_resource"
@@ -1911,15 +1911,15 @@ info_render_json() {
     install_date_json="$(info_json_escape "$install_date")"
     next_lesson_json="$(info_json_escape "$next_lesson")"
 
-    local swarm_summary swarm_status swarm_next swarm_sessions swarm_windows swarm_ready swarm_in_progress swarm_mail swarm_rch swarm_resource swarm_warnings
+    local swarm_summary swarm_status swarm_next swarm_workspaces swarm_agents swarm_ready swarm_in_progress swarm_mail swarm_rch swarm_resource swarm_warnings
     swarm_summary="$(info_get_swarm_summary)"
-    IFS=$'\t' read -r swarm_status swarm_next swarm_sessions swarm_windows swarm_ready swarm_in_progress swarm_mail swarm_rch swarm_resource swarm_warnings <<< "$swarm_summary"
+    IFS=$'\t' read -r swarm_status swarm_next swarm_workspaces swarm_agents swarm_ready swarm_in_progress swarm_mail swarm_rch swarm_resource swarm_warnings <<< "$swarm_summary"
 
-    local swarm_status_json swarm_next_json swarm_sessions_json swarm_windows_json swarm_ready_json swarm_in_progress_json swarm_mail_json swarm_rch_json swarm_resource_json
+    local swarm_status_json swarm_next_json swarm_workspaces_json swarm_agents_json swarm_ready_json swarm_in_progress_json swarm_mail_json swarm_rch_json swarm_resource_json
     swarm_status_json="$(info_json_escape "$swarm_status")"
     swarm_next_json="$(info_json_escape "$swarm_next")"
-    swarm_sessions_json="$(info_json_escape "$swarm_sessions")"
-    swarm_windows_json="$(info_json_escape "$swarm_windows")"
+    swarm_workspaces_json="$(info_json_escape "$swarm_workspaces")"
+    swarm_agents_json="$(info_json_escape "$swarm_agents")"
     swarm_ready_json="$(info_json_escape "$swarm_ready")"
     swarm_in_progress_json="$(info_json_escape "$swarm_in_progress")"
     swarm_mail_json="$(info_json_escape "$swarm_mail")"
@@ -1951,8 +1951,8 @@ info_render_json() {
   "swarm": {
     "status": "$swarm_status_json",
     "next_action": "$swarm_next_json",
-    "tmux_sessions": "$swarm_sessions_json",
-    "tmux_windows": "$swarm_windows_json",
+    "herdr_workspaces": "$swarm_workspaces_json",
+    "herdr_agents": "$swarm_agents_json",
     "ready_beads": "$swarm_ready_json",
     "in_progress_beads": "$swarm_in_progress_json",
     "agent_mail": "$swarm_mail_json",
@@ -2022,15 +2022,15 @@ info_render_html() {
     os_version_html="$(_info_html_escape "$os_version")"
     os_codename_html="$(_info_html_escape "$os_codename")"
 
-    local swarm_summary swarm_status swarm_next swarm_sessions swarm_windows swarm_ready swarm_in_progress swarm_mail swarm_rch swarm_resource swarm_warnings
+    local swarm_summary swarm_status swarm_next swarm_workspaces swarm_agents swarm_ready swarm_in_progress swarm_mail swarm_rch swarm_resource swarm_warnings
     swarm_summary="$(info_get_swarm_summary)"
-    IFS=$'\t' read -r swarm_status swarm_next swarm_sessions swarm_windows swarm_ready swarm_in_progress swarm_mail swarm_rch swarm_resource swarm_warnings <<< "$swarm_summary"
+    IFS=$'\t' read -r swarm_status swarm_next swarm_workspaces swarm_agents swarm_ready swarm_in_progress swarm_mail swarm_rch swarm_resource swarm_warnings <<< "$swarm_summary"
 
-    local swarm_status_html swarm_next_html swarm_sessions_html swarm_windows_html swarm_ready_html swarm_in_progress_html swarm_mail_html swarm_rch_html swarm_resource_html
+    local swarm_status_html swarm_next_html swarm_workspaces_html swarm_agents_html swarm_ready_html swarm_in_progress_html swarm_mail_html swarm_rch_html swarm_resource_html
     swarm_status_html="$(_info_html_escape "$swarm_status")"
     swarm_next_html="$(_info_html_escape "$swarm_next")"
-    swarm_sessions_html="$(_info_html_escape "$swarm_sessions")"
-    swarm_windows_html="$(_info_html_escape "$swarm_windows")"
+    swarm_workspaces_html="$(_info_html_escape "$swarm_workspaces")"
+    swarm_agents_html="$(_info_html_escape "$swarm_agents")"
     swarm_ready_html="$(_info_html_escape "$swarm_ready")"
     swarm_in_progress_html="$(_info_html_escape "$swarm_in_progress")"
     swarm_mail_html="$(_info_html_escape "$swarm_mail")"
@@ -2157,7 +2157,7 @@ EOF
             <h2>Swarm Operations</h2>
             <div class="grid">
                 <span class="label">Status</span><span class="value">$swarm_status_html</span>
-                <span class="label">NTM/tmux</span><span>sessions=$swarm_sessions_html windows=$swarm_windows_html</span>
+                <span class="label">herdr</span><span>workspaces=$swarm_workspaces_html agents=$swarm_agents_html</span>
                 <span class="label">Beads</span><span>ready=$swarm_ready_html in_progress=$swarm_in_progress_html</span>
                 <span class="label">Coordination</span><span>Agent Mail=$swarm_mail_html RCH=$swarm_rch_html</span>
                 <span class="label">Resources</span><span>$swarm_resource_html</span>

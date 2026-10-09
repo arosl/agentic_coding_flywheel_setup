@@ -59,7 +59,7 @@ test_pass_fixture_exits_zero() {
     "beads": {"status": "pass", "available": true, "ready_count": 3, "in_progress_count": 0, "open_count": 7, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "warnings": []},
-    "ntm": {"status": "pass", "available": true, "robot_status_ok": true, "tmux_available": true, "tmux_session_count": 2, "tmux_window_count": 8, "warnings": []}
+    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 2, "agent_count": 2, "warnings": []}
   }
 }
 JSON
@@ -91,7 +91,7 @@ test_missing_required_tools_fail() {
     "beads": {"status": "warn", "available": false, "ready_count": null, "in_progress_count": null, "open_count": null, "warnings": ["br not found in PATH"]},
     "bv": {"status": "warn", "available": false, "robot_ok": false, "warnings": ["bv not found in PATH"]},
     "rch": {"status": "warn", "available": false, "status_json_ok": false, "warnings": ["rch not found in PATH"]},
-    "ntm": {"status": "warn", "available": false, "robot_status_ok": false, "tmux_available": false, "tmux_session_count": null, "tmux_window_count": null, "warnings": ["ntm not found in PATH"]}
+    "herdr": {"status": "warn", "available": false, "server_ok": false, "workspace_count": null, "agent_count": null, "warnings": ["herdr not found in PATH"]}
   }
 }
 JSON
@@ -122,7 +122,7 @@ test_partial_state_warns() {
     "beads": {"status": "pass", "available": true, "ready_count": 4, "in_progress_count": 2, "open_count": 11, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "warnings": []},
-    "ntm": {"status": "warn", "available": true, "robot_status_ok": false, "tmux_available": true, "tmux_session_count": 1, "tmux_window_count": 4, "warnings": ["ntm --robot-status failed or timed out"]}
+    "herdr": {"status": "warn", "available": true, "server_ok": false, "workspace_count": null, "agent_count": null, "warnings": ["herdr server is not running or timed out"]}
   }
 }
 JSON
@@ -133,7 +133,7 @@ JSON
     [[ "$status" -eq 1 ]] || return 1
     jq -e '
       .status == "warn" and
-      (.checks[] | select(.id == "ntm" and .status == "warn")) and
+      (.checks[] | select(.id == "herdr" and .status == "warn")) and
       (.checks[] | select(.id == "active_work" and .status == "warn")) and
       (.next_commands[] | select(. == "br list --status in_progress --json"))
     ' <<<"$output" >/dev/null || return 1
@@ -163,7 +163,7 @@ test_stale_beads_warn_with_manual_commands() {
     },
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "warnings": []},
-    "ntm": {"status": "pass", "available": true, "robot_status_ok": true, "tmux_available": true, "tmux_session_count": 1, "tmux_window_count": 3, "warnings": []}
+    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 1, "agent_count": 1, "warnings": []}
   }
 }
 JSON
@@ -204,7 +204,7 @@ test_stale_reservations_warn_without_releasing() {
     "beads": {"status": "pass", "available": true, "ready_count": 4, "in_progress_count": 0, "open_count": 11, "warnings": [], "in_progress_items": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "warnings": []},
-    "ntm": {"status": "pass", "available": true, "robot_status_ok": true, "tmux_available": true, "tmux_session_count": 1, "tmux_window_count": 3, "warnings": []}
+    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 1, "agent_count": 1, "warnings": []}
   }
 }
 JSON
@@ -246,7 +246,7 @@ test_malformed_reservation_timestamp_warns() {
     "beads": {"status": "pass", "available": true, "ready_count": 4, "in_progress_count": 0, "open_count": 11, "warnings": [], "in_progress_items": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "warnings": []},
-    "ntm": {"status": "pass", "available": true, "robot_status_ok": true, "tmux_available": true, "tmux_session_count": 1, "tmux_window_count": 3, "warnings": []}
+    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 1, "agent_count": 1, "warnings": []}
   }
 }
 JSON
@@ -288,7 +288,7 @@ test_human_output_marks_stale_candidates_advisory() {
     },
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "warnings": []},
-    "ntm": {"status": "pass", "available": true, "robot_status_ok": true, "tmux_available": true, "tmux_session_count": 1, "tmux_window_count": 3, "warnings": []}
+    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 1, "agent_count": 1, "warnings": []}
   }
 }
 JSON
@@ -320,7 +320,7 @@ test_human_output_lists_next_commands() {
     "beads": {"status": "pass", "available": true, "ready_count": 1, "in_progress_count": 0, "open_count": 2, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "warnings": []},
-    "ntm": {"status": "pass", "available": true, "robot_status_ok": true, "tmux_available": true, "warnings": []}
+    "herdr": {"status": "pass", "available": true, "server_ok": true, "warnings": []}
   }
 }
 JSON

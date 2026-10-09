@@ -240,13 +240,13 @@ swarm_plan_validate_snapshot() {
         if . == null then true else
           type == "object" and diagnostic
           and (. as $o | all(["available", "healthy", "status_json_ok", "queue_json_ok",
-            "robot_ok", "robot_status_ok", "tmux_available"][];
+            "robot_ok", "server_ok"][];
             . as $k | $o[$k] == null or ($o[$k] | type == "boolean")))
           and counts(["queue_depth", "active_build_count", "slots_available", "slots_total",
             "workers_total", "workers_healthy", "workers_busy", "workers_offline",
             "pressure_warning_count", "stale_worker_count", "ready_count", "open_count",
             "in_progress_count", "stale_in_progress_count", "stale_work_count", "stale_count",
-            "tmux_session_count", "tmux_window_count"])
+            "workspace_count", "agent_count"])
         end;
       length == 1 and (.[0] |
         type == "object" and .schema_version == 1
@@ -256,7 +256,7 @@ swarm_plan_validate_snapshot() {
             and counts(["cpu_count", "mem_available_kb"])
             and (.load_1m == null or (.load_1m | nonnegative)))
           and (.probes | type == "object"
-            and all(.agent_mail, .beads, .bv, .rch, .ntm; probe))
+            and all(.agent_mail, .beads, .bv, .rch, .herdr; probe))
           and (.stale_work == null or (.stale_work | type == "object"
             and counts(["total_stale_count", "stale_count"])))
         else
@@ -335,7 +335,7 @@ $status as $s
 | ($s.probes.beads // {}) as $beads
 | ($s.probes.bv // {}) as $bv
 | ($s.probes.rch // {}) as $rch
-| ($s.probes.ntm // {}) as $ntm
+| ($s.probes.herdr // {}) as $herdr
 | ($s.host // {}) as $host
 | (n($host.cpu_count)) as $host_cpu_count
 | (n($host.load_1m)) as $host_load_1m
@@ -454,17 +454,15 @@ $status as $s
       ["br ready --json", "bv --robot-next", "mcp-agent-mail doctor check --json"]
     ),
     check(
-      "ntm_tmux";
-      (if (b($ntm.available) | not) then "fail"
-       elif (b($ntm.robot_status_ok)) then "pass"
-       elif (b($ntm.tmux_available)) then "warn"
-       else "fail" end);
-      (if (b($ntm.available) | not) then "NTM is unavailable for launch command generation"
-       elif (b($ntm.robot_status_ok)) then "NTM robot status is usable"
-       elif (b($ntm.tmux_available)) then "NTM robot status is uncertain, but tmux is usable"
-       else "NTM and tmux are unavailable" end);
-      ($ntm.warnings // []);
-      ["ntm --robot-status", "tmux list-sessions -F '#S #{session_windows}'"]
+      "herdr";
+      (if (b($herdr.available) | not) then "fail"
+       elif (b($herdr.server_ok)) then "pass"
+       else "warn" end);
+      (if (b($herdr.available) | not) then "herdr is unavailable for launch command generation"
+       elif (b($herdr.server_ok)) then "herdr server is usable"
+       else "herdr is installed, but its server is not running" end);
+      ($herdr.warnings // []);
+      ["herdr workspace list", "herdr agent list"]
     ),
     check(
       "active_work";
@@ -476,11 +474,11 @@ $status as $s
       ["br list --status in_progress --json", "acfs swarm status --json", "acfs swarm doctor --stale-hours 12"]
     ),
     check(
-      "active_sessions";
-      (if n($ntm.tmux_session_count) >= $requested_agents and $requested_agents > 1 then "warn" else "pass" end);
-      (if n($ntm.tmux_session_count) >= $requested_agents and $requested_agents > 1 then "Existing tmux session count is already at or above the requested agent count" else "Existing tmux activity does not block planning" end);
+      "active_agents";
+      (if n($herdr.agent_count) >= $requested_agents and $requested_agents > 1 then "warn" else "pass" end);
+      (if n($herdr.agent_count) >= $requested_agents and $requested_agents > 1 then "Live herdr agent count is already at or above the requested agent count" else "Existing herdr agents do not block planning" end);
       [];
-      ["ntm --robot-status", "acfs swarm status --json"]
+      ["herdr agent list", "acfs swarm status --json"]
     )
   ] as $checks
 | (if any($checks[]; .status == "fail") then "fail" elif any($checks[]; .status == "warn") then "warn" else "pass" end) as $plan_status
@@ -545,7 +543,7 @@ $status as $s
       passed: ([$checks[] | select(.status == "pass")] | length),
       beads_ready: ($beads.ready_count // null),
       beads_in_progress: ($beads.in_progress_count // null),
-      tmux_sessions: ($ntm.tmux_session_count // null),
+      herdr_agents: ($herdr.agent_count // null),
       rch_queue_depth: ($rch.queue_depth // null),
       rch_slots_available: ($rch.slots_available // null)
     },
