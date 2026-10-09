@@ -94,6 +94,13 @@ The VM sits on Incus's NAT bridge, so nothing outside reaches it except through 
 - **Where it applies:** it's attached to each launcher VM's NIC (`security.acls`). Other instances aren't affected.
 - **It needs a managed bridge.** On any other network, the launcher stops before creating the VM.
 - **What it doesn't cover:** the host's addresses outside those ranges, such as a public IP, stay reachable from the VM. The host's sshd still needs a key the VM doesn't have.
+- **To lift it for one VM,** for example when a development VM needs a service on the host, such as Agent Mail on the bridge's gateway address:
+
+  ```bash
+  incus config device unset dev eth0 security.acls
+  ```
+
+  `eth0` is the NIC's name in the default profile; `incus config device show dev` lists it. It takes effect on the running VM. Afterwards `dev` reaches everything the ACL rejected: the host on every address, its LAN and its tailnet. Other VMs keep the ACL. Re-running the launcher doesn't put it back.
 
 ## herdr versions
 

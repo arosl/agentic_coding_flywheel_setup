@@ -132,6 +132,22 @@ else
     echo "  (not tested: the install didn't complete, so a re-run resumes it by design)"
 fi
 
+echo "== lifting the ACL on the running VM (the guide's command)"
+vm_nic="$(incus query "/1.0/instances/$NAME" </dev/null \
+    | jq -r '.devices | to_entries[] | select(.value.type == "nic") | .key' | head -n 1)"
+check "the VM has its own NIC device" test -n "$vm_nic"
+if [[ -n "$vm_nic" ]] && incus config device unset "$NAME" "$vm_nic" security.acls </dev/null; then
+    pass "incus config device unset $NAME $vm_nic security.acls"
+    if [[ -n "$gateway" ]] && timeout 5 bash -c "</dev/tcp/$gateway/22" 2>/dev/null; then
+        check "without a restart, the VM now opens $gateway:22" \
+            vm_ssh "timeout 5 bash -c '</dev/tcp/$gateway/22'"
+    else
+        echo "  (not tested: the host itself doesn't accept on the gateway's :22)"
+    fi
+else
+    fail "incus config device unset $NAME ${vm_nic:-<no NIC>} security.acls"
+fi
+
 echo "== Ctrl-C reaches a process started with incus exec"
 # The launcher runs the installer as `incus exec ... </dev/null` in the
 # foreground; a terminal's Ctrl-C sends SIGINT to that whole process group.
