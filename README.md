@@ -1182,15 +1182,13 @@ The Learning Hub provides interactive lessons with progress tracking:
 | 0 | Welcome & Overview | 5 min | What's installed, mental model |
 | 1 | Linux Navigation | 8 min | Filesystem structure, essential commands |
 | 2 | SSH & Persistence | 6 min | Secure connections, staying connected |
-| 3 | tmux Basics | 7 min | Sessions, windows, panes, survival |
+| 3 | herdr Basics | 7 min | Panes, tabs, workspaces, surviving disconnects |
 | 4 | Git Essentials | 10 min | Version control, dangerous operations |
 | 5 | GitHub CLI | 8 min | Issues, PRs, releases via `gh` |
 | 6 | Agent Commands | 10 min | Claude, Codex, Antigravity usage |
-| 7 | NTM Command Center | 8 min | Session orchestration |
-| 8 | NTM Prompt Palette | 6 min | Quick command access |
-| 9 | The Flywheel Loop | 10 min | How all 10 tools work together |
+| 7 | The Flywheel Loop | 10 min | How all 10 tools work together |
 
-These are the core lessons; the hub ships 65 lessons in total (the core track plus per-tool deep dives such as UBS, Agent Mail, CASS, Beads, SLB, RCH and the case studies below), all defined in `apps/web/lib/lessons.ts`.
+These are the core lessons; the hub ships 62 lessons in total (the core track plus per-tool deep dives such as UBS, Agent Mail, CASS, Beads, SLB, RCH and the case studies below), all defined in `apps/web/lib/lessons.ts`.
 
 **Features:**
 - Progress tracking in localStorage
@@ -1207,7 +1205,7 @@ The [Command Reference](https://agent-flywheel.com/learn/commands) documents eve
 | **Agents** | `cc`, `cod`, `agy` |
 | **Search** | `rg`, `fd`, `sg`, `fzf` |
 | **Git** | `lg`, `gh`, `git-lfs` |
-| **System** | `z`, `bat`, `lsd`, `atuin`, `tmux` |
+| **System** | `z`, `bat`, `lsd`, `atuin` |
 | **Stack** | `herdr`, `am`, `br`, `bv`, `cass`, `cm`, `ubs`, `dcg`, `ru`, `rch`, `slb`, `caam` |
 | **Languages** | `bun`, `uv`, `cargo`, `go` |
 | **Cloud** | `wrangler`, `supabase`, `vercel`, `vault` |
