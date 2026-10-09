@@ -77,6 +77,7 @@ The fork tracks upstream ACFS and changes its toolset: herdr instead of ntm, wez
   - acfs-gxd: shell and test fixes that make the gate pass. Upstream's fails: release-doctor aborts under `set -e`, and tests assert the upgrade paths upstream retired.
   - acfs-bnz: CI pins shellcheck 0.9.0 and bun, which upstream's CI leaves unpinned.
   - acfs-0pj: the plugin-pack tests set their fixtures' file modes, because upstream's tests fail under umask 0002.
+  - acfs-rst: `test_swarm_fleet_probe.py` sets its library fixtures' modes, and reads the canonical scripts from a 0644 copy, for the same reason.
   - acfs-a04: `ACFS_REPO_OWNER` defaults to the fork's owner, so the one-liner installs the fork, not upstream.
   - acfs-m3l: the `fail()` helper in 22 `tests/unit/` shell tests returns 0, because upstream's ends in a `&&` list that stops the run at the first failure under `set -e`. Also fixed: two `jq -e` assertions in `test_swarm_plan.sh` that read only the last of a stream, the support inventory fixture's 2099 probe date, and the summary `swarm_plan.sh` gives when RCH reports zero workers.
 
