@@ -40,7 +40,7 @@ Two things still lean on what the fork removed: tmux stays installed because `ac
 ### Quick Install
 
 ```bash
-{ acfs_installer="$(curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh")" || acfs_installer="$(curl -fsSL "https://cdn.jsdelivr.net/gh/Dicklesworthstone/agentic_coding_flywheel_setup@main/install.sh")"; } && printf '%s\n' "$acfs_installer" | bash -s -- --yes --mode vibe
+{ acfs_installer="$(curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh")" || acfs_installer="$(curl -fsSL "https://cdn.jsdelivr.net/gh/arosl/agentic_coding_flywheel_setup@main/install.sh")"; } && printf '%s\n' "$acfs_installer" | bash -s -- --yes --mode vibe
 ```
 
 > [!NOTE]
@@ -58,10 +58,10 @@ The installer is **idempotent**—if interrupted, simply re-run it. It will auto
 > **Production environments:** For stable, reproducible installs, pin to a tagged release or specific commit:
 > ```bash
 > # Preferred: use a tagged release (e.g., v0.9.0)
-> curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/v0.9.0/install.sh" | bash -s -- --yes --mode vibe --ref v0.9.0
+> curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/v0.9.0/install.sh" | bash -s -- --yes --mode vibe --ref v0.9.0
 >
 > # Alternative: pin to a specific commit SHA
-> curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/abc1234/install.sh" | bash -s -- --yes --mode vibe --ref abc1234
+> curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/abc1234/install.sh" | bash -s -- --yes --mode vibe --ref abc1234
 > ```
 > Tagged releases are tested and stable. Passing `--ref` ensures all fetched scripts use the same version.
 
@@ -479,19 +479,19 @@ The installer is the heart of ACFS—a modular Bash script that transforms a fre
 Full vibe mode (recommended for throwaway VPS):
 
 ```bash
-{ acfs_installer="$(curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh")" || acfs_installer="$(curl -fsSL "https://cdn.jsdelivr.net/gh/Dicklesworthstone/agentic_coding_flywheel_setup@main/install.sh")"; } && printf '%s\n' "$acfs_installer" | bash -s -- --yes --mode vibe
+{ acfs_installer="$(curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh")" || acfs_installer="$(curl -fsSL "https://cdn.jsdelivr.net/gh/arosl/agentic_coding_flywheel_setup@main/install.sh")"; } && printf '%s\n' "$acfs_installer" | bash -s -- --yes --mode vibe
 ```
 
 Interactive mode (asks for confirmation):
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh" | bash
+curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh" | bash
 ```
 
 Safe mode (no passwordless sudo, agent confirmations enabled):
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh" | bash -s -- --mode safe
+curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh" | bash -s -- --mode safe
 ```
 
 ### Installer Modes
@@ -552,17 +552,17 @@ The installer tracks progress in `~/.acfs/state.json`. If interrupted:
 
 To force a fresh reinstall of all tools:
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh" | bash -s -- --yes --mode vibe --force-reinstall
+curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh" | bash -s -- --yes --mode vibe --force-reinstall
 ```
 
 ### Pre-Flight Check
 
 Before running the full installer, validate your system:
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/scripts/preflight.sh" | bash
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/scripts/preflight.sh" | bash -s -- --json
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/scripts/preflight.sh" | bash -s -- --format toon
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/scripts/preflight.sh" | bash -s -- --network=skip
+curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/preflight.sh" | bash
+curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/preflight.sh" | bash -s -- --json
+curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/preflight.sh" | bash -s -- --format toon
+curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/preflight.sh" | bash -s -- --network=skip
 ```
 
 This checks:
@@ -635,12 +635,12 @@ Pass **`--target-ubuntu=26.04`** to explicitly request an upgrade to Ubuntu 26.0
 
 **To explicitly request the 26.04 LTS upgrade:**
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh" | bash -s -- --yes --mode vibe --target-ubuntu=26.04
+curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh" | bash -s -- --yes --mode vibe --target-ubuntu=26.04
 ```
 
 **To suppress an explicit upgrade request:**
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh" | bash -s -- --yes --mode vibe --target-ubuntu=26.04 --skip-ubuntu-upgrade
+curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh" | bash -s -- --yes --mode vibe --target-ubuntu=26.04 --skip-ubuntu-upgrade
 ```
 
 `--skip-ubuntu-upgrade` wins regardless of flag order. Neither this flag nor an ordinary no-target install bypasses an active system upgrade checkpoint: normal installation remains blocked until the unfinished upgrade is resolved. Inspect the checkpoint and resume logs before retrying; keep the recovery state intact.
@@ -2984,7 +2984,7 @@ shellcheck install.sh scripts/lib/*.sh
 ./tests/vm/test_factory_install_qemu.sh --ubuntu 24.04 --expect-final-ubuntu 24.04
 
 # Explicit upgrade entrypoint (run as root on a disposable Ubuntu 24.04 host)
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh" | bash -s -- --yes --mode vibe --target-ubuntu=26.04
+curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh" | bash -s -- --yes --mode vibe --target-ubuntu=26.04
 ```
 
 The explicit upgrade command starts the upgrade; it is not a complete factory E2E verdict. Capture resume, final OS, and tool-health evidence separately until the factory harness can forward the opt-in target.
@@ -3090,7 +3090,7 @@ harness_summary  # Outputs: 15 passed, 0 failed, 2 skipped
 
 # Explicit upgrade entrypoint (root on a disposable Ubuntu 24.04 host;
 # collect resume and final-state evidence separately)
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh" | bash -s -- --yes --mode vibe --target-ubuntu=26.04
+curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh" | bash -s -- --yes --mode vibe --target-ubuntu=26.04
 
 # Selection logic tests
 ./tests/vm/selection_checks.sh
@@ -3172,7 +3172,7 @@ For local development, use the individual tools directly.
 
 The installer is **checkpointed**. Simply re-run it:
 ```bash
-{ acfs_installer="$(curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh")" || acfs_installer="$(curl -fsSL "https://cdn.jsdelivr.net/gh/Dicklesworthstone/agentic_coding_flywheel_setup@main/install.sh")"; } && printf '%s\n' "$acfs_installer" | bash -s -- --yes --mode vibe
+{ acfs_installer="$(curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh")" || acfs_installer="$(curl -fsSL "https://cdn.jsdelivr.net/gh/arosl/agentic_coding_flywheel_setup@main/install.sh")"; } && printf '%s\n' "$acfs_installer" | bash -s -- --yes --mode vibe
 ```
 
 It will skip already-completed phases and resume where it left off.
@@ -4467,7 +4467,7 @@ for f in ~/.zshrc ~/.p10k.zsh; do
   [ -f "$f" ] && mv "$f" "$f".backup."$ts"
 done
 
-{ acfs_installer="$(curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh")" || acfs_installer="$(curl -fsSL "https://cdn.jsdelivr.net/gh/Dicklesworthstone/agentic_coding_flywheel_setup@main/install.sh")"; } && printf '%s\n' "$acfs_installer" | bash -s -- --yes --mode vibe --force-reinstall
+{ acfs_installer="$(curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh")" || acfs_installer="$(curl -fsSL "https://cdn.jsdelivr.net/gh/arosl/agentic_coding_flywheel_setup@main/install.sh")"; } && printf '%s\n' "$acfs_installer" | bash -s -- --yes --mode vibe --force-reinstall
 ```
 
 ---
@@ -4738,16 +4738,16 @@ ACFS supports various configuration mechanisms for advanced users.
 **Examples:**
 ```bash
 # Install from a tagged release (recommended for production)
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/v0.1.0/install.sh" | bash -s -- --yes --mode vibe --ref v0.1.0
+curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/v0.1.0/install.sh" | bash -s -- --yes --mode vibe --ref v0.1.0
 
 # Install from a specific branch (development/testing)
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/feature/new-tool/install.sh" | bash -s -- --yes --mode vibe --ref feature/new-tool
+curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/feature/new-tool/install.sh" | bash -s -- --yes --mode vibe --ref feature/new-tool
 
 # Install from a specific commit (reproducibility)
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/abc1234/install.sh" | bash -s -- --yes --mode vibe --ref abc1234
+curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/abc1234/install.sh" | bash -s -- --yes --mode vibe --ref abc1234
 
 # Pin installer version but use latest checksums (avoid stale hash mismatches)
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/v0.9.0/install.sh" | bash -s -- --yes --mode vibe --ref v0.9.0 --checksums-ref main
+curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/v0.9.0/install.sh" | bash -s -- --yes --mode vibe --ref v0.9.0 --checksums-ref main
 ```
 
 > **Tip:** Always match the URL path with `--ref` so the initial script and all subsequently fetched scripts come from the same ref. If you use environment variables in a pipeline, attach them to `bash`, not `curl`: `curl ... | ACFS_REF=v0.9.0 bash -s -- --yes --mode vibe`.
