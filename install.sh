@@ -10138,6 +10138,9 @@ UNIT_EOF
         fi
 
         if [[ "$am_service_ready" != "true" ]]; then
+            # This return skips the herdr call below, so install herdr here.
+            # The phase already fails for Agent Mail.
+            acfs_legacy_run_manifest_module "tools.herdr" || true
             return 1
         fi
     fi
