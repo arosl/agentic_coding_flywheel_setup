@@ -282,7 +282,7 @@ Examples:
   acfs cheatsheet git
   acfs cheatsheet "push"
   acfs cheatsheet --category Agents
-  acfs cheatsheet --search docker
+  acfs cheatsheet --search rg
   acfs cheatsheet --format toon --stats
 EOF
 }
@@ -853,7 +853,6 @@ normalize_category() {
   case "${raw,,}" in
     *agent*) echo "Agents" ;;
     *git*) echo "Git" ;;
-    *docker*) echo "Docker" ;;
     *directory*) echo "Directories" ;;
     bun*) echo "Bun" ;;
     *ubuntu*|*debian*|*convenience*) echo "System" ;;
@@ -870,7 +869,6 @@ infer_category() {
     br|bl|bt) echo "Bun" ;;
     dev|proj|dots|p) echo "Directories" ;;
     g*) [[ "$cmd" == git* ]] && { echo "Git"; return 0; } ;;
-    d*) [[ "$cmd" == docker* ]] && { echo "Docker"; return 0; } ;;
   esac
   echo "Misc"
 }
@@ -1243,7 +1241,7 @@ main() {
         local q="$1"
         shift
         case "${q,,}" in
-          agents|git|docker|directories|system|bun|modern\ cli)
+          agents|git|directories|system|bun|modern\ cli)
             category_filter="$q"
             ;;
           *)

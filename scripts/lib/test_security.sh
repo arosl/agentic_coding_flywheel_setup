@@ -731,6 +731,113 @@ test_non_retryable_exit_code_success() {
 }
 
 # ============================================================
+# Test Cases: Content-Encoding decoding (acfs-b0u)
+# ============================================================
+
+test_configure_curl_decodes_when_curl_has_zlib() {
+    local name="acfs_security_configure_curl: --compressed exactly when curl has zlib"
+    local curl_version="" expected=""
+
+    acfs_security_configure_curl
+    curl_version="$("$ACFS_CURL_BIN" -V 2>/dev/null || true)"
+    [[ "$curl_version" == *" libz"* ]] && expected="--compressed"
+
+    if [[ "${ACFS_CURL_DECODE_ARGS[*]}" == "$expected" ]]; then
+        test_pass "$name"
+    else
+        test_fail "$name" "expected '${expected}', got '${ACFS_CURL_DECODE_ARGS[*]}'"
+    fi
+}
+
+test_download_to_file_passes_decode_args() {
+    local name="acfs_download_to_file: passes the decode args to curl"
+    local recorded=""
+
+    recorded="$(
+        ACFS_CURL_DECODE_ARGS=(--compressed)
+        acfs_curl() { printf '%s\n' "$*"; }
+        acfs_download_to_file "https://example.com/install.sh" "$TEST_TMP_DIR/decode-args.out" "decode-args"
+    )"
+
+    if [[ "$recorded" == "--compressed https://example.com/install.sh "* ]]; then
+        test_pass "$name"
+    else
+        test_fail "$name" "curl got: $recorded"
+    fi
+}
+
+# A server that, like the Google Frontend cache behind antigravity.google,
+# answers with a gzip body and "Content-Encoding: gzip" whatever the request
+# asked for. The download must hash to the uncompressed script.
+test_download_to_file_decodes_unrequested_gzip() {
+    local name="acfs_download_to_file: unrequested gzip encoding hashes as the plain script"
+    local python_bin="" server_py="$TEST_TMP_DIR/gzip_server.py" port_file="$TEST_TMP_DIR/gzip_server.port"
+    local body_file="$TEST_TMP_DIR/gzip_server_body.sh" out_file="$TEST_TMP_DIR/gzip_download.sh"
+    local server_pid="" port="" i=0 status=0
+
+    python_bin="$(command -v python3 || true)"
+    if [[ -z "$python_bin" ]]; then
+        echo "  [SKIP] $name (python3 not found)"
+        return 0
+    fi
+    acfs_security_configure_curl
+    if [[ ${#ACFS_CURL_DECODE_ARGS[@]} -eq 0 ]]; then
+        echo "  [SKIP] $name (curl lacks zlib)"
+        return 0
+    fi
+
+    printf '#!/bin/sh\necho "installer body"\n' > "$body_file"
+    cat > "$server_py" << 'EOF'
+import gzip, http.server, sys
+body = gzip.compress(open(sys.argv[1], "rb").read())
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/x-sh")
+        self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *args):
+        pass
+server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+with open(sys.argv[2], "w") as f:
+    f.write(str(server.server_address[1]))
+server.serve_forever()
+EOF
+    "$python_bin" -I "$server_py" "$body_file" "$port_file" &
+    server_pid=$!
+    for ((i = 0; i < 50; i++)); do
+        [[ -s "$port_file" ]] && break
+        sleep 0.1
+    done
+    port="$(cat "$port_file" 2>/dev/null || true)"
+
+    if [[ -z "$port" ]]; then
+        test_fail "$name" "local gzip server did not start"
+    else
+        # The fixture is plain http on loopback, so drop only the https-only
+        # protocol restriction; everything else is the real download path.
+        (
+            ACFS_CURL_BASE_ARGS=(-q --connect-timeout 5 --max-time 10 -fsSL)
+            ACFS_CURL_RETRY_DELAYS=(0)
+            acfs_download_to_file "http://127.0.0.1:${port}/install.sh" "$out_file" "gzip-fixture"
+        ) || status=$?
+
+        if (( status != 0 )); then
+            test_fail "$name" "download failed with status $status"
+        elif [[ "$(calculate_sha256 < "$out_file")" == "$(calculate_sha256 < "$body_file")" ]]; then
+            test_pass "$name"
+        else
+            test_fail "$name" "downloaded bytes differ from the plain script (still gzip-encoded?)"
+        fi
+    fi
+
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+}
+
+# ============================================================
 # Test Cases: KNOWN_INSTALLERS Array
 # ============================================================
 
@@ -826,6 +933,11 @@ test_checksum_candidate_validation_is_exact_and_network_free
 test_checksum_candidate_validation_rejects_cross_wired_hashes
 test_checksum_candidate_validation_rejects_url_drift_and_incomplete_evidence
 test_checksum_report_rejects_duplicate_keys_and_policy_digest_drift
+
+# Content-Encoding decoding tests (use the fixture directory above)
+test_configure_curl_decodes_when_curl_has_zlib
+test_download_to_file_passes_decode_args
+test_download_to_file_decodes_unrequested_gzip
 
 echo ""
 echo "==================="
