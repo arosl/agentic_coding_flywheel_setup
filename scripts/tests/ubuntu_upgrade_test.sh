@@ -201,7 +201,7 @@ _write_upgrade_stage_fixture() {
 
 _calculate_path_for_version() {
     local version="$1"
-    local target="${2:-2510}"
+    local target="${2:-2604}"
 
     (
         rehearsal_version="$version"
@@ -247,20 +247,20 @@ test_version_number_conversion() {
         log_fail "Expected 24.04 from 2204, got: $result"
     fi
 
-    # 2404 (24.04) should map to "25.04" (skip 24.10, which may be EOL)
+    # 2404 (24.04) should map to "26.04" (LTS hop)
     result=$(ubuntu_get_next_version_hardcoded 2404)
-    if [[ "$result" == "25.04" ]]; then
+    if [[ "$result" == "26.04" ]]; then
         log_pass "Numeric code 2404 correctly handled"
     else
-        log_fail "Expected 25.04 from 2404, got: $result"
+        log_fail "Expected 26.04 from 2404, got: $result"
     fi
 
-    # 2510 (25.10) should return empty (no next version)
+    # 2510 (25.10) should map to "26.04" (EOL recovery)
     result=$(ubuntu_get_next_version_hardcoded 2510)
-    if [[ -z "$result" ]]; then
-        log_pass "Numeric code 2510 returns empty (end of chain)"
+    if [[ "$result" == "26.04" ]]; then
+        log_pass "Numeric code 2510 correctly handled"
     else
-        log_fail "Expected empty from 2510, got: $result"
+        log_fail "Expected 26.04 from 2510, got: $result"
     fi
 }
 
@@ -371,8 +371,8 @@ test_upgrade_path_chain() {
     # we test the upgrade chain logic via ubuntu_get_next_version_hardcoded
 
     local versions=()
-    local current=2404  # Start at 24.04
-    local target=2510   # Target 25.10
+    local current=2204  # Start at 22.04
+    local target=2604   # Target 26.04
 
     # Build the path by following the chain
     while [[ $current -lt $target ]]; do
@@ -388,12 +388,12 @@ test_upgrade_path_chain() {
         current=$((major * 100 + minor))
     done
 
-    # Check the path: should be 25.04, 25.10 (skip 24.10, which may be EOL)
+    # Check the path: LTS to LTS only, 24.04 then 26.04
     local path="${versions[*]}"
-    if [[ "$path" == "25.04 25.10" ]]; then
-        log_pass "Path from 24.04 to 25.10: 25.04 → 25.10"
+    if [[ "$path" == "24.04 26.04" ]]; then
+        log_pass "Path from 22.04 to 26.04: 24.04 → 26.04"
     else
-        log_fail "Expected '25.04 25.10', got: $path"
+        log_fail "Expected '24.04 26.04', got: $path"
     fi
 }
 
@@ -411,13 +411,13 @@ test_upgrade_path_lts_hop() {
 }
 
 test_upgrade_path_no_upgrade_needed() {
-    log_test "Upgrade Path: 25.10 → 25.10 (no upgrade needed)"
+    log_test "Upgrade Path: 26.04 → 26.04 (no upgrade needed)"
 
-    # 25.10 should have no next version
+    # 26.04 should have no next version
     local next
-    next=$(ubuntu_get_next_version_hardcoded 2510)
+    next=$(ubuntu_get_next_version_hardcoded 2604) || true
     if [[ -z "$next" ]]; then
-        log_pass "25.10 has no next version (end of chain)"
+        log_pass "26.04 has no next version (end of chain)"
     else
         log_fail "Expected empty, got: $next"
     fi
@@ -432,13 +432,17 @@ test_next_version_hardcoded() {
     assert_equals "24.04" "$result" "22.04 → 24.04 (LTS hop)"
 
     result=$(ubuntu_get_next_version_hardcoded 2404)
-    assert_equals "25.04" "$result" "24.04 → 25.04 (skip 24.10, which may be EOL)"
+    assert_equals "26.04" "$result" "24.04 → 26.04 (LTS hop)"
 
-    result=$(ubuntu_get_next_version_hardcoded 2410)
-    assert_equals "25.04" "$result" "24.10 → 25.04 (if on 24.10)"
+    result=$(ubuntu_get_next_version_hardcoded 2510)
+    assert_equals "26.04" "$result" "25.10 → 26.04 (EOL recovery)"
 
-    result=$(ubuntu_get_next_version_hardcoded 2504)
-    assert_equals "25.10" "$result" "25.04 → 25.10"
+    # EOL interim releases have no reviewed next version
+    result=$(ubuntu_get_next_version_hardcoded 2410) || true
+    assert_empty "$result" "24.10 has no reviewed next version"
+
+    result=$(ubuntu_get_next_version_hardcoded 2504) || true
+    assert_empty "$result" "25.04 has no reviewed next version"
 }
 
 test_upgrade_rehearsal_fixture_paths() {
@@ -448,16 +452,22 @@ test_upgrade_rehearsal_fixture_paths() {
     local unsupported_output=""
 
     path="$(_calculate_path_for_version "22.04")"
-    assert_equals "24.04 25.04 25.10" "$path" "22.04 rehearses LTS hop plus interim chain"
+    assert_equals "24.04 26.04" "$path" "22.04 rehearses both LTS hops"
 
     path="$(_calculate_path_for_version "24.04")"
-    assert_equals "25.04 25.10" "$path" "24.04 skips EOL 24.10 and reaches 25.10"
-
-    path="$(_calculate_path_for_version "24.10")"
-    assert_equals "25.04 25.10" "$path" "24.10 resumes through supported interim releases"
+    assert_equals "26.04" "$path" "24.04 upgrades directly to 26.04"
 
     path="$(_calculate_path_for_version "25.10")"
-    assert_empty "$path" "25.10 already current has empty path"
+    assert_equals "26.04" "$path" "25.10 recovers to 26.04"
+
+    path="$(_calculate_path_for_version "26.04")"
+    assert_empty "$path" "26.04 already current has empty path"
+
+    if unsupported_output="$(_calculate_path_for_version "24.10" 2>/dev/null)"; then
+        log_fail "EOL 24.10 should not produce a path, got: ${unsupported_output:-<empty>}"
+    else
+        log_pass "EOL 24.10 fails closed"
+    fi
 
     if unsupported_output="$(_calculate_path_for_version "23.10" 2>/dev/null)"; then
         log_fail "Unsupported 23.10 should not produce a path, got: ${unsupported_output:-<empty>}"
@@ -731,7 +741,8 @@ test_upgrade_setup_infrastructure_persists_resolved_target_home() {
         source "$ACFS_RESUME_DIR/continue_context.env"
         printf 'target=%s\nacfs=%s\nstate=%s\nhome=%s\n'             "$CONTINUE_TARGET_HOME" "$CONTINUE_ACFS_HOME" "$CONTINUE_ACFS_STATE_FILE" "$CONTINUE_HOME"
     )"; then
-        if [[ "$result" == $'target=/srv/alice\nacfs=/srv/alice/.acfs\nstate=/srv/alice/.acfs/state.json\nhome=/srv/alice' ]]; then
+        # The continuation runs as root with HOME=/root; TARGET_HOME carries the user's home.
+        if [[ "$result" == $'target=/srv/alice\nacfs=/srv/alice/.acfs\nstate=/srv/alice/.acfs/state.json\nhome=/root' ]]; then
             log_pass "resume context uses resolved target home"
         else
             log_fail "resume context uses resolved target home: unexpected output: $result"
@@ -769,7 +780,8 @@ test_upgrade_setup_infrastructure_persists_explicit_new_user_home_for_root() {
         source "$ACFS_RESUME_DIR/continue_context.env"
         printf 'target=%s\nacfs=%s\nstate=%s\nhome=%s\n'             "$CONTINUE_TARGET_HOME" "$CONTINUE_ACFS_HOME" "$CONTINUE_ACFS_STATE_FILE" "$CONTINUE_HOME"
     )"; then
-        if [[ "$result" == $'target=/srv/alice\nacfs=/srv/alice/.acfs\nstate=/srv/alice/.acfs/state.json\nhome=/srv/alice' ]]; then
+        # The continuation runs as root with HOME=/root; TARGET_HOME carries the user's home.
+        if [[ "$result" == $'target=/srv/alice\nacfs=/srv/alice/.acfs\nstate=/srv/alice/.acfs/state.json\nhome=/root' ]]; then
             log_pass "resume context keeps explicit new-user target home"
         else
             log_fail "resume context keeps explicit new-user target home: unexpected output: $result"
