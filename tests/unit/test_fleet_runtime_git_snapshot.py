@@ -34,6 +34,9 @@ class InstalledGitSnapshotTests(unittest.TestCase):
         for role in ("prepare", "dispatch", "status"):
             (self.source / ("swarm-fleet-" + role + ".py")).write_text(
                 "raise SystemExit('unused controller must never execute')\n")
+        # The runtime refuses group-writable sources; don't inherit the umask.
+        for path in self.source.iterdir():
+            path.chmod(0o644)
         self.prefix, self.bin_dir = fx.root / "fleet", fx.root / "bin"
         self.prefix.mkdir(mode=0o700)
         self.bin_dir.mkdir(mode=0o700)

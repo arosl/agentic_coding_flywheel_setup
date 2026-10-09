@@ -124,7 +124,8 @@ class FilesystemTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.parts = self.root / "sources.list.d"
-        self.parts.mkdir()
+        # APT's directory must not be group-writable; don't inherit the umask.
+        self.parts.mkdir(mode=0o755)
         self.source = self.parts / "ubuntu.sources"
         self.source.write_text(STANZA)
         self.source.chmod(0o640)
@@ -163,7 +164,9 @@ class FilesystemTests(unittest.TestCase):
         self.assertEqual(os.getxattr(self.source, "user.acfs-fixture"), b"preserve-me")
 
     def test_bad_second_file_refused_before_first_write(self):
-        (self.parts / "zz-bad.sources").write_text(STANZA.replace("questing", "resolute"))
+        bad = self.parts / "zz-bad.sources"
+        bad.write_text(STANZA.replace("questing", "resolute"))
+        bad.chmod(0o644)
         with self.assertRaises(recovery.RecoveryError):
             recovery.prepare_sources(str(self.root), True)
         self.assertEqual(self.source.read_text(), STANZA)
@@ -172,6 +175,7 @@ class FilesystemTests(unittest.TestCase):
     def test_cross_file_signing_conflict_is_refused_by_apt(self):
         other = STANZA.replace(OLD, "http://security.ubuntu.com/ubuntu").replace(KEY, "/custom/other-key.gpg")
         (self.parts / "other.sources").write_text(other)
+        (self.parts / "other.sources").chmod(0o644)
         with self.assertRaises(recovery.RecoveryError) as error:
             recovery.prepare_sources(str(self.root), True)
         self.assertIn("APT rejected", str(error.exception))
@@ -195,6 +199,7 @@ class FilesystemTests(unittest.TestCase):
     def test_legacy_and_deb822_are_both_processed(self):
         legacy = self.root / "sources.list"
         legacy.write_text(f"deb {OLD} questing main\n")
+        legacy.chmod(0o644)
         self.assertEqual(recovery.prepare_sources(str(self.root), True), 2)
         self.assertIn(NEW, legacy.read_text())
         self.assertIn(NEW, self.source.read_text())
@@ -276,6 +281,7 @@ class FilesystemTests(unittest.TestCase):
     def test_partial_replace_failure_is_recoverable(self):
         other = self.parts / "zz-security.sources"
         other.write_text(STANZA.replace(OLD, "http://security.ubuntu.com/ubuntu"))
+        other.chmod(0o644)
         real = os.replace
         calls = []
         def fail_second(*args, **kwargs):

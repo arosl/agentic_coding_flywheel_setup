@@ -43,6 +43,9 @@ if "--exit" in sys.argv: sys.exit(23)
 '''
         for name in runtime.COMMANDS.values():
             (self.checkout / name).write_text(self.peer)
+        # The runtime refuses group-writable sources; don't inherit the umask.
+        for path in self.checkout.iterdir():
+            path.chmod(0o644)
         self.env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
         self.command = [sys.executable, "-I", str(self.checkout / "acfs-fleet.py")]
 
