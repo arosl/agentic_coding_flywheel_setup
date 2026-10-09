@@ -34,7 +34,7 @@ const digest = (bytes: Buffer): string => createHash("sha256").update(bytes).dig
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "acfs-pack-command-"));
   const source = join(directory, "source");
-  mkdirSync(source);
+  mkdirSync(source, { mode: 0o700 });
   const manifest = {
     schema: "acfs.plugin-package.v1",
     schemaVersion: 1,
@@ -90,9 +90,9 @@ function fixture() {
     },
     extensions: {},
   };
-  writeFileSync(join(source, "plugin.json"), JSON.stringify(manifest));
-  writeFileSync(join(source, "README.md"), "Package documentation.");
-  writeFileSync(join(source, "LICENSE"), "MIT");
+  writeFileSync(join(source, "plugin.json"), JSON.stringify(manifest), { mode: 0o644 });
+  writeFileSync(join(source, "README.md"), "Package documentation.", { mode: 0o644 });
+  writeFileSync(join(source, "LICENSE"), "MIT", { mode: 0o644 });
   const output = join(directory, "package.tar.gz");
   const messages: string[] = [];
   let calls = 0;
@@ -193,7 +193,7 @@ test("failed validator errors and diagnostic payloads do not disclose local path
 
 test("unsafe or malformed source never reaches semantic validation or publication", async () => {
   const item = fixture();
-  writeFileSync(join(item.source, ".env"), "PRIVATE");
+  writeFileSync(join(item.source, ".env"), "PRIVATE", { mode: 0o644 });
   assert.equal(await pluginPackMain(item.args, item.services), 1);
   assert.equal(item.calls(), 0);
   assert.equal(existsSync(item.output), false);

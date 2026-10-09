@@ -195,8 +195,8 @@ test("exposes frozen manifest metadata and refuses fabricated build objects", ()
 for (const name of [".env", ".git", "docs/unlisted.md", "review.json", "install.sh"]) {
   test(`refuses undeclared or private workspace member ${name}`, () => {
     const item = fixture();
-    mkdirSync(dirname(join(item.source, name)), { recursive: true });
-    writeFileSync(join(item.source, name), "not declared");
+    mkdirSync(dirname(join(item.source, name)), { recursive: true, mode: 0o755 });
+    writeFileSync(join(item.source, name), "not declared", { mode: 0o644 });
     assert.throws(() => buildPluginArchive(item.source), refused);
     assert.ok(!existsSync(item.output));
   });
@@ -209,7 +209,7 @@ for (const missing of ["plugin.json", "README.md", "LICENSE"]) {
       "README.md": "Docs",
       LICENSE: "MIT",
     })) {
-      if (name !== missing) writeFileSync(join(directory, name), bytes);
+      if (name !== missing) writeFileSync(join(directory, name), bytes, { mode: 0o644 });
     }
     assert.throws(() => buildPluginArchive(directory), /missing/);
   });
@@ -240,7 +240,7 @@ test("refuses symlinked files, directories and source ancestors before following
   symlinkSync(item.source, dirLink);
   assert.throws(() => buildPluginArchive(dirLink), PluginPackError);
   const nested = join(item.source, "nested");
-  mkdirSync(nested);
+  mkdirSync(nested, { mode: 0o755 });
   assert.throws(() => buildPluginArchive(join(dirLink, "nested")), PluginPackError);
   assert.equal(readFileSync(other, "utf8"), "private");
 });
@@ -315,17 +315,17 @@ test("member, expanded, entry-count and compressed budgets bound authoring", () 
   truncateSync(join(member.source, "README.md"), PLUGIN_ARCHIVE_LIMITS.memberBytes + 1);
   assert.throws(() => buildPluginArchive(member.source), /member size/);
   const total = fixture();
-  mkdirSync(join(total.source, "assets"));
+  mkdirSync(join(total.source, "assets"), { mode: 0o755 });
   for (let n = 0; n < 8; n++) {
     const path = join(total.source, "assets", `file${n}`);
-    writeFileSync(path, "x");
+    writeFileSync(path, "x", { mode: 0o644 });
     truncateSync(path, PLUGIN_ARCHIVE_LIMITS.memberBytes);
   }
   assert.throws(() => buildPluginArchive(total.source), /total expanded/);
   const entries = fixture();
-  mkdirSync(join(entries.source, "docs"));
+  mkdirSync(join(entries.source, "docs"), { mode: 0o755 });
   for (let n = 0; n < PLUGIN_ARCHIVE_LIMITS.entries; n++)
-    writeFileSync(join(entries.source, "docs", `f${n}`), "x");
+    writeFileSync(join(entries.source, "docs", `f${n}`), "x", { mode: 0o644 });
   assert.throws(() => buildPluginArchive(entries.source), /entry budget/);
   const compressed = fixture({
     "assets/one.bin": randomBytes(8 * 1024 * 1024),
