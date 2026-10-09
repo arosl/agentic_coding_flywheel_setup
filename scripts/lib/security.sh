@@ -185,15 +185,27 @@ _acfs_is_interactive() {
 # curl defaults: enforce HTTPS (including redirects) when supported
 ACFS_CURL_BIN=""
 ACFS_CURL_BASE_ARGS=()
+# Content-decoding args for acfs_download_to_file. Some CDNs (Google Frontend,
+# for antigravity.google) answer from a gzip cache entry with
+# "Content-Encoding: gzip" even when the request asked for no encoding; without
+# --compressed curl saves the gzip bytes, and the checksum fails at random.
+ACFS_CURL_DECODE_ARGS=()
 
 acfs_security_configure_curl() {
     local curl_help=""
+    local curl_version=""
 
     ACFS_CURL_BIN="$(acfs_security_curl_binary_path 2>/dev/null || true)"
     ACFS_CURL_BASE_ARGS=(-q --connect-timeout 30 --max-time 300 -fsSL)
+    ACFS_CURL_DECODE_ARGS=()
 
     if [[ -n "$ACFS_CURL_BIN" ]] && curl_help="$("$ACFS_CURL_BIN" --help all 2>/dev/null)" && [[ "$curl_help" == *"--proto"* ]]; then
         ACFS_CURL_BASE_ARGS=(-q --proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 300 -fsSL)
+    fi
+
+    # --compressed needs a curl built with zlib ("libz" in its Features line).
+    if [[ -n "$ACFS_CURL_BIN" ]] && curl_version="$("$ACFS_CURL_BIN" -V 2>/dev/null)" && [[ "$curl_version" == *" libz"* ]]; then
+        ACFS_CURL_DECODE_ARGS=(--compressed)
     fi
 }
 
@@ -337,10 +349,12 @@ acfs_download_to_file() {
         local hdr_file=""
         hdr_file="$(mktemp "${TMPDIR:-/tmp}/acfs-hdr.XXXXXX" 2>/dev/null || true)"
 
+        # Decode any Content-Encoding, so the file holds the same bytes the
+        # checksum refresh hashed, whichever cache entry answered.
         if [[ -n "$hdr_file" ]]; then
-            acfs_curl "$url" -o "$output_path" -D "$hdr_file"
+            acfs_curl "${ACFS_CURL_DECODE_ARGS[@]}" "$url" -o "$output_path" -D "$hdr_file"
         else
-            acfs_curl "$url" -o "$output_path"
+            acfs_curl "${ACFS_CURL_DECODE_ARGS[@]}" "$url" -o "$output_path"
         fi
         status=$?
 
@@ -2046,10 +2060,14 @@ acfs_load_checksums_strict() {
     local tail_bin=""
     local last_byte=""
     local nul_stripped=""
-    local -A parsed_urls=()
-    local -A parsed_checksums=()
-    local -n output_urls="$urls_var"
-    local -n output_checksums="$checksums_var"
+    # The working arrays and namerefs carry a prefix no caller uses: a nameref
+    # resolves to the innermost variable of that name, so a caller passing
+    # "parsed_urls" would otherwise bind to this function's own local and
+    # never see the result.
+    local -A _acfs_strict_urls=()
+    local -A _acfs_strict_checksums=()
+    local -n _acfs_strict_out_urls="$urls_var"
+    local -n _acfs_strict_out_checksums="$checksums_var"
 
     if [[ ! -f "$file" || -L "$file" || ! -r "$file" ]]; then
         acfs_strict_checksums_error "$file" 0 "expected a readable regular non-symlink file"
@@ -2145,7 +2163,7 @@ acfs_load_checksums_strict() {
                     acfs_strict_checksums_error "$file" "$line_number" "installer URLs must be unambiguous HTTPS scalars"
                     return 1
                 fi
-                parsed_urls["$current_tool"]="$url"
+                _acfs_strict_urls["$current_tool"]="$url"
                 state="sha256"
                 ;;
             sha256)
@@ -2159,7 +2177,7 @@ acfs_load_checksums_strict() {
                     acfs_strict_checksums_error "$file" "$line_number" "sha256 must be exactly 64 lowercase hexadecimal characters"
                     return 1
                 fi
-                parsed_checksums["$current_tool"]="$checksum"
+                _acfs_strict_checksums["$current_tool"]="$checksum"
                 state="separator_or_eof"
                 ;;
             separator_or_eof)
@@ -2182,12 +2200,12 @@ acfs_load_checksums_strict() {
     fi
 
     expected_count="${#ACFS_SECURITY_REQUIRED_INSTALLERS[@]}"
-    if (( ${#parsed_urls[@]} != expected_count || ${#parsed_checksums[@]} != expected_count )); then
+    if (( ${#_acfs_strict_urls[@]} != expected_count || ${#_acfs_strict_checksums[@]} != expected_count )); then
         acfs_strict_checksums_error "$file" 0 "installer set does not exactly match the required security-policy set"
         return 1
     fi
     for tool in "${ACFS_SECURITY_REQUIRED_INSTALLERS[@]}"; do
-        if [[ -z "${parsed_urls[$tool]:-}" || -z "${parsed_checksums[$tool]:-}" ]]; then
+        if [[ -z "${_acfs_strict_urls[$tool]:-}" || -z "${_acfs_strict_checksums[$tool]:-}" ]]; then
             acfs_strict_checksums_error "$file" 0 "required installer is missing: $tool"
             return 1
         fi
@@ -2195,11 +2213,11 @@ acfs_load_checksums_strict() {
 
     # Transactional commit: malformed input never partially replaces caller
     # state that may already contain a previously trusted policy.
-    output_urls=()
-    output_checksums=()
-    for tool in "${!parsed_urls[@]}"; do
-        output_urls["$tool"]="${parsed_urls[$tool]}"
-        output_checksums["$tool"]="${parsed_checksums[$tool]}"
+    _acfs_strict_out_urls=()
+    _acfs_strict_out_checksums=()
+    for tool in "${!_acfs_strict_urls[@]}"; do
+        _acfs_strict_out_urls["$tool"]="${_acfs_strict_urls[$tool]}"
+        _acfs_strict_out_checksums["$tool"]="${_acfs_strict_checksums[$tool]}"
     done
     return 0
 }
