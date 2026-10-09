@@ -105,6 +105,10 @@ extract_verified_installer_cache_normalizer() {
 # Actually, let's just define our test environment and source install.sh functions
 setup_test_env() {
     # Reset all variables to defaults
+    # The acfs.sh shorthand cases test upstream ACFS's own source; the
+    # fork's default owner is covered by tests/unit/test_fork_source.sh.
+    ACFS_REPO_OWNER="Dicklesworthstone"
+    ACFS_REPO_NAME="agentic_coding_flywheel_setup"
     SCRIPT_DIR=""
     ACFS_COMMIT_SHA_FULL=""
     ACFS_REF_INPUT=""

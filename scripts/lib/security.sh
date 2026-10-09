@@ -49,7 +49,7 @@ YELLOW="${ACFS_YELLOW-\033[0;33m}"
 # Configuration
 # ============================================================
 
-ACFS_REPO_OWNER="${ACFS_REPO_OWNER:-Dicklesworthstone}"
+ACFS_REPO_OWNER="${ACFS_REPO_OWNER:-arosl}"
 ACFS_REPO_NAME="${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}"
 ACFS_CHECKSUMS_REF="${ACFS_CHECKSUMS_REF:-main}"
 

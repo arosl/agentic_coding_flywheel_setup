@@ -122,7 +122,7 @@ _acfs_update_acquire_lock() {
 }
 
 ACFS_VERSION="${ACFS_VERSION:-0.1.0}"
-ACFS_REPO_OWNER="${ACFS_REPO_OWNER:-Dicklesworthstone}"
+ACFS_REPO_OWNER="${ACFS_REPO_OWNER:-arosl}"
 ACFS_REPO_NAME="${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}"
 ACFS_CHECKSUMS_REF="${ACFS_CHECKSUMS_REF:-main}"
 

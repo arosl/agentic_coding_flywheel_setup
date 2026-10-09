@@ -352,7 +352,7 @@ dry_run_self_update_output=$(
 
             case "$*" in
                 *"remote get-url origin"*)
-                    printf "https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup.git\n"
+                    printf "https://github.com/arosl/agentic_coding_flywheel_setup.git\n"
                     return 0
                     ;;
                 *"branch --show-current"*)

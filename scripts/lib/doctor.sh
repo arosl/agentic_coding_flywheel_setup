@@ -859,7 +859,7 @@ build_fix_suggestion() {
         pinned_ref="$(_acfs_doctor_read_json_string_key "$state_file" "pinned_ref" 2>/dev/null || true)"
         pinned_ref="$(_acfs_doctor_normalize_ref "$pinned_ref" 2>/dev/null || true)"
         if [[ -n "$pinned_ref" && "$pinned_ref" != "main" ]]; then
-            install_url="https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${pinned_ref}/install.sh"
+            install_url="https://raw.githubusercontent.com/${ACFS_REPO_OWNER:-arosl}/${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}/${pinned_ref}/install.sh"
             flag_args+=(--ref "$pinned_ref")
         fi
     fi

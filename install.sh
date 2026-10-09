@@ -5,7 +5,7 @@
 # Main installer script
 #
 # Usage:
-#   { acfs_installer="$(curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh")" || acfs_installer="$(curl -fsSL "https://cdn.jsdelivr.net/gh/Dicklesworthstone/agentic_coding_flywheel_setup@main/install.sh")"; } && printf '%s\n' "$acfs_installer" | bash -s -- --yes --mode vibe
+#   { acfs_installer="$(curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh")" || acfs_installer="$(curl -fsSL "https://cdn.jsdelivr.net/gh/arosl/agentic_coding_flywheel_setup@main/install.sh")"; } && printf '%s\n' "$acfs_installer" | bash -s -- --yes --mode vibe
 #
 # Options:
 #   --yes         Skip all prompts, use defaults
@@ -163,7 +163,7 @@ ACFS_SKILLS_AND_SUMMARY_DONE=0
 # fallback so it never fires for those benign early exits.
 ACFS_INSTALL_RUN_CONFIRMED=0
 # Allow fork installations by overriding these via environment variables
-ACFS_REPO_OWNER="${ACFS_REPO_OWNER:-Dicklesworthstone}"
+ACFS_REPO_OWNER="${ACFS_REPO_OWNER:-arosl}"
 ACFS_REPO_NAME="${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}"
 ACFS_REF="${ACFS_REF:-main}"
 # Preserve the original ref (branch/tag/sha) before resolving to a commit SHA.
@@ -1544,7 +1544,7 @@ generate_resume_hint() {
     local arg_q=""
     local resume_ref=""
     local resume_ref_pinned_from_commit=false
-    local resume_repo_owner="${ACFS_REPO_OWNER:-Dicklesworthstone}"
+    local resume_repo_owner="${ACFS_REPO_OWNER:-arosl}"
     local resume_repo_name="${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}"
     local -a resume_args=(--resume)
 
@@ -1719,7 +1719,7 @@ print_resume_hint() {
     local failed_phase="${1:-}"
     local failed_step="${2:-}"
     local resume_cmd=""
-    local resume_repo_owner="${ACFS_REPO_OWNER:-Dicklesworthstone}"
+    local resume_repo_owner="${ACFS_REPO_OWNER:-arosl}"
     local resume_repo_name="${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}"
     if ! resume_cmd=$(generate_resume_hint "${failed_phase:-}" "${failed_step:-}" 2>/dev/null); then
         if [[ -n "${SCRIPT_DIR:-}" ]] \

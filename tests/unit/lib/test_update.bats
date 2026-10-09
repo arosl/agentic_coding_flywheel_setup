@@ -21,7 +21,10 @@ setup() {
     export UPDATE_LOG_DIR="$HOME/.acfs/logs/updates"
     
     source_lib "update"
-    
+    # The checksum-refresh cases below assert upstream ACFS's URLs; the
+    # fork's default owner is covered by tests/unit/test_fork_source.sh.
+    ACFS_REPO_OWNER="Dicklesworthstone"
+
     # Mock date
     stub_command "date" "2025-01-01"
 }
