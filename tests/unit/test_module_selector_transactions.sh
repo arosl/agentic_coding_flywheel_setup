@@ -63,7 +63,7 @@ fixture() {
     declare -ga ACFS_PROFILES_IN_ORDER=(vibe safe minimal agents-only cloud-only stack-only)
     declare -gA ACFS_PROFILE_MODE=([vibe]=vibe [safe]=safe)
     declare -gA ACFS_PROFILE_ONLY_MODULES=(
-        [minimal]=agents.alpha,stack.workflow [cloud-only]=cloud.deploy
+        [minimal]="agents.alpha,stack.workflow" [cloud-only]="cloud.deploy"
     )
     declare -gA ACFS_PROFILE_ONLY_PHASES=([agents-only]=7 [stack-only]=9)
     acfs_resolve_selection
