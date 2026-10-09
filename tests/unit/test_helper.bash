@@ -28,6 +28,11 @@ load_bats_helpers() {
         source "$HOME/.bats-assert/load.bash"
         helpers_loaded=1
     # Try Ubuntu/Debian package location
+    elif [[ -f "/usr/lib/bats/bats-support/load.bash" && -f "/usr/lib/bats/bats-assert/load.bash" ]]; then
+        source "/usr/lib/bats/bats-support/load.bash"
+        source "/usr/lib/bats/bats-assert/load.bash"
+        helpers_loaded=1
+    # Try legacy system package location
     elif [[ -d "/usr/lib/bats-support" ]]; then
         source "/usr/lib/bats-support/load.bash"
         source "/usr/lib/bats-assert/load.bash"
@@ -500,8 +505,12 @@ source_lib() {
 mock_function() {
     local func_name="$1"
     local return_value="$2"
+    local quoted_value=""
 
-    eval "${func_name}() { echo '$return_value'; }"
+    [[ "$func_name" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || return 1
+    printf -v quoted_value '%q' "$return_value"
+    # The function name is validated and the value is shell-quoted literal data.
+    eval "${func_name}() { printf '%s\\n' $quoted_value; }" # ubs:ignore -- validated name and shell-quoted literal
     log_debug "Created mock for: $func_name"
 }
 
@@ -511,6 +520,10 @@ mock_function_fail() {
     local func_name="$1"
     local exit_code="${2:-1}"
 
-    eval "${func_name}() { return $exit_code; }"
+    [[ "$func_name" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || return 1
+    [[ "$exit_code" =~ ^[0-9]{1,3}$ ]] || return 1
+    (( 10#$exit_code <= 255 )) || return 1
+    # Only a validated function name and a bounded decimal status enter eval.
+    eval "${func_name}() { return $((10#$exit_code)); }" # ubs:ignore -- validated name and bounded integer
     log_debug "Created failing mock for: $func_name (exit $exit_code)"
 }
