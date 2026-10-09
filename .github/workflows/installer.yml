@@ -10,6 +10,8 @@ on:
       - 'checksums.yaml'
       - 'packages/manifest/**'
       - '.github/workflows/*.yml'
+      - '.github/actions/**'
+      - 'package.json'
       - '.shellcheckrc'
       - 'tests/**/*.sh'
   pull_request:
@@ -21,6 +23,8 @@ on:
       - 'checksums.yaml'
       - 'packages/manifest/**'
       - '.github/workflows/*.yml'
+      - '.github/actions/**'
+      - 'package.json'
       - '.shellcheckrc'
       - 'tests/**/*.sh'
 
@@ -66,10 +70,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install ShellCheck
+      - name: Install jq
         run: |
           sudo apt-get update
-          sudo apt-get install -y shellcheck jq
+          sudo apt-get install -y jq
+
+      - name: Install ShellCheck
+        uses: ./.github/actions/setup-shellcheck
 
       - name: Run ShellCheck
         shell: bash
@@ -120,7 +127,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version-file: package.json
 
       - name: Install dependencies
         run: bun install
@@ -135,9 +142,7 @@ jobs:
         working-directory: packages/manifest
 
       - name: Install ShellCheck
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
+        uses: ./.github/actions/setup-shellcheck
 
       - name: Validate generated scripts (syntax + shellcheck)
         run: |

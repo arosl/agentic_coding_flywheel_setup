@@ -41,6 +41,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - uses: ./.github/actions/setup-shellcheck
       - name: Install locked generator dependencies without lifecycle scripts
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Verify committed runtime distribution without regeneration
