@@ -68,6 +68,8 @@ case "$cmd" in
     is-active)
         [[ "${1:-}" == "--quiet" ]] && shift
         [[ -e "$STUB_STATE/active/$1" ]] ;;
+    is-enabled)
+        if [[ -e "$STUB_STATE/enabled/$1" ]]; then echo enabled; else echo disabled; exit 1; fi ;;
     daemon-reload|reset-failed) ;;
     enable)
         [[ "${1:-}" == "--now" ]] && shift
@@ -138,7 +140,9 @@ mkdir -p "$HOMEDIR/.local/bin"
 for tool in cm cass am; do
     printf '#!/usr/bin/env bash\necho "%s 1.0.0"\n' "$tool" > "$HOMEDIR/.local/bin/$tool"
 done
-chmod 755 "$SYSBIN"/* "$HOMEDIR/.local/bin"/*
+# The script trusts the stub directory only when group and others cannot write
+# it, so set that explicitly rather than inherit the umask.
+chmod 755 "$SYSBIN" "$SYSBIN"/* "$HOMEDIR/.local/bin"/*
 
 UNIT_DIR="$HOMEDIR/.config/systemd/user"
 
@@ -246,6 +250,53 @@ if [[ "$RC" -eq 0 && ! -f "$UNIT_DIR/acfs-agent-mail.service" ]] \
     pass "with a native agent-mail.service, start uses it and writes no acfs-agent-mail unit"
 else
     fail "with a native agent-mail.service, start uses it and writes no acfs-agent-mail unit" "rc=$RC $(calls)"
+fi
+
+# A machine that got acfs-agent-mail.service and later the native unit:
+# start retires ACFS's unit, so the two never race for 8765 at boot.
+reset_state
+svc start
+touch "$STATE/loaded-agent-mail.service"
+: > "$STATE/calls"
+svc start
+if [[ "$RC" -eq 0 && ! -e "$STATE/active/acfs-agent-mail.service" && ! -e "$STATE/enabled/acfs-agent-mail.service" ]] \
+    && calls | grep -q '^systemctl --user disable --now acfs-agent-mail.service$' \
+    && calls | grep -q '^systemctl --user start agent-mail.service$'; then
+    pass "once a native agent-mail.service exists, start disables acfs-agent-mail.service and uses the native one"
+else
+    fail "once a native agent-mail.service exists, start disables acfs-agent-mail.service and uses the native one" "rc=$RC $(calls)"
+fi
+
+# acfs-agent-mail.service serving a healthy Agent Mail, but its unit is stale
+# (written for another am path): start rewrites it and restarts that unit.
+reset_state
+svc start
+sed -i 's|^ExecStart=.*|ExecStart=/opt/old/am serve-http --no-tui --host 127.0.0.1 --port 8765|' \
+    "$UNIT_DIR/acfs-agent-mail.service"
+: > "$STATE/calls"
+svc start
+exec_am="$(grep '^ExecStart=' "$UNIT_DIR/acfs-agent-mail.service")"
+if [[ "$RC" -eq 0 && "$exec_am" == "ExecStart=$HOMEDIR/.local/bin/am serve-http"* ]] \
+    && calls | grep -q '^systemctl --user restart acfs-agent-mail.service$' \
+    && ! calls | grep -q 'restart acfs-cm.service'; then
+    pass "start refreshes a stale acfs-agent-mail.service while it serves Agent Mail, and restarts only that unit"
+else
+    fail "start refreshes a stale acfs-agent-mail.service while it serves Agent Mail, and restarts only that unit" "rc=$RC $exec_am $(calls)"
+fi
+
+# ------------------------------------------------------------
+# The test hook only trusts a private stub directory
+# ------------------------------------------------------------
+OPEN_SYSBIN="$ROOT/open-sysbin"
+mkdir -p "$OPEN_SYSBIN"
+cp "$SYSBIN/systemctl" "$OPEN_SYSBIN/systemctl"
+chmod 775 "$OPEN_SYSBIN"
+open_resolved="$(env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" ACFS_SERVICES_SYSTEM_BIN_PREFIX="$OPEN_SYSBIN" \
+    bash -c 'source "$1" --source-test; _initialize_bins; printf "%s" "$_SYSTEMCTL_BIN"' _ "$SERVICES_SH")"
+if [[ "$open_resolved" != "$OPEN_SYSBIN/systemctl" ]]; then
+    pass "a group-writable ACFS_SERVICES_SYSTEM_BIN_PREFIX is ignored"
+else
+    fail "a group-writable ACFS_SERVICES_SYSTEM_BIN_PREFIX is ignored" "$open_resolved"
 fi
 
 # ------------------------------------------------------------

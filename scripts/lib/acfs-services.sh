@@ -51,6 +51,7 @@ readonly ACFS_NATIVE_AGENT_MAIL_UNIT="agent-mail.service"
 
 # --- State ---
 _DRY_RUN=false
+_LEGACY_SESSION_STOPPED=false
 _TMUX_BIN=""
 _CURL_BIN=""
 _SS_BIN=""
@@ -84,15 +85,27 @@ _err()   { printf '%s[acfs-services]%s %s%s%s\n' "$_C_CYAN" "$_C_RESET" "$_C_RED
 # System tools are resolved from fixed directories, never from PATH.
 # ACFS_SERVICES_SYSTEM_BIN_PREFIX (tests only) names one directory searched
 # first, so a test can put stub systemctl/curl/lsof in front of the real ones
-# and never reach the host's user service manager.
+# and never reach the host's user service manager. It is honoured only for an
+# absolute directory owned by this user that neither group nor others can
+# write; anything else is ignored.
+_system_bin_prefix_trusted() {
+    local dir="${ACFS_SERVICES_SYSTEM_BIN_PREFIX:-}"
+    local perms=""
+
+    [[ -n "$dir" && "$dir" == /* && -d "$dir" && -O "$dir" ]] || return 1
+    [[ -x /usr/bin/stat ]] || return 1
+    perms="$(/usr/bin/stat -c '%a' "$dir" 2>/dev/null || true)"
+    [[ "$perms" =~ ^[0-7]{3,4}$ ]] || return 1
+    (( (8#$perms & 8#022) == 0 ))
+}
+
 _system_binary_path() {
     local name="${1:-}"
     local dir=""
     local -a dirs=()
 
     [[ "$name" =~ ^[A-Za-z0-9._+-]+$ ]] || return 1
-    [[ -n "${ACFS_SERVICES_SYSTEM_BIN_PREFIX:-}" && "$ACFS_SERVICES_SYSTEM_BIN_PREFIX" == /* ]] \
-        && dirs+=("$ACFS_SERVICES_SYSTEM_BIN_PREFIX")
+    _system_bin_prefix_trusted && dirs+=("$ACFS_SERVICES_SYSTEM_BIN_PREFIX")
     dirs+=(/usr/bin /bin /usr/sbin /sbin /usr/local/bin /usr/local/sbin /opt/homebrew/bin)
     for dir in "${dirs[@]}"; do
         if [[ -x "$dir/$name" && ! -d "$dir/$name" ]]; then
@@ -256,7 +269,6 @@ _unit_text() {
 # every start; edit ACFS_* settings instead, then run 'acfs services start'.
 [Unit]
 Description=ACFS $desc
-After=default.target
 # Give up after 5 failed starts in 2 minutes (e.g. a port held by another
 # process) instead of crash-looping; 'acfs services repair' clears it.
 StartLimitIntervalSec=120
@@ -421,6 +433,28 @@ _native_agent_mail_is_active() {
     _unit_is_active "$ACFS_NATIVE_AGENT_MAIL_UNIT"
 }
 
+# Once the native agent-mail.service exists, ACFS's own acfs-agent-mail.service
+# (written while there was none) must not stay enabled: at the next boot both
+# would race for the same port. Stop and disable it; the unit file stays.
+_retire_acfs_agent_mail_unit() {
+    local unit=""
+    unit="$(_unit_name agent-mail)"
+
+    _unit_file_exists agent-mail || return 0
+    _unit_is_active "$unit" || \
+        [[ "$(_systemctl_user is-enabled "$unit" 2>/dev/null || true)" == "enabled" ]] || return 0
+    if $_DRY_RUN; then
+        _info "[dry-run] Would stop and disable $unit: the native $ACFS_NATIVE_AGENT_MAIL_UNIT replaces it."
+        return 0
+    fi
+    _info "The native $ACFS_NATIVE_AGENT_MAIL_UNIT is installed; stopping and disabling $unit."
+    if ! _systemctl_user disable --now "$unit" >/dev/null 2>&1; then
+        _err "Failed to disable $unit. Disable it yourself: systemctl --user disable --now $unit"
+        return 1
+    fi
+    return 0
+}
+
 # Who runs Agent Mail here: native (its own agent-mail.service), acfs
 # (acfs-agent-mail.service), or external (something else serves the port).
 _agent_mail_owner() {
@@ -544,6 +578,7 @@ _stop_legacy_tmux_session() {
         _err "Stop it yourself (tmux kill-session -t $ACFS_LEGACY_TMUX_SESSION), then re-run: acfs services start"
         return 1
     fi
+    _LEGACY_SESSION_STOPPED=true
     return 0
 }
 
@@ -676,13 +711,17 @@ _service_binary_name() {
 _PREFLIGHT_AGENT_MAIL_WILL_STOP=false
 
 # Does this service need its own binary launched by us? Agent Mail does not
-# when it is already healthy or owned by the native user unit.
+# when the native user unit owns it, or when something other than our own
+# acfs-agent-mail.service already serves it. When our unit serves it, `start`
+# rewrites that unit, so `am` must resolve.
 _service_needs_own_binary() {
     local service="${1:-}"
     [[ "$service" == "agent-mail" ]] || return 0
     $_PREFLIGHT_AGENT_MAIL_WILL_STOP && return 0
-    _agent_mail_is_healthy && return 1
     _native_agent_mail_unit_available && return 1
+    if _agent_mail_is_healthy && [[ "$(_agent_mail_owner)" != "acfs" ]]; then
+        return 1
+    fi
     return 0
 }
 
@@ -1115,13 +1154,19 @@ cmd_start() {
     _stop_legacy_tmux_session || return 1
 
     # Fail fast on bad/duplicate/occupied HTTP ports before starting anything.
-    _validate_http_endpoints || return 1
+    if ! _validate_http_endpoints; then
+        if $_LEGACY_SESSION_STOPPED; then
+            _err "The old tmux session '$ACFS_LEGACY_TMUX_SESSION' was already stopped, so cm and cass stay down until 'acfs services start' succeeds."
+        fi
+        return 1
+    fi
 
     local agent_mail_own_unit=false
-    if _agent_mail_is_healthy; then
-        _info "Reusing healthy Agent Mail at $ACFS_AGENT_MAIL_HOST:$ACFS_AGENT_MAIL_PORT ($(_agent_mail_owner))."
-    elif _native_agent_mail_unit_available; then
-        if $_DRY_RUN; then
+    if _native_agent_mail_unit_available; then
+        _retire_acfs_agent_mail_unit || return 1
+        if _agent_mail_is_healthy; then
+            _info "Reusing healthy Agent Mail at $ACFS_AGENT_MAIL_HOST:$ACFS_AGENT_MAIL_PORT ($(_agent_mail_owner))."
+        elif $_DRY_RUN; then
             _info "[dry-run] Would start the native $ACFS_NATIVE_AGENT_MAIL_UNIT."
         else
             _info "Starting native Agent Mail user service..."
@@ -1132,7 +1177,12 @@ cmd_start() {
                 return 1
             fi
         fi
+    elif _agent_mail_is_healthy && [[ "$(_agent_mail_owner)" != "acfs" ]]; then
+        _info "Reusing healthy Agent Mail at $ACFS_AGENT_MAIL_HOST:$ACFS_AGENT_MAIL_PORT (external)."
     else
+        # No native unit: Agent Mail is ours. Passing it on rewrites a stale
+        # acfs-agent-mail.service (moved am, new port); an unchanged running
+        # unit is left alone.
         agent_mail_own_unit=true
     fi
 
@@ -1201,8 +1251,9 @@ cmd_repair() {
 
     for service in "${targets[@]}"; do
         if [[ "$service" == "agent-mail" ]]; then
-            _agent_mail_is_healthy && continue
             if _native_agent_mail_unit_available; then
+                _retire_acfs_agent_mail_unit || rc=1
+                _agent_mail_is_healthy && continue
                 repaired+=("agent-mail")
                 _info "Starting native Agent Mail user service..."
                 if ! _systemctl_user start "$ACFS_NATIVE_AGENT_MAIL_UNIT" >/dev/null 2>&1; then
@@ -1212,7 +1263,10 @@ cmd_repair() {
                 fi
                 continue
             fi
-            # No native unit: Agent Mail runs in acfs-agent-mail.service.
+            # No native unit: Agent Mail runs in acfs-agent-mail.service,
+            # unless something outside ACFS already serves it.
+            _service_unit_active agent-mail && continue
+            _agent_mail_is_healthy && continue
         elif _service_unit_active "$service"; then
             continue
         fi

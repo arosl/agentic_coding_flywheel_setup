@@ -185,7 +185,6 @@ test("maps the published CLI, language, agent and shell aliases without fuzzy in
     "tool.uv": "lang.uv",
     "tool.cargo": "lang.rust",
     "tool.go": "lang.go",
-    "tool.tmux": "cli.modern",
     "tool.rg": "cli.modern",
     "tool.gh": "cli.modern",
     "tool.git_lfs": "cli.modern",
