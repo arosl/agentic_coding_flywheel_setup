@@ -186,8 +186,8 @@ _write_upgrade_stage_fixture() {
         enabled: true,
         started_at: "2026-05-08T00:00:00Z",
         original_version: "24.04",
-        target_version: "25.10",
-        upgrade_path: ["25.04", "25.10"],
+        target_version: "26.04",
+        upgrade_path: ["26.04"],
         current_stage: $stage,
         completed_upgrades: [],
         current_upgrade: null,
@@ -247,7 +247,7 @@ test_version_number_conversion() {
         log_fail "Expected 24.04 from 2204, got: $result"
     fi
 
-    # 2404 (24.04) should map to "26.04" (LTS hop)
+    # 2404 (24.04) should hop straight to the 26.04 LTS target
     result=$(ubuntu_get_next_version_hardcoded 2404)
     if [[ "$result" == "26.04" ]]; then
         log_pass "Numeric code 2404 correctly handled"
@@ -255,10 +255,10 @@ test_version_number_conversion() {
         log_fail "Expected 26.04 from 2404, got: $result"
     fi
 
-    # 2510 (25.10) should map to "26.04" (EOL recovery)
+    # 2510 (end-of-life 25.10) is only a recovery source on the way to 26.04
     result=$(ubuntu_get_next_version_hardcoded 2510)
     if [[ "$result" == "26.04" ]]; then
-        log_pass "Numeric code 2510 correctly handled"
+        log_pass "Numeric code 2510 recovers to 26.04"
     else
         log_fail "Expected 26.04 from 2510, got: $result"
     fi
@@ -372,12 +372,12 @@ test_upgrade_path_chain() {
 
     local versions=()
     local current=2204  # Start at 22.04
-    local target=2604   # Target 26.04
+    local target=2604   # Target 26.04 LTS
 
     # Build the path by following the chain
     while [[ $current -lt $target ]]; do
         local next
-        next=$(ubuntu_get_next_version_hardcoded "$current")
+        next=$(ubuntu_get_next_version_hardcoded "$current" "$target") || break
         if [[ -z "$next" ]]; then
             break
         fi
@@ -385,10 +385,10 @@ test_upgrade_path_chain() {
         # Convert version string back to number
         local major="${next%%.*}"
         local minor="${next#*.}"
-        current=$((major * 100 + minor))
+        current=$((10#$major * 100 + 10#$minor))
     done
 
-    # Check the path: LTS to LTS only, 24.04 then 26.04
+    # LTS to LTS only: 22.04 -> 24.04 -> 26.04, no interim releases
     local path="${versions[*]}"
     if [[ "$path" == "24.04 26.04" ]]; then
         log_pass "Path from 22.04 to 26.04: 24.04 → 26.04"
@@ -413,10 +413,11 @@ test_upgrade_path_lts_hop() {
 test_upgrade_path_no_upgrade_needed() {
     log_test "Upgrade Path: 26.04 → 26.04 (no upgrade needed)"
 
-    # 26.04 should have no next version
-    local next
-    next=$(ubuntu_get_next_version_hardcoded 2604) || true
-    if [[ -z "$next" ]]; then
+    # The 26.04 target has no next version
+    local next=""
+    if next=$(ubuntu_get_next_version_hardcoded 2604); then
+        log_fail "26.04 should have no next version, got: $next"
+    elif [[ -z "$next" ]]; then
         log_pass "26.04 has no next version (end of chain)"
     else
         log_fail "Expected empty, got: $next"
@@ -431,18 +432,30 @@ test_next_version_hardcoded() {
     result=$(ubuntu_get_next_version_hardcoded 2204)
     assert_equals "24.04" "$result" "22.04 → 24.04 (LTS hop)"
 
+    result=$(ubuntu_get_next_version_hardcoded 2204 2404)
+    assert_equals "24.04" "$result" "22.04 → 24.04 when 24.04 is the target"
+
     result=$(ubuntu_get_next_version_hardcoded 2404)
     assert_equals "26.04" "$result" "24.04 → 26.04 (LTS hop)"
 
     result=$(ubuntu_get_next_version_hardcoded 2510)
-    assert_equals "26.04" "$result" "25.10 → 26.04 (EOL recovery)"
+    assert_equals "26.04" "$result" "EOL 25.10 → 26.04 (recovery)"
 
-    # EOL interim releases have no reviewed next version
-    result=$(ubuntu_get_next_version_hardcoded 2410) || true
-    assert_empty "$result" "24.10 has no reviewed next version"
+    # End-of-life interim releases get no invented release-skipping hop.
+    local from=""
+    for from in 2410 2504; do
+        if result=$(ubuntu_get_next_version_hardcoded "$from"); then
+            log_fail "$from should have no reviewed hop, got: $result"
+        else
+            log_pass "$from has no reviewed automatic hop"
+        fi
+    done
 
-    result=$(ubuntu_get_next_version_hardcoded 2504) || true
-    assert_empty "$result" "25.04 has no reviewed next version"
+    if result=$(ubuntu_get_next_version_hardcoded 2510 2404); then
+        log_fail "25.10 must not move to 24.04, got: $result"
+    else
+        log_pass "25.10 has no hop toward an older 24.04 target"
+    fi
 }
 
 test_upgrade_rehearsal_fixture_paths() {
@@ -455,24 +468,30 @@ test_upgrade_rehearsal_fixture_paths() {
     assert_equals "24.04 26.04" "$path" "22.04 rehearses both LTS hops"
 
     path="$(_calculate_path_for_version "24.04")"
-    assert_equals "26.04" "$path" "24.04 upgrades directly to 26.04"
+    assert_equals "26.04" "$path" "24.04 hops directly to 26.04"
 
     path="$(_calculate_path_for_version "25.10")"
-    assert_equals "26.04" "$path" "25.10 recovers to 26.04"
+    assert_equals "26.04" "$path" "EOL 25.10 recovers to 26.04"
 
-    path="$(_calculate_path_for_version "26.04")"
-    assert_empty "$path" "26.04 already current has empty path"
-
-    if unsupported_output="$(_calculate_path_for_version "24.10" 2>/dev/null)"; then
-        log_fail "EOL 24.10 should not produce a path, got: ${unsupported_output:-<empty>}"
+    if path="$(_calculate_path_for_version "26.04")"; then
+        assert_empty "$path" "26.04 already current has empty path"
     else
-        log_pass "EOL 24.10 fails closed"
+        log_fail "26.04 already current should succeed with an empty path"
     fi
 
-    if unsupported_output="$(_calculate_path_for_version "23.10" 2>/dev/null)"; then
-        log_fail "Unsupported 23.10 should not produce a path, got: ${unsupported_output:-<empty>}"
+    local from=""
+    for from in 23.10 24.10 25.04; do
+        if unsupported_output="$(_calculate_path_for_version "$from" 2>/dev/null)"; then
+            log_fail "Unsupported $from should not produce a path, got: ${unsupported_output:-<empty>}"
+        else
+            log_pass "Unsupported $from fails closed"
+        fi
+    done
+
+    if unsupported_output="$(_calculate_path_for_version "24.04" 2510 2>/dev/null)"; then
+        log_fail "EOL 25.10 must be rejected as a target, got: ${unsupported_output:-<empty>}"
     else
-        log_pass "Unsupported 23.10 fails closed"
+        log_pass "EOL 25.10 is rejected as an upgrade target"
     fi
 }
 
@@ -496,7 +515,7 @@ test_upgrade_rehearsal_state_machine_multi_hop() {
         # shellcheck source=scripts/lib/state.sh
         source "$PROJECT_ROOT/scripts/lib/state.sh"
 
-        state_upgrade_init "22.04" "25.10" '["24.04","25.04","25.10"]'
+        state_upgrade_init "22.04" "26.04" '["24.04","26.04"]'
         [[ "$(state_upgrade_get_next_version)" == "24.04" ]]
 
         state_upgrade_start "22.04" "24.04"
@@ -506,15 +525,9 @@ test_upgrade_rehearsal_state_machine_multi_hop() {
         jq -e '.ubuntu_upgrade.current_stage == "awaiting_reboot" and .ubuntu_upgrade.needs_reboot == true and .ubuntu_upgrade.resume_after_reboot == true' "$state_file" >/dev/null
 
         state_upgrade_resumed
-        [[ "$(state_upgrade_get_next_version)" == "25.04" ]]
-        state_upgrade_start "24.04" "25.04"
-        state_upgrade_complete "25.04"
-        state_upgrade_needs_reboot
-
-        state_upgrade_resumed
-        [[ "$(state_upgrade_get_next_version)" == "25.10" ]]
-        state_upgrade_start "25.04" "25.10"
-        state_upgrade_complete "25.10"
+        [[ "$(state_upgrade_get_next_version)" == "26.04" ]]
+        state_upgrade_start "24.04" "26.04"
+        state_upgrade_complete "26.04"
         state_upgrade_is_complete
 
         state_upgrade_mark_complete
@@ -523,7 +536,7 @@ test_upgrade_rehearsal_state_machine_multi_hop() {
           .ubuntu_upgrade.needs_reboot == false and
           .ubuntu_upgrade.resume_after_reboot == false and
           .ubuntu_upgrade.current_upgrade == null and
-          (.ubuntu_upgrade.completed_upgrades | length) == 3
+          (.ubuntu_upgrade.completed_upgrades | length) == 2
         ' "$state_file" >/dev/null
     ); then
         log_pass "Multi-hop state machine reaches terminal completed state"
@@ -741,7 +754,8 @@ test_upgrade_setup_infrastructure_persists_resolved_target_home() {
         source "$ACFS_RESUME_DIR/continue_context.env"
         printf 'target=%s\nacfs=%s\nstate=%s\nhome=%s\n'             "$CONTINUE_TARGET_HOME" "$CONTINUE_ACFS_HOME" "$CONTINUE_ACFS_STATE_FILE" "$CONTINUE_HOME"
     )"; then
-        # The continuation runs as root with HOME=/root; TARGET_HOME carries the user's home.
+        # The root continuation keeps HOME=/root so root-context tools never
+        # drop root-owned files into the user's home; TARGET_HOME carries it.
         if [[ "$result" == $'target=/srv/alice\nacfs=/srv/alice/.acfs\nstate=/srv/alice/.acfs/state.json\nhome=/root' ]]; then
             log_pass "resume context uses resolved target home"
         else
@@ -780,7 +794,8 @@ test_upgrade_setup_infrastructure_persists_explicit_new_user_home_for_root() {
         source "$ACFS_RESUME_DIR/continue_context.env"
         printf 'target=%s\nacfs=%s\nstate=%s\nhome=%s\n'             "$CONTINUE_TARGET_HOME" "$CONTINUE_ACFS_HOME" "$CONTINUE_ACFS_STATE_FILE" "$CONTINUE_HOME"
     )"; then
-        # The continuation runs as root with HOME=/root; TARGET_HOME carries the user's home.
+        # The root continuation keeps HOME=/root so root-context tools never
+        # drop root-owned files into the user's home; TARGET_HOME carries it.
         if [[ "$result" == $'target=/srv/alice\nacfs=/srv/alice/.acfs\nstate=/srv/alice/.acfs/state.json\nhome=/root' ]]; then
             log_pass "resume context keeps explicit new-user target home"
         else
