@@ -233,6 +233,7 @@ EOF
         ACFS_COMMIT_SHA_FULL="$pinned_ref" \
         ACFS_REF="$pinned_ref" \
         ACFS_REF_INPUT="main" \
+        ACFS_REPO_OWNER="Dicklesworthstone" \
         ACFS_RAW="https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/$pinned_ref" \
         ACFS_CHECKSUMS_REF_EXPLICIT=true \
         ACFS_CHECKSUMS_REF="release-checksums" \
