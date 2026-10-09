@@ -6,4 +6,4 @@ Append-only record of changes to durable knowledge. Each entry is a heading `## 
 
 ## [2026-10-09] A catalog and a log for docs/
 
-The docs now have a catalog (`docs/index.md`) and this log, as agentharness's docs structure asks. The catalog lists every page under `docs/`, one line each, and says that history is in git. The pages themselves are upstream ACFS's and are unchanged: they get no `Related:` line or scope paragraph, and nothing moved out of `README.md`, because each such edit would conflict at every upstream sync.
+The docs now have a catalog (`docs/index.md`) and this log. The catalog lists every page under `docs/`, one line each, and says that history is in git. The pages themselves are upstream ACFS's and are unchanged: they get no `Related:` line or scope paragraph, and nothing moved out of `README.md`, because each such edit would conflict at every upstream sync.
