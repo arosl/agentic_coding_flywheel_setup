@@ -2298,7 +2298,7 @@ show_auth_flow() {
             local choice
             choice=$(printf '%s\n' "${items[@]}" | gum choose \
                 --cursor.foreground "$ACFS_ACCENT" \
-                --selected.foreground "$ACFS_SUCCESS" 2>/dev/null) || true
+                --selected.foreground "$ACFS_SUCCESS") || true
 
             # Empty choice (Esc or Ctrl+C) -> back to menu
             if [[ -z "$choice" ]]; then
@@ -2575,13 +2575,14 @@ show_menu_gum() {
     fi
     items+=("👋 [q] Quit")
 
-    # Show menu with gum using Catppuccin colors
+    # Show menu with gum using Catppuccin colors. gum draws its UI on
+    # stderr, so never discard it: the menu would come up blank.
     local choice=""
     choice=$(printf '%s\n' "${items[@]}" | gum choose \
         --cursor.foreground "$ACFS_ACCENT" \
         --selected.foreground "$ACFS_SUCCESS" \
         --header.foreground "$ACFS_PRIMARY" \
-        --header "Select a lesson:" 2>/dev/null) || true
+        --header "Select a lesson:") || true
 
     # Parse choice (handles single and double digit lesson numbers)
     # Empty choice (Esc or gum failure) is treated as "invalid" to redraw menu
@@ -2903,7 +2904,7 @@ $(gum style --foreground "$ACFS_PINK" --bold "${LESSON_TITLES[$idx]}")"
         local action=""
         action=$(printf '%s\n' "${nav_items[@]}" | gum choose \
             --cursor.foreground "$ACFS_ACCENT" \
-            --selected.foreground "$ACFS_SUCCESS" 2>/dev/null) || true
+            --selected.foreground "$ACFS_SUCCESS") || true
 
         # Handle empty action (Esc pressed or gum failed) -> return to menu
         if [[ -z "$action" ]]; then
