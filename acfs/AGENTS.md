@@ -445,7 +445,7 @@ Never run bare `herdr` from an agent: it opens the TUI and blocks.
 | `herdr agent list` | List agents and their state |
 | `herdr agent read <agent>` | Read an agent's recent output |
 | `herdr agent prompt <agent> "<text>"` | Send a prompt to an agent |
-| `herdr agent wait <agent> --until idle` | Wait for an agent to finish |
+| `herdr agent wait <agent>` | Wait until an agent is idle, done or blocked (a finished turn is `done`, not `idle`) |
 | `herdr agent prompt <agent> "<prompt>"` | Send a prompt from the command palette, `~/.acfs/onboard/docs/ntm/command_palette.md` |
 
 ### Safety Tools

@@ -464,7 +464,7 @@ const _flywheelTools: FlywheelTool[] = [
       "herdr agent list",
       "herdr agent read <agent>",
       'herdr agent prompt <agent> "<text>"',
-      "herdr agent wait <agent> --until idle",
+      "herdr agent wait <agent>",
     ],
     installCommand: "curl -fsSL https://herdr.dev/install.sh | sh",
     language: "Rust",

@@ -52,6 +52,34 @@ This creates, in your current workspace:
 - 1 Gemini pane
 
 Agent names must be unique across herdr, so prefix them with the project.
+herdr takes only lowercase names: a lowercase letter first, then lowercase
+letters, digits, `-` or `_`, 32 characters at most. An agent that also has
+an Agent Mail name (CamelCase, such as `IcyKnoll`) uses it lowercased in
+herdr (`icyknoll`), so other agents can find it in both.
+
+### When an Agent Isn't Ready
+
+`herdr agent start` returns once herdr sees the agent ready for input. Two
+things can still stand in the way:
+
+- **A first-run dialog.** Codex asks "Trust this folder?" on its first run in
+  a directory, and then "Hooks need review" for the hooks that dcg and herdr
+  install. While a dialog is up, the agent is `blocked`: `agent start` fails
+  with `agent_not_ready`, and `agent prompt` with `agent_blocked`, without
+  typing anything. Look at the dialog, then answer it deliberately:
+
+  ```bash
+  herdr agent read myproject-cod1 --source visible   # what's on screen now
+  herdr agent send-keys myproject-cod1 enter         # accept the highlighted choice
+  ```
+
+  Other key names include `esc`, `up`, `down` and `ctrl+c`.
+- **A login screen.** A Claude or Codex that isn't logged in yet can look
+  `idle`. It has started a real session only once herdr reports one:
+
+  ```bash
+  herdr agent get myproject-cc1 | jq '.result.agent.agent_session'   # null until then
+  ```
 
 ### List Agents
 
@@ -103,7 +131,9 @@ herdr agent wait myproject-cc1 --timeout 600000
 ```
 
 `herdr agent list` shows each agent's state: `working`, `idle`, `done`,
-`blocked` (waiting for your approval or answer) or `unknown`.
+`blocked` (waiting for your approval or answer) or `unknown`. A finished turn
+is `done`, not `idle`, until you look at that agent, so wait without
+`--until idle`: plain `herdr agent wait` matches idle, done and blocked.
 
 ---
 

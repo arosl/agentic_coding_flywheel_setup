@@ -299,7 +299,7 @@ herdr workspace create --cwd /data/projects/PROJECT  # New workspace for a proje
 herdr agent list                                     # Agents and their state
 herdr agent read AGENT                               # Recent terminal output
 herdr agent prompt AGENT "message"                   # Send a prompt
-herdr agent wait AGENT --until idle                  # Wait for an agent
+herdr agent wait AGENT                               # Wait until idle, done or blocked
 ```
 
 ### Issue Tracking with Beads
