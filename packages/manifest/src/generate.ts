@@ -612,6 +612,7 @@ const INTERNAL_SCRIPTS_TO_CHECKSUM = [
   "VERSION",
   "acfs.manifest.yaml",
   "acfs/AGENTS.md",
+  "acfs/onboard/docs/ntm/command_palette.md",
   "acfs/zsh/acfs.zshrc",
   "acfs/zsh/p10k.zsh",
   "scripts/completions/_acfs",

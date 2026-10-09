@@ -1287,7 +1287,7 @@ describe("Generated script headers", () => {
     expect(countMatch).not.toBeNull();
     expect(rawEntries.length).toBe(checksums.size);
     expect(Number(countMatch?.[1])).toBe(checksums.size);
-    expect(checksums.size).toBe(115);
+    expect(checksums.size).toBe(116);
 
     const mandatoryPaths = [
       "install.sh",
@@ -1337,6 +1337,7 @@ describe("Generated script headers", () => {
       "VERSION",
       "acfs.manifest.yaml",
       "acfs/AGENTS.md",
+      "acfs/onboard/docs/ntm/command_palette.md",
       "acfs/zsh/acfs.zshrc",
       "acfs/zsh/p10k.zsh",
       "scripts/completions/_acfs",
