@@ -346,7 +346,7 @@ jobs:
           su - ubuntu -c "zsh -ic 'command -v lsof >/dev/null'"
           su - ubuntu -c "zsh -ic 'command -v dig >/dev/null'"
           su - ubuntu -c "zsh -ic 'command -v nc >/dev/null'"
-          su - ubuntu -c "zsh -ic 'ntm --help'"
+          su - ubuntu -c "zsh -ic 'herdr --version'"
           su - ubuntu -c "zsh -ic 'ubs --help'"
           su - ubuntu -c "zsh -ic 'bv --help'"
           su - ubuntu -c "zsh -ic 'cass --help'"
@@ -366,7 +366,6 @@ jobs:
           su - ubuntu -c "zsh -ic 'pt --help || true'"
           su - ubuntu -c "zsh -ic 'brenner --version || brenner --help || true'"
           su - ubuntu -c "zsh -ic 'rch --version || rch --help || true'"
-          su - ubuntu -c "zsh -ic 'wa --version || wa --help || true'"
           su - ubuntu -c "zsh -ic 'sysmoni --version || sysmoni --help || true'"
           # Agents
           su - ubuntu -c "zsh -ic 'claude --version'"
