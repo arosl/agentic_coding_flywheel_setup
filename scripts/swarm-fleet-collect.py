@@ -48,23 +48,31 @@ INTEGRATION_WRITES_STARTED = False
 # Fixed read-only program. No executable, ref expression, command or environment
 # is supplied by the selection. Git configuration that could start network or
 # external diff/filter/fsmonitor helpers is disabled. No worktree is extracted.
-REMOTE = r'''import grp, hashlib, json, os, pwd, re, selectors, signal, stat, subprocess, sys, time
+REMOTE = r'''import errno, grp, hashlib, json, os, pwd, re, selectors, signal, stat, subprocess, sys, time
 LIMIT = 1048576
 MAX_BUNDLE = 16777216
 class Refused(Exception): pass
 def need(value, code):
     if not value: raise Refused(code)
+PRIVATE = {}
 def private_group(gid):
     # The user's own primary group, named after them, with no other member.
-    try:
-        me = pwd.getpwuid(os.geteuid()); group = grp.getgrgid(gid)
-        others = [e for e in pwd.getpwall() if e.pw_gid == gid and e.pw_uid != me.pw_uid]
-    except (KeyError, OSError):
-        return False
-    return me.pw_gid == gid and group.gr_name == me.pw_name and not group.gr_mem and not others
-def writable_by_others(info):
+    if gid not in PRIVATE:
+        try:
+            me = pwd.getpwuid(os.geteuid()); group = grp.getgrgid(gid)
+            others = [e for e in pwd.getpwall() if e.pw_gid == gid and e.pw_uid != me.pw_uid]
+            PRIVATE[gid] = me.pw_gid == gid and group.gr_name == me.pw_name and not group.gr_mem and not others
+        except (KeyError, OSError):
+            PRIVATE[gid] = False
+    return PRIVATE[gid]
+def writable_by_others(info, fd):
+    # Group write only for the private group, and only without an access ACL,
+    # whose mask the group bits would then be.
     if info.st_mode & 0o002: return True
-    return bool(info.st_mode & 0o020) and not private_group(info.st_gid)
+    if not info.st_mode & 0o020: return False
+    if not private_group(info.st_gid): return True
+    try: return 'system.posix_acl_access' in os.listxattr(fd)
+    except OSError as error: return error.errno not in (errno.ENOTSUP, errno.EOPNOTSUPP)
 def stop(signum, frame): raise Refused("remote_interrupted")
 for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP): signal.signal(sig, stop)
 def directory(path):
@@ -77,8 +85,8 @@ def directory(path):
             os.close(fd); fd = child
             info = os.fstat(fd)
             sticky = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
-            need(info.st_uid in (0, os.geteuid()) and (not writable_by_others(info) or sticky), "unsafe_repository")
-        need(info.st_uid == os.geteuid() and not writable_by_others(info), "unsafe_repository")
+            need(info.st_uid in (0, os.geteuid()) and (not writable_by_others(info, fd) or sticky), "unsafe_repository")
+        need(info.st_uid == os.geteuid() and not writable_by_others(info, fd), "unsafe_repository")
         return fd
     except BaseException:
         os.close(fd)

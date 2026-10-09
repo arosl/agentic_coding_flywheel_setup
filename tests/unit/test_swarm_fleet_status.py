@@ -12,6 +12,7 @@ from pathlib import Path
 import shlex
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -511,6 +512,19 @@ class RemoteExportTests(unittest.TestCase):
         self.path.chmod(0o660)
         private = fleet.private_group(self.path.stat().st_gid)
         self.assertEqual(self.run_reader().returncode, 0 if private else 2)
+        # An access ACL granting another user write leaves the same 0660 mode
+        # (its mask), and must be refused even in a private group.
+        undefined = 0xFFFFFFFF
+        acl = struct.pack("<I", 2) + b"".join(struct.pack("<HHI", *entry) for entry in (
+            (0x01, 6, undefined), (0x02, 6, 65534), (0x04, 4, undefined), (0x10, 6, undefined), (0x20, 0, undefined)))
+        try:
+            os.setxattr(self.path, "system.posix_acl_access", acl)
+        except OSError:
+            pass  # No ACL support here; the mode cases above still ran.
+        else:
+            self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o660)
+            self.assertEqual(self.run_reader().returncode, 2)
+            os.removexattr(self.path, "system.posix_acl_access")
         self.path.chmod(0o600)
         os.link(self.path, self.beads / "linked.jsonl")
         self.assertEqual(self.run_reader().returncode, 2)

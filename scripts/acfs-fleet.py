@@ -7,6 +7,7 @@ approval, SSH and journal rules. This command never adds execution authority.
 import argparse
 import ast
 from contextlib import contextmanager
+import errno
 import fcntl
 import functools
 import grp
@@ -71,11 +72,23 @@ def private_group(gid):
     return me.pw_gid == gid and group.gr_name == me.pw_name and not group.gr_mem and not others
 
 
-def writable_by_others(info):
-    """World write, or group write for a group other than the user's private one."""
+def has_access_acl(fd):
+    """True when fd carries a POSIX access ACL, whose mask the group bits would be."""
+    try:
+        names = os.listxattr(fd)
+    except OSError as error:
+        # No xattr support means no ACL can exist; anything else fails closed.
+        return error.errno not in (errno.ENOTSUP, errno.EOPNOTSUPP)
+    return "system.posix_acl_access" in names
+
+
+def writable_by_others(info, fd):
+    """World write, or group write that reaches anyone but this user."""
     if info.st_mode & 0o002:
         return True
-    return bool(info.st_mode & 0o020) and not private_group(info.st_gid)
+    if not info.st_mode & 0o020:
+        return False
+    return not private_group(info.st_gid) or has_access_acl(fd)
 
 
 def encode(value):
@@ -118,10 +131,10 @@ def directory(path, owned=False, private=False):
             fd = child
             info = os.fstat(fd)
             sticky = info.st_uid == 0 and bool(info.st_mode & stat.S_ISVTX)
-            require(info.st_uid in (0, os.geteuid()) and (not writable_by_others(info) or sticky), "unsafe_directory")
+            require(info.st_uid in (0, os.geteuid()) and (not writable_by_others(info, fd) or sticky), "unsafe_directory")
         info = os.fstat(fd)
         if owned:
-            require(info.st_uid == os.geteuid() and not writable_by_others(info), "directory_not_owned_or_writable")
+            require(info.st_uid == os.geteuid() and not writable_by_others(info, fd), "directory_not_owned_or_writable")
         if private:
             require(not info.st_mode & 0o077, "runtime_directory_not_private")
         yield fd
@@ -134,7 +147,8 @@ def read_file(fd, name, installed=False):
     with os.fdopen(handle, "rb") as stream:
         info = os.fstat(stream.fileno())
         require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1
-                and info.st_uid in (0, os.geteuid()) and not writable_by_others(info), "unsafe_runtime_file")
+                and info.st_uid in (0, os.geteuid()) and not writable_by_others(info, stream.fileno()),
+                "unsafe_runtime_file")
         if installed:
             require(not info.st_mode & 0o277, "runtime_file_not_read_only_private")
         raw = stream.read(LIMIT + 1)

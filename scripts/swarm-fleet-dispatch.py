@@ -36,18 +36,26 @@ SEND_ATTEMPTED = False
 # Fixed read-only remote program, not code supplied by a batch/spec. It snapshots
 # an original private native delivery intent without depending on a live pane,
 # packet file, or remote batch. JSON and request binding are validated locally.
-READ_RECEIPT = r'''import grp, os, pwd, stat, sys
+READ_RECEIPT = r'''import errno, grp, os, pwd, stat, sys
+PRIVATE = {}
 def private_group(gid):
     # The user's own primary group, named after them, with no other member.
-    try:
-        me = pwd.getpwuid(os.geteuid()); group = grp.getgrgid(gid)
-        others = [e for e in pwd.getpwall() if e.pw_gid == gid and e.pw_uid != me.pw_uid]
-    except (KeyError, OSError):
-        return False
-    return me.pw_gid == gid and group.gr_name == me.pw_name and not group.gr_mem and not others
-def writable_by_others(info):
+    if gid not in PRIVATE:
+        try:
+            me = pwd.getpwuid(os.geteuid()); group = grp.getgrgid(gid)
+            others = [e for e in pwd.getpwall() if e.pw_gid == gid and e.pw_uid != me.pw_uid]
+            PRIVATE[gid] = me.pw_gid == gid and group.gr_name == me.pw_name and not group.gr_mem and not others
+        except (KeyError, OSError):
+            PRIVATE[gid] = False
+    return PRIVATE[gid]
+def writable_by_others(info, fd):
+    # Group write only for the private group, and only without an access ACL,
+    # whose mask the group bits would then be.
     if info.st_mode & 0o002: return True
-    return bool(info.st_mode & 0o020) and not private_group(info.st_gid)
+    if not info.st_mode & 0o020: return False
+    if not private_group(info.st_gid): return True
+    try: return 'system.posix_acl_access' in os.listxattr(fd)
+    except OSError as error: return error.errno not in (errno.ENOTSUP, errno.EOPNOTSUPP)
 try:
     path = sys.argv[1]
     uid = os.geteuid()
@@ -61,7 +69,7 @@ try:
             fd = child
             info = os.fstat(fd)
             sticky = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
-            if info.st_uid not in (0, uid) or (writable_by_others(info) and not sticky):
+            if info.st_uid not in (0, uid) or (writable_by_others(info, fd) and not sticky):
                 raise ValueError()
         handle = os.open(path.rsplit('/', 1)[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
         with os.fdopen(handle, 'rb') as stream:

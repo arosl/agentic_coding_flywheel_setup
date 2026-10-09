@@ -7,6 +7,7 @@ accepted as permission to spawn. Requires Linux, OpenSSH, and existing ACFS host
 """
 import argparse
 from contextlib import contextmanager
+import errno
 import fcntl
 import functools
 import grp
@@ -69,11 +70,34 @@ def private_group(gid):
     return me.pw_gid == gid and group.gr_name == me.pw_name and not group.gr_mem and not others
 
 
-def writable_by_others(info):
-    """World write, or group write for a group other than the user's private one."""
+def has_access_acl(target):
+    """True when target (an fd, or a path not followed) carries a POSIX access ACL.
+
+    With one, the mode's group bits are the ACL mask, which may grant write
+    to other users, so they no longer describe the owning group alone.
+    """
+    try:
+        if isinstance(target, int):
+            names = os.listxattr(target)
+        else:
+            names = os.listxattr(target, follow_symlinks=False)
+    except OSError as error:
+        # No xattr support means no ACL can exist; anything else fails closed.
+        return error.errno not in (errno.ENOTSUP, errno.EOPNOTSUPP)
+    return "system.posix_acl_access" in names
+
+
+def writable_by_others(info, target):
+    """World write, or group write that reaches anyone but this user.
+
+    Group write is accepted only for the user's private group, and only
+    without an access ACL. target is the fd (or unfollowed path) of info.
+    """
     if info.st_mode & 0o002:
         return True
-    return bool(info.st_mode & 0o020) and not private_group(info.st_gid)
+    if not info.st_mode & 0o020:
+        return False
+    return not private_group(info.st_gid) or has_access_acl(target)
 
 
 def encoded(value):
@@ -194,11 +218,11 @@ def directory_fd(path, private=False):
             fd = child
             info = os.fstat(fd)
             sticky_root = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
-            require(info.st_uid in (0, os.geteuid()) and (not writable_by_others(info) or sticky_root),
+            require(info.st_uid in (0, os.geteuid()) and (not writable_by_others(info, fd) or sticky_root),
                     "unsafe_directory")
         info = os.fstat(fd)
         require(info.st_uid == os.geteuid()
-                and not (info.st_mode & 0o077 if private else writable_by_others(info)),
+                and not (info.st_mode & 0o077 if private else writable_by_others(info, fd)),
                 "directory_ownership_or_permissions")
         yield fd
     finally:
@@ -216,7 +240,7 @@ def read_at(fd, name, private=True, optional=False):
         info = os.fstat(stream.fileno())
         require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1
                 and info.st_uid == os.geteuid()
-                and not (info.st_mode & 0o077 if private else writable_by_others(info)),
+                and not (info.st_mode & 0o077 if private else writable_by_others(info, stream.fileno())),
                 "unsafe_input_file")
         raw = stream.read(LIMIT + 1)
         require(len(raw) <= LIMIT, "input_size_limit")

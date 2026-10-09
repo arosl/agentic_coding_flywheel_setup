@@ -9,6 +9,7 @@ import argparse
 import concurrent.futures
 import copy
 import datetime as dt
+import errno
 import fcntl
 import functools
 import grp
@@ -58,10 +59,22 @@ def private_group(gid):
     return me.pw_gid == gid and group.gr_name == me.pw_name and not group.gr_mem and not others
 
 
-def writable_by_others(info):
+def has_access_acl(fd):
+    # With an access ACL the group bits are its mask, which may grant others write.
+    try:
+        names = os.listxattr(fd)
+    except OSError as error:
+        # No xattr support means no ACL can exist; anything else fails closed.
+        return error.errno not in (errno.ENOTSUP, errno.EOPNOTSUPP)
+    return "system.posix_acl_access" in names
+
+
+def writable_by_others(info, fd):
     if info.st_mode & 0o002:
         return True
-    return bool(info.st_mode & 0o020) and not private_group(info.st_gid)
+    if not info.st_mode & 0o020:
+        return False
+    return not private_group(info.st_gid) or has_access_acl(fd)
 
 
 def encoded(value):
@@ -112,7 +125,7 @@ def read_snapshot(path, private=False):
     try:
         before = os.fstat(fd)
         if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or
-                before.st_size > LIMIT or writable_by_others(before) or
+                before.st_size > LIMIT or writable_by_others(before, fd) or
                 (private and (before.st_uid != os.getuid() or before.st_mode & 0o077))):
             refuse("unsafe_input_file")
         data = bytearray()
@@ -363,7 +376,7 @@ def output_parent(path):
             os.close(fd)
             fd = child
         info = os.fstat(fd)
-        if info.st_uid != os.getuid() or writable_by_others(info):
+        if info.st_uid != os.getuid() or writable_by_others(info, fd):
             refuse("output_directory_unsafe")
         try:
             os.stat(target.name, dir_fd=fd, follow_symlinks=False)

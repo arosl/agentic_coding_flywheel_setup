@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -454,6 +455,10 @@ class PrivateGroupTests(unittest.TestCase):
             patcher = patch.object(*self.split(target), side_effect=replacement)
             patcher.start()
             self.addCleanup(patcher.stop)
+        # ACLs are covered against a real inode in AccessAclTests.
+        patcher = patch.object(fleet, "has_access_acl", return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     @staticmethod
     def split(target):
@@ -466,35 +471,63 @@ class PrivateGroupTests(unittest.TestCase):
         return self.groups[gid]
 
     @staticmethod
-    def info(mode, gid):
-        return SimpleNamespace(st_mode=stat.S_IFDIR | mode, st_gid=gid)
+    def writable(mode, gid):
+        return fleet.writable_by_others(SimpleNamespace(st_mode=stat.S_IFDIR | mode, st_gid=gid), -1)
 
     def test_private_group_write_is_accepted(self):
-        self.assertFalse(fleet.writable_by_others(self.info(0o775, 1000)))
-        self.assertFalse(fleet.writable_by_others(self.info(0o755, 27)))
+        self.assertFalse(self.writable(0o775, 1000))
+        self.assertFalse(self.writable(0o755, 27))
 
     def test_world_write_is_refused_even_in_the_private_group(self):
-        self.assertTrue(fleet.writable_by_others(self.info(0o777, 1000)))
-        self.assertTrue(fleet.writable_by_others(self.info(0o757, 1000)))
+        self.assertTrue(self.writable(0o777, 1000))
+        self.assertTrue(self.writable(0o757, 1000))
 
     def test_shared_or_foreign_group_write_is_refused(self):
-        self.assertTrue(fleet.writable_by_others(self.info(0o775, 27)))
-        self.assertTrue(fleet.writable_by_others(self.info(0o775, 1001)))
+        self.assertTrue(self.writable(0o775, 27))
+        self.assertTrue(self.writable(0o775, 1001))
 
     def test_listed_member_makes_the_group_shared(self):
         self.groups[1000] = SimpleNamespace(gr_name="alice", gr_mem=["bob"])
-        self.assertTrue(fleet.writable_by_others(self.info(0o775, 1000)))
+        self.assertTrue(self.writable(0o775, 1000))
 
     def test_another_user_with_the_same_primary_group_makes_it_shared(self):
         self.users.append(SimpleNamespace(pw_name="carol", pw_uid=1002, pw_gid=1000))
-        self.assertTrue(fleet.writable_by_others(self.info(0o775, 1000)))
+        self.assertTrue(self.writable(0o775, 1000))
 
     def test_group_not_named_after_the_user_is_refused(self):
         self.groups[1000] = SimpleNamespace(gr_name="staff", gr_mem=[])
-        self.assertTrue(fleet.writable_by_others(self.info(0o775, 1000)))
+        self.assertTrue(self.writable(0o775, 1000))
 
     def test_failed_lookup_is_refused(self):
-        self.assertTrue(fleet.writable_by_others(self.info(0o775, 4242)))
+        self.assertTrue(self.writable(0o775, 4242))
+
+
+class AccessAclTests(unittest.TestCase):
+    """An access ACL makes the group bits its mask, which can grant others write."""
+
+    @staticmethod
+    def acl_granting_nobody_write():
+        # Linux system.posix_acl_access: version 2, then (tag, perm, id) entries in tag order.
+        undefined = 0xFFFFFFFF
+        entries = ((0x01, 7, undefined), (0x02, 7, 65534), (0x04, 5, undefined),
+                   (0x10, 7, undefined), (0x20, 5, undefined))
+        return struct.pack("<I", 2) + b"".join(struct.pack("<HHI", *entry) for entry in entries)
+
+    def test_private_group_write_with_an_access_acl_is_refused(self):
+        directory = Path(tempfile.mkdtemp(prefix="acfs-fleet-acl-"))
+        directory.chmod(0o775)
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        self.addCleanup(os.close, fd)
+        with patch.object(fleet, "private_group", return_value=True):
+            self.assertFalse(fleet.writable_by_others(os.fstat(fd), fd))
+            try:
+                os.setxattr(fd, "system.posix_acl_access", self.acl_granting_nobody_write())
+            except OSError as error:
+                self.skipTest(f"no POSIX ACL support here: {error.strerror}")
+            info = os.fstat(fd)
+            self.assertEqual(stat.S_IMODE(info.st_mode), 0o775)
+            self.assertTrue(fleet.writable_by_others(info, fd))
+            self.assertTrue(fleet.writable_by_others(directory.lstat(), str(directory)))
 
 
 if __name__ == "__main__":
