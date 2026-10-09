@@ -82,6 +82,12 @@ The fork tracks upstream ACFS and changes its toolset: herdr instead of ntm, wez
 - **Deploys as:** nothing from this repo. Users run `install.sh` on their own VPS, through the one-liner that fetches it from GitHub, and the fork has no deployment of its own; upstream deploys the wizard website (`apps/web/`) to Vercel.
 - **Deferred** (don't build, don't scaffold): Incus in place of the removed Docker modules and of the Docker-based `tests/vm/`.
 - **Rejected** (2026-10-08; not to be built or reopened): Docker and lazydocker; ntm, wezterm_automata, and ACFS's tmux config and `agents` session, which herdr replaces. The reasons: `README.md`, "About this fork".
+- **Upstream compatibility** (the operator's standing rule, 2026-10-09): keep upstream compatibility where possible, and diverge only where herdr naturally replaces a tool. Porting upstream content to herdr beats deleting it.
+- **Known non-herdr divergences:** fork-only changes to upstream files. Resolve each one knowingly at a sync, and drop it once upstream fixes it.
+  - acfs-gxd: shell and test fixes that make the gate pass. Upstream's fails: release-doctor aborts under `set -e`, and tests assert the upgrade paths upstream retired.
+  - acfs-bnz: CI pins shellcheck 0.9.0 and bun, which upstream's CI leaves unpinned.
+  - acfs-0pj: the plugin-pack tests set their fixtures' file modes, because upstream's tests fail under umask 0002.
+  - acfs-a04: `ACFS_REPO_OWNER` defaults to the fork's owner, so the one-liner installs the fork, not upstream.
 
 ## Commands and gates
 
