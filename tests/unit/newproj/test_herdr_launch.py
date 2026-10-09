@@ -55,12 +55,25 @@ if args[:2] == ["tab", "create"]:
     n = counter()
     print(json.dumps({"result": {"tab": {"tab_id": "w9:t%d" % n}, "root_pane": {"pane_id": "w9:p%d" % n}}}))
     sys.exit(0)
+kinds = Path(os.environ["CALLS"] + ".kinds")
 if args[:2] == ["agent", "start"]:
-    if mode == "start_blocked": fail("agent_not_ready", "agent is blocked")
+    known = json.loads(kinds.read_text()) if kinds.exists() else {}
+    known[args[2]] = args[args.index("--kind") + 1]
+    kinds.write_text(json.dumps(known))
+    if mode in ("start_blocked", "trust_dialog"): fail("agent_not_ready", "agent is blocked")
     print(json.dumps({"result": {"agent": {"name": args[2]}}}))
     sys.exit(0)
 if args[:2] == ["agent", "read"]:
-    print("Trust this folder?")
+    kind = json.loads(kinds.read_text()).get(args[2]) if kinds.exists() else None
+    if mode == "trust_dialog" and kind == "claude":
+        print(" Quick safety check\n Is this a project you created or one you trust?\n\n ❯ No, exit\n   Yes, I trust this folder")
+    elif mode == "trust_dialog" and kind == "codex":
+        print("  Trust this folder?\n\n› 1. Trust and continue\n  2. Quit")
+    else:
+        print("Trust this folder?")
+    sys.exit(0)
+if args[:2] in (["agent", "send-keys"], ["agent", "wait"]):
+    print(json.dumps({"result": {}}))
     sys.exit(0)
 if args[:2] == ["agent", "prompt"]:
     if mode == "prompt_fail": fail("agent_blocked", "agent is blocked")
@@ -182,9 +195,12 @@ class LaunchTests(unittest.TestCase):
         return [json.loads(line) for line in self.calls.read_text().splitlines()] if self.calls.exists() else []
 
     def mutating(self):
-        """herdr calls that change anything: all but status and read."""
+        """herdr calls that change anything: all but status, read and wait."""
         return [call["argv"] for call in self.invocations()
-                if call["argv"][:2] not in (["status", "server"], ["agent", "read"])]
+                if call["argv"][:2] not in (["status", "server"], ["agent", "read"], ["agent", "wait"])]
+
+    def keys(self):
+        return [argv[2:] for argv in self.mutating() if argv[:2] == ["agent", "send-keys"]]
 
     def starts(self):
         return [argv for argv in self.mutating() if argv[:2] == ["agent", "start"]]
@@ -231,6 +247,31 @@ class LaunchTests(unittest.TestCase):
                 self.assertFalse(self.events.exists())
         self.assertFalse((self.root / "injected").exists())
         self.assertNotIn([], [call["argv"] for call in self.invocations()])
+
+    def test_new_folder_trust_dialogs_are_answered_with_consent(self):
+        # A folder newproj just created: Claude Code and Codex each ask
+        # whether to trust it. The consent text says ACFS answers "trust".
+        self.bin.joinpath("agy").rename(self.bin / "agy.disabled")
+        result = self.run_bash('open_in_herdr', "\n\n\nyes\n", FAKE_HERDR_MODE="trust_dialog")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("trust this new project folder", result.stdout)
+        self.assertEqual(self.keys(), [["bluelake", "down", "enter"], ["greencastle", "enter"]])
+        self.assertIn("ATTACHED", result.stdout)
+
+    def test_other_dialogs_still_stop_spawn(self):
+        # Antigravity's dialog isn't a folder-trust dialog spawn knows.
+        for agent in ("claude", "codex"):
+            self.bin.joinpath(agent).rename(self.bin / (agent + ".disabled"))
+        result = self.run_bash('open_in_herdr', "\n\nyes\n", FAKE_HERDR_MODE="trust_dialog")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("ATTACHED", result.stdout)
+        self.assertEqual(self.keys(), [])
+        self.assertEqual(len(self.starts()), 1)
+
+    def test_default_label_is_sanitized(self):
+        result = self.run_bash('open_in_herdr', "\n\n\n\nyes\n", PROJECT_NAME="my.app v2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.mutating()[0][4:6], ["--label", "acfs-my-app-v2"])
 
     def test_ws_failure_starts_no_agent(self):
         for mode in ("ws_exit", "ws_invalid", "ws_unsafe"):

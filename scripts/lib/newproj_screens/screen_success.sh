@@ -311,8 +311,11 @@ newproj_start_herdr() {
         echo "herdr did not confirm a new workspace; no agents were started." >&2
         return 1
     fi
+    # The wizard just created this folder, so Claude Code's and Codex's
+    # first-run "trust this folder?" dialog is answered with trust (the
+    # consent text says so). spawn answers no other dialog.
     response=$(bash "$NEWPROJ_HERDR_AGENTS" spawn --workspace "$workspace" --cwd "$project_dir" \
-        --claude "$cc" --codex "$cod" --agy "$agy" "${prompt_args[@]}" --json) || status=$?
+        --claude "$cc" --codex "$cod" --agy "$agy" "${prompt_args[@]}" --trust-folder --json) || status=$?
     if ((status != 0)) || ! jq -e -s --arg ws "$workspace" --arg dir "$project_dir" \
         --argjson count "$total" --arg want "$want" '
         length == 1 and (.[0] |
@@ -357,10 +360,13 @@ open_in_herdr() {
         ((cod > 0)) && cod=2
         ((agy > 0)) && agy=2
     fi
+    # A project name can hold characters a workspace name can't.
     label="acfs-${project_name:0:48}"
+    label="${label//[^a-zA-Z0-9_-]/-}"
     printf '\nProject: %s\n' "$project_dir"
     echo "Start each agent in its own tab of a new herdr workspace, beside a tab with your own shell."
     echo "Each agent gets an Agent Mail identity, and its tab is named after it."
+    echo "ACFS tells Claude Code and Codex that you trust this new project folder."
     echo "Installed does not mean authenticated. Sign in inside each agent as needed."
     echo "Agents may incur provider charges."
     if [[ "$work" == true ]]; then
@@ -426,7 +432,7 @@ open_in_herdr() {
         return 0
     fi
     printf '\nWorkspace %s started. Reconnect any time by running herdr; Ctrl+b then w lists workspaces.\n' "$label"
-    echo "Agents keep running after you disconnect."
+    echo "Detach with Ctrl+b then q. Agents keep running after you disconnect."
     prepare_success_exec
     cd -- "$project_dir" || return 1
     exec herdr
