@@ -1386,6 +1386,10 @@ export PATH="$global_bin:/usr/bin:/bin"
 export TARGET_USER="$current_user"
 export TARGET_HOME="$target_home"
 export ACFS_BIN_DIR="$target_home/.local/bin"
+# Without this, _stack_target_home keeps the current user's TARGET_HOME only
+# when HOME is that user's passwd home, so under a throwaway HOME the commands
+# ran in the real home and the pwd check failed.
+export ACFS_STACK_TRUST_TARGET_HOME=true
 # shellcheck source=/dev/null
 source "$STACK_SH"
 resolved_curl="$(_stack_run_as_user 'command -v curl' 2>/dev/null || true)"
