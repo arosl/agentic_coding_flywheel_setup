@@ -38,21 +38,10 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMPROOT="$(mktemp -d "${TMPDIR:-/tmp}/acfs-composition-proof.XXXXXX")"
-cleanup_tmproot() { rm -rf "$TMPROOT"; }
-trap cleanup_tmproot EXIT
+trap 'rm -rf "$TMPROOT"' EXIT
 mkdir -p "$TMPROOT"
 
 FAIL=0
-assert() {
-    local desc="$1" cond="$2"
-    if [[ "$cond" == "true" ]]; then
-        echo "PASS: $desc"
-    else
-        echo "FAIL: $desc"
-        FAIL=1
-    fi
-}
-note() { echo "NOTE: $1"; }
 
 SOURCEABLE="$TMPROOT/install_sourceable.sh"
 total_lines="$(wc -l < "$REPO_ROOT/install.sh")"
@@ -74,7 +63,26 @@ HAS_GUM=false
 YES_MODE=true
 # shellcheck disable=SC1090
 source "$SOURCEABLE"
+# Sourcing install.sh replaced the EXIT trap with its cleanup(), which reports
+# an install failure, and removed every function defined before it, so the
+# trap is set again here and the test's helpers are defined only below.
+trap 'rm -rf "$TMPROOT"' EXIT
+# Sourcing the truncated copy also sets SCRIPT_DIR to $TMPROOT. detect_environment
+# verifies the internal checksum ledger against SCRIPT_DIR, and the ledger
+# covers install.sh itself (here truncated), VERSION and packages/ (absent),
+# and refuses symlinked files, so point it at the real checkout instead.
+SCRIPT_DIR="$(cd "$REPO_ROOT" && pwd -P)"
 detect_environment
+assert() {
+    local desc="$1" cond="$2"
+    if [[ "$cond" == "true" ]]; then
+        echo "PASS: $desc"
+    else
+        echo "FAIL: $desc"
+        FAIL=1
+    fi
+}
+note() { echo "NOTE: $1"; }
 # install.sh's own `set -euo pipefail` is now active in this shell (it leaks
 # in via sourcing above). Every step below intentionally exercises failure
 # paths and checks their real, nonzero exit codes — under -e a bare
@@ -91,6 +99,9 @@ echo "        case)."
 echo "=============================================="
 
 echo "-- A1: resolve a real ref against the real repo --"
+# The repo install.sh defaults to; A6 resolves against the same one.
+repo_owner="$ACFS_REPO_OWNER"
+repo_name="$ACFS_REPO_NAME"
 sha_main="$(acfs_resolve_ref_sha "main")"
 assert "A1. acfs_resolve_ref_sha resolves 'main' to a real 40-char SHA" \
     "$([[ "$sha_main" =~ ^[0-9a-f]{40}$ ]] && echo true || echo false)"
@@ -117,8 +128,8 @@ assert "A5. failed resolution correctly RE-APPLIES the cache-buster (still mutab
 
 echo
 echo "-- A6: resolving a SECOND, real ref after a failed resolution doesn't leak state --"
-ACFS_REPO_OWNER="Dicklesworthstone"
-ACFS_REPO_NAME="agentic_coding_flywheel_setup"
+ACFS_REPO_OWNER="$repo_owner"
+ACFS_REPO_NAME="$repo_name"
 sha_main_again="$(acfs_resolve_ref_sha "main")"
 assert "A6. a real ref resolved after an unrelated failure still resolves correctly" \
     "$([[ "$sha_main_again" == "$sha_main" ]] && echo true || echo false)"
