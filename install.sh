@@ -7435,6 +7435,34 @@ acfs_legacy_module_selected() {
     should_run_module "$module_id"
 }
 
+# Runs one module's manifest-mapped installer from a hand-written phase body,
+# rather than a second copy of its steps. The generated function applies the
+# module selection itself. Records a failure in ACFS_MODULE_FAILURES and
+# returns 1 when the installer is missing or fails.
+# acfs_get_module_installer can't serve here: it returns nothing unless the
+# module's category is on the generated path, and these phases run exactly
+# when it isn't.
+acfs_legacy_run_manifest_module() {
+    local module_id="$1"
+    local installer=""
+    local module_func_decl=""
+    module_func_decl="$(declare -p ACFS_MODULE_FUNC 2>/dev/null || true)"
+    if [[ "$module_func_decl" == declare\ -A* ]]; then
+        installer="${ACFS_MODULE_FUNC[$module_id]:-}"
+    fi
+    if [[ ! "$installer" =~ ^acfs_generated_install_[a-z0-9_]+$ ]] \
+        || ! declare -f "$installer" >/dev/null 2>&1; then
+        log_error "Manifest-mapped $module_id installer is unavailable"
+        ACFS_MODULE_FAILURES+=("$module_id (installer unavailable)")
+        return 1
+    fi
+    if ! "$installer"; then
+        ACFS_MODULE_FAILURES+=("$module_id (installer execution)")
+        return 1
+    fi
+    return 0
+}
+
 normalize_user() {
     set_phase "user_setup" "User Normalization"
     log_step "1/9" "Normalizing user account..."
@@ -9621,23 +9649,8 @@ install_stack_phase() {
     fi
 
     # herdr (tools.herdr). This hand-written path is the default on every
-    # distro (and the only one on Arch); it runs the manifest-mapped installer,
-    # which has no apt step, rather than a second copy of it.
-    local herdr_installer=""
-    local module_func_decl=""
-    module_func_decl="$(declare -p ACFS_MODULE_FUNC 2>/dev/null || true)"
-    if [[ "$module_func_decl" == declare\ -A* ]]; then
-        herdr_installer="${ACFS_MODULE_FUNC[tools.herdr]:-}"
-    fi
-    if [[ ! "$herdr_installer" =~ ^acfs_generated_install_[a-z0-9_]+$ ]] \
-        || ! declare -f "$herdr_installer" >/dev/null 2>&1; then
-        log_error "Manifest-mapped tools.herdr installer is unavailable"
-        ACFS_MODULE_FAILURES+=("tools.herdr (installer unavailable)")
-        stack_phase_rc=1
-    elif ! "$herdr_installer"; then
-        ACFS_MODULE_FAILURES+=("tools.herdr (installer execution)")
-        stack_phase_rc=1
-    fi
+    # distro (and the only one on Arch); the manifest installer has no apt step.
+    acfs_legacy_run_manifest_module "tools.herdr" || stack_phase_rc=1
 
     # MCP Agent Mail
     if ! acfs_legacy_module_selected "stack.mcp_agent_mail"; then
@@ -10600,10 +10613,19 @@ finalize() {
     set_phase "finalize" "Final Wiring"
     log_step "9/9" "Finalizing installation..."
 
+    local workspace_rc=0
     if acfs_use_generated_category "acfs"; then
         log_detail "Using generated installers for acfs (phase 10)"
         acfs_run_generated_category_phase "acfs" "10" || return 1
         log_detail "Generated acfs modules are supplemental; continuing legacy finalize for full runtime deployment parity"
+    else
+        # The default install keeps acfs on this hand-written path, which
+        # deploys every other acfs module itself. The workspace (starter
+        # project, quick reference, `agents` alias) has no copy here. It is
+        # optional, so its failure must not stop the onboard and acfs CLI
+        # deployment below; the phase still fails at the end, so a resume
+        # retries it.
+        acfs_legacy_run_manifest_module "acfs.workspace" || workspace_rc=1
     fi
 
     # Install onboard lessons + command
@@ -10938,6 +10960,10 @@ EOF
     # This phase can run after an earlier phase failed because main deliberately
     # records failures and continues. Reserve the overall success claim for
     # acfs_report_success_if_clean(), after every phase and the smoke test.
+    if [[ "$workspace_rc" -ne 0 ]]; then
+        log_error "Finalization finished, but acfs.workspace failed"
+        return 1
+    fi
     log_success "Finalization complete"
 }
 
