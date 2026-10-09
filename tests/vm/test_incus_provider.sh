@@ -4,10 +4,15 @@
 #
 # Creates a real VM with the launcher, then checks it the way a user would
 # reach it: only through the ssh_config entry and known_hosts line the
-# launcher printed. It needs Incus with a KVM-capable host and network
-# access to images: and GitHub, and it runs the full ACFS install.
+# launcher printed. It needs Incus (on a KVM-capable host, for a VM) and
+# network access to images: and GitHub, and it runs the full ACFS install.
 #
-# Usage: tests/vm/test_incus_provider.sh <instance-name>
+# Usage: tests/vm/test_incus_provider.sh [--container] <instance-name>
+#
+# With --container it creates the launcher's unprivileged system container
+# instead, and needs no KVM. Either way it ends by measuring the instance:
+# disk and memory once installed, and a cold start from stopped to an SSH
+# login. Run it once in each mode to compare the two.
 #
 # The instance must not exist yet. The test stops it at the end and never
 # deletes it; it prints the delete command instead. It runs from the Incus
@@ -18,6 +23,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LAUNCHER="$ROOT/scripts/providers/incus.sh"
+MODE_ARGS=()
+if [[ "${1:-}" == "--container" ]]; then
+    MODE_ARGS=(--container)
+    shift
+fi
 NAME="${1:-}"
 
 PASS=0
@@ -32,11 +42,11 @@ check() {
 }
 not() { ! "$@"; }
 
-[[ -n "$NAME" ]] || { echo "Usage: $0 <instance-name>" >&2; exit 2; }
+[[ -n "$NAME" ]] || { echo "Usage: $0 [--container] <instance-name>" >&2; exit 2; }
 
 command -v incus >/dev/null 2>&1 || skip "incus is not installed"
 incus info </dev/null >/dev/null 2>&1 || skip "this user can't reach the Incus daemon (not in incus-admin?)"
-[[ -e /dev/kvm ]] || skip "/dev/kvm is missing, so Incus can't run VMs here"
+[[ ${#MODE_ARGS[@]} -gt 0 || -e /dev/kvm ]] || skip "/dev/kvm is missing, so Incus can't run VMs here"
 incus image info images:ubuntu/26.04/cloud </dev/null >/dev/null 2>&1 || skip "the images: remote isn't reachable"
 if incus info "$NAME" </dev/null >/dev/null 2>&1; then
     echo "instance $NAME already exists; pass a fresh name" >&2
@@ -51,7 +61,7 @@ ssh-keygen -q -t ed25519 -N '' -C acfs-incus-vm-test -f "$WORK/key"
 echo "== create $NAME (full install)"
 create_started=$SECONDS
 set +e
-"$LAUNCHER" "$NAME" --ssh-key "$WORK/key.pub" >"$WORK/block" 2>"$WORK/create.log"
+"$LAUNCHER" "$NAME" --ssh-key "$WORK/key.pub" "${MODE_ARGS[@]}" >"$WORK/block" 2>"$WORK/create.log"
 create_rc=$?
 set -e
 echo "  launcher exit: $create_rc after $((SECONDS - create_started)) s; its last stderr lines:"
@@ -65,6 +75,21 @@ sed -n '/^Host /,/^#/p' "$WORK/block" | grep -v '^#' >"$WORK/ssh_config"
 grep -A1 -x '# Add to ~/.ssh/known_hosts on that machine:' "$WORK/block" | tail -n 1 >"$WORK/known_hosts"
 check "the block has an ssh_config entry" grep -qx "Host $NAME" "$WORK/ssh_config"
 check "the block has a known_hosts line" grep -q "^$NAME ssh-ed25519 " "$WORK/known_hosts"
+
+echo "== instance type"
+instance_type="$(incus query "/1.0/instances/$NAME" </dev/null | jq -r '.type' || true)"
+if [[ ${#MODE_ARGS[@]} -gt 0 ]]; then
+    check "the instance is a container" test "$instance_type" = container
+    for setting in security.privileged=false security.nesting=false security.idmap.isolated=true; do
+        check "it carries $setting" test "$(incus config get "$NAME" "${setting%%=*}" </dev/null)" = "${setting#*=}"
+    done
+    # /proc/self/uid_map: <uid inside> <uid on the host> <count>.
+    root_host_uid="$(incus exec "$NAME" -- awk '$1 == 0 {print $2; exit}' /proc/self/uid_map </dev/null || true)"
+    check "root in the container is an unprivileged uid on the host (${root_host_uid:-none})" \
+        bash -c '[[ "$1" =~ ^[1-9][0-9]*$ ]]' _ "$root_host_uid"
+else
+    check "the instance is a VM" test "$instance_type" = virtual-machine
+fi
 
 vm_ssh() {
     ssh -F "$WORK/ssh_config" -i "$WORK/key" -o IdentitiesOnly=yes -o BatchMode=yes \
@@ -214,8 +239,29 @@ check "the client exits 130 on SIGINT (exit $probe_rc)" test "$probe_rc" -eq 130
 check "SIGINT to the client ends the bash and its child in the VM" \
     bash -c '! incus exec "$1" -- pgrep -f "sleep 900" </dev/null >/dev/null' _ "$NAME"
 
+# Printed for comparing a VM with a container, not checked. The host's view
+# is what the instance costs the host; a VM's disk usage may be missing
+# there, depending on the storage driver.
+echo "== measurements ($instance_type, installed, idle)"
+instance_state="$(incus query "/1.0/instances/$NAME/state" </dev/null || true)"
+echo "  host's view: memory $(jq -r '.memory.usage // "?"' <<<"$instance_state" 2>/dev/null) B, root disk $(jq -r '.disk.root.usage // "?"' <<<"$instance_state" 2>/dev/null) B"
+echo "  inside: / has $(vm_ssh "df -B1 --output=used / | tail -n 1" 2>/dev/null || echo '?') B used, memory used $(vm_ssh "free -b | awk '/^Mem:/ {print \$3}'" 2>/dev/null || echo '?') B"
+
+incus stop "$NAME" </dev/null
+
+echo "== cold start (stopped to an SSH login through the printed entry)"
+start_ms="$(date +%s%3N)"
+incus start "$NAME" </dev/null || fail "incus start $NAME"
+deadline=$((SECONDS + 300))
+until incus exec "$NAME" -- true </dev/null >/dev/null 2>&1 || ((SECONDS >= deadline)); do sleep 0.2; done
+exec_ms="$(date +%s%3N)"
+until vm_ssh true 2>/dev/null || ((SECONDS >= deadline)); do sleep 0.5; done
+ssh_ms="$(date +%s%3N)"
+echo "  incus exec answered after $((exec_ms - start_ms)) ms, SSH login after $((ssh_ms - start_ms)) ms"
+check "an SSH login works after a cold start" vm_ssh true
+
 incus stop "$NAME" </dev/null
 echo
 echo "Stopped $NAME. It is not deleted; to delete it: incus delete $NAME"
-echo "incus provider (real Incus VM): $PASS passed, $FAIL failed"
+echo "incus provider (real Incus $instance_type): $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

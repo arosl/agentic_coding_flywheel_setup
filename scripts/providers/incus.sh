@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # ============================================================
-# ACFS on an Incus VM
+# ACFS on an Incus VM or system container
 #
-# Creates an Ubuntu VM with Incus, runs the ACFS installer inside it from
-# this checkout, and prints the ssh_config entry and the `herdr machine add`
+# Creates an Ubuntu VM (or, with --container, an unprivileged system
+# container) with Incus, runs the ACFS installer inside it from this
+# checkout, and prints the ssh_config entry and the `herdr machine add`
 # command for attaching to it. The guide is scripts/providers/incus.md.
 #
-# Re-running it is safe: an absent VM is created, a VM where it started an
-# install that never completed resumes it, a VM that is installed is never
-# changed (the block is printed again), and any other instance is refused
-# untouched. It never deletes an instance, image or ACL.
+# Re-running it is safe: an absent instance is created, an instance where it
+# started an install that never completed resumes it, an instance that is
+# installed is never changed (the block is printed again), and any other
+# instance is refused untouched. It never deletes an instance, image or ACL.
 #
 # Progress goes to stderr; stdout carries only the attach block.
 # ============================================================
@@ -22,9 +23,14 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../lib/logging.sh
 source "$REPO_ROOT/scripts/lib/logging.sh"
 
-# The one place the instance type and size are decided.
+# The one place the instance types and sizes are decided. A container pins
+# the security keys a profile could loosen: unprivileged, no nesting, and
+# its own uid/gid range, so root in one ACFS container is no uid of another.
 IMAGE="images:ubuntu/26.04/cloud"
-LAUNCH_ARGS=(--vm -c limits.cpu=4 -c limits.memory=8GiB -d "root,size=40GiB")
+SIZE_ARGS=(-c limits.cpu=4 -c limits.memory=8GiB -d "root,size=40GiB")
+VM_LAUNCH_ARGS=(--vm "${SIZE_ARGS[@]}")
+CONTAINER_LAUNCH_ARGS=("${SIZE_ARGS[@]}"
+    -c security.privileged=false -c security.nesting=false -c security.idmap.isolated=true)
 
 REPO_OWNER="arosl"
 REPO_NAME="agentic_coding_flywheel_setup"
@@ -35,7 +41,7 @@ ACL_NAME="acfs-vm-egress"
 ACL_REJECT_DESTINATIONS="10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16,fc00::/7,fe80::/10"
 AGENT_TIMEOUT_SECONDS=300
 CLOUD_INIT_TIMEOUT_SECONDS=600
-# Runs "$@" in the VM so that Ctrl-C stops it. A non-interactive incus exec
+# Runs "$@" in the instance so that Ctrl-C stops it. A non-interactive incus exec
 # passes SIGINT to the remote pid alone, and a bash waiting on a child
 # doesn't pass it on, so the installer would carry on. This gives "$@" its
 # own process group and signals that whole group; the client then exits 130.
@@ -44,19 +50,22 @@ REMOTE_GROUP_WRAPPER='set -m; "$@" & p=$!; trap "kill -INT -- -$p" INT TERM HUP;
 
 usage() {
     cat <<'EOF'
-Usage: scripts/providers/incus.sh [<remote>:]<name> --ssh-key FILE [--ssh-key FILE]... [--jump SSH_HOST]
+Usage: scripts/providers/incus.sh [<remote>:]<name> --ssh-key FILE [--ssh-key FILE]... [--jump SSH_HOST] [--container]
 
 Creates the Incus VM <name>, installs ACFS in it from this checkout's
 committed HEAD, and prints the ssh_config entry and `herdr machine add`
 command for the machine you attach from.
 
   --ssh-key FILE   Public key of the machine you'll attach from (repeatable).
-                   Required when the VM doesn't exist yet.
+                   Required when the instance doesn't exist yet.
   --jump SSH_HOST  How that machine reaches the Incus host over SSH. Without
                    it, the entry works only on the Incus host itself.
+  --container      Create an unprivileged system container instead of a VM.
+                   It shares the host's kernel. It applies only when the
+                   instance is created; an existing one keeps its type.
 
-Re-running is safe: an unfinished install resumes, and an installed VM is
-left as it is. See scripts/providers/incus.md.
+Re-running is safe: an unfinished install resumes, and an installed instance
+is left as it is. See scripts/providers/incus.md.
 EOF
 }
 
@@ -74,7 +83,10 @@ incus_run() {
 remote=""
 name=""
 jump=""
+container=""
 ssh_key_files=()
+# What the messages call the instance: "VM" or "container".
+kind="VM"
 
 parse_args() {
     local target=""
@@ -89,6 +101,10 @@ parse_args() {
                 [[ -n "${2:-}" ]] || die "--jump needs an SSH host" 2
                 jump="$2"
                 shift 2
+                ;;
+            --container)
+                container=1
+                shift
                 ;;
             -h|--help)
                 usage
@@ -193,7 +209,7 @@ ensure_acl() {
     # The one incus call whose stdin is meant: the ACL's YAML.
     # --quiet: the client reports the creation on stdout, which is the block's.
     incus network acl create --quiet "$(qualified "$ACL_NAME")" <<EOF || die "could not create network ACL $ACL_NAME" 1
-description: "ACFS VMs: no egress to private, CGNAT or link-local ranges"
+description: "ACFS instances: no egress to private, CGNAT or link-local ranges"
 egress:
   - action: reject
     destination: $ACL_REJECT_DESTINATIONS
@@ -202,11 +218,17 @@ EOF
 }
 
 launch() {
-    local keys_json="$1" sha="$2" nic
+    local keys_json="$1" sha="$2" nic launch_args
     nic="$(check_managed_bridge)"
     ensure_acl
-    log_step "Creating VM $(qualified "$name") from $IMAGE (4 vCPU, 8 GiB RAM, 40 GiB disk)"
-    incus_run launch "$IMAGE" "$(qualified "$name")" "${LAUNCH_ARGS[@]}" \
+    if [[ -n "$container" ]]; then
+        launch_args=("${CONTAINER_LAUNCH_ARGS[@]}")
+        log_step "Creating unprivileged container $(qualified "$name") from $IMAGE (4 CPUs, 8 GiB RAM, 40 GiB disk where the storage pool enforces it)"
+    else
+        launch_args=("${VM_LAUNCH_ARGS[@]}")
+        log_step "Creating VM $(qualified "$name") from $IMAGE (4 vCPU, 8 GiB RAM, 40 GiB disk)"
+    fi
+    incus_run launch "$IMAGE" "$(qualified "$name")" "${launch_args[@]}" \
         -c user.acfs.provider=incus \
         -c "user.acfs.install-started=$sha" \
         -c "cloud-init.user-data=$(user_data "$keys_json")" \
@@ -218,14 +240,14 @@ launch() {
 
 wait_agent() {
     local deadline=$((SECONDS + AGENT_TIMEOUT_SECONDS))
-    log_step "Waiting for the VM agent"
+    log_step "Waiting for the $kind to accept incus exec"
     until incus_run exec "$(qualified "$name")" -- true >/dev/null 2>&1; do
-        ((SECONDS < deadline)) || die "the VM agent didn't answer within ${AGENT_TIMEOUT_SECONDS}s" 1
+        ((SECONDS < deadline)) || die "the $kind didn't accept incus exec within ${AGENT_TIMEOUT_SECONDS}s" 1
         sleep 3
     done
 }
 
-# Only before an install: an installed VM may have been installed by hand,
+# Only before an install: an installed instance may have been installed by hand,
 # on an image without cloud-init.
 wait_cloud_init() {
     local deadline=$((SECONDS + CLOUD_INIT_TIMEOUT_SECONDS)) output state exit_code
@@ -267,7 +289,7 @@ install_acfs() {
         || status=$?
     rm -f -- "$work/acfs.tar.gz" "$work/install.sh"
     rmdir -- "$work"
-    ((status == 0)) || die "could not archive HEAD and copy it into the VM" 1
+    ((status == 0)) || die "could not archive HEAD and copy it into the $kind" 1
 
     log_step "Installing ACFS $REPO_OWNER/$REPO_NAME@$sha (--yes --mode vibe)"
     incus_run exec "$(qualified "$name")" \
@@ -288,9 +310,9 @@ print_block() {
     local install_status="$1" ip host_key herdr_version
     ip="$(instance_json | jq -r '[.state.network // {} | to_entries[] | select(.key != "lo")
         | .value.addresses[] | select(.family == "inet" and .scope == "global") | .address][0] // empty')"
-    [[ -n "$ip" ]] || die "the VM has no IPv4 address yet; re-run once it has one" 1
+    [[ -n "$ip" ]] || die "the $kind has no IPv4 address yet; re-run once it has one" 1
     host_key="$(vm_exec cat /etc/ssh/ssh_host_ed25519_key.pub | awk '{print $1, $2}')"
-    [[ -n "$host_key" ]] || die "could not read the VM's SSH host key" 1
+    [[ -n "$host_key" ]] || die "could not read the $kind's SSH host key" 1
     herdr_version="$(vm_exec runuser -u "$TARGET_USER" -- "/home/$TARGET_USER/.local/bin/herdr" --version 2>/dev/null || true)"
 
     if [[ -n "$jump" ]]; then
@@ -331,23 +353,27 @@ main() {
     json="$(instance_json)"
 
     if [[ -z "$json" ]]; then
+        [[ -z "$container" ]] || kind="container"
         ((${#ssh_key_files[@]} > 0)) \
             || die "--ssh-key is required: pass the public key of the machine you'll attach from" 2
         keys_json="$(read_public_keys | jq -R . | jq -s -c .)"
         launch "$keys_json" "$sha"
     else
-        # Decided before anything touches the VM, and only by the install
-        # keys: user.acfs.provider is a label, which a VM marked by hand can
+        # Decided before anything touches the instance, and only by the install
+        # keys: user.acfs.provider is a label, which an instance marked by hand can
         # carry without this launcher having started an install there.
         installed="$(jq -r '.config["user.acfs.installed"] // empty' <<<"$json")"
         if [[ -z "$installed" ]] && ! jq -e '.config["user.acfs.install-started"] != null' <<<"$json" >/dev/null; then
             log_error "instance $(qualified "$name") exists, and this launcher didn't start an install in it; refusing to touch it."
             log_error "If ACFS is already installed there and you only want the attach block, mark it installed:"
             log_error "  incus config set $(qualified "$name") user.acfs.installed=<commit>"
-            die "The launcher then never touches that VM's install, so set it only for an install you made." 2
+            die "The launcher then never touches that instance's install, so set it only for an install you made." 2
         fi
+        [[ "$(jq -r '.type' <<<"$json")" != "container" ]] || kind="container"
+        [[ -z "$container" || "$kind" == "container" ]] \
+            || log_warn "--container is ignored: $(qualified "$name") exists as a VM, and an instance keeps the type it was created with"
         ((${#ssh_key_files[@]} == 0)) \
-            || log_warn "--ssh-key is ignored for an existing VM; add keys with ssh-copy-id from a machine that can already log in, or here with: incus exec $(qualified "$name") -- bash -c 'cat >> /home/$TARGET_USER/.ssh/authorized_keys' < KEY.pub"
+            || log_warn "--ssh-key is ignored for an existing $kind; add keys with ssh-copy-id from a machine that can already log in, or here with: incus exec $(qualified "$name") -- bash -c 'cat >> /home/$TARGET_USER/.ssh/authorized_keys' < KEY.pub"
         if [[ "$(jq -r '.status' <<<"$json")" != "Running" ]]; then
             log_step "Starting $(qualified "$name")"
             incus_run start "$(qualified "$name")" || die "incus start failed" 1
@@ -357,7 +383,7 @@ main() {
     [[ -n "$installed" ]] || wait_cloud_init
 
     if [[ -n "$installed" ]]; then
-        log_info "Already installed at ${installed:0:12}; the checkout is at ${sha:0:12}. Update inside the VM with: acfs update"
+        log_info "Already installed at ${installed:0:12}; the checkout is at ${sha:0:12}. Update inside the $kind with: acfs update"
     else
         incus_run config set "$(qualified "$name")" "user.acfs.install-started=$sha" \
             || die "could not record user.acfs.install-started" 1
@@ -373,7 +399,7 @@ main() {
 
     print_block "$status"
     if ((status != 0)); then
-        log_error "Install failed (exit $status); the VM is kept."
+        log_error "Install failed (exit $status); the $kind is kept."
         log_error "Ignore the installer's resume hint: re-run this command to resume."
         log_error "Installer log: incus exec $(qualified "$name") -- ls -t /home/$TARGET_USER/.acfs/logs/"
         exit 1

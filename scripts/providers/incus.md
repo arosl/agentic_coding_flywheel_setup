@@ -1,6 +1,6 @@
 # ACFS on an Incus VM
 
-Run ACFS without renting a VPS. `scripts/providers/incus.sh` creates an Ubuntu VM with [Incus](https://linuxcontainers.org/incus/), installs ACFS inside it, and prints what the machine you work from needs to attach to it as a herdr remote machine.
+Run ACFS without renting a VPS. `scripts/providers/incus.sh` creates an Ubuntu VM with [Incus](https://linuxcontainers.org/incus/), installs ACFS inside it, and prints what the machine you work from needs to attach to it as a herdr remote machine. With `--container` it creates an unprivileged system container instead ([below](#a-container-instead-of-a-vm)).
 
 The installer runs **inside the VM**, never on the machine that runs Incus.
 
@@ -8,7 +8,7 @@ The installer runs **inside the VM**, never on the machine that runs Incus.
 
 ## What you need
 
-- **A Linux host with Incus and KVM.** The VM needs `/dev/kvm`, so check `incus info` works for you; on many hosts that means being in `incus-admin`. A fresh `incus admin init --minimal` is enough: the launcher uses the default profile, its storage pool and its managed bridge (`incusbr0`).
+- **A Linux host with Incus and KVM.** The VM needs `/dev/kvm` (a `--container` doesn't), so check `incus info` works for you; on many hosts that means being in `incus-admin`. A fresh `incus admin init --minimal` is enough: the launcher uses the default profile, its storage pool and its managed bridge (`incusbr0`).
 - **A clone of this repository on that host.** The launcher installs the clone's committed `HEAD`.
 - **`git`, `jq` and `ssh-keygen` on that host.**
 - **The public key of the machine you'll attach from,** usually your laptop's `~/.ssh/id_ed25519.pub`. Copy it to the host first. The host's own key is the wrong one when you attach from somewhere else.
@@ -118,6 +118,32 @@ The VM sits on Incus's NAT bridge, so nothing outside reaches it except through 
   - Updating your laptop's herdr doesn't touch the VM's server. `acfs update` inside the VM updates the VM's herdr; the running server keeps its version until it restarts.
 - **`~/.local/bin` isn't on the PATH of a non-interactive SSH command** in the VM. herdr's own discovery looks there, but a bare `ssh dev herdr` doesn't find it. Use `ssh dev .local/bin/herdr`.
 
+## A container instead of a VM
+
+```bash
+scripts/providers/incus.sh dev --ssh-key laptop.pub --jump myhost --container
+```
+
+- **What you get:** an unprivileged system container from the same image, with the same limits (4 CPUs, 8 GiB of RAM, 40 GiB of disk), the same egress ACL, the same keys and the same attach block. Everything above applies to it, with "container" for "VM".
+- **No KVM needed,** so it runs on hosts without virtualization, such as a cloud VM without nested virtualization.
+- **The type is fixed at creation.** On a re-run, an existing instance keeps its type: `--container` on an existing VM is ignored with a warning, and an existing container needs no `--container`.
+- **Settings the launcher pins,** whatever the default profile says:
+  - `security.privileged=false`: root in the container is an ordinary, unprivileged uid on the host;
+  - `security.nesting=false`: no Incus or Docker inside it;
+  - `security.idmap.isolated=true`: each such container gets its own block of host uids and gids (65536 by default), so root in one ACFS container is no uid of another.
+
+### What a container gives up against a VM
+
+- **It shares the host's kernel.** The agents run with passwordless sudo in vibe mode, so they are root in the container. That root is unprivileged on the host, but the container's processes call the host kernel directly, and a kernel bug they can reach is a way onto the host. A VM runs its own kernel, behind KVM's much smaller interface. **Where agents run with loose permissions on a host you care about, use the VM.**
+- **No kernel tunables, modules or swap.** The installer uses none: a read of `install.sh`, `scripts/lib/` and the generated installers on 2026-10-09 found no swap, sysctl, modprobe, mount, fstab, AppArmor or firewall step. Not yet confirmed by a real install in a container.
+- **Tailscale installs but can't connect.** An unprivileged container has no `/dev/net/tun`, so `tailscaled` can't make its interface and `sudo tailscale up` fails. Attaching through the printed SSH entry doesn't need Tailscale. Passing the host's `/dev/net/tun` in (`incus config device add dev tun unix-char path=/dev/net/tun`) is your call: the launcher adds no host devices.
+- **The disk limit depends on the storage pool.** On a `btrfs`, `zfs` or `lvm` pool, the 40 GiB is enforced. On a `dir` pool, the `incus admin init --minimal` default, it is enforced only on ext4 or XFS with project quotas. Otherwise Incus skips it with only a warning in its own log, and the container can fill the host's disk. `incus storage list` shows the driver.
+- **Memory:** `limits.memory` caps it, and `free` inside shows the limit, not the host's RAM.
+
+### Startup, disk and RAM
+
+`tests/vm/test_incus_provider.sh --container <name>` and `tests/vm/test_incus_provider.sh <name>` each end by printing the instance's disk and memory use once installed, and the time from `incus start` to an SSH login. Run both on one host to compare. **No run yet:** the container mode was written on a machine without Incus (2026-10-09), so it is tested only against a stub `incus`.
+
 ## Incus on another host (unverified)
 
 Prefix the name with an Incus remote, set up with `incus remote add`:
@@ -148,4 +174,4 @@ Untested, because there was no Mac. What should apply:
 ## Tests
 
 - `bash tests/unit/test_incus_provider_stub.sh`: the launcher's calls and output, against a stub `incus`.
-- `tests/vm/test_incus_provider.sh <new-name>`: a real VM, checked through the printed block. It's opt-in and runs a full ACFS install, and it skips with the reason when Incus, KVM or `images:` isn't available.
+- `tests/vm/test_incus_provider.sh [--container] <new-name>`: a real VM, or with `--container` a real container, checked through the printed block, then measured. It's opt-in and runs a full ACFS install, and it skips with the reason when Incus, KVM (for a VM) or `images:` isn't available.

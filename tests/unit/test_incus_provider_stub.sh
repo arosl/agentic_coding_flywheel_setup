@@ -205,6 +205,7 @@ check "attaches the egress ACL to the profile's NIC" launch_has 'eth0,security.a
 check "unmatched egress passes the ACL" launch_has 'eth0,security.acls.default.egress.action=allow'
 check "unmatched ingress passes the ACL" launch_has 'eth0,security.acls.default.ingress.action=allow'
 check "no device beyond root and the NIC's ACL keys" only_expected_devices
+check "a VM gets none of the container's security keys" bash -c '! grep -q "^security\." "$1"' _ "$CASE/launch.args"
 check "user-data authorizes exactly the given key" \
     bash -c 'grep -A1 -x -- -c "$1" | grep "^cloud-init.user-data=" >/dev/null && [[ "$(grep -c "^  - \"ssh-ed25519 " "$1")" -eq 1 ]] && grep -qF "$(cut -d" " -f2 "$2")" "$1"' _ "$CASE/launch.args" "$WORK/laptop.pub"
 check "user-data installs openssh-server" grep -q 'packages: \[openssh-server, curl, git, jq, ca-certificates, unzip\]' "$CASE/launch.args"
@@ -233,6 +234,54 @@ new_case nojump absent
 run_launcher dev --ssh-key "$WORK/laptop.pub"
 check "exits 0" rc_is 0
 check "stdout is the block without ProxyJump" stdout_is_block ''
+
+echo "== absent instance with --container: an unprivileged system container"
+new_case container absent
+run_launcher dev --ssh-key "$WORK/laptop.pub" --container --jump box
+check "exits 0" rc_is 0
+check "launches the same cloud image" launch_has 'images:ubuntu/26.04/cloud'
+check "doesn't pass --vm" bash -c '! grep -qx -- --vm "$1"' _ "$CASE/launch.args"
+check "limits: 4 CPUs" launch_has 'limits.cpu=4'
+check "limits: 8 GiB" launch_has 'limits.memory=8GiB'
+check "root disk 40 GiB" launch_has 'root,size=40GiB'
+check "pins it unprivileged" launch_has 'security.privileged=false'
+check "pins nesting off" launch_has 'security.nesting=false'
+check "gives it its own uid/gid range" launch_has 'security.idmap.isolated=true'
+check "marks the instance as the launcher's" launch_has 'user.acfs.provider=incus'
+check "marks the install as started at launch" launch_has "user.acfs.install-started=$SHA"
+check "attaches the egress ACL to the profile's NIC" launch_has 'eth0,security.acls=acfs-vm-egress'
+check "no device beyond root and the NIC's ACL keys" only_expected_devices
+check "every incus call but the ACL's YAML gets /dev/null on stdin" only_null_stdin_except_acl_create
+check "says it creates an unprivileged container" err_has 'Creating unprivileged container dev'
+check "says the disk size holds only where the pool enforces it" err_has 'where the storage pool enforces it'
+check "waits for the container, not a VM agent" err_has 'Waiting for the container to accept incus exec'
+check "runs the installer the same way" called '--bootstrap-archive /root/acfs.tar.gz < /root/install.sh'
+check "records the installed sha" grep -qx "user.acfs.installed=$SHA" "$CASE/config-set"
+check "stdout is exactly the attach block" stdout_is_block box
+
+# Synthetic: the captured fixtures are VMs, so these set .type the way
+# `incus list -f json` reports a container.
+echo "== existing container whose install never completed: resumed as a container, without --container"
+new_case container-resume running-started
+jq '.[0].type = "container"' "$FIXTURES/list-running-started.json" >"$CASE/list.json"
+export STUB_INSTALL_EXIT=7
+run_launcher dev
+unset STUB_INSTALL_EXIT
+check "exits 1 (the installer failed)" rc_is 1
+check "launches nothing" no_launch
+check "runs the installer" called 'bootstrap-archive'
+check "calls it a container" err_has 'the container is kept'
+check "doesn't warn about --container" bash -c '! grep -q -- "--container is ignored" "$1"' _ "$CASE/err"
+
+echo "== --container on an existing VM: the VM keeps its type"
+new_case container-on-vm running-installed
+run_launcher dev --container
+check "exits 0" rc_is 0
+check "warns that --container is ignored" err_has '--container is ignored: dev exists as a VM'
+check "launches nothing" no_launch
+check "runs no installer" not_called 'bootstrap-archive'
+check "calls it a VM" err_has 'Update inside the VM with: acfs update'
+check "stdout is the attach block" stdout_is_block ''
 
 echo "== existing ACL is left as it is"
 new_case acl-exists absent
