@@ -92,7 +92,6 @@ describe("flywheelTools array", () => {
     expect(ru?.name).toBe("Repo Updater");
     expect(ru?.shortName).toBe("RU");
     expect(ru?.language).toBe("Bash");
-    expect(ru?.connectsTo).toContain("ntm");
     expect(ru?.connectsTo).toContain("mail");
     expect(ru?.connectsTo).toContain("bv");
   });
@@ -267,7 +266,7 @@ describe("flywheelDescription object", () => {
   });
 
   test("keyInsight mentions key tools", () => {
-    expect(flywheelDescription.keyInsight).toMatch(/BV|Mail|CASS|CM|SLB|DCG|RU|NTM/);
+    expect(flywheelDescription.keyInsight).toMatch(/BV|Mail|CASS|CM|SLB|DCG|RU|herdr/);
   });
 });
 
@@ -277,7 +276,7 @@ describe("flywheelDescription object", () => {
 
 describe("getToolSynergy", () => {
   test("returns number for valid tool", () => {
-    const synergy = getToolSynergy("ntm");
+    const synergy = getToolSynergy("herdr");
     expect(typeof synergy).toBe("number");
     expect(synergy).toBeGreaterThan(0);
   });
@@ -288,12 +287,12 @@ describe("getToolSynergy", () => {
   });
 
   test("counts both outgoing and incoming connections", () => {
-    // NTM has connections to other tools AND other tools connect to it
-    const ntmSynergy = getToolSynergy("ntm");
-    const ntmTool = flywheelTools.find((t) => t.id === "ntm");
+    // herdr has connections to other tools AND other tools connect to it
+    const herdrSynergy = getToolSynergy("herdr");
+    const herdrTool = flywheelTools.find((t) => t.id === "herdr");
 
     // Should be more than just outgoing connections
-    expect(ntmSynergy).toBeGreaterThanOrEqual(ntmTool?.connectsTo.length ?? 0);
+    expect(herdrSynergy).toBeGreaterThanOrEqual(herdrTool?.connectsTo.length ?? 0);
   });
 });
 
@@ -421,7 +420,7 @@ describe("data integrity", () => {
   test("synergy explanations cover key tool combinations", () => {
     // Core loop should exist
     const coreLoop = synergyExplanations.find(
-      (s) => s.tools.includes("ntm") && s.tools.includes("mail") && s.tools.includes("bv"),
+      (s) => s.tools.includes("herdr") && s.tools.includes("mail") && s.tools.includes("bv"),
     );
     expect(coreLoop).toBeDefined();
 

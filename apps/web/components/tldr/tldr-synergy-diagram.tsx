@@ -41,7 +41,7 @@ const PRIMARY_TOOL_IDS = new Set([
   "cass", // Session Search - memory hub
   "cm", // Memory System
   "ubs", // Bug Scanner
-  "ntm", // Named Tmux Manager
+  "herdr", // herdr - where the agents run
 ]);
 
 // =============================================================================

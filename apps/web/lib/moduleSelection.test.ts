@@ -60,7 +60,7 @@ describe("resolveModuleSelection", () => {
   test("stack-only profile follows phase selection and dependencies", () => {
     const ids = includedIds({ profile: "stack-only" });
 
-    expect(ids).toContain("stack.ntm");
+    expect(ids).toContain("tools.herdr");
     expect(ids).toContain("stack.rch");
     expect(ids).toContain("utils.giil");
     expect(ids).toContain("cli.modern");

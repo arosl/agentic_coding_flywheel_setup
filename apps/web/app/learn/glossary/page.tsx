@@ -31,7 +31,7 @@ function toAnchorId(value: string): string {
 }
 
 const TOOL_TERMS = new Set([
-  "tmux",
+  "herdr",
   "zsh",
   "bash",
   "bun",
@@ -48,7 +48,6 @@ const TOOL_TERMS = new Set([
   "direnv",
   "zoxide",
   "atuin",
-  "ntm",
   "bv",
   "br",
   "ubs",

@@ -32,7 +32,7 @@ const STATIC_ROUTE_SOCIAL_DATA: Record<string, SocialImageData> = {
     badge: "Interactive Lessons",
     title: "ACFS Learning Hub",
     description:
-      "Master Linux, SSH, tmux, git, and multi-agent workflows with structured lessons designed for real-world execution.",
+      "Master Linux, SSH, herdr, git, and multi-agent workflows with structured lessons designed for real-world execution.",
     path: "/learn",
     theme: "learn",
     tags: ["Beginner Friendly", "Hands-On", "Step-by-Step"],

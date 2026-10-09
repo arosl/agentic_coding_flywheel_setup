@@ -74,10 +74,6 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
         toolId: "slb",
         description: "Two-person approval requests delivered via agent inboxes",
       },
-      {
-        toolId: "ntm",
-        description: "NTM-spawned agents auto-register with Agent Mail",
-      },
     ],
     techStack: ["Python 3.14+", "FastMCP", "SQLAlchemy async", "SQLite + FTS5", "LiteLLM"],
     keyFeatures: [
@@ -131,11 +127,6 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
         toolId: "cass",
         description: "Search prior sessions for task context",
       },
-      {
-        toolId: "ntm",
-        description:
-          "NTM uses --robot-plan for dependency analysis during multi-agent orchestration",
-      },
     ],
     techStack: ["Go", "Bubble Tea", "Lip Gloss", "Graph algorithms"],
     keyFeatures: [
@@ -177,10 +168,6 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
       {
         toolId: "mail",
         description: "Task updates notify agents via mail",
-      },
-      {
-        toolId: "ntm",
-        description: "NTM spawns agents that pick work from beads",
       },
       {
         toolId: "ubs",
@@ -226,10 +213,6 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
         description: "Indexes memories stored by CM for retrieval",
       },
       {
-        toolId: "ntm",
-        description: "Searches all managed agent session histories",
-      },
-      {
         toolId: "bv",
         description: "Links search results to related Beads tasks",
       },
@@ -271,8 +254,8 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
     ],
     synergies: [
       {
-        toolId: "ntm",
-        description: "Installs and configures NTM",
+        toolId: "herdr",
+        description: "Installs herdr and its integration for each supported agent CLI",
       },
       {
         toolId: "mail",
@@ -366,8 +349,8 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
         description: "Works alongside SLB for layered command safety",
       },
       {
-        toolId: "ntm",
-        description: "Guards all commands in NTM-managed sessions",
+        toolId: "herdr",
+        description: "Guards the agents running in herdr panes",
       },
     ],
     techStack: ["Rust", "Claude Code hooks", "SARIF output", "MCP"],
@@ -408,10 +391,6 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
     ],
     synergies: [
       {
-        toolId: "ntm",
-        description: "Uses ntm robot mode API for AI review session management",
-      },
-      {
         toolId: "mail",
         description: "Coordinates repo claims across parallel agents",
       },
@@ -420,7 +399,7 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
         description: "Multi-repo task tracking via beads integration",
       },
     ],
-    techStack: ["Bash 4.0+", "Git plumbing", "GitHub CLI GraphQL", "ntm robot mode"],
+    techStack: ["Bash 4.0+", "Git plumbing", "GitHub CLI GraphQL"],
     keyFeatures: [
       "Parallel sync with work-stealing queue (-j4)",
       "AI code review with priority scoring (ru review)",
@@ -484,63 +463,44 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
     ],
   },
   {
-    id: "ntm",
-    name: "Named Tmux Manager",
-    shortName: "NTM",
-    href: "https://github.com/Dicklesworthstone/ntm",
+    id: "herdr",
+    name: "herdr",
+    shortName: "herdr",
+    href: "https://herdr.dev",
     icon: "LayoutGrid",
     color: "from-sky-500 to-blue-600",
     category: "core",
-    stars: 69,
     whatItDoes:
-      "A multi-agent tmux orchestration tool with 80+ commands. Spawns Claude, Codex, and Antigravity agents in named panes with type classification (cc/cod/agy). Monitors context windows, detects file conflicts, and provides robot mode for automation.",
+      "A terminal workspace manager for coding agents. Runs Claude, Codex, Antigravity and other agents side by side in panes, tabs and workspaces, and shows in its sidebar whether each one is working, waiting for you, or done.",
     whyItsUseful:
-      "Running multiple AI agents simultaneously creates chaos without orchestration. NTM provides the command center: spawn agents with one command, broadcast prompts to specific types, monitor context usage, and coordinate via Agent Mail. Sessions persist across SSH disconnects and system reboots.",
+      "Running several agents at once means losing track of which one needs you, and losing them all when SSH drops. herdr keeps them running after you disconnect, reattaches with one command, and shows every agent's state at a glance.",
     implementationHighlights: [
-      "Go implementation with Bubble Tea TUI and Catppuccin themes",
-      "Context rotation monitors usage, warns at 80%, triggers compaction recovery",
-      "Robot mode (--robot-*) outputs JSON for agent automation",
-      "Direct CASS integration: --robot-cass-search, --robot-cass-context",
-      "Bead management: --robot-bead-create, --robot-bead-claim, --robot-bead-close",
+      "Agents keep running after you disconnect; `herdr` reattaches",
+      "Detects each agent and shows its state: working, idle, done, blocked",
+      "Integrations for supported agent CLIs add session restore or more exact state",
+      "Scriptable subcommands: herdr agent list, read, prompt and wait",
     ],
     synergies: [
       {
-        toolId: "slb",
-        description:
-          "SLB provides two-person rule safety checks for dangerous commands in NTM sessions",
-      },
-      {
         toolId: "mail",
-        description:
-          "Agents auto-register with Mail; ntm mail commands for messaging; pre-commit guard enforces file reservations",
+        description: "`herdr agent prompt <agent>` wakes an idle agent to read its Agent Mail inbox",
       },
       {
-        toolId: "cass",
-        description: "Direct integration via --robot-cass-search and --robot-cass-context commands",
-      },
-      {
-        toolId: "bv",
-        description: "Graph analysis via --robot-plan and --robot-graph for dependency insights",
-      },
-      {
-        toolId: "br",
-        description: "Bead management via --robot-bead-* commands for issue tracking",
+        toolId: "dcg",
+        description: "DCG hooks protect the agents running in herdr panes",
       },
     ],
-    techStack: ["Go 1.25+", "Bubble Tea", "tmux 3.0+", "Catppuccin themes"],
+    techStack: ["Rust"],
     keyFeatures: [
-      "80+ commands: spawn, send, dashboard, checkpoint, health, and more",
-      "Agent type classification with named panes (cc, cod, agy)",
-      "Context window monitoring with automatic compaction recovery",
-      "Command palette TUI with fuzzy search and pinned commands",
-      "Robot mode for scripting and agent automation",
-      "Hooks: pre/post-spawn, pre/post-send, pre/post-shutdown",
+      "Panes, tabs and workspaces with a Ctrl+b prefix",
+      "Sidebar with each agent's state",
+      "Survives SSH disconnects",
+      "Agent CLI integrations, installed by ACFS",
     ],
     useCases: [
-      "Running 10+ agents across multiple projects simultaneously",
-      "Broadcasting prompts to all Claude agents: ntm send proj --cc 'prompt'",
-      "Monitoring context window usage to prevent agent context exhaustion",
-      "Checkpointing session state before risky operations",
+      "Running several agents across multiple projects at once",
+      "Reconnecting after SSH drops with every agent still running",
+      "Seeing which agent is waiting for you: herdr agent list",
     ],
   },
   {
@@ -568,10 +528,6 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
       {
         toolId: "dcg",
         description: "DCG blocks pre-execution, SLB validates with multi-agent approval",
-      },
-      {
-        toolId: "ntm",
-        description: "Coordinates approval quorum across NTM-managed agents",
       },
       {
         toolId: "mail",
@@ -674,8 +630,8 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
     ],
     synergies: [
       {
-        toolId: "ntm",
-        description: "Agents in NTM sessions use RCH for builds",
+        toolId: "herdr",
+        description: "Agents in herdr panes use RCH for builds",
       },
       {
         toolId: "ru",
@@ -721,10 +677,6 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
     ],
     synergies: [
       {
-        toolId: "ntm",
-        description: "NTM spawns agents with isolated CAAM profiles for parallel sessions",
-      },
-      {
         toolId: "mail",
         description: "Account switches can trigger Agent Mail notifications",
       },
@@ -747,55 +699,6 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
       "Per-directory profile defaults for projects",
       "Running parallel agents with isolated credentials",
       "Automated rotation for long-running sessions",
-    ],
-  },
-  {
-    id: "wa",
-    name: "WezTerm Automata",
-    shortName: "WA",
-    href: "https://github.com/Dicklesworthstone/wezterm_automata",
-    icon: "Monitor",
-    color: "from-cyan-500 to-teal-600",
-    category: "core",
-    stars: 42,
-    whatItDoes:
-      "Terminal hypervisor that captures pane output in real-time, detects agent state transitions through pattern matching, and enables event-driven automation across multiple AI coding agents.",
-    whyItsUseful:
-      "When running multiple AI agents in WezTerm, you need to know when they hit rate limits, complete tasks, or need approval. WA observes all panes with sub-50ms latency and triggers automated responses.",
-    implementationHighlights: [
-      "Real-time delta extraction (sub-50ms latency)",
-      "Multi-agent pattern detection engine",
-      "FTS5-powered full-text search with BM25 ranking",
-      "TOON output format for token-efficient AI consumption",
-      "Workflow automation triggered by pattern matches",
-    ],
-    synergies: [
-      {
-        toolId: "ntm",
-        description: "WA observes agents spawned by NTM",
-      },
-      {
-        toolId: "mail",
-        description: "State changes trigger Agent Mail notifications",
-      },
-      {
-        toolId: "bv",
-        description: "Task completions can update bead status",
-      },
-    ],
-    techStack: ["Rust", "WezTerm API", "SQLite FTS5", "Pattern matching"],
-    keyFeatures: [
-      "Real-time terminal observation (<50ms latency)",
-      "Multi-agent pattern detection (Claude, Codex, Antigravity)",
-      "Robot Mode JSON/TOON API",
-      "Event-driven wait-for automation",
-      "Explainability via 'wa why' command",
-    ],
-    useCases: [
-      "Detecting agent rate limits and errors",
-      "Coordinating multi-agent workflows",
-      "Searching across captured terminal sessions",
-      "Triggering automated responses on state changes",
     ],
   },
   {
@@ -825,15 +728,15 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
           "Research sessions coordinate via Agent Mail threads with acknowledgment tracking",
       },
       {
-        toolId: "ntm",
-        description: "Cockpit runtime spawns parallel research agents with role-specific prompts",
+        toolId: "herdr",
+        description: "Run the parallel research agents one per herdr pane",
       },
       {
         toolId: "cass",
         description: "Research session history searchable for prior solutions and patterns",
       },
     ],
-    techStack: ["TypeScript", "Bun", "Agent Mail", "ntm", "Multi-model AI"],
+    techStack: ["TypeScript", "Bun", "Agent Mail", "Multi-model AI"],
     keyFeatures: [
       "Hypothesis lifecycle: create, activate, kill, validate with test evidence",
       "Evidence packs with stable EV-NNN citations for papers, datasets, prior sessions",
@@ -918,8 +821,8 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
     ],
     synergies: [
       {
-        toolId: "ntm",
-        description: "Keeps tmux sessions responsive during heavy workloads",
+        toolId: "herdr",
+        description: "Keeps herdr panes responsive during heavy workloads",
       },
       {
         toolId: "slb",
@@ -1164,10 +1067,6 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
       {
         toolId: "srps",
         description: "PT terminates stuck processes, SRPS prevents them from hogging resources",
-      },
-      {
-        toolId: "ntm",
-        description: "Clean up runaway processes in tmux sessions",
       },
     ],
     techStack: ["Rust", "Bash", "gum", "procfs", "Bayesian inference"],
@@ -1414,10 +1313,6 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
       {
         toolId: "rano",
         description: "Network observations feed usage data",
-      },
-      {
-        toolId: "ntm",
-        description: "Track usage per NTM-managed session",
       },
       {
         toolId: "mail",

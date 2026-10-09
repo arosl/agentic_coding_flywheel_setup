@@ -55,14 +55,6 @@ const QUICK_REFERENCE_ITEMS: QuickReferenceItem[] = [
     gradient: "from-violet-500/10 to-violet-500/5",
   },
   {
-    href: "/learn/ntm-palette",
-    lessonSlug: "ntm-palette",
-    icon: BookOpen,
-    title: "NTM Commands",
-    desc: "Session management reference",
-    gradient: "from-blue-500/10 to-blue-500/5",
-  },
-  {
     href: "/learn/commands",
     icon: List,
     title: "Command Reference",

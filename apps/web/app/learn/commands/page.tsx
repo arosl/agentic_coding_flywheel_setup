@@ -165,12 +165,12 @@ const COMMANDS: CommandEntry[] = [
 
   // Stack / orchestration
   {
-    name: "ntm",
-    fullName: "Named Tmux Manager",
-    description: "Agent cockpit (spawn, send prompts, dashboards)",
-    example: "ntm spawn myproject --cc=2 --cod=1 --agy=1",
+    name: "herdr",
+    fullName: "herdr",
+    description: "Where agents run: panes, tabs, workspaces, and each agent's state",
+    example: "herdr agent list",
     category: "stack",
-    learnMoreHref: "/learn/tools/ntm",
+    learnMoreHref: "/learn/tools/herdr",
   },
   {
     name: "br",
@@ -330,13 +330,6 @@ const COMMANDS: CommandEntry[] = [
   },
 
   // System
-  {
-    name: "tmux",
-    fullName: "tmux",
-    description: "Terminal multiplexer (sessions survive disconnects)",
-    example: "tmux new -s demo",
-    category: "system",
-  },
   {
     name: "bat",
     fullName: "bat",

@@ -68,10 +68,10 @@ export const workflowScenarios: WorkflowScenario[] = [
       "Keep multiple projects moving forward simultaneously, even when you don't have mental bandwidth for all of them.",
     steps: [
       {
-        tool: "ntm",
+        tool: "herdr",
         action:
-          "Spawn agents across 3 projects: `ntm spawn proj1 --cc=2 proj2 --cod=1 proj3 --agy=1`",
-        result: "6 agents running in parallel across your machines",
+          "Open herdr with one workspace per project, and start each agent in its own pane",
+        result: "Agents running in parallel across your projects, each one's state in the sidebar",
       },
       {
         tool: "bv",
@@ -199,9 +199,9 @@ export const workflowScenarios: WorkflowScenario[] = [
         result: "See which repos have unpushed commits or conflicts",
       },
       {
-        tool: "ntm",
-        action: "Spawn agents into key repos: `ntm spawn proj1 --cc=2 proj2 --cc=2`",
-        result: "4 Claude agents ready across 2 projects",
+        tool: "herdr",
+        action: "Create a workspace per key repo: `herdr workspace create --cwd <repo>`",
+        result: "Start Claude agents in each workspace's panes",
       },
       {
         tool: "bv",
@@ -229,12 +229,6 @@ export const workflowScenarios: WorkflowScenario[] = [
         result: "RU makes the planned conventional commits repo by repo",
       },
       {
-        tool: "ntm",
-        action:
-          "For AI-assisted review of the result, `ru review` drives agents via ntm robot mode",
-        result: "Two-phase workflow: --plan (discover) → --apply (execute)",
-      },
-      {
         tool: "bv",
         action: "Update beads as work is committed",
         result: "Tasks auto-close when related commits push",
@@ -255,8 +249,8 @@ export const workflowScenarios: WorkflowScenario[] = [
         result: "ananicy-cpp daemon is active, auto-managing process priorities",
       },
       {
-        tool: "ntm",
-        action: "Launch heavy multi-agent session: `ntm spawn proj1 --cc=2 proj2 --cod=2`",
+        tool: "herdr",
+        action: "Start 4 heavy agents, each in its own herdr pane",
         result: "4 agents start, each spawning compilers and test runners",
       },
       {
@@ -265,8 +259,8 @@ export const workflowScenarios: WorkflowScenario[] = [
         result: "See agents' subprocesses being auto-deprioritized as they spawn",
       },
       {
-        tool: "slb",
-        action: "Add more agents safely: `slb run 'ntm spawn proj3 --agy=2'`",
+        tool: "herdr",
+        action: "Add 2 more agents in new panes",
         result: "Even with 6 agents, terminal stays responsive",
       },
     ],
@@ -352,13 +346,13 @@ export const agentPrompts: AgentPrompt[] = [
 
 export const synergyExplanations = [
   {
-    tools: ["ntm", "mail", "bv"],
+    tools: ["herdr", "mail", "bv"],
     title: "The Core Loop",
     description:
-      "NTM spawns agents that register with Mail for coordination. They use BV to find tasks to work on. The result: autonomous agents that figure out what to do next without human intervention.",
+      "Agents run side by side in herdr panes and register with Mail for coordination. They use BV to find tasks to work on. The result: autonomous agents that figure out what to do next without human intervention.",
     multiplier: "10x",
     example:
-      "Spawn 6 agents across 3 projects. Each finds work via BV, coordinates via Mail. You return 3 hours later to merged PRs.",
+      "Start 6 agents across 3 projects in herdr. Each finds work via BV, coordinates via Mail. You return 3 hours later to merged PRs.",
   },
   {
     tools: ["cass", "cm"],
@@ -397,22 +391,13 @@ export const synergyExplanations = [
       "Similar bug appears in new project. CM surfaces the pattern. BV creates bead linking to successful prior fix.",
   },
   {
-    tools: ["caam", "ntm"],
-    title: "Account Orchestration",
-    description:
-      "CAAM manages API keys for all your agent accounts. NTM spawns agents with the right credentials automatically. Seamless multi-account workflows.",
-    multiplier: "Infinite agents",
-    example:
-      "Rate limited on one Claude account? NTM spawns agents with fresh credentials from CAAM. No manual switching.",
-  },
-  {
-    tools: ["ru", "ntm", "bv"],
+    tools: ["ru", "herdr", "bv"],
     title: "Multi-Repo Orchestra",
     description:
-      "RU syncs all your repos with parallel workers. NTM spawns agents into each repo. BV tracks tasks across the entire fleet. Coordinated progress across dozens of projects.",
+      "RU syncs all your repos with parallel workers. herdr gives each repo a workspace where its agents run. BV tracks tasks across the entire fleet. Coordinated progress across dozens of projects.",
     multiplier: "N× projects",
     example:
-      "Morning: `ru sync -j4`. RU clones 3 new repos, pulls 15 updates. NTM spawns agents. By lunch, beads completed across 8 projects.",
+      "Morning: `ru sync -j4`. RU clones 3 new repos, pulls 15 updates. You start agents in a herdr workspace per repo. By lunch, beads completed across 8 projects.",
   },
   {
     tools: ["ru", "mail"],
@@ -433,10 +418,10 @@ export const synergyExplanations = [
       "Claude proposes 'rm -rf ./old_code' - DCG blocks it instantly. Claude rephrases to 'mv ./old_code ./archive' - SLB prompts for confirmation before the move.",
   },
   {
-    tools: ["dcg", "ntm", "mail"],
+    tools: ["dcg", "herdr", "mail"],
     title: "Protected Agent Fleet",
     description:
-      "NTM spawns multiple Claude agents. Each agent runs under DCG protection. If one agent attempts something dangerous, DCG blocks it and can notify via Mail so other agents (or you) know what happened.",
+      "Multiple Claude agents run side by side in herdr panes. Each agent runs under DCG protection. If one agent attempts something dangerous, DCG blocks it and can notify via Mail so other agents (or you) know what happened.",
     multiplier: "Fleet-wide protection",
     example:
       "Agent 1 working on repo cleanup tries 'git clean -fdx'. DCG blocks it. Mail notification: 'Agent 1 attempted blocked command in project-x'.",
@@ -449,49 +434,40 @@ export const synergyExplanations = [
 
 const _flywheelTools: FlywheelTool[] = [
   {
-    id: "ntm",
-    name: "Named Tmux Manager",
-    shortName: "NTM",
-    href: "https://github.com/Dicklesworthstone/ntm",
+    id: "herdr",
+    name: "herdr",
+    shortName: "herdr",
+    href: "https://herdr.dev",
     icon: "LayoutGrid",
     color: "from-sky-400 to-blue-500",
-    tagline: "Multi-agent tmux command center",
+    tagline: "Terminal workspace manager for coding agents",
     description:
-      "Orchestrate multiple AI coding agents across tmux sessions. Spawn Claude, Codex, and Antigravity agents in named panes. 80+ commands for session management, prompt broadcasting, file conflict detection, and context rotation. Persistent sessions survive SSH disconnects.",
+      "Run your AI coding agents side by side in panes, tabs and workspaces. Agents keep running when SSH drops; reconnect and run `herdr` to find them where you left them. The sidebar shows whether each agent is working, waiting for you, or done.",
     deepDescription:
-      "NTM transforms tmux into a multi-agent command center with 80+ commands. Spawn agents with type classification (cc/cod/agy), broadcast prompts with filtering, and use the command palette TUI for quick actions. Features context window monitoring with automatic compaction recovery, checkpoints for session state management, agent profiles/personas for specialized roles, and deep integrations with Agent Mail (file reservations, messaging), CASS (session search), and beads (--robot-bead-* commands). Robot mode (--robot-*) provides JSON output for automation.",
-    connectsTo: ["slb", "mail", "cass", "caam", "ru", "srps", "bv", "br", "dcg"],
+      "herdr is where your agents run. Each workspace usually holds one project, and its tabs and panes hold your agents and your own shell. herdr detects each agent and shows its state (working, idle, done, blocked) in the sidebar. ACFS installs herdr's integration for each supported agent CLI, which adds session restore or more exact state, depending on the agent. Scripts and agents drive it through subcommands: `herdr agent list`, `herdr agent read`, `herdr agent prompt` and `herdr agent wait`.",
+    connectsTo: ["mail", "srps", "dcg"],
     connectionDescriptions: {
-      slb: "Routes dangerous commands through SLB safety checks",
-      mail: "Agents auto-register with Mail; ntm mail commands for messaging; pre-commit guard for file reservations",
-      cass: "Direct integration via --robot-cass-search, --robot-cass-context, --robot-cass-status",
-      caam: "Quick-switches credentials when spawning new agents",
-      ru: "RU review (ru review) uses ntm robot mode for orchestration",
-      srps: "SRPS keeps tmux sessions responsive when agents spawn heavy builds",
-      bv: "Graph analysis via --robot-plan, --robot-graph for dependency insights",
-      br: "Bead management via --robot-bead-create, --robot-bead-claim, --robot-bead-close",
-      dcg: "DCG hooks protect agents in NTM sessions from destructive commands",
+      mail: "`herdr agent prompt <agent>` wakes an idle agent to read its Agent Mail inbox",
+      srps: "SRPS keeps herdr panes responsive when agents spawn heavy builds",
+      dcg: "DCG hooks protect the agents running in herdr panes from destructive commands",
     },
-    stars: 16,
     features: [
-      "80+ commands: spawn, send, dashboard, palette, checkpoint, health, and more",
-      "Agent types: Claude (cc), Codex (cod), Antigravity (agy) with named panes",
-      "Context rotation: monitors usage, warns at 80%, auto-compaction recovery",
-      "Command palette TUI with fuzzy search, Catppuccin themes, pinned commands",
-      "Robot mode: --robot-status, --robot-snapshot, --robot-plan, --robot-mail",
-      "Hooks: pre/post-spawn, pre/post-send, pre/post-shutdown with env vars",
+      "Agents keep running after you disconnect; `herdr` reattaches",
+      "Panes, tabs and workspaces, driven by the Ctrl+b prefix",
+      "Sidebar with each agent's state: working, idle, done, blocked",
+      "Integrations for Claude Code, Codex, Antigravity and other agent CLIs",
+      "Scriptable: list, read, prompt and wait for agents from the shell",
     ],
     cliCommands: [
-      "ntm spawn <session> --cc=N --cod=N --agy=N",
-      "ntm send <session> --cc 'prompt'",
-      "ntm --robot-status",
-      "ntm --robot-snapshot",
-      "ntm dashboard <session>",
-      "ntm checkpoint save <session> -m 'description'",
+      "herdr",
+      "herdr workspace create --cwd <dir>",
+      "herdr agent list",
+      "herdr agent read <agent>",
+      'herdr agent prompt <agent> "<text>"',
+      "herdr agent wait <agent> --until idle",
     ],
-    installCommand:
-      "curl --proto '=https' --proto-redir '=https' -fsSL https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh | bash -s -- --easy-mode",
-    language: "Go",
+    installCommand: "curl -fsSL https://herdr.dev/install.sh | sh",
+    language: "Rust",
   },
   {
     id: "mail",
@@ -505,12 +481,11 @@ const _flywheelTools: FlywheelTool[] = [
       "A complete coordination system for multi-agent workflows. Agents register identities, send/receive messages, search conversations, and declare file reservations to prevent edit conflicts. HTTP-only FastMCP server with static export and Web UI.",
     deepDescription:
       "Agent Mail is the nervous system of the flywheel. HTTP-only transport (Streamable HTTP) for modern MCP clients. Provides: agent identities (adjective+noun names like 'BlueLake'), threaded GFM messages, FTS5 full-text search, and advisory file reservations. SQLite + Git dual persistence means human-auditable artifacts. 30+ MCP tools including macros for common workflows. Static mailbox export with Ed25519 signing and age encryption for audits. Web UI for exploration and Human Overseer for human-to-agent messaging.",
-    connectsTo: ["bv", "cm", "slb", "ntm", "ru"],
+    connectsTo: ["bv", "cm", "slb", "ru"],
     connectionDescriptions: {
       bv: "Task IDs link conversations to Beads issues",
       cm: "Shared memories accessible across sessions",
       slb: "Approval requests delivered to agent inboxes",
-      ntm: "NTM-spawned agents auto-register",
       ru: "RU can coordinate repo claims via Mail",
     },
     stars: 1015,
@@ -583,7 +558,7 @@ const _flywheelTools: FlywheelTool[] = [
       "Transforms task tracking with DAG-based analysis. Nine graph metrics, robot protocol for AI, time-travel diffing. Agents use BV to figure out what to work on next.",
     deepDescription:
       "BV treats your project as a Directed Acyclic Graph. Computes PageRank, Betweenness Centrality, HITS, Critical Path, and more. Robot protocol (--robot-*) outputs structured JSON for agents. Time-travel lets you diff across git history.",
-    connectsTo: ["br", "mail", "ubs", "cass", "cm", "ru", "ntm"],
+    connectsTo: ["br", "mail", "ubs", "cass", "cm", "ru"],
     connectionDescriptions: {
       br: "Reads and visualizes issues created by beads_rust (br)",
       mail: "Task updates trigger notifications",
@@ -591,7 +566,6 @@ const _flywheelTools: FlywheelTool[] = [
       cass: "Search prior sessions for task context",
       cm: "Remembers successful approaches",
       ru: "RU integrates with beads for multi-repo task tracking",
-      ntm: "NTM uses --robot-plan, --robot-graph for dependency insights during agent orchestration",
     },
     stars: 546,
     demoUrl: "https://dicklesworthstone.github.io/beads_viewer-pages/",
@@ -625,11 +599,10 @@ const _flywheelTools: FlywheelTool[] = [
       "Local-first issue tracking for AI agents. SQLite primary storage with JSONL export for git. Dependencies, labels, priorities (P0-P4), blocking relationships. Non-invasive: never runs git commands automatically. The bd alias provides backward compatibility.",
     deepDescription:
       "beads_rust (br) is the ~20K line Rust port of the beads issue tracker. SQLite for fast local queries, JSONL for git-friendly collaboration. Full dependency graph, labels, priorities, comments. Agent-first design: all commands support --json. Explicit sync (flush-only/import-only). Works offline. Doctor diagnostics and schema output (--format toon/json).",
-    connectsTo: ["bv", "mail", "ntm", "ru", "ubs"],
+    connectsTo: ["bv", "mail", "ru", "ubs"],
     connectionDescriptions: {
       bv: "BV visualizes and analyzes beads from br",
       mail: "Task updates notify agents via mail",
-      ntm: "NTM spawns agents that pick work from beads",
       ru: "RU syncs repos containing beads across projects",
       ubs: "UBS --beads-jsonl outputs findings as importable beads",
     },
@@ -665,10 +638,9 @@ const _flywheelTools: FlywheelTool[] = [
       "Unified search for all AI coding sessions. Indexes 11 agent formats: Claude Code, Codex, Cursor, Antigravity/Gemini, ChatGPT, Cline, Aider, Pi-Agent, Factory, OpenCode, Amp. Tantivy-powered <60ms queries with optional semantic search.",
     deepDescription:
       "CASS unifies session history from 11 agent formats into a single searchable timeline. Three search modes: lexical (BM25 with edge n-grams), semantic (local MiniLM or hash embedder fallback), and hybrid (RRF fusion). Robot mode with cursor pagination, field selection, and token budgeting. HTML export with optional AES-256-GCM encryption. Multi-machine search via SSH/rsync with interactive setup wizard.",
-    connectsTo: ["cm", "ntm", "bv"],
+    connectsTo: ["cm", "bv"],
     connectionDescriptions: {
       cm: "Indexes stored memories for retrieval",
-      ntm: "Searches all NTM-managed session histories",
       bv: "Links search results to related tasks",
     },
     stars: 145,
@@ -742,9 +714,8 @@ const _flywheelTools: FlywheelTool[] = [
       "Manage multiple accounts for Claude Code, Codex CLI, and Antigravity CLI with sub-100ms switching. Smart rotation algorithms, cooldown tracking, health scoring, and vault-based profile isolation for parallel agent sessions.",
     deepDescription:
       "CAAM enables seamless multi-account workflows for AI coding CLIs. Vault profiles store auth files for instant switching without browser flows. Smart rotation considers cooldown state, health status (healthy/warning/critical), recency, and plan type. Robot mode provides JSON output for agent automation. Features include profile isolation for parallel sessions, background token refresh daemon, and multi-machine vault sync. AES-256-GCM encrypted bundles with Argon2id key derivation for secure export/import.",
-    connectsTo: ["ntm", "slb", "mail"],
+    connectsTo: ["slb", "mail"],
     connectionDescriptions: {
-      ntm: "Provides credentials when spawning agents; enables parallel sessions with isolated profiles",
       slb: "Account switching can be coordinated through SLB for team approval workflows",
       mail: "Account switches can trigger Agent Mail notifications for coordination",
     },
@@ -783,11 +754,10 @@ const _flywheelTools: FlywheelTool[] = [
       "Nuclear-launch-style safety for AI agents. Four risk tiers (CRITICAL/DANGEROUS/CAUTION/SAFE) with 40+ regex patterns. CRITICAL commands require 2+ approvals from different agents. Cryptographic signing, rollback support, and outcome analytics.",
     deepDescription:
       "SLB implements a two-person authorization rule for dangerous commands. Commands are classified by regex patterns: CRITICAL (rm -rf /, DROP DATABASE, terraform destroy) needs 2+ approvals, DANGEROUS (git reset --hard, rm -rf) needs 1, CAUTION auto-approves after 30s, SAFE skips entirely. Approvals are cryptographically signed with HMAC. Features include Claude Code hooks, Cursor rules generation, session management for agents, watch mode (NDJSON streaming) for reviewing agents, pre-execution state capture for rollback, and outcome recording for pattern improvement.",
-    connectsTo: ["dcg", "mail", "ntm", "caam"],
+    connectsTo: ["dcg", "mail", "caam"],
     connectionDescriptions: {
       dcg: "DCG blocks pre-execution, SLB validates with multi-agent approval",
       mail: "Approval requests can be routed via Agent Mail for coordination",
-      ntm: "Coordinates approval quorum across NTM-managed agents",
       caam: "Account switching can require SLB approval for team workflows",
     },
     stars: 23,
@@ -825,10 +795,10 @@ const _flywheelTools: FlywheelTool[] = [
       "Claude Code PreToolUse hook blocking dangerous commands BEFORE execution. 50+ packs across 17 categories: git, filesystem, databases, Kubernetes, cloud providers, CI/CD, and more. Fail-open design ensures you're never blocked by errors.",
     deepDescription:
       "DCG protects your codebase from destructive operations. As a PreToolUse hook, it intercepts commands before execution with sub-millisecond latency. 50+ protection packs cover git (reset --hard, force push, branch -D), filesystem (rm -rf outside temp dirs), databases (DROP TABLE, TRUNCATE), Kubernetes (delete namespace, drain), and cloud providers (AWS, GCP, Azure). Commands are classified as blocked or allowed with safe directory exceptions (/tmp, /var/tmp, $TMPDIR). Output formats include text, JSON, and SARIF for security tooling integration.",
-    connectsTo: ["slb", "ntm", "mail", "srps"],
+    connectsTo: ["slb", "herdr", "mail", "srps"],
     connectionDescriptions: {
       slb: "DCG and SLB form a two-layer safety system - DCG blocks pre-execution, SLB validates post-execution",
-      ntm: "Agents spawned by NTM are protected by DCG hooks in Claude Code",
+      herdr: "Agents running in herdr panes are protected by DCG hooks in Claude Code",
       mail: "DCG denials can be logged to Mail for agent coordination",
       srps: "Together with SRPS: DCG blocks dangerous commands, SRPS blocks resource exhaustion",
     },
@@ -876,7 +846,6 @@ conflict type (dirty tree, diverged branches, auth failures).
 - GraphQL batch queries discover issues/PRs across all repos
 - Multi-factor priority scoring: type (+20 PRs), labels (+50 security), age, staleness
 - Git worktree isolation for parallel sessions (main directory untouched)
-- Session drivers: auto, ntm (robot mode API), local (raw tmux)
 - Two-phase workflow: --plan (discover) → --apply --push (execute)
 - Quality gates: ShellCheck, tests, lint before push
 
@@ -895,9 +864,8 @@ conflict type (dirty tree, diverged branches, auth failures).
 - Meaningful exit codes: 0=ok, 1=partial, 2=conflicts, 3=system, 4=bad args, 5=interrupted
 - Bulk import from GitHub/GitLab/Bitbucket/Gitea (ru import)
 - Orphan repo cleanup with ru prune`,
-    connectsTo: ["ntm", "mail", "bv"],
+    connectsTo: ["mail", "bv"],
     connectionDescriptions: {
-      ntm: "Uses ntm robot mode for AI-assisted reviews (ru review)",
       mail: "Can coordinate repo claims across agents",
       bv: "Integrates with beads for multi-repo task tracking",
     },
@@ -1004,9 +972,9 @@ as a native tool, not string-parsing.`,
       "Claude Code PreToolUse hook that offloads cargo builds to remote workers. Intercepts build commands, syncs source via rsync + zstd, compiles on server-grade hardware, and streams artifacts back.",
     deepDescription:
       "RCH runs as a PreToolUse hook intercepting cargo commands before execution. Workers are managed via `rch workers` with health probes and priority scheduling. The daemon mode maintains persistent SSH connections for low-latency builds. Agent detection (`rch agents`) finds running Claude Code, Codex, and Antigravity sessions to coordinate multi-agent builds. Doctor command validates workers, daemon, and hook configuration.",
-    connectsTo: ["ntm", "ru", "br"],
+    connectsTo: ["herdr", "ru", "br"],
     connectionDescriptions: {
-      ntm: "NTM can spawn agents on same machines RCH uses as workers",
+      herdr: "Agents running in herdr panes use RCH for their builds",
       ru: "RU syncs repos that RCH then builds remotely",
       br: "Build tasks tracked via beads",
     },
@@ -1032,63 +1000,6 @@ as a native tool, not string-parsing.`,
     language: "Rust",
   },
   {
-    id: "wa",
-    name: "WezTerm Automata",
-    shortName: "WA",
-    href: "https://github.com/Dicklesworthstone/wezterm_automata",
-    icon: "Terminal",
-    color: "from-purple-500 to-violet-600",
-    tagline: "Terminal hypervisor for AI agents",
-    description:
-      "A terminal hypervisor that captures pane output in real-time, detects AI agent state transitions via pattern matching, and enables event-driven automation across multi-agent swarms.",
-    deepDescription: `WA is a terminal hypervisor - not just an automation tool. It runs a daemon that continuously
-observes WezTerm panes with sub-50ms latency, capturing output deltas and detecting state
-transitions in AI coding agents (Claude Code, Codex, Antigravity).
-
-The pattern detection engine recognizes agent-specific states: ready for input, thinking,
-rate limited, awaiting approval, idle timeout. When states change, WA can trigger automated
-responses via callbacks or Robot Mode.
-
-Robot Mode provides a JSON API for external orchestration:
-- wa robot state: Get current state of all observed panes
-- wa robot get-text: Extract screen content from specific panes
-- wa robot send: Inject keystrokes with configurable delays
-- wa robot wait-for: Block until a pattern matches
-- wa robot search: Query the FTS5-indexed capture history
-
-The policy engine allows capability gates (e.g., "agent X can only send to its own pane")
-to prevent runaway automation. All captured content is stored in SQLite with FTS5 for
-full-text search across sessions - invaluable for debugging agent behavior.`,
-    connectsTo: ["ntm", "mail", "br"],
-    connectionDescriptions: {
-      ntm: "WA observes agents spawned by NTM sessions",
-      mail: "State changes can trigger Agent Mail notifications",
-      br: "Task completions can update bead status",
-    },
-    stars: 42,
-    features: [
-      "Real-time delta capture (sub-50ms latency)",
-      "Multi-agent pattern detection engine",
-      "Robot Mode JSON API for orchestration",
-      "FTS5-powered search with BM25 ranking",
-      "Policy engine with capability gates",
-      "Workflow automation triggered by pattern matches",
-      "TOON output format for token-efficient AI consumption",
-      "Explainability via 'wa why' command",
-    ],
-    cliCommands: [
-      "wa daemon start              # Start background observer",
-      "wa robot state               # JSON state of all panes",
-      "wa robot get-text --pane 1   # Extract pane content",
-      "wa robot send --pane 1 'cmd' # Inject keystrokes",
-      "wa robot wait-for 0 'pattern' # Event-driven wait",
-      "wa robot events              # Recent detection events",
-      "wa why deny.alt_screen       # Explain policy denials",
-    ],
-    installCommand: "cargo install --git https://github.com/Dicklesworthstone/wezterm_automata",
-    language: "Rust",
-  },
-  {
     id: "brenner",
     name: "Brenner Bot",
     shortName: "BRENNER",
@@ -1110,8 +1021,8 @@ sections with §n anchors), multi-model syntheses (Opus, GPT, Gemini), and full 
 - Evidence packs: import papers, datasets, prior sessions with stable EV-NNN citations
 
 **Cockpit Runtime:**
-- Multi-agent sessions via ntm with role-specific prompts (hypothesis_generator, test_designer, adversarial_critic)
-- Thread ID is global join key: ties Agent Mail, ntm sessions, artifacts, beads
+- Role-specific prompts for each research agent (hypothesis_generator, test_designer, adversarial_critic); ACFS starts the cockpit with --skip-ntm, and you run the agents in herdr panes
+- Thread ID is global join key: ties Agent Mail, artifacts, beads
 - Session state machine with phase detection (awaiting_responses → partially_complete → awaiting_compilation)
 - Artifact compiler with 50+ validation rules: third alternative checks, potency controls, citation anchors
 
@@ -1119,10 +1030,10 @@ sections with §n anchors), multi-model syntheses (Opus, GPT, Gemini), and full 
 - Two axioms: Reality has a generative grammar, Understanding = Reconstruction
 - "Exclusion is always a tremendously good thing" - design for sharp discriminative experiments
 - Third alternative check: "Both could be wrong" - always consider misspecification`,
-    connectsTo: ["mail", "ntm", "cass", "br"],
+    connectsTo: ["mail", "herdr", "cass", "br"],
     connectionDescriptions: {
       mail: "Research sessions coordinate via Agent Mail threads with acknowledgment tracking",
-      ntm: "Cockpit runtime spawns parallel research agents with role-specific prompts",
+      herdr: "Run the parallel research agents one per herdr pane",
       cass: "Research session history is searchable for prior solutions",
       br: "Research tasks and session artifacts tracked via beads",
     },
@@ -1215,9 +1126,9 @@ Helper tools: check-throttled, cursor-guard (log/renice-only), srps-doctor, srps
 Safety-first: no automated process killing. Aliases: limited, cargo-limited, make-limited.
 
 Supports Linux (Debian/Ubuntu) and WSL2. Idempotent installer with --plan dry-run.`,
-    connectsTo: ["ntm", "dcg", "slb", "pt"],
+    connectsTo: ["herdr", "dcg", "slb", "pt"],
     connectionDescriptions: {
-      ntm: "SRPS ensures tmux sessions stay responsive even during heavy builds - no frozen terminals",
+      herdr: "SRPS keeps herdr panes responsive even during heavy builds - no frozen terminals",
       dcg: "Combined safety: DCG prevents destructive commands, SRPS prevents resource exhaustion from runaway processes",
       slb: "When SLB launches multiple agents, SRPS keeps them from starving each other for CPU/memory",
       pt: "PT identifies stuck processes, SRPS deprioritizes resource hogs - complementary approaches",
@@ -1306,10 +1217,9 @@ Safety model: Identity validation (boot_id:start_time_ticks:pid) prevents PID re
 Agent/robot mode safety gates: min_posterior (0.95 default), max_kills (10/session), max_blast_radius (4GB), fdr_budget (0.05). Output formats: json, toon, md, jsonl, summary, metrics, slack, exitcode, prose.
 
 Tech stack: Rust pt-core inference engine + Bash wrapper + gum TUI. Session bundles (.ptb) enable sharing and reproducibility with optional encryption.`,
-    connectsTo: ["srps", "ntm"],
+    connectsTo: ["srps"],
     connectionDescriptions: {
       srps: "PT terminates stuck processes, SRPS prevents them from starving the system",
-      ntm: "Clean up runaway processes across all your tmux sessions",
     },
     stars: 45,
     features: [
@@ -1892,10 +1802,9 @@ Supports 14+ providers: Claude Code, Codex CLI, Antigravity CLI, Cursor, Aider, 
 The conversion preserves tool calls, file edits, and reasoning chains in a format each
 target provider understands. Quality depends on what was captured — inspect the generated
 conversion with 'casr resume <target> <session-id> --dry-run' before trusting it.`,
-    connectsTo: ["cass", "ntm", "caam"],
+    connectsTo: ["cass", "caam"],
     connectionDescriptions: {
       cass: "CASS provides the session logs that CASR converts",
-      ntm: "Resume sessions across NTM-managed agent instances",
       caam: "Switch accounts then resume sessions across providers",
     },
     stars: 25,
@@ -2146,9 +2055,8 @@ Compared to the TypeScript original: native cold start with no Node/Bun bootstra
 bounded-resource long sessions (SQLite index + segmented log for fast resume), and a
 capability-gated extension security model with two-stage exec mediation, a per-extension
 trust lifecycle, kill switches, and a tamper-evident risk ledger.`,
-    connectsTo: ["ntm", "caam"],
+    connectsTo: ["caam"],
     connectionDescriptions: {
-      ntm: "NTM spawns and orchestrates Pi sessions alongside Claude and Codex",
       caam: "CAAM-style account hygiene applies when Pi points at hosted providers",
     },
     stars: 45,
@@ -2191,10 +2099,9 @@ exits non-zero on silent failures.
 
 There is no --version flag; health-check with 'pfr --doctor --json'. It is a local
 workstation tool: headless servers can plan and inspect but not reopen terminal tabs.`,
-    connectsTo: ["casr", "ntm"],
+    connectsTo: ["casr"],
     connectionDescriptions: {
       casr: "CASR moves sessions between providers; PFR resurrects them after a crash",
-      ntm: "NTM-spawned panes are excluded by default (override with --include-ntm)",
     },
     stars: 15,
     features: [
@@ -2279,7 +2186,7 @@ export const flywheelDescription = {
     agentsParallel: "6+",
   },
   keyInsight:
-    "The power comes from how these tools work together. Agents figure out what to work on using BV, coordinate via Mail, search past sessions with CASS, learn from CM, stay protected by SLB and DCG, and sync repos with RU. NTM orchestrates everything.",
+    "The power comes from how these tools work together. Agents figure out what to work on using BV, coordinate via Mail, search past sessions with CASS, learn from CM, stay protected by SLB and DCG, and sync repos with RU. herdr runs them all side by side.",
 };
 
 // ============================================================

@@ -30,8 +30,6 @@ export function getManifestCommandByCliName(name: string): ManifestCommand | und
 
 export function getManifestCommandDocsUrl(moduleId: string): string | undefined {
   switch (moduleId) {
-    case "stack.ntm":
-      return "/learn/tools/ntm";
     case "stack.beads_rust":
     case "stack.beads_viewer":
       return "/learn/tools/beads";
@@ -187,19 +185,12 @@ export const COMMANDS: CommandRef[] = [
     aliases: ["lg"],
   },
   {
-    name: "ntm",
-    fullName: "Named Tmux Manager",
-    description: "Session management for agents and workflows.",
+    name: "herdr",
+    fullName: "herdr",
+    description: "Terminal workspace manager for coding agents.",
     category: "stack",
-    example: "ntm new acfs",
-    docsUrl: "/learn/tools/ntm",
-  },
-  {
-    name: "tmux",
-    fullName: "tmux",
-    description: "Terminal multiplexer.",
-    category: "system",
-    example: "tmux new -s work",
+    example: "herdr agent list",
+    docsUrl: "/learn/tools/herdr",
   },
   {
     name: "lsd",

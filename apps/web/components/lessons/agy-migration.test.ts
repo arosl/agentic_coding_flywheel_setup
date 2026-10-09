@@ -7,15 +7,11 @@
  * level — the migrated lessons must teach `agy` as the primary third agent AND
  * retain the labeled-legacy `gmi` note, with no operational gmi command left
  * behind (the over-migration / under-migration regression guard).
- *
- * It also cross-checks the exported descriptive data (NTM card in flywheel.ts +
- * tldr-content.ts) so the forward trio reads cc/cod/agy.
  */
 
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { flywheelTools } from "../../lib/flywheel";
 
 const LESSON_DIR = import.meta.dir;
 const read = (file: string) => readFileSync(join(LESSON_DIR, file), "utf8");
@@ -50,15 +46,5 @@ describe("welcome-lesson teaches agy as the third agent", () => {
   test("third agent card/tool no longer uses gmi as the primary shortcut", () => {
     expect(src).not.toContain('shortcut="gmi"');
     expect(src).not.toContain('shortName: "gmi"');
-  });
-});
-
-describe("NTM descriptive data uses the cc/cod/agy trio", () => {
-  test("flywheel NTM tool advertises the cc/cod/agy classification", () => {
-    const ntm = flywheelTools.find((t) => t.id === "ntm");
-    expect(ntm).toBeDefined();
-    const blob = JSON.stringify(ntm);
-    expect(blob).toContain("cc/cod/agy");
-    expect(blob).not.toContain("cc/cod/gmi");
   });
 });

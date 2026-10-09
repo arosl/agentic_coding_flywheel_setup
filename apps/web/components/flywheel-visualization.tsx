@@ -118,7 +118,7 @@ function getUniqueTools(): FlywheelTool[] {
 // =============================================================================
 
 const PRIMARY_TOOL_IDS = new Set([
-  "ntm", // Named Tmux Manager - orchestration hub
+  "herdr", // herdr - where the agents run
   "mail", // Agent Mail - coordination hub
   "bv", // Beads Viewer - task management hub
   "cass", // Session Search - memory hub

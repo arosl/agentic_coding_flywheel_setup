@@ -299,12 +299,12 @@ test.describe("Tool Detail Pages (generated data)", () => {
     });
   }
 
-  test("/learn/tools/ntm uses the canonical repository link", async ({ page }) => {
-    await page.goto("/learn/tools/ntm");
+  test("/learn/tools/herdr links to herdr's site", async ({ page }) => {
+    await page.goto("/learn/tools/herdr");
     await waitForPageSettled(page);
 
     const html = await page.content();
-    expect(html).toContain("https://github.com/Dicklesworthstone/ntm");
+    expect(html).toContain("https://herdr.dev");
   });
 
   test("/learn/tools/pcr shows a hook usage example, not a raw installer pipe", async ({

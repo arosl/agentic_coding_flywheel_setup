@@ -283,13 +283,13 @@ test.describe
     });
 
     test.describe("SRPS Synergies", () => {
-      test("SRPS synergies with NTM are documented", async ({ page }) => {
+      test("SRPS synergies with herdr are documented", async ({ page }) => {
         await page.goto("/learn/tools/srps");
         await page.waitForLoadState("networkidle");
 
-        // Check for NTM synergy reference
-        const ntmMention = page.getByText(/NTM|tmux/i).first();
-        await expect(ntmMention).toBeVisible();
+        // Check for herdr synergy reference
+        const herdrMention = page.getByText(/herdr/i).first();
+        await expect(herdrMention).toBeVisible();
       });
 
       test("SRPS synergies with DCG are documented", async ({ page }) => {

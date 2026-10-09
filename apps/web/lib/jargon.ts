@@ -176,14 +176,14 @@ export const jargonDictionary: Record<string, JargonTerm> = {
   // DEVELOPER TOOLS
   // ═══════════════════════════════════════════════════════════════
 
-  tmux: {
-    term: "tmux",
-    short: "A tool that keeps your terminal sessions running even when you disconnect",
-    long: "tmux (terminal multiplexer) solves a critical problem: normally, when you close a terminal or lose your internet connection, anything running in that terminal stops. If you're running a long installation and your WiFi blips, you have to start over. tmux fixes this by running your terminal sessions inside a persistent container on the server itself. You can disconnect (intentionally or accidentally), reconnect hours later, and find everything exactly as you left it, still running. Beyond persistence, tmux also lets you split your terminal into multiple sections (called panes) so you can see several things at once: perhaps an AI assistant in one pane, its output logs in another, and a file editor in a third. You can create multiple tabs (called windows) for different tasks. And you can switch between these sessions at will.",
+  herdr: {
+    term: "herdr",
+    short: "A workspace for your AI agents that keeps them running even when you disconnect",
+    long: "herdr is a terminal workspace manager for coding agents. It solves a critical problem: normally, when you close a terminal or lose your internet connection, anything running in that terminal stops. herdr runs your agents on the server itself, so you can disconnect (intentionally or accidentally), reconnect hours later, run `herdr`, and find everything exactly as you left it, still running. It also lets you split your terminal into panes, tabs and workspaces, so you can see several agents at once, and its sidebar shows whether each agent is working, waiting for you, or done.",
     analogy:
-      "Think of tmux like leaving your work open on your desk at the office. You can go home (disconnect), come back later, and everything is still exactly where you left it—notes, processes, and all. A normal terminal connection is more like a phone call: if it drops, it's over.",
-    why: "tmux is essential for AI coding assistants because they often run tasks that take hours. Without tmux, you'd have to sit and watch, keeping your connection stable the whole time. With tmux, you can start multiple AI assistants, close your laptop, go to dinner, and come back to find them still working. If one assistant finishes and you want to give it new instructions, it's right there waiting. The installer sets up tmux so you get this persistence automatically.",
-    related: ["terminal", "ntm"],
+      "Think of herdr like leaving your work open on your desk at the office. You can go home (disconnect), come back later, and everything is still exactly where you left it—notes, processes, and all. A normal terminal connection is more like a phone call: if it drops, it's over.",
+    why: "AI coding assistants often run tasks that take hours. Without herdr, you'd have to sit and watch, keeping your connection stable the whole time. With herdr, you can start several AI assistants, close your laptop, go to dinner, and come back to find them still working, with the sidebar telling you which one needs you. The installer sets up herdr, and its integration for each agent, so you get this automatically.",
+    related: ["terminal", "parallel-agents"],
   },
 
   git: {
@@ -506,16 +506,6 @@ export const jargonDictionary: Record<string, JargonTerm> = {
   // FLYWHEEL ECOSYSTEM
   // ═══════════════════════════════════════════════════════════════
 
-  ntm: {
-    term: "NTM",
-    short: "Named Tmux Manager, a control center for running multiple AI agents",
-    long: "NTM (Named Tmux Manager) is a tool for organizing and managing multiple terminal sessions where AI agents are running. When you're working with several AI assistants simultaneously (perhaps one writing code, one running tests, one fixing bugs), keeping track of them becomes challenging. NTM provides a unified interface: you can see all your running sessions at a glance, switch between them instantly, and manage the whole operation from one place. It builds on top of tmux (the terminal persistence tool) by adding a layer of organization specifically designed for managing AI agent workflows.",
-    analogy:
-      "NTM is like air traffic control for AI agents. Instead of looking out the window and trying to spot planes (terminal windows scattered across your screen), you have a radar display showing all flights (agent sessions) with their status. You can communicate with any flight, see which ones are active, and keep everything organized even when many things are happening simultaneously.",
-    why: "When running multiple AI agents, organization becomes critical. Without NTM, you'd have multiple terminal windows scattered around, possibly losing track of which agent is doing what. NTM prevents that chaos by giving you a single command center. You can start work, step away for hours, come back, and immediately see the status of all your agents and what they've accomplished.",
-    related: ["tmux", "ai-agents", "parallel-agents"],
-  },
-
   "agent-mail": {
     term: "Agent Mail",
     short: "A messaging system that lets AI agents coordinate with each other",
@@ -523,13 +513,13 @@ export const jargonDictionary: Record<string, JargonTerm> = {
     analogy:
       "Imagine a shared bulletin board in an office where team members can leave notes for each other: 'Working on the Johnson account until 3 PM,' 'Budget report is ready for review,' 'Don't touch the printer, it's being serviced.' Agent Mail is that bulletin board for AI assistants. They check it before starting work, post updates about what they're doing, and leave messages for colleagues who might work on related things.",
     why: "Multiple AI agents working on the same codebase can easily step on each other's toes. One agent edits a file while another is trying to edit the same file, causing conflicts. Agent Mail prevents this by enabling coordination. Agents can claim ownership of files, signal when they're done, and leave context for whoever picks up the work next. It's essential for the 'parallel agents' workflow where multiple assistants tackle different parts of a project simultaneously.",
-    related: ["ai-agents", "ntm", "parallel-agents"],
+    related: ["ai-agents", "herdr", "parallel-agents"],
   },
 
   flywheel: {
     term: "Flywheel",
     short: "A self-reinforcing system where each part makes the others more effective",
-    long: "A flywheel is a heavy wheel that stores rotational energy. Once you get it spinning, it wants to keep spinning; each push adds to its momentum. In business and product design, 'flywheel' describes a system where each component reinforces the others, creating a positive feedback loop. The 'Agentic Coding Flywheel' means the tools in this setup aren't random; each one makes the others more powerful. Fast search (ripgrep) helps agents understand code quickly. Task tracking (Beads) helps them know what to work on. Coordination (Agent Mail) prevents conflicts. Session persistence (tmux/NTM) lets work continue across time. Together, they create a system greater than the sum of its parts.",
+    long: "A flywheel is a heavy wheel that stores rotational energy. Once you get it spinning, it wants to keep spinning; each push adds to its momentum. In business and product design, 'flywheel' describes a system where each component reinforces the others, creating a positive feedback loop. The 'Agentic Coding Flywheel' means the tools in this setup aren't random; each one makes the others more powerful. Fast search (ripgrep) helps agents understand code quickly. Task tracking (Beads) helps them know what to work on. Coordination (Agent Mail) prevents conflicts. Session persistence (herdr) lets work continue across time. Together, they create a system greater than the sum of its parts.",
     analogy:
       "Think of compound interest. A small improvement today doesn't just help once—it makes the next improvement easier and more valuable. The Agent Flywheel is built for that kind of compounding: each tool makes the others work better, so your overall output grows faster than any single change would suggest.",
     why: "Understanding the flywheel concept helps you see why this specific set of tools matters. We didn't pick them randomly; each one was chosen because it amplifies the effectiveness of the others. If you're wondering 'why so many tools?', the answer is that they work together as a system. Removing one would weaken the whole setup, like removing a spoke from a wheel.",
@@ -543,7 +533,7 @@ export const jargonDictionary: Record<string, JargonTerm> = {
     analogy:
       "Beads is like a project manager who never forgets anything and never goes home. They know every task, every dependency, every completion status. When a new AI agent shows up and asks 'what should I work on?', Beads can instantly answer: 'Task 14 and 17 are ready because their dependencies are complete, but Task 15 is blocked until Task 12 finishes.' This coordination happens automatically, without requiring humans to track everything manually.",
     why: "Beads is central to how the Agent Flywheel workflow operates. You start by planning (perhaps using ChatGPT 5.2 Pro for deep thinking), then break that plan into tasks tracked by Beads. AI agents check Beads to find available work. They mark tasks complete when done. Everything persists in your project's version control, so work is never lost. Commands like 'br ready' (show tasks ready to work on), 'br create' (add a new task), and 'br close' (mark a task done) make it easy to interact with.",
-    related: ["ai-agents", "ntm", "agent-mail", "git"],
+    related: ["ai-agents", "agent-mail", "git"],
   },
 
   ru: {
@@ -553,7 +543,7 @@ export const jargonDictionary: Record<string, JargonTerm> = {
     analogy:
       "RU is like having a diligent assistant who manages all your filing cabinets. Every morning, they check each cabinet for updates, pull in any new documents, and flag anything that needs your attention. And when you've made changes to several cabinets, they can sort the loose papers into labeled folders and show you the plan before filing anything.",
     why: "Multi-repo workflows are common in serious development. A project might span a frontend repo, backend repo, shared libraries, deployment configs, and documentation. RU keeps them all synchronized and turns the dirty worktrees you accumulate across them into clean, reviewable commits.",
-    related: ["git", "ntm", "agent-mail", "beads"],
+    related: ["git", "agent-mail", "beads"],
   },
 
   "commit-sweep": {
@@ -579,7 +569,7 @@ export const jargonDictionary: Record<string, JargonTerm> = {
   srps: {
     term: "SRPS",
     short: "System Monitor & Process Deprioritization Daemon",
-    long: "SRPS (System Resource Protection System) is an intelligent background daemon that monitors running processes. When you run CPU-heavy or memory-hungry operations like a large compilation, 'npm install', or spawn multiple AI agents concurrently, SRPS automatically adjusts their priority to keep your core UI (like tmux and your shell) snappy. It is safety-first: it never automatically kills processes. Instead, it relies on Ananicy rules (thousands of community-maintained rules) to gracefully deprioritize known resource hogs so your machine remains responsive.",
+    long: "SRPS (System Resource Protection System) is an intelligent background daemon that monitors running processes. When you run CPU-heavy or memory-hungry operations like a large compilation, 'npm install', or spawn multiple AI agents concurrently, SRPS automatically adjusts their priority to keep your core UI (like herdr and your shell) snappy. It is safety-first: it never automatically kills processes. Instead, it relies on Ananicy rules (thousands of community-maintained rules) to gracefully deprioritize known resource hogs so your machine remains responsive.",
     analogy:
       "Imagine an office manager who notices when the accounting department starts a massive calculation. Instead of letting them hog all the power and bring the elevators and coffee machines to a halt, the manager gently limits their power draw so everyone else can continue working normally. SRPS does this for your CPU and memory.",
     why: "In agentic coding, launching 5-10 AI agents in parallel can easily overwhelm even a powerful VPS. SRPS prevents resource exhaustion, allowing multiple agents to work concurrently without locking up your terminal.",
@@ -950,8 +940,8 @@ export const jargonDictionary: Record<string, JargonTerm> = {
     long: "Running agents in parallel means having multiple AI assistants work at the same time on different parts of a project. While one agent writes the API, another writes tests, and a third handles documentation. This dramatically speeds up development because tasks that would be sequential (one after another) happen simultaneously. The key challenge is coordination; agents need to know what others are working on to avoid conflicts.",
     analogy:
       "Like a kitchen with multiple chefs. One handles appetizers, one does mains, one makes desserts. They work faster together than one chef doing everything sequentially, but they need to communicate to avoid both reaching for the same pan.",
-    why: "Parallel agents are the core of the Agent Flywheel. Tools like Agent Mail coordinate who's working on what, NTM manages multiple terminal sessions, and Beads tracks which tasks are ready. This lets you achieve in hours what would take days working sequentially.",
-    related: ["ai-agents", "agent-mail", "ntm", "beads"],
+    why: "Parallel agents are the core of the Agent Flywheel. Tools like Agent Mail coordinate who's working on what, herdr runs the agents side by side, and Beads tracks which tasks are ready. This lets you achieve in hours what would take days working sequentially.",
+    related: ["ai-agents", "agent-mail", "herdr", "beads"],
   },
 
   "extended-thinking": {
@@ -980,7 +970,7 @@ export const jargonDictionary: Record<string, JargonTerm> = {
     long: "The Unix Philosophy is a set of design principles from the 1970s that still guides modern software: (1) Make each program do one thing well, (2) Write programs to work together, (3) Write programs to handle text streams, because that's a universal interface. Instead of one giant program that does everything, you have small, focused tools that combine. 'ls | grep foo | wc -l' (list files, filter for 'foo', count lines) is Unix Philosophy in action.",
     analogy:
       "Like a well-designed kitchen where you have a great knife, a great pan, and a great cutting board, rather than one 'UltraCooker 3000' that tries to do everything but does nothing well. Simple, focused tools that combine elegantly.",
-    why: "The Agent Flywheel tools follow Unix Philosophy. Each tool (NTM, Agent Mail, Beads) does one thing well. They communicate through standard formats (JSON, Git, text). This means tools can improve independently, and you can swap one out without breaking others.",
+    why: "The Agent Flywheel tools follow Unix Philosophy. Each tool (herdr, Agent Mail, Beads) does one thing well. They communicate through standard formats (JSON, Git, text). This means tools can improve independently, and you can swap one out without breaking others.",
     related: ["cli", "json"],
   },
 
@@ -1010,7 +1000,7 @@ export const jargonDictionary: Record<string, JargonTerm> = {
     long: "Autonomous operation means an AI agent can work on its own for extended periods, making decisions, handling errors, and completing tasks without needing human input at every step. This doesn't mean 'no supervision'; you set the goal, define boundaries, and review results. But between those checkpoints, the agent operates independently. An autonomous agent might work for hours, making dozens of commits, while you're away.",
     analogy:
       "Like giving instructions to a contractor rather than supervising every hammer swing. You define what you want built, check in periodically, and review the finished work, but you don't need to be present for every task.",
-    why: "Autonomous operation is the goal of agentic AI. When agents can work unsupervised, you multiply your productivity; agents work while you sleep, think about other problems, or take breaks. The Agent Flywheel tools (Agent Mail, Beads, NTM) enable autonomous operation by providing coordination, task tracking, and session persistence.",
+    why: "Autonomous operation is the goal of agentic AI. When agents can work unsupervised, you multiply your productivity; agents work while you sleep, think about other problems, or take breaks. The Agent Flywheel tools (Agent Mail, Beads, herdr) enable autonomous operation by providing coordination, task tracking, and session persistence.",
     related: ["agentic", "ai-agents", "parallel-agents"],
   },
 
@@ -1021,11 +1011,11 @@ export const jargonDictionary: Record<string, JargonTerm> = {
   session: {
     term: "Session",
     short: "A persistent terminal environment that keeps running even when you disconnect",
-    long: "In the context of tmux and terminal work, a session is a saved terminal environment that persists on the server. When you start a tmux session, it creates a container for your terminal work. You can open multiple windows and panes within that session, run programs, and do your work. The key feature is persistence: if you disconnect (close your laptop, lose internet, or just log off), the session keeps running on the server. When you reconnect, you can 'attach' back to that same session and find everything exactly as you left it, with programs still running.",
+    long: "In the context of herdr and terminal work, a session is a saved terminal environment that persists on the server. When you start herdr, it creates a container for your terminal work. You can open multiple tabs and panes within that session, run programs, and do your work. The key feature is persistence: if you disconnect (close your laptop, lose internet, or just log off), the session keeps running on the server. When you reconnect, you can run `herdr` to reattach to that same session and find everything exactly as you left it, with programs still running.",
     analogy:
-      "It's like leaving your desk at work with papers spread out and programs open. When you come back the next day, everything is still there. A normal SSH connection is more like a phone call; when you hang up, it's over. A tmux session is like your desk; it stays there waiting for you.",
-    why: "Sessions are essential for AI coding assistants because they often run long tasks. Without sessions, if your internet blips or you close your laptop, all running work stops. With sessions, agents can work for hours or days, and you can check in whenever you want. The installer sets up ntm (nice tmux) to manage sessions easily.",
-    related: ["tmux", "ntm", "ssh"],
+      "It's like leaving your desk at work with papers spread out and programs open. When you come back the next day, everything is still there. A normal SSH connection is more like a phone call; when you hang up, it's over. A herdr session is like your desk; it stays there waiting for you.",
+    why: "Sessions are essential for AI coding assistants because they often run long tasks. Without sessions, if your internet blips or you close your laptop, all running work stops. With sessions, agents can work for hours or days, and you can check in whenever you want. The installer sets up herdr to manage sessions easily.",
+    related: ["herdr", "ssh"],
   },
 
   "api-key": {

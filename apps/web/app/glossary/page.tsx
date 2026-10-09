@@ -30,8 +30,7 @@ const LEARN_MORE: Partial<Record<string, LearnMoreLink>> = {
   ssh: { href: "/learn/ssh-basics", label: "Learn: SSH basics" },
   "ssh-key": { href: "/wizard/generate-ssh-key", label: "Wizard: Generate SSH key" },
   vps: { href: "/wizard/rent-vps", label: "Wizard: Rent a VPS" },
-  tmux: { href: "/learn/tmux-basics", label: "Learn: tmux basics" },
-  ntm: { href: "/learn/ntm-core", label: "Learn: NTM command center" },
+  herdr: { href: "/learn/herdr-basics", label: "Learn: herdr basics" },
   "agent-mail": { href: "/learn/flywheel-loop", label: "Learn: The flywheel loop" },
   beads: { href: "/learn/flywheel-loop", label: "Learn: The flywheel loop" },
   codex: { href: "/learn/agent-commands", label: "Learn: Agent commands" },
@@ -60,7 +59,7 @@ function categorizeKey(key: string): Exclude<GlossaryCategory, "all"> {
   }
 
   if (
-    /(terminal|command-line|shell|zsh|bash|oh-my-zsh|p10k|powerlevel10k|alias|path|env|tmux|session|zoxide|atuin|fzf)/.test(
+    /(terminal|command-line|shell|zsh|bash|oh-my-zsh|p10k|powerlevel10k|alias|path|env|herdr|session|zoxide|atuin|fzf)/.test(
       k,
     )
   ) {
@@ -272,7 +271,7 @@ export default function GlossaryPage() {
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search terms (e.g., SSH, tmux, API key)…"
+                placeholder="Search terms (e.g., SSH, herdr, API key)…"
                 aria-label="Search glossary terms"
                 className="w-full rounded-xl border border-border/50 bg-background px-9 py-2 text-sm outline-none transition-colors focus:border-primary/50 focus:ring-2 focus:ring-primary/20"
               />

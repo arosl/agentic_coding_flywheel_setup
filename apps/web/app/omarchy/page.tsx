@@ -150,7 +150,7 @@ const DOCTOR_LINES: ReadonlyArray<{ status: "ok" | "skip"; label: string; note?:
   { status: "ok", label: "cargo 1.9x" },
   { status: "ok", label: "go 1.2x (pacman)" },
   { status: "ok", label: "claude / codex / agy" },
-  { status: "ok", label: "ntm · am · bv · br · cass · cm · dcg · ru …" },
+  { status: "ok", label: "herdr · am · bv · br · cass · cm · dcg · ru …" },
 ];
 
 type ToolTier = "cornerstone" | "flywheel" | "thirdParty";
@@ -220,8 +220,8 @@ const TIER_ORDER: ToolTier[] = ["cornerstone", "flywheel", "thirdParty"];
 const TOOLS: ToolEntry[] = [
   // Cornerstones: the ten tools a working session runs through, in workflow order.
   {
-    name: "ntm",
-    description: "Named Tmux Manager: spawn and monitor agent sessions",
+    name: "herdr",
+    description: "Terminal workspace manager: agents run in its panes and survive disconnects",
     tier: "cornerstone",
   },
   {
@@ -887,7 +887,7 @@ export default function OmarchyPage() {
             >
               <p>
                 The inner ring is the loop a working session runs through:{" "}
-                <code className="font-mono text-[#9ece6a]">ntm</code> spawns the agents,{" "}
+                <code className="font-mono text-[#9ece6a]">herdr</code> runs the agents in its panes,{" "}
                 <code className="font-mono text-[#9ece6a]">am</code> lets them message each other
                 and reserve files, <code className="font-mono text-[#9ece6a]">bv</code> picks the
                 next task from the Beads graph,{" "}

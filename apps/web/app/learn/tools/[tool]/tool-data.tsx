@@ -29,7 +29,7 @@ export type ToolId =
   | "codex-cli"
   | "antigravity-cli"
   | "gemini-cli"
-  | "ntm"
+  | "herdr"
   | "beads"
   | "agent-mail"
   | "ubs"
@@ -71,7 +71,6 @@ export type ToolCard = {
 };
 
 const manifestShortIdByToolId: Partial<Record<ToolId, string>> = {
-  ntm: "ntm",
   beads: "br",
   "agent-mail": "mail",
   ubs: "ubs",
@@ -133,7 +132,7 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     docsUrl: "https://docs.anthropic.com/en/docs/claude-code",
     docsLabel: "Anthropic Docs",
     quickCommand: "cc",
-    relatedTools: ["codex-cli", "antigravity-cli", "ntm"],
+    relatedTools: ["codex-cli", "antigravity-cli", "herdr"],
   },
   "codex-cli": {
     id: "codex-cli",
@@ -145,7 +144,7 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     docsUrl: "https://github.com/openai/codex",
     docsLabel: "GitHub",
     quickCommand: "cod",
-    relatedTools: ["claude-code", "antigravity-cli", "ntm"],
+    relatedTools: ["claude-code", "antigravity-cli", "herdr"],
   },
   "antigravity-cli": {
     id: "antigravity-cli",
@@ -157,7 +156,7 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     docsUrl: "https://github.com/google-antigravity/antigravity-cli",
     docsLabel: "GitHub",
     quickCommand: "agy",
-    relatedTools: ["claude-code", "codex-cli", "ntm"],
+    relatedTools: ["claude-code", "codex-cli", "herdr"],
   },
   "gemini-cli": {
     id: "gemini-cli",
@@ -171,16 +170,16 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     quickCommand: "gmi",
     relatedTools: ["antigravity-cli", "claude-code", "codex-cli"],
   },
-  ntm: {
-    id: "ntm",
-    title: "Named Tmux Manager",
-    tagline: "The agent cockpit - spawn and orchestrate multiple agents",
+  herdr: {
+    id: "herdr",
+    title: "herdr",
+    tagline: "Where your agents run - panes, tabs, workspaces, and each agent's state",
     icon: <LayoutGrid className="h-8 w-8" aria-hidden="true" />,
     gradient: "from-sky-500/20 via-blue-500/20 to-sky-500/20",
     glowColor: "rgba(56,189,248,0.4)",
-    docsUrl: "https://github.com/Dicklesworthstone/ntm",
-    docsLabel: "GitHub",
-    quickCommand: "ntm spawn myproject --cc=2",
+    docsUrl: "https://herdr.dev",
+    docsLabel: "herdr.dev",
+    quickCommand: "herdr agent list",
     relatedTools: ["claude-code", "codex-cli", "agent-mail"],
   },
   beads: {
@@ -204,7 +203,7 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     glowColor: "rgba(139,92,246,0.4)",
     docsUrl: "https://github.com/Dicklesworthstone/mcp_agent_mail",
     docsLabel: "GitHub",
-    relatedTools: ["ntm", "beads", "cass"],
+    relatedTools: ["herdr", "beads", "cass"],
   },
   ubs: {
     id: "ubs",
@@ -274,7 +273,7 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     docsUrl: "https://github.com/Dicklesworthstone/destructive_command_guard",
     docsLabel: "GitHub",
     quickCommand: "dcg test 'rm -rf /' --explain",
-    relatedTools: ["slb", "claude-code", "ntm"],
+    relatedTools: ["slb", "claude-code", "herdr"],
   },
   ru: {
     id: "ru",
@@ -286,7 +285,7 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     docsUrl: "https://github.com/Dicklesworthstone/repo_updater",
     docsLabel: "GitHub",
     quickCommand: "ru sync --parallel 4",
-    relatedTools: ["ntm", "beads", "agent-mail"],
+    relatedTools: ["beads", "agent-mail"],
   },
   ms: {
     id: "ms",
@@ -311,7 +310,7 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     docsUrl: "https://github.com/Dicklesworthstone/automated_plan_reviser_pro",
     docsLabel: "GitHub",
     quickCommand: "apr run 1",
-    relatedTools: ["beads", "claude-code", "ntm"],
+    relatedTools: ["beads", "claude-code", "jfp"],
   },
   jfp: {
     id: "jfp",
@@ -335,7 +334,7 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     docsUrl: "https://github.com/Dicklesworthstone/process_triage",
     docsLabel: "GitHub",
     quickCommand: "pt --help",
-    relatedTools: ["ntm", "slb", "dcg"],
+    relatedTools: ["srps", "slb", "dcg"],
   },
   srps: {
     id: "srps",
@@ -347,7 +346,7 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     docsUrl: "https://github.com/Dicklesworthstone/system_resource_protection_script",
     docsLabel: "GitHub",
     quickCommand: "sysmoni",
-    relatedTools: ["ntm", "dcg", "slb"],
+    relatedTools: ["herdr", "dcg", "slb"],
   },
   xf: {
     id: "xf",
@@ -371,7 +370,7 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     docsUrl: "https://github.com/Dicklesworthstone/remote_compilation_helper",
     docsLabel: "GitHub",
     quickCommand: "rch exec -- cargo build --release",
-    relatedTools: ["ntm", "pt", "sbh"],
+    relatedTools: ["herdr", "pt", "sbh"],
   },
   fsfs: {
     id: "fsfs",
@@ -395,7 +394,7 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     docsUrl: "https://github.com/Dicklesworthstone/storage_ballast_helper",
     docsLabel: "GitHub",
     quickCommand: "sbh status",
-    relatedTools: ["pt", "rch", "ntm"],
+    relatedTools: ["pt", "rch", "srps"],
   },
   casr: {
     id: "casr",
@@ -419,7 +418,7 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     docsUrl: "https://github.com/Dicklesworthstone/doodlestein_self_releaser",
     docsLabel: "GitHub",
     quickCommand: "dsr check --all",
-    relatedTools: ["ru", "ntm", "slb"],
+    relatedTools: ["ru", "slb"],
   },
   asb: {
     id: "asb",
@@ -480,7 +479,7 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     docsUrl: "https://github.com/Dicklesworthstone/pi_agent_rust",
     docsLabel: "GitHub",
     quickCommand: 'pi "refactor this function"',
-    relatedTools: ["claude-code", "codex-cli", "ntm"],
+    relatedTools: ["claude-code", "codex-cli", "caam"],
   },
   pfr: {
     id: "pfr",
@@ -492,7 +491,7 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     docsUrl: "https://github.com/Dicklesworthstone/power_failure_resumer",
     docsLabel: "GitHub",
     quickCommand: "pfr --dry-run",
-    relatedTools: ["casr", "ntm", "claude-code"],
+    relatedTools: ["casr", "claude-code"],
   },
 };
 

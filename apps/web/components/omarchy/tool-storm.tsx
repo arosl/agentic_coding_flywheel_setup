@@ -36,7 +36,7 @@ const PALETTE = {
 // land on PATH (see lib/generated/manifest-tools.ts). Kept to a readable
 // handful: the full index lives further down the page.
 const TOOL_NAMES = [
-  "ntm",
+  "herdr",
   "cass",
   "am",
   "dcg",

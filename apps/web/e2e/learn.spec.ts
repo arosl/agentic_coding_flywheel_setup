@@ -199,7 +199,6 @@ test.describe
       // completed any earlier lessons. The Quick Reference card plus the All
       // Lessons grid card both render a link, so each href appears twice.
       await expect(page.locator('a[href="/learn/agent-commands"]')).toHaveCount(2);
-      await expect(page.locator('a[href="/learn/ntm-palette"]')).toHaveCount(2);
       await expect(page.locator('a[href="/learn/commands"]')).toHaveCount(1);
       await expect(page.locator('a[href="/glossary"]')).toHaveCount(1);
     });
@@ -332,11 +331,10 @@ test.describe
       await expect(page.locator('a[href="/learn/tools/codex-cli"]').first()).toBeVisible();
       await expect(page.locator('a[href="/learn/tools/antigravity-cli"]').first()).toBeVisible();
       await expect(page.locator('a[href="/learn/tools/gemini-cli"]').first()).toBeVisible();
-      await expect(page.locator('a[href="/learn/tools/ntm"]').first()).toBeVisible();
+      await expect(page.locator('a[href="/learn/tools/herdr"]').first()).toBeVisible();
       await expect(page.locator('a[href="/learn/tools/beads"]').first()).toBeVisible();
 
       await expect(page.locator('a[href="/learn/agent-commands"]')).toHaveCount(0);
-      await expect(page.locator('a[href="/learn/ntm-palette"]')).toHaveCount(0);
       await expect(page.locator('a[href="/learn/beads"]')).toHaveCount(0);
       await expect(page.locator('a[href="/learn/bv"]')).toHaveCount(0);
     });
