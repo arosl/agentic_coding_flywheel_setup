@@ -340,6 +340,9 @@ class FleetTests(unittest.TestCase):
         library.mkdir()
         (library / "swarm_inventory.sh").write_text("inventory policy fixture")
         (library / "swarm_fleet_probe.sh").write_bytes(SCRIPT.read_bytes())
+        # read_snapshot refuses group-writable files; don't inherit the umask.
+        for name in ("swarm_inventory.sh", "swarm_fleet_probe.sh"):
+            (library / name).chmod(0o644)
         base = self.file("inventory.json", m.encoded(inventory()))
         targets = self.file("targets.json", m.encoded({"schema": "acfs.swarm-probe-targets.v1", "targets": [
             target("alpha", "alpha.example"), target("beta", "beta.example"), target("untouched", "gamma.example")]}))
@@ -508,8 +511,14 @@ class FleetTests(unittest.TestCase):
         base = self.file("inventory.json", m.encoded(inventory()))
         targets = self.file("targets.json", m.encoded({"schema": "acfs.swarm-probe-targets.v1", "targets": [target()]}))
         known = self.file("known_hosts", "operator-known-key\n")
+        # A checkout made under umask 0002 has group-writable files, which
+        # read_snapshot refuses, so the canonical scripts are read from a copy.
+        library = Path(tempfile.mkdtemp(prefix="acfs-fleet-lib-"))
+        for name in ("swarm_inventory.sh", "swarm_fleet_probe.sh"):
+            shutil.copyfile(ROOT / "scripts/lib" / name, library / name)
+            (library / name).chmod(0o644)
         before = {p.name: p.read_bytes() for p in self.directory.iterdir()}
-        report, code = m.main(["--inventory", str(base), "--targets", str(targets), "--known-hosts", str(known)], ROOT / "scripts/lib")
+        report, code = m.main(["--inventory", str(base), "--targets", str(targets), "--known-hosts", str(known)], library)
         self.assertEqual(code, 0)
         self.assertEqual(report["status"], "planned")
         self.assertNotIn(b"alpha.example", m.encoded(report))
