@@ -244,7 +244,7 @@ swarm_sim_fallback_status_json() {
                 disk_available_kb: 0
             },
             probes: {
-                ntm: {status: "warn", available: false, robot_status_ok: false, tmux_available: false, tmux_session_count: null, tmux_window_count: null, duration_ms: 0, warnings: ["not probed"]},
+                herdr: {status: "warn", available: false, server_ok: false, workspace_count: null, agent_count: null, duration_ms: 0, warnings: ["not probed"]},
                 agent_mail: {status: "warn", available: false, healthy: null, duration_ms: 0, warnings: ["not probed"]},
                 beads: {status: "warn", available: false, ready_count: null, in_progress_count: null, open_count: null, duration_ms: 0, warnings: ["not probed"]},
                 bv: {status: "warn", available: false, robot_ok: false, duration_ms: 0, warnings: ["not probed"]},

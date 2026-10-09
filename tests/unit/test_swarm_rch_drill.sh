@@ -74,7 +74,7 @@ status_fixture_with_rch() {
     "beads": {"status": "pass", "available": true, "ready_count": 12, "in_progress_count": 0, "open_count": 20, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": $rch_json,
-    "ntm": {"status": "pass", "available": true, "robot_status_ok": true, "tmux_available": true, "tmux_session_count": 1, "tmux_window_count": 4, "warnings": []}
+    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 1, "agent_count": 1, "warnings": []}
   }
 }
 JSON

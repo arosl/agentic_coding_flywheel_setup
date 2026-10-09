@@ -76,6 +76,34 @@ write_executable() {
     chmod +x "$path"
 }
 
+# Fake herdr with a running server holding the given numbers of workspaces
+# and agents. Its JSON keeps the shape of real herdr 0.9.3 `workspace list`
+# and `agent list` output (captured 2026-10-09), trimmed, with generic labels.
+write_herdr_stub() {
+    local stub_dir="$1"
+    printf '%s\n' "$2" > "$stub_dir/herdr.workspaces"
+    printf '%s\n' "$3" > "$stub_dir/herdr.agents"
+    cat > "$stub_dir/herdr" <<'STUB'
+#!/usr/bin/env bash
+dir="$(dirname "$0")"
+entries() {
+    local n="$1" entry="$2" i out=""
+    for ((i = 1; i <= n; i++)); do out+="${out:+,}${entry//@/$i}"; done
+    printf '%s' "$out"
+}
+case "$1 $2" in
+  "workspace list")
+    printf '{"id":"cli:workspace:list","result":{"type":"workspace_list","workspaces":[%s]}}\n' \
+      "$(entries "$(cat "$dir/herdr.workspaces")" '{"active_tab_id":"w@:t1","agent_status":"idle","focused":false,"label":"project-@","number":@,"pane_count":1,"tab_count":1,"workspace_id":"w@"}')" ;;
+  "agent list")
+    printf '{"id":"cli:agent:list","result":{"agents":[%s],"type":"agent_list"}}\n' \
+      "$(entries "$(cat "$dir/herdr.agents")" '{"agent":"claude","agent_status":"idle","pane_id":"w1:p@","tab_id":"w1:t1","terminal_id":"term_@","workspace_id":"w1"}')" ;;
+  *) exit 2 ;;
+esac
+STUB
+    chmod +x "$stub_dir/herdr"
+}
+
 test_no_tool_environment_warns() {
     local output
     output="$(run_and_capture no_tool_environment env PATH="/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 bash "$SWARM_STATUS_SH" --json)"
@@ -98,13 +126,7 @@ test_stubbed_tools_pass() {
     local stub_dir
     stub_dir="$(make_stub_dir)"
 
-    write_executable "$stub_dir/ntm" '#!/usr/bin/env bash
-[[ "$1" == "--robot-status" ]] || exit 2
-echo "{\"sessions\":[{\"name\":\"main\"}]}"'
-
-    write_executable "$stub_dir/tmux" '#!/usr/bin/env bash
-[[ "$1" == "list-sessions" ]] || exit 2
-printf "main\t3\nworkers\t2\n"'
+    write_herdr_stub "$stub_dir" 2 5
 
     write_executable "$stub_dir/am" '#!/usr/bin/env bash
 [[ "$1 $2 $3" == "doctor check --json" ]] || exit 2
@@ -135,10 +157,11 @@ esac'
 
     jq -e '
       .status == "pass" and
-      .probes.ntm.available == true and
-      .probes.ntm.robot_status_ok == true and
-      .probes.ntm.tmux_session_count == 2 and
-      .probes.ntm.tmux_window_count == 5 and
+      .probes.herdr.status == "pass" and
+      .probes.herdr.available == true and
+      .probes.herdr.server_ok == true and
+      .probes.herdr.workspace_count == 2 and
+      .probes.herdr.agent_count == 5 and
       .probes.agent_mail.status == "pass" and
       .probes.agent_mail.healthy == true and
       .probes.beads.ready_count == 1 and
@@ -212,9 +235,12 @@ test_partial_swarm_records_down_subsystems() {
     local stub_dir
     stub_dir="$(make_stub_dir)"
 
-    write_executable "$stub_dir/tmux" '#!/usr/bin/env bash
-[[ "$1" == "list-sessions" ]] || exit 2
-printf "workers\t4\n"'
+    # herdr is installed, but no server is running: the error real herdr
+    # 0.9.3 prints (captured 2026-10-09; socket path generic).
+    write_executable "$stub_dir/herdr" '#!/usr/bin/env bash
+[[ "$1 $2" == "workspace list" || "$1 $2" == "agent list" ]] || exit 2
+echo "{\"id\":\"cli:${1}:list\",\"error\":{\"code\":\"server_not_running\",\"message\":\"no herdr server is running at /home/user/.config/herdr/herdr.sock; run \`herdr\` to start or attach it\"}}" >&2
+exit 1'
 
     write_executable "$stub_dir/am" '#!/usr/bin/env bash
 [[ "$1 $2 $3" == "doctor check --json" ]] || exit 2
@@ -243,10 +269,12 @@ echo "not json"'
 
     jq -e '
       .status == "warn" and
-      .probes.ntm.status == "warn" and
-      .probes.ntm.tmux_available == true and
-      .probes.ntm.tmux_session_count == 1 and
-      .probes.ntm.tmux_window_count == 4 and
+      .probes.herdr.status == "warn" and
+      .probes.herdr.available == true and
+      .probes.herdr.server_ok == false and
+      .probes.herdr.workspace_count == null and
+      .probes.herdr.agent_count == null and
+      any(.probes.herdr.warnings[]; contains("herdr server is not running or timed out")) and
       .probes.agent_mail.available == true and
       .probes.agent_mail.status == "warn" and
       any(.probes.agent_mail.warnings[]; contains("Agent Mail doctor check failed or timed out")) and
@@ -275,13 +303,7 @@ Filesystem 1K-blocks Used Available Use% Mounted on
 /dev/test 1000000 488000 512000 49% /tmp
 DF'
 
-    write_executable "$stub_dir/ntm" '#!/usr/bin/env bash
-[[ "$1" == "--robot-status" ]] || exit 2
-echo "{\"sessions\":[]}"'
-
-    write_executable "$stub_dir/tmux" '#!/usr/bin/env bash
-[[ "$1" == "list-sessions" ]] || exit 2
-printf "main\t1\n"'
+    write_herdr_stub "$stub_dir" 1 0
 
     write_executable "$stub_dir/am" '#!/usr/bin/env bash
 [[ "$1 $2 $3" == "doctor check --json" ]] || exit 2
@@ -329,9 +351,9 @@ test_timeout_becomes_structured_warning() {
     local stub_dir
     stub_dir="$(make_stub_dir)"
 
-    write_executable "$stub_dir/ntm" '#!/usr/bin/env bash
+    write_executable "$stub_dir/herdr" '#!/usr/bin/env bash
 sleep 2
-echo "{\"sessions\":[]}"'
+echo "{\"id\":\"cli:workspace:list\",\"result\":{\"type\":\"workspace_list\",\"workspaces\":[]}}"'
 
     local output
     output="$(run_and_capture timeout_warning env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 bash "$SWARM_STATUS_SH" --json)"
@@ -339,8 +361,8 @@ echo "{\"sessions\":[]}"'
 
     jq -e '
       .status == "warn" and
-      .probes.ntm.status == "warn" and
-      any(.probes.ntm.warnings[]; contains("ntm --robot-status failed or timed out"))
+      .probes.herdr.status == "warn" and
+      any(.probes.herdr.warnings[]; contains("herdr server is not running or timed out"))
     ' <<<"$output" >/dev/null || return 1
 
     pass "timeout_becomes_structured_warning"

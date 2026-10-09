@@ -76,4 +76,4 @@ bash tests/unit/test_swarm_plan_admission.sh
 
 The tests exercise the actual Bash/jq CLI with isolated fixtures and prove that
 paired replay does not invoke either live collector. They are not a substitute
-for acceptance on a configured VPS with real Agent Mail, Beads, RCH, and NTM.
+for acceptance on a configured VPS with real Agent Mail, Beads, RCH, and herdr.

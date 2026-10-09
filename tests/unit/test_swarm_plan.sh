@@ -68,7 +68,7 @@ healthy_status_fixture() {
     "beads": {"status": "pass", "available": true, "ready_count": 12, "in_progress_count": 0, "open_count": 20, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "queue_json_ok": true, "queue_depth": 0, "active_build_count": 0, "workers_total": 8, "workers_healthy": 8, "workers_busy": 0, "workers_offline": 0, "slots_total": 32, "slots_available": 24, "pressure_warning_count": 0, "stale_worker_count": 0, "warnings": []},
-    "ntm": {"status": "pass", "available": true, "robot_status_ok": true, "tmux_available": true, "tmux_session_count": 2, "tmux_window_count": 8, "warnings": []}
+    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 2, "agent_count": 2, "warnings": []}
   }
 }
 JSON
@@ -85,7 +85,7 @@ busy_rch_status_fixture() {
     "beads": {"status": "pass", "available": true, "ready_count": 12, "in_progress_count": 1, "open_count": 20, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "warn", "available": true, "status_json_ok": true, "queue_json_ok": true, "queue_depth": 7, "active_build_count": 6, "workers_total": 8, "workers_healthy": 8, "workers_busy": 5, "workers_offline": 0, "slots_total": 32, "slots_available": 4, "pressure_warning_count": 2, "stale_worker_count": 0, "warnings": ["rch reports 2 worker(s) with elevated pressure"]},
-    "ntm": {"status": "pass", "available": true, "robot_status_ok": true, "tmux_available": true, "tmux_session_count": 3, "tmux_window_count": 10, "warnings": []}
+    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 3, "agent_count": 3, "warnings": []}
   }
 }
 JSON
@@ -102,7 +102,7 @@ missing_agent_mail_status_fixture() {
     "beads": {"status": "pass", "available": true, "ready_count": 5, "in_progress_count": 0, "open_count": 12, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "queue_json_ok": true, "queue_depth": 0, "active_build_count": 0, "workers_total": 8, "workers_healthy": 8, "workers_busy": 0, "workers_offline": 0, "slots_total": 32, "slots_available": 20, "pressure_warning_count": 0, "stale_worker_count": 0, "warnings": []},
-    "ntm": {"status": "pass", "available": true, "robot_status_ok": true, "tmux_available": true, "tmux_session_count": 1, "tmux_window_count": 4, "warnings": []}
+    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 1, "agent_count": 1, "warnings": []}
   }
 }
 JSON
@@ -119,7 +119,7 @@ high_load_status_fixture() {
     "beads": {"status": "pass", "available": true, "ready_count": 5, "in_progress_count": 0, "open_count": 12, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "queue_json_ok": true, "queue_depth": 0, "active_build_count": 0, "workers_total": 8, "workers_healthy": 8, "workers_busy": 0, "workers_offline": 0, "slots_total": 32, "slots_available": 20, "pressure_warning_count": 0, "stale_worker_count": 0, "warnings": []},
-    "ntm": {"status": "pass", "available": true, "robot_status_ok": true, "tmux_available": true, "tmux_session_count": 1, "tmux_window_count": 4, "warnings": []}
+    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 1, "agent_count": 1, "warnings": []}
   }
 }
 JSON
@@ -136,7 +136,7 @@ low_memory_status_fixture() {
     "beads": {"status": "pass", "available": true, "ready_count": 5, "in_progress_count": 0, "open_count": 12, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "queue_json_ok": true, "queue_depth": 0, "active_build_count": 0, "workers_total": 8, "workers_healthy": 8, "workers_busy": 0, "workers_offline": 0, "slots_total": 32, "slots_available": 20, "pressure_warning_count": 0, "stale_worker_count": 0, "warnings": []},
-    "ntm": {"status": "pass", "available": true, "robot_status_ok": true, "tmux_available": true, "tmux_session_count": 1, "tmux_window_count": 4, "warnings": []}
+    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 1, "agent_count": 1, "warnings": []}
   }
 }
 JSON
@@ -153,7 +153,7 @@ stale_work_status_fixture() {
     "beads": {"status": "pass", "available": true, "ready_count": 5, "in_progress_count": 2, "stale_in_progress_count": 1, "open_count": 12, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "queue_json_ok": true, "queue_depth": 0, "active_build_count": 0, "workers_total": 8, "workers_healthy": 8, "workers_busy": 0, "workers_offline": 0, "slots_total": 32, "slots_available": 20, "pressure_warning_count": 0, "stale_worker_count": 0, "warnings": []},
-    "ntm": {"status": "pass", "available": true, "robot_status_ok": true, "tmux_available": true, "tmux_session_count": 1, "tmux_window_count": 4, "warnings": []}
+    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 1, "agent_count": 1, "warnings": []}
   }
 }
 JSON

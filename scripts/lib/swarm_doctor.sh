@@ -130,7 +130,7 @@ def check($id; $status; $summary; $details; $commands):
 | ($s.probes.beads // {}) as $beads
 | ($s.probes.bv // {}) as $bv
 | ($s.probes.rch // {}) as $rch
-| ($s.probes.ntm // {}) as $ntm
+| ($s.probes.herdr // {}) as $herdr
 | ($s.host // {}) as $host
 | arr($beads.in_progress_items // $beads.in_progress // $beads.active_items) as $bead_items
 | arr($am.file_reservations // $am.reservations // $am.active_reservations) as $reservation_items
@@ -272,17 +272,15 @@ def check($id; $status; $summary; $details; $commands):
       ["rch status", "rch workers probe --all", "rch exec -- cargo test"]
     ),
     check(
-      "ntm";
-      (if (b($ntm.available) | not) then "fail"
-       elif (b($ntm.robot_status_ok)) then "pass"
-       elif (b($ntm.tmux_available)) then "warn"
-       else "fail" end);
-      (if (b($ntm.available) | not) then "NTM is unavailable"
-       elif (b($ntm.robot_status_ok)) then "NTM robot status is usable"
-       elif (b($ntm.tmux_available)) then "NTM robot status is uncertain, but tmux is available"
-       else "NTM and tmux are unavailable" end);
-      ($ntm.warnings // []);
-      ["ntm --robot-status", "tmux list-sessions -F '#S #{session_windows}'"]
+      "herdr";
+      (if (b($herdr.available) | not) then "fail"
+       elif (b($herdr.server_ok)) then "pass"
+       else "warn" end);
+      (if (b($herdr.available) | not) then "herdr is unavailable"
+       elif (b($herdr.server_ok)) then "herdr server is usable"
+       else "herdr is installed, but its server is not running" end);
+      ($herdr.warnings // []);
+      ["herdr workspace list", "herdr agent list"]
     ),
     check(
       "resource_pressure";

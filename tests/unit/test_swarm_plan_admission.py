@@ -27,8 +27,8 @@ def healthy_status():
                     "workers_total": 8, "workers_healthy": 8, "workers_busy": 0,
                     "workers_offline": 0, "slots_total": 32, "slots_available": 24,
                     "pressure_warning_count": 0, "stale_worker_count": 0},
-            "ntm": {"status": "pass", "available": True, "robot_status_ok": True,
-                    "tmux_available": True, "tmux_session_count": 2},
+            "herdr": {"status": "pass", "available": True, "server_ok": True,
+                      "agent_count": 2},
         },
     }
 
