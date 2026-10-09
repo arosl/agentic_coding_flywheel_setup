@@ -294,7 +294,7 @@ flowchart TB
 | **Installer** | `install.sh` | Bash | One-liner bootstrap script |
 | **Lib Scripts** | `scripts/lib/` | Bash | Modular installer functions |
 | **Generated Scripts** | `scripts/generated/` | Bash/data | Source-only category libraries and harness, doctor checks, manifest metadata, and the schema-1 internal checksum ledger |
-| **Configs** | `acfs/` | Shell/Tmux configs | Files deployed to `~/.acfs/` |
+| **Configs** | `acfs/` | Shell configs | Files deployed to `~/.acfs/` |
 | **Onboarding** | `acfs/onboard/` | Bash + Markdown | Interactive tutorial system |
 | **Checksums** | `checksums.yaml` | YAML | SHA256 hashes for upstream installers |
 
@@ -1370,7 +1370,7 @@ onboard --reset        # Alias for reset
 
 ### Lessons
 
-Run `onboard --help` to see the currently discovered lesson list. The curriculum currently spans Linux basics, SSH, tmux, agent login, NTM, the flywheel workflow, updating, Beads, RCH, and other ACFS tools. Because lessons are discovered by filename, adding a new `NN_name.md` file automatically extends the tutorial.
+Run `onboard --help` to see the currently discovered lesson list. The curriculum currently spans Linux basics, SSH, herdr, agent login, the flywheel workflow, updating, Beads, RCH, and other ACFS tools. Because lessons are discovered by filename, adding a new `NN_name.md` file automatically extends the tutorial.
 
 ### Progress Tracking
 
@@ -2801,7 +2801,7 @@ ACFS works on any Ubuntu VPS with SSH access and either root password login or a
 
 > **Why 48-64GB RAM?** Each AI coding agent uses ~2GB RAM. To run 10-20+ agents simultaneously, you need 48GB+ RAM. Don't bottleneck a $400+/month AI investment to save $20 on hosting.
 
-After installation, run `acfs capacity --profile 25-agents --recommend-ntm` on the VPS for a local RAM/CPU/disk sizing report with recommended agent counts and copyable NTM launch profiles.
+After installation, run `acfs capacity --profile 25-agents` on the VPS for a local RAM/CPU/disk sizing report with recommended agent counts.
 
 Plan names, specs, and prices below were verified against the provider sites in 2026-08 (`PRICING_LAST_UPDATED` in `apps/web/lib/vpsProviders.ts`, the single source the wizard renders from).
 
@@ -3279,9 +3279,9 @@ ACFS isn't just a collection of tools—it's a **carefully curated system** wher
 │  LAYER          │         │    LAYER        │         │  LAYER          │
 ├─────────────────┤         ├─────────────────┤         ├─────────────────┤
 │ • zsh + p10k    │────────▶│ • Claude Code   │────────▶│ • Agent Mail    │
-│ • tmux          │         │ • Codex CLI     │         │ • NTM           │
-│ • Modern CLI    │         │ • Antigravity   │         │ • SLB + DCG     │
-│ • Language VMs  │         │                 │         │ • Beads Viewer  │
+│ • herdr         │         │ • Codex CLI     │         │ • SLB + DCG     │
+│ • Modern CLI    │         │ • Antigravity   │         │ • Beads Viewer  │
+│ • Language VMs  │         │                 │         │                 │
 └─────────────────┘         └─────────────────┘         └─────────────────┘
          │                             │                             │
          │    Each layer enables       │    Agents become more      │
@@ -3295,8 +3295,7 @@ Every tool in ACFS earns its place through **concrete productivity gains**:
 
 | Tool | Individual Value | Synergy Value |
 |------|-----------------|---------------|
-| **tmux** | Persistent sessions | Agents can work while you're disconnected |
-| **NTM** | Organized sessions | One command spawns 10 agents in named windows |
+| **herdr** | Persistent panes and workspaces | Agents keep working while you're disconnected, and you see each one's state |
 | **Agent Mail** | Message passing | Agents coordinate without conflicts |
 | **SLB** | Two-person rule | Dangerous operations require confirmation |
 | **DCG** | Command guardrails | Blocks destructive commands before execution |
@@ -3311,7 +3310,7 @@ Every tool in ACFS earns its place through **concrete productivity gains**:
 A single agent with basic tooling is useful. Three agents with:
 - A shared project structure
 - Coordination via Agent Mail
-- Orchestration via NTM
+- Agent panes and live agent state via herdr
 - Safety guardrails via SLB
 - DCG guard hook (blocks destructive commands before execution)
 - Task visibility via Beads
@@ -3583,8 +3582,8 @@ Without coordination, multiple agents cause chaos:
 │                         AGENT COORDINATION LAYER                           │
 │                                                                             │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐       │
-│  │ Agent Mail  │  │    NTM      │  │  SLB + DCG  │  │   Beads     │       │
-│  │ (Messaging) │  │ (Sessions)  │  │ (Safety)    │  │ (Tasks)     │       │
+│  │ Agent Mail  │  │   herdr     │  │  SLB + DCG  │  │   Beads     │       │
+│  │ (Messaging) │  │ (Panes)     │  │ (Safety)    │  │ (Tasks)     │       │
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘       │
 │         │                │                │                │               │
 │         │   ┌────────────┴────────────────┴────────────────┘               │
@@ -3626,28 +3625,20 @@ Agent B: reserve_paths(["src/auth/*"]) → CONFLICT: held by Agent A
 Agent B: reserve_paths(["src/api/*"]) → GRANTED
 ```
 
-### The NTM Orchestration Pattern
+### Agents in herdr
 
-Named Tmux Manager (NTM) enables the **one-command swarm spawn**:
+Each agent runs in its own [herdr](https://herdr.dev) pane. A workspace usually holds one project, and its tabs and panes hold the agents and your own shell:
 
-```bash
-# Spawn 10 agents, each in a named tmux window
-ntm spawn \
-  --count 10 \
-  --prefix "agent-" \
-  --command "claude --dangerously-skip-permissions"
+```
+herdr workspace: my-project
+├── pane: Claude working on auth
+├── pane: Claude working on api
+├── pane: Codex reviewing changes
+├── pane: Antigravity writing docs
+└── pane: your shell
 ```
 
-Result:
-```
-tmux session: acfs-swarm
-├── agent-1: Claude working on auth
-├── agent-2: Claude working on api
-├── agent-3: Claude working on tests
-├── agent-4: Codex reviewing PRs
-├── agent-5: Antigravity writing docs
-└── ...
-```
+herdr's sidebar shows whether each agent is working, waiting for you, or done. The agents keep running when SSH drops: run `herdr` again to reattach. `onboard 3` teaches the keys.
 
 ### Dry-Run Swarm Simulation
 
@@ -3797,7 +3788,7 @@ Vibe coding assumes you'll run multiple agents simultaneously:
 - Codex for rapid prototyping and refactoring
 - Antigravity for documentation and research
 
-ACFS provides the coordination layer (Agent Mail, NTM, SLB) that makes this practical.
+ACFS provides the coordination layer (herdr, Agent Mail, SLB) that makes this practical.
 
 ### The Anti-Patterns
 
@@ -4413,7 +4404,7 @@ Doctor checks are generated directly from the manifest, so they verify the exact
 
 ### Stack Tools Not Working
 
-**Symptom**: `ntm`, `slb`, `dcg`, etc. not found or erroring.
+**Symptom**: `slb`, `dcg`, `ru`, etc. not found or erroring.
 
 **Solutions**:
 
@@ -4424,7 +4415,7 @@ Doctor checks are generated directly from the manifest, so they verify the exact
 
 2. **Check cargo install worked**:
    ```bash
-   ls ~/.cargo/bin/  # Should contain ntm, slb, ru, etc.
+   ls ~/.cargo/bin/  # Should contain slb, ru, etc.
    ls ~/.local/bin/  # dcg often installs here
    ```
 
@@ -4681,7 +4672,7 @@ Each tool in the stack addresses specific problems:
 
 | # | Tool | Problem Solved | Philosophy |
 |---|------|----------------|------------|
-| 1 | **NTM** | Session chaos | Named sessions create order from chaos |
+| 1 | **herdr** | Session chaos | Panes and workspaces, with each agent's state in view |
 | 2 | **Agent Mail** | No communication + file conflicts | Message-passing + file reservations |
 | 3 | **UBS** | Dangerous commands | Guardrails with intelligence |
 | 4 | **Beads Viewer** | No task visibility | Graph-based task dependencies |
@@ -4704,7 +4695,7 @@ Each tool in the stack addresses specific problems:
 These tools are designed to work together:
 
 ```
-NTM spawns agents → Agents register with Agent Mail →
+herdr runs the agents → Agents register with Agent Mail →
 Agent Mail reserves files → DCG blocks dangerous commands →
 UBS validates operations → Beads tracks tasks →
 CASS searches history → CM provides memory →
@@ -4954,7 +4945,7 @@ MIT License (with OpenAI/Anthropic Rider). See [LICENSE](LICENSE) for details.
 - **Website:** [agent-flywheel.com](https://agent-flywheel.com) — Interactive wizard for beginners
 - **GitHub:** [Dicklesworthstone/agentic_coding_flywheel_setup](https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)
 - **Related Projects:**
-  - [ntm](https://github.com/Dicklesworthstone/ntm) - Named Tmux Manager
+  - [herdr](https://herdr.dev) - Terminal workspace manager for coding agents
   - [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) - Task management TUI
   - [mcp_agent_mail_rust](https://github.com/Dicklesworthstone/mcp_agent_mail_rust) - Agent coordination
   - [cass](https://github.com/Dicklesworthstone/coding_agent_session_search) - Agent session search
