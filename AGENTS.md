@@ -98,7 +98,7 @@ The fork tracks upstream ACFS and changes its toolset: herdr instead of ntm, wez
 
 ## Docs
 
-- **Catalog:** none yet. `docs/` has no `index.md` or log; a bead tracks adding them.
+- **Catalog:** `docs/index.md`, one line per page; history is in git, and `docs/log.md` records added, moved or restructured pages. A page you add gets its catalog line and a log entry in the same commit. The pages are upstream's, so they carry no `Related:` line.
 - **At session start, read only:** this file.
 - **Search, don't read whole:** `rg -n -i -- '<term>' docs/ README.md`. Never read `README.md` or the pages in `docs/methodology/` whole; each runs to about a thousand lines or more.
 
