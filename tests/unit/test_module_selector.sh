@@ -268,6 +268,64 @@ test_interactive_profile_reselection_clears_stale_mode() {
     pass "interactive_profile_reselection_clears_stale_mode"
 }
 
+# acfs.workspace runs on every default install, and only its quick-reference
+# text names the agent CLIs, so skipping codex or antigravity must not fail
+# selection. (agents.claude is a real dependency of stack.dcg and stack.pcr.)
+test_skipping_codex_or_antigravity_keeps_the_workspace() {
+    source_manifest_index
+    local agent="" output status=0
+    for agent in agents.codex agents.antigravity; do
+        reset_selection_env
+        SKIP_MODULES=("$agent")
+        status=0
+        output="$(acfs_resolve_selection 2>&1)" || status=$?
+        [[ "$status" -eq 0 ]] \
+            || { fail "skipping_codex_or_antigravity_keeps_the_workspace" "--skip $agent failed selection: $output"; return 1; }
+        acfs_resolve_selection 2>/dev/null
+        should_run_module "acfs.workspace" \
+            || { fail "skipping_codex_or_antigravity_keeps_the_workspace" "--skip $agent dropped acfs.workspace"; return 1; }
+        ! should_run_module "$agent" \
+            || { fail "skipping_codex_or_antigravity_keeps_the_workspace" "$agent still in the plan"; return 1; }
+    done
+
+    pass "skipping_codex_or_antigravity_keeps_the_workspace"
+}
+
+# The `agents` alias runs herdr, so skipping herdr alone still fails selection.
+test_skipping_herdr_alone_fails_on_the_workspace() {
+    source_manifest_index
+    reset_selection_env
+    SKIP_MODULES=("tools.herdr")
+
+    local output status=0
+    output="$(acfs_resolve_selection 2>&1)" || status=$?
+    [[ "$status" -ne 0 && "$output" == *"acfs.workspace depends on skipped tools.herdr"* ]] \
+        || { fail "skipping_herdr_alone_fails_on_the_workspace" "status $status, output: $output"; return 1; }
+
+    pass "skipping_herdr_alone_fails_on_the_workspace"
+}
+
+# --only acfs.workspace pulls in what the workspace needs, and no agent CLI.
+test_only_workspace_pulls_its_own_needs() {
+    source_manifest_index
+    reset_selection_env
+    ONLY_MODULES=("acfs.workspace")
+
+    acfs_resolve_selection 2>/dev/null \
+        || { fail "only_workspace_pulls_its_own_needs" "--only acfs.workspace failed selection"; return 1; }
+    local module=""
+    for module in base.filesystem tools.herdr; do
+        should_run_module "$module" \
+            || { fail "only_workspace_pulls_its_own_needs" "missing $module"; return 1; }
+    done
+    for module in agents.claude agents.codex agents.antigravity; do
+        ! should_run_module "$module" \
+            || { fail "only_workspace_pulls_its_own_needs" "pulled in $module"; return 1; }
+    done
+
+    pass "only_workspace_pulls_its_own_needs"
+}
+
 run_all_tests() {
     test_all_canonical_profiles_apply_successfully
     test_unknown_profile_fails_cleanly
@@ -280,6 +338,9 @@ run_all_tests() {
     test_selection_review_rendering_contains_expected_sections
     test_no_tty_fallback_behavior
     test_interactive_profile_reselection_clears_stale_mode
+    test_skipping_codex_or_antigravity_keeps_the_workspace
+    test_skipping_herdr_alone_fails_on_the_workspace
+    test_only_workspace_pulls_its_own_needs
 
     echo ""
     echo "Tests passed: $TESTS_PASSED"

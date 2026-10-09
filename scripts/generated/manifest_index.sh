@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="17020e5a69ac59a3a3433f662fdfa8e2e26eccb1159c7f72fe6f739a17848fab"
+ACFS_MANIFEST_SHA256="2fc6ede93117a6ee8489061c0804d020456dfba0bf930e0d95878f32a32584a9"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -242,7 +242,7 @@ declare -gA ACFS_MODULE_DEPS=(
   ['utils.rust_proxy']="lang.rust,users.ubuntu"
   ['utils.aadc']="lang.rust,users.ubuntu"
   ['utils.caut']="lang.rust,users.ubuntu"
-  ['acfs.workspace']="agents.claude,agents.codex,agents.antigravity,tools.herdr,users.ubuntu"
+  ['acfs.workspace']="base.filesystem,tools.herdr,users.ubuntu"
   ['acfs.onboard']="users.ubuntu"
   ['acfs.update']="users.ubuntu"
   ['acfs.nightly']="acfs.update,users.ubuntu"
