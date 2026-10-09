@@ -35,6 +35,12 @@ ACL_NAME="acfs-vm-egress"
 ACL_REJECT_DESTINATIONS="10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16,fc00::/7,fe80::/10"
 AGENT_TIMEOUT_SECONDS=300
 CLOUD_INIT_TIMEOUT_SECONDS=600
+# Runs "$@" in the VM so that Ctrl-C stops it. A non-interactive incus exec
+# passes SIGINT to the remote pid alone, and a bash waiting on a child
+# doesn't pass it on, so the installer would carry on. This gives "$@" its
+# own process group and signals that whole group; the client then exits 130.
+# tests/vm/test_incus_provider.sh reads this line.
+REMOTE_GROUP_WRAPPER='set -m; "$@" & p=$!; trap "kill -INT -- -$p" INT TERM HUP; wait "$p"; s=$?; wait "$p" 2>/dev/null; exit "$s"'
 
 usage() {
     cat <<'EOF'
@@ -266,6 +272,7 @@ install_acfs() {
     log_step "Installing ACFS $REPO_OWNER/$REPO_NAME@$sha (--yes --mode vibe)"
     incus_run exec "$(qualified "$name")" \
         --env "TARGET_USER=$TARGET_USER" --env "ACFS_REPO_OWNER=$REPO_OWNER" -- \
+        bash -c "$REMOTE_GROUP_WRAPPER" acfs-install \
         bash -c 'bash -s -- --yes --mode vibe --bootstrap-archive /root/acfs.tar.gz < /root/install.sh' >&2 \
         || status=$?
     return "$status"
@@ -340,7 +347,7 @@ main() {
             die "The launcher then never touches that VM's install, so set it only for an install you made." 2
         fi
         ((${#ssh_key_files[@]} == 0)) \
-            || log_warn "--ssh-key is ignored for an existing VM; add keys with ssh-copy-id"
+            || log_warn "--ssh-key is ignored for an existing VM; add keys with ssh-copy-id from a machine that can already log in, or here with: incus exec $(qualified "$name") -- bash -c 'cat >> /home/$TARGET_USER/.ssh/authorized_keys' < KEY.pub"
         if [[ "$(jq -r '.status' <<<"$json")" != "Running" ]]; then
             log_step "Starting $(qualified "$name")"
             incus_run start "$(qualified "$name")" || die "incus start failed" 1

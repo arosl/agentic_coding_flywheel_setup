@@ -219,6 +219,8 @@ check "both pushes are quiet (no progress lines on stderr)" two_quiet_pushes
 check "runs the installer for ubuntu" grep -qx 'TARGET_USER=ubuntu' "$CASE/exec-env"
 check "passes the fork as the repo owner" grep -qx 'ACFS_REPO_OWNER=arosl' "$CASE/exec-env"
 check "runs the installer with --bootstrap-archive" called '--bootstrap-archive /root/acfs.tar.gz < /root/install.sh'
+check "runs it in its own process group, so Ctrl-C stops it" \
+    called $'\texec dev --env TARGET_USER=ubuntu --env ACFS_REPO_OWNER=arosl -- bash -c set -m; "$@" & p=$!; trap "kill -INT -- -$p" INT TERM HUP; wait "$p"; s=$?; wait "$p" 2>/dev/null; exit "$s" acfs-install bash -c bash -s -- '
 check "records the installed sha" grep -qx "user.acfs.installed=$SHA" "$CASE/config-set"
 check "stdout is exactly the attach block (installer output stays on stderr)" stdout_is_block box
 check "installer output went to stderr" err_has 'INSTALLER OUTPUT'

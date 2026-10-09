@@ -21,7 +21,7 @@ scripts/providers/incus.sh dev --ssh-key laptop.pub --jump myhost
 
 - `dev` is the VM's name.
 - `--jump myhost` is how your laptop reaches this host over SSH: a `Host` from your laptop's `~/.ssh/config`. Leave it out when you'll attach from the Incus host itself.
-- **Time:** about 12 minutes in all. One complete run took 697 s from the command to the printed block, with the image already cached (a one-time check on 2026-10-09). About half a minute of that is the VM booting.
+- **Time:** 10 to 12 minutes in all. Three complete runs took 616 to 697 s from the command to the printed block, with the image already cached (a one-time check on 2026-10-09). About half a minute of that is the VM booting.
 - **Output:** the installer's output streams to stderr. When it's done, stdout carries only this block:
 
 ```
@@ -69,13 +69,14 @@ Re-running the same command is safe:
   - `user.acfs.installed`, set only when the installer exits 0. ACFS's own `state.json` can list a failed install as complete, so the launcher doesn't read it.
 - **`user.acfs.provider=incus`** is also set at creation, as a label: `incus list user.acfs.provider=incus` lists the launcher's VMs. The launcher doesn't decide by it.
 - **A VM you installed ACFS in yourself:** to have the launcher print its block, mark it installed with `incus config set dev user.acfs.installed=<commit>`. That's a promise: from then on the launcher never touches that VM's install, so set it only for an install that finished.
-- **If the install fails:** the VM is kept, and the block leaves out the `herdr machine add` line, because herdr may not be installed yet. Ignore the installer's own resume hint, which names a GitHub URL; re-run the launcher instead.
+- **If the install fails, or you stop it with Ctrl-C:** Ctrl-C stops the installer inside the VM too. The VM is kept, and the block leaves out the `herdr machine add` line, because herdr may not be installed yet. Ignore the installer's own resume hint, which names a GitHub URL; re-run the launcher instead.
 - **Uncommitted changes aren't installed.** The launcher archives the committed `HEAD`, through the installer's own `--bootstrap-archive` option, and warns when the checkout has changes it leaves out.
 - **Stop or remove:** `incus stop dev`, or `incus delete dev`. The launcher never deletes anything.
 
 ## What reaches the VM
 
-- **SSH keys:** only the public keys you pass with `--ssh-key`, for the `ubuntu` user. `--ssh-key` is ignored when the VM already exists; add keys later with `ssh-copy-id`.
+- **SSH keys:** only the public keys you pass with `--ssh-key`, for the `ubuntu` user. `--ssh-key` is ignored when the VM already exists. Add keys later with `ssh-copy-id` from a machine that can already log in, or on the Incus host with `incus exec dev -- bash -c 'cat >> /home/ubuntu/.ssh/authorized_keys' < key.pub`.
+  - **Keep the first line of `authorized_keys`.** The installer copies root's keys into ubuntu's file, so each key also appears a second time, behind cloud-init's forced command for root, which asks you to log in as `ubuntu` instead and disconnects. sshd uses the first line that matches, so if you delete or reorder the plain one, every login gets that message.
 - **The code:** the archive of the committed `HEAD`, and the installer from that commit.
 - **Two settings:** the installer's `TARGET_USER=ubuntu` and `ACFS_REPO_OWNER=arosl`.
 - **Nothing else:**
@@ -105,7 +106,7 @@ The VM sits on Incus's NAT bridge, so nothing outside reaches it except through 
   incus config device unset dev eth0 security.acls
   ```
 
-  `eth0` is the NIC's name in the default profile; `incus config device show dev` lists it. It takes effect on the running VM. Afterwards `dev` reaches everything the ACL rejected: the host on every address, its LAN and its tailnet. Other VMs keep the ACL. Re-running the launcher doesn't put it back.
+  `eth0` is the NIC's name in the default profile; `incus config device show dev` lists it. It takes effect on the running VM. Afterwards `dev` reaches everything the ACL rejected: the host on every address, its LAN and its tailnet. Other VMs keep the ACL. Re-running the launcher doesn't put it back; `incus config device set dev eth0 security.acls=acfs-vm-egress` does, also on the running VM.
 
 ## herdr versions
 

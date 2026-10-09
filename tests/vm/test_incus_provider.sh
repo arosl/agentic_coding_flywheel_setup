@@ -178,17 +178,23 @@ else
     fail "incus config device unset $NAME ${vm_nic:-<no NIC>} security.acls"
 fi
 
-echo "== Ctrl-C reaches a process started with incus exec"
+echo "== Ctrl-C stops a command run the way the launcher runs the installer"
 # The launcher runs the installer as `incus exec ... </dev/null` in the
 # foreground; a terminal's Ctrl-C sends SIGINT to that whole process group.
-setsid bash -c "exec incus exec '$NAME' -- sleep 900 </dev/null" &
+# The probe has the installer's shape: the launcher's wrapper around a bash
+# that waits on a child, which a bare SIGINT to the remote pid doesn't stop.
+wrapper="$(sed -n "s/^REMOTE_GROUP_WRAPPER='\(.*\)'\$/\1/p" "$LAUNCHER")"
+check "the launcher's REMOTE_GROUP_WRAPPER line is readable" test -n "$wrapper"
+setsid bash -c 'exec incus exec "$1" -- bash -c "$2" probe bash -c "sleep 900; true" </dev/null' _ "$NAME" "$wrapper" &
 probe=$!
 sleep 5
 kill -INT -- "-$probe" 2>/dev/null || true
-wait "$probe" 2>/dev/null || true
+probe_rc=0
+wait "$probe" 2>/dev/null || probe_rc=$?
 sleep 2
-check "SIGINT to the client ends the process in the VM" \
-    bash -c '! incus exec "$1" -- pgrep -x -f "sleep 900" </dev/null >/dev/null' _ "$NAME"
+check "the client exits 130 on SIGINT (exit $probe_rc)" test "$probe_rc" -eq 130
+check "SIGINT to the client ends the bash and its child in the VM" \
+    bash -c '! incus exec "$1" -- pgrep -f "sleep 900" </dev/null >/dev/null' _ "$NAME"
 
 incus stop "$NAME" </dev/null
 echo
