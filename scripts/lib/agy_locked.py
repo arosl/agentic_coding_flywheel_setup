@@ -603,8 +603,11 @@ def promote_positional_prompt(argv):
     return list(argv)
 
 
-def run_real_agy(args):
-    with subprocess.Popen(args) as proc:
+def run_real_agy(real_agy, args):
+    # agy-real runs with argv[0] "agy": herdr recognizes an Antigravity agent
+    # by that name among the pane's foreground processes, and never sees one
+    # named python3 or agy-real (acfs-zg0).
+    with subprocess.Popen(["agy", *args], executable=str(real_agy)) as proc:
         previous_handlers = {}
         for sig in (signal.SIGINT, signal.SIGQUIT):
             previous_handlers[sig] = signal.getsignal(sig)
@@ -632,14 +635,13 @@ def main():
     ensure_dcg_hook()
 
     args = [
-        str(real_agy),
         "--model",
         MODEL,
         "--dangerously-skip-permissions",
         *promote_positional_prompt(filtered_args(sys.argv[1:])),
     ]
     try:
-        return run_real_agy(args)
+        return run_real_agy(real_agy, args)
     finally:
         ensure_settings()
         ensure_dcg_hook()

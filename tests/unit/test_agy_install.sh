@@ -366,6 +366,47 @@ positional_prompt_launcher_end_to_end() {
   [[ "$out" != *"--print"* && "$out" == *$'\nmodels' ]] || { echo "  launcher argv: $out"; return 1; }
 }
 
+# herdr recognizes an Antigravity agent by a foreground process whose argv[0]
+# is agy, so the launcher runs agy-real under that name (acfs-zg0).
+launcher_runs_agy_real_as_agy() {
+  local sandbox
+  sandbox="$(mktemp -d "${TMPDIR:-/tmp}/acfs-agy-argv0.XXXXXX")" || return 1
+  mkdir -p "$sandbox/.local/bin" || return 1
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$sandbox/.local/bin/agy-real" || return 1
+  chmod +x "$sandbox/.local/bin/agy-real" || return 1
+  HOME="$sandbox" ACFS_BIN_DIR="$sandbox/.local/bin" python3 - "$sandbox/.local/bin/agy-real" <<'PY'
+import sys
+
+real = sys.argv[1]
+sys.path.insert(0, "scripts/lib")
+import agy_locked
+
+calls = []
+
+class FakePopen:
+    def __init__(self, args, **kwargs):
+        calls.append((list(args), kwargs))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def wait(self):
+        return 0
+
+agy_locked.subprocess.Popen = FakePopen
+sys.argv = ["agy-locked", "--model", "other", "Hello!"]
+assert agy_locked.main() == 0
+assert len(calls) == 1, calls
+args, kwargs = calls[0]
+assert args[0] == "agy", args
+assert kwargs.get("executable") == real, kwargs
+assert args[1:] == ["--model", agy_locked.MODEL, "--dangerously-skip-permissions", "--print", "Hello!"], args
+PY
+}
+
 # Docs teach the form that works even without the wrapper.
 docs_use_print_flag_for_agy_prompts() {
   local f
@@ -468,6 +509,8 @@ check "agy locked launcher forwards a bare positional prompt as --print (#390)" 
   "positional_prompt_parity_contract"
 check "agy locked launcher hands agy-real --print for the onboarding command and passes subcommands through" \
   "positional_prompt_launcher_end_to_end"
+check "agy locked launcher runs agy-real with argv[0] agy, the name herdr detects" \
+  "launcher_runs_agy_real_as_agy"
 check "onboarding and web docs teach agy -p, the form that works without the wrapper" \
   "docs_use_print_flag_for_agy_prompts"
 check "agents-only update does not fail on missing Bun when Codex is absent" \
