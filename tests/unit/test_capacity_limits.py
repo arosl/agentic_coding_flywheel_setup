@@ -281,7 +281,7 @@ class CapacityModelTests(unittest.TestCase):
         env = {"PATH": "/usr/bin:/bin", "HOME": os.environ.get("HOME", "/tmp"),
                "ACFS_CAPACITY_CPU_COUNT": "64", "ACFS_CAPACITY_MEM_TOTAL_KB": "268435456",
                "ACFS_CAPACITY_DISK_AVAILABLE_KB": "536870912", "ACFS_CAPACITY_RCH_AVAILABLE": "true",
-               "ACFS_CAPACITY_NTM_AVAILABLE": "true", "BUDGET": str(budget), "MEMORY": str(memory_kb),
+               "ACFS_CAPACITY_HERDR_AVAILABLE": "true", "BUDGET": str(budget), "MEMORY": str(memory_kb),
                "DETAILS": json.dumps(metadata)}
         result = subprocess.run(["/bin/bash", "-c", script, "model", str(SOURCE), workload],
                                 env=env, text=True, capture_output=True, timeout=5)

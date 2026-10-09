@@ -1034,12 +1034,12 @@ try:
     safe = count(result["capacity"]["safe_agent_count"])
     if recommended > safe or (result["status"] == "fail" and safe != 0):
         reject()
-    ntm = result["tools"]["ntm"]["available"]
+    ntm = result["tools"]["herdr"]["available"]
     rch = result["tools"]["rch"]["available"]
     if type(ntm) is not bool or type(rch) is not bool:
         reject()
     if allow_launch == "true" and (not ntm or role not in ("swarm-controller", "swarm-worker", "support")):
-        raise ValueError("launch opt-in needs NTM and a launch-capable role")
+        raise ValueError("launch opt-in needs herdr and a launch-capable role")
     if existing is None:
         existing = {"id": host_id, "role": role, "status": "disabled" if role == "disabled" else "active",
                     "resources": {}, "capacity": {}, "ntm": {"can_launch": allow_launch == "true"}, "rch": {}, "ru": {}}
@@ -1063,7 +1063,7 @@ except (OSError, ValueError, TypeError, KeyError, RecursionError, subprocess.Sub
     sys.exit(1)
 PY
     )"; then
-        swarm_inventory_fail "$jq_bin" "probe-local" "probe_failed" "Local measurement failed or conflicts with existing policy. Check capacity.sh, NTM availability, and new-host-only options; no snapshot was published."
+        swarm_inventory_fail "$jq_bin" "probe-local" "probe_failed" "Local measurement failed or conflicts with existing policy. Check capacity.sh, herdr availability, and new-host-only options; no snapshot was published."
         return 2
     fi
     swarm_inventory_validate_or_fail validation_json "$jq_bin" "probe-local" "$candidate" "local snapshot" || return $?

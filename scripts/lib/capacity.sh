@@ -37,7 +37,7 @@ Environment overrides for tests:
   ACFS_CAPACITY_MEM_TOTAL_KB
   ACFS_CAPACITY_DISK_AVAILABLE_KB
   ACFS_CAPACITY_RCH_AVAILABLE=true|false
-  ACFS_CAPACITY_NTM_AVAILABLE=true|false
+  ACFS_CAPACITY_HERDR_AVAILABLE=true|false
   ACFS_CAPACITY_SYSTEMD_RUN_AVAILABLE=true|false
   ACFS_CAPACITY_SYSTEMD_USER_AVAILABLE=true|false
   ACFS_CAPACITY_BIN_DIR
@@ -870,12 +870,12 @@ capacity_apply_process_limits() {
 }
 
 capacity_collect_model() {
-    local cpu_count mem_total_kb disk_available_kb rch_available ntm_available
+    local cpu_count mem_total_kb disk_available_kb rch_available herdr_available
     cpu_count="$(capacity_read_cpu_count)"
     mem_total_kb="$(capacity_read_mem_total_kb)"
     disk_available_kb="$(capacity_read_disk_available_kb)"
     rch_available="$(capacity_tool_available rch ACFS_CAPACITY_RCH_AVAILABLE)"
-    ntm_available="$(capacity_tool_available ntm ACFS_CAPACITY_NTM_AVAILABLE)"
+    herdr_available="$(capacity_tool_available herdr ACFS_CAPACITY_HERDR_AVAILABLE)"
     CAPACITY_PHYSICAL_MEM_TOTAL_MIB=$((mem_total_kb / 1024))
     capacity_apply_process_limits "$cpu_count" "$mem_total_kb"
     mem_total_kb="$CAPACITY_EFFECTIVE_MEM_TOTAL_KB"
@@ -958,7 +958,7 @@ capacity_collect_model() {
     CAPACITY_SAFE_AGENTS="$safe_agents"
     CAPACITY_RECOMMENDED_AGENTS="$recommended_agents"
     CAPACITY_RCH_AVAILABLE="$rch_available"
-    CAPACITY_NTM_AVAILABLE="$ntm_available"
+    CAPACITY_HERDR_AVAILABLE="$herdr_available"
     CAPACITY_REQUESTED_AGENTS="$requested_agents"
     CAPACITY_PROFILE_STATUS="$profile_status"
     CAPACITY_PROFILE_REASON="$profile_reason"
@@ -995,7 +995,7 @@ capacity_emit_json() {
         --argjson safe_agents "$CAPACITY_SAFE_AGENTS" \
         --argjson recommended_agents "$CAPACITY_RECOMMENDED_AGENTS" \
         --argjson rch_available "$CAPACITY_RCH_AVAILABLE" \
-        --argjson ntm_available "$CAPACITY_NTM_AVAILABLE" \
+        --argjson herdr_available "$CAPACITY_HERDR_AVAILABLE" \
         --argjson recommend_ntm "$CAPACITY_RECOMMEND_NTM" \
         --arg status "$CAPACITY_STATUS" '
         {
@@ -1012,7 +1012,7 @@ capacity_emit_json() {
             resource_limits: $process_limits,
             tools: {
                 rch: {available: $rch_available},
-                ntm: {available: $ntm_available}
+                herdr: {available: $herdr_available}
             },
             assumptions: {
                 workload: $workload,
@@ -1101,7 +1101,7 @@ capacity_emit_human() {
     echo ""
     echo "Tooling"
     echo "  RCH available:       $CAPACITY_RCH_AVAILABLE"
-    echo "  NTM available:       $CAPACITY_NTM_AVAILABLE"
+    echo "  herdr available:     $CAPACITY_HERDR_AVAILABLE"
 
     if [[ -n "$CAPACITY_PROFILE" ]]; then
         echo ""

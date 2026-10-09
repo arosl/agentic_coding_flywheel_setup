@@ -82,7 +82,7 @@ run_sim_json() {
         ACFS_CAPACITY_MEM_TOTAL_KB=268435456 \
         ACFS_CAPACITY_DISK_AVAILABLE_KB=419430400 \
         ACFS_CAPACITY_RCH_AVAILABLE=true \
-        ACFS_CAPACITY_NTM_AVAILABLE=true \
+        ACFS_CAPACITY_HERDR_AVAILABLE=true \
         bash "$SWARM_SIM_SH" --json --status-file "$fixture" --artifact-dir "$run_artifacts" "$@" > "$output_file"
     status=$?
     set -e
@@ -152,7 +152,7 @@ test_low_capacity_fails_large_profile() {
         ACFS_CAPACITY_MEM_TOTAL_KB=4194304 \
         ACFS_CAPACITY_DISK_AVAILABLE_KB=20971520 \
         ACFS_CAPACITY_RCH_AVAILABLE=false \
-        ACFS_CAPACITY_NTM_AVAILABLE=true \
+        ACFS_CAPACITY_HERDR_AVAILABLE=true \
         bash "$SWARM_SIM_SH" --json --status-file "$fixture" --artifact-dir "$ARTIFACT_DIR/low-artifacts" --counts 50)"
     status=$?
     set -e
@@ -174,7 +174,7 @@ test_human_output_declares_simulation_only() {
         ACFS_CAPACITY_MEM_TOTAL_KB=268435456 \
         ACFS_CAPACITY_DISK_AVAILABLE_KB=419430400 \
         ACFS_CAPACITY_RCH_AVAILABLE=true \
-        ACFS_CAPACITY_NTM_AVAILABLE=true \
+        ACFS_CAPACITY_HERDR_AVAILABLE=true \
         bash "$SWARM_SIM_SH" --status-file "$fixture" --artifact-dir "$ARTIFACT_DIR/human-artifacts")"
     status=$?
     set -e

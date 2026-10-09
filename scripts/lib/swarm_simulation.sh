@@ -532,7 +532,7 @@ swarm_sim_capacity_json() {
             schema_version: 1,
             status: "warn",
             assumptions: {workload: $workload},
-            tools: {rch: {available: false}, ntm: {available: false}},
+            tools: {rch: {available: false}, herdr: {available: false}},
             capacity: {safe_agent_count: null, recommended_agent_count: null},
             profile_check: {
                 status: "warn",

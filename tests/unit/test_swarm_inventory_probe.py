@@ -32,7 +32,7 @@ class InventoryProbeTests(unittest.TestCase):
         self.report = {
             "schema_version": 1, "status": "pass", "generated_at": "1999-01-01T00:00:00Z",
             "host": {"cpu_count": 32, "mem_total_mib": 131072, "disk_available_mib": 262144},
-            "tools": {"ntm": {"available": True}, "rch": {"available": True}},
+            "tools": {"herdr": {"available": True}, "rch": {"available": True}},
             "assumptions": {"workload": "standard"},
             "capacity": {"recommended_agent_count": 20, "safe_agent_count": 30},
         }
@@ -150,14 +150,15 @@ class InventoryProbeTests(unittest.TestCase):
         self.calculator()
         self.assertEqual(self.probe("--inventory", path)["hosts"][0]["capacity"]["workload"], "heavy")
 
-    def test_missing_ntm_withdraws_capability_and_blocks_new_opt_in(self):
+    def test_missing_herdr_withdraws_capability_and_blocks_new_opt_in(self):
         path, data = self.base()
         data["hosts"][0]["ntm"]["can_launch"] = True
         path.write_text(json.dumps(data))
-        self.report["tools"]["ntm"]["available"] = False
+        self.report["tools"]["herdr"]["available"] = False
         self.calculator()
         self.assertFalse(self.probe("--inventory", path)["hosts"][0]["ntm"]["can_launch"])
-        self.probe("--allow-launch", code=2)
+        refusal = self.run_cli("probe-local", "--host-id", "worker-a", "--allow-launch", code=2)
+        self.assertIn("herdr availability", json.loads(refusal.stdout)["message"])
         self.assertFalse(self.probe()["hosts"][0]["ntm"]["can_launch"])
 
     def test_build_only_and_disabled_new_roles_cannot_opt_in(self):
@@ -178,7 +179,7 @@ class InventoryProbeTests(unittest.TestCase):
 
     def test_child_receives_no_fixture_overrides_credentials_or_startup_settings(self):
         self.env.update({"ACFS_CAPACITY_CPU_COUNT": "99999", "ACFS_CAPACITY_MEM_TOTAL_KB": "99999",
-                         "ACFS_CAPACITY_NTM_AVAILABLE": "true", "ACFS_CAPACITY_BIN_DIR": "/secret/tools",
+                         "ACFS_CAPACITY_HERDR_AVAILABLE": "true", "ACFS_CAPACITY_BIN_DIR": "/secret/tools",
                          "ACFS_CAPACITY_DISK_PATH": "/secret/mount", "HTTP_PROXY": "http://secret.invalid",
                          "AGENT_MAIL_TOKEN": "never-emit-this-secret", "PYTHONPATH": "/secret/modules"})
         self.probe()
@@ -223,7 +224,7 @@ class InventoryProbeTests(unittest.TestCase):
             self.calculator()
             self.probe(code=2)
         self.report = copy.deepcopy(original)
-        self.report["tools"]["ntm"]["available"] = "true"
+        self.report["tools"]["herdr"]["available"] = "true"
         self.calculator()
         self.probe(code=2)
 
