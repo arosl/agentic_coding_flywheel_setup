@@ -978,6 +978,21 @@ Deployment creates the destination only when it is absent. If the destination al
 
 Discovery scopes worth knowing: Codex reads global guidance from `~/.codex/AGENTS.md` and project guidance from the project root down to the working directory; filesystem-root `/AGENTS.md` is **not** automatically read by any major harness, which is exactly why ACFS no longer writes it.
 
+### `acfs agents spawn|send|list` — Agents in herdr
+
+herdr has no multi-agent spawn and no broadcast, so `acfs agents` provides both on top of herdr's own commands. It keeps no state of its own.
+
+```bash
+acfs agents spawn --claude 2 --codex 1   # one tab per agent in the current herdr workspace
+acfs agents spawn --kind agy --count 1 --workspace w2 --prompt "Review the open beads."
+acfs agents spawn --claude 1 --dry-run   # print the plan; create nothing
+acfs agents send --kind codex "Check your Agent Mail inbox."
+acfs agents send --all --wait --timeout 600000 "Report your status."
+acfs agents list [--workspace w1] [--kind claude] [--json]
+```
+
+`spawn` registers each agent in Agent Mail first and takes the name Agent Mail returns. The herdr name is that name lowercased, and the tab is labelled with it. Then it runs `herdr tab create` and `herdr agent start` in the new tab's pane. By default it sends each agent its identity followed by the command palette's `default_new_agent` prompt; `--prompt` replaces the palette text and `--no-prompt` sends nothing. If an agent stops at a first-run dialog (Codex's "Trust this folder?"), `spawn` shows the dialog and stops instead of answering it. `send` prompts every matching agent except the one it runs in. An agent that is blocked at an approval or question is skipped and reported, never answered, and the exit code is nonzero.
+
 Tool detection always runs in the target user's context (including under `sudo`, resolved via `SUDO_USER` with `~/.local/bin`, `~/go/bin`, etc. on PATH), so user-local tools are reported accurately.
 
 ### `acfs info` — System Overview

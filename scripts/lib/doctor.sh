@@ -5583,9 +5583,22 @@ main() {
             ;;
         agents|agent-guide)
             shift
-            # Manage the ACFS-owned flywheel agent guide. Generation only
-            # touches ~/.acfs/docs/flywheel-agent-guide.md; deployment into a
-            # real instruction file is explicit and non-overwriting.
+            # spawn/send/list drive coding agents in herdr (herdr_agents.sh).
+            case "${1:-}" in
+                spawn|send|list|ls)
+                    local herdr_agents_script=""
+                    herdr_agents_script="$(_acfs_doctor_find_lib_script "herdr_agents.sh" 2>/dev/null || true)"
+                    if [[ -n "$herdr_agents_script" ]]; then
+                        _acfs_doctor_exec_bash_script "$herdr_agents_script" "$@"
+                    fi
+                    echo "Error: herdr_agents.sh not found (run acfs-update to sync the runtime)" >&2
+                    return 1
+                    ;;
+            esac
+            # Everything else manages the ACFS-owned flywheel agent guide.
+            # Generation only touches ~/.acfs/docs/flywheel-agent-guide.md;
+            # deployment into a real instruction file is explicit and
+            # non-overwriting.
             local agents_generator=""
             agents_generator="$(doctor_binary_path flywheel-update-agents-md 2>/dev/null || true)"
             [[ -n "$agents_generator" ]] || agents_generator="$(command -v flywheel-update-agents-md 2>/dev/null || true)"
@@ -5617,6 +5630,7 @@ main() {
                 *)
                     echo "Error: unknown agents subcommand: $agents_subcmd" >&2
                     echo "Usage: acfs agents [update|install <target>|path|help]" >&2
+                    echo "       acfs agents [spawn|send|list] ...   (agents in herdr; see 'acfs agents spawn --help')" >&2
                     return 1
                     ;;
             esac

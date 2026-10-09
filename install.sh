@@ -3847,6 +3847,7 @@ acfs_load_internal_checksums_data() {
         scripts/lib/continue.sh
         scripts/lib/credential_preflight.sh
         scripts/lib/dashboard.sh
+        scripts/lib/herdr_agents.sh
         scripts/lib/info.sh
         scripts/lib/landing_plane.sh
         scripts/lib/module_selector.sh
@@ -10760,6 +10761,7 @@ finalize() {
     try_step "Installing notify.sh" install_asset "scripts/lib/notify.sh" "$ACFS_HOME/scripts/lib/notify.sh" || return 1
     try_step "Installing notifications.sh" install_asset "scripts/lib/notifications.sh" "$ACFS_HOME/scripts/lib/notifications.sh" || return 1
     try_step "Installing dashboard.sh" install_asset "scripts/lib/dashboard.sh" "$ACFS_HOME/scripts/lib/dashboard.sh" || return 1
+    try_step "Installing herdr_agents.sh" install_asset "scripts/lib/herdr_agents.sh" "$ACFS_HOME/scripts/lib/herdr_agents.sh" || return 1
     try_step "Installing support.sh" install_asset "scripts/lib/support.sh" "$ACFS_HOME/scripts/lib/support.sh" || return 1
     try_step "Installing acfs-nightly-update.service template" install_asset "scripts/templates/acfs-nightly-update.service" "$ACFS_HOME/scripts/templates/acfs-nightly-update.service" || return 1
     try_step "Installing acfs-nightly-update.timer template" install_asset "scripts/templates/acfs-nightly-update.timer" "$ACFS_HOME/scripts/templates/acfs-nightly-update.timer" || return 1

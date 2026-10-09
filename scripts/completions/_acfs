@@ -490,7 +490,7 @@ _acfs_commands() {
         'hold:Pin one tool out of updates'
         'unhold:Release a version hold'
         'holds:List version holds'
-        'agents:Manage the flywheel agent guide'
+        'agents:Manage the flywheel agent guide; spawn, send to and list agents in herdr'
         'landing-plane:Read-only end-of-session closeout checklist'
         'land:Closeout checklist (alias for landing-plane)'
         'provenance:Read-only installed-tool provenance ledger'

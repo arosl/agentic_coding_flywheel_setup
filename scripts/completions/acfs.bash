@@ -20,7 +20,7 @@ _acfs_completions() {
     local credential_preflight_flags="--json --human --home --acfs-home --root --file --exclude --max-bytes -h --help"
     local swarm_subcommands="plan advisor launch status snapshot doctor preflight simulate packet assign convergence calibration inventory hosts host-inventory help"
     local notifications_subcommands="enable disable test status topic set-server -h --help"
-    local agents_subcommands="update generate refresh install deploy path help"
+    local agents_subcommands="update generate refresh install deploy path spawn send list ls help"
     local swarm_plan_flags="--json --agents --profile --workload --status-file -h --help"
     local swarm_status_flags="--json -h --help"
     local swarm_doctor_flags="--json --status-file -h --help"

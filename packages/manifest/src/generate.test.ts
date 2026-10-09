@@ -1287,7 +1287,7 @@ describe("Generated script headers", () => {
     expect(countMatch).not.toBeNull();
     expect(rawEntries.length).toBe(checksums.size);
     expect(Number(countMatch?.[1])).toBe(checksums.size);
-    expect(checksums.size).toBe(116);
+    expect(checksums.size).toBe(117);
 
     const mandatoryPaths = [
       "install.sh",
@@ -1352,6 +1352,7 @@ describe("Generated script headers", () => {
       "scripts/lib/continue.sh",
       "scripts/lib/credential_preflight.sh",
       "scripts/lib/dashboard.sh",
+      "scripts/lib/herdr_agents.sh",
       "scripts/lib/info.sh",
       "scripts/lib/landing_plane.sh",
       "scripts/lib/module_selector.sh",

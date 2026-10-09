@@ -172,6 +172,7 @@ INTERNAL_CHECKSUM_REQUIRED_PATHS=(
     scripts/lib/continue.sh
     scripts/lib/credential_preflight.sh
     scripts/lib/dashboard.sh
+    scripts/lib/herdr_agents.sh
     scripts/lib/info.sh
     scripts/lib/landing_plane.sh
     scripts/lib/module_selector.sh
