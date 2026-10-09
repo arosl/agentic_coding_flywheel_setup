@@ -48,7 +48,7 @@ const TERMINAL_LINES = [
   { type: "output", text: "▸ Installing zsh + shell prompt..." },
   { type: "output", text: "▸ Installing bun, uv, rust, go..." },
   { type: "output", text: "▸ Installing Claude Code, Codex CLI, Antigravity CLI..." },
-  { type: "output", text: "▸ Configuring tmux, ripgrep, lazygit..." },
+  { type: "output", text: "▸ Configuring herdr, ripgrep, lazygit..." },
   { type: "output", text: "▸ Setting up Agent Flywheel stack..." },
   { type: "success", text: "✓ Setup complete! Run 'onboard' to get started." },
 ];
@@ -320,7 +320,7 @@ function FeaturesSection() {
 }
 
 const FLYWHEEL_TOOLS = [
-  { name: "NTM", color: "from-sky-400 to-blue-500", desc: "Agent Orchestration" },
+  { name: "herdr", color: "from-sky-400 to-blue-500", desc: "Agent Workspace" },
   { name: "Mail", color: "from-violet-400 to-purple-500", desc: "Coordination" },
   { name: "UBS", color: "from-rose-400 to-red-500", desc: "Bug Scanning" },
   { name: "BV", color: "from-emerald-400 to-teal-500", desc: "Task Graph" },
@@ -1343,7 +1343,7 @@ export default function HomePage() {
                 <ToolBadge name="Bun" color="oklch(0.78 0.16 75)" />
                 <ToolBadge name="Rust" color="oklch(0.65 0.22 25)" />
                 <ToolBadge name="Go" color="oklch(0.75 0.18 195)" />
-                <ToolBadge name="tmux" color="oklch(0.72 0.19 145)" />
+                <ToolBadge name="herdr" color="oklch(0.72 0.19 145)" />
                 <ToolBadge name="zsh" color="oklch(0.7 0.2 330)" />
               </div>
             </div>
@@ -1598,12 +1598,12 @@ export default function HomePage() {
                   TL;DR
                 </Link>
                 <a
-                  href="https://github.com/Dicklesworthstone/ntm"
+                  href="https://herdr.dev"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex min-h-6 items-center rounded-sm underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                 >
-                  NTM
+                  herdr
                 </a>
                 <a
                   href="https://github.com/Dicklesworthstone/mcp_agent_mail"

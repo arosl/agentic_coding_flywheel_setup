@@ -1753,7 +1753,7 @@ bv --robot-triage --robot-triage-by-label    # Group by domain`}
                 chunk&quot; bottleneck, and the system is resilient to partial agent failures by
                 design. Failure recovery is trivial: the bead remains marked{" "}
                 <code>in_progress</code>, any other agent can resume it, and a replacement agent is
-                just <code>ntm add PROJECT --cc=1</code> plus the standard marching orders prompt.
+                just a new agent in a fresh herdr pane plus the standard marching orders prompt.
               </P>
 
               <BlockQuote>
@@ -1840,68 +1840,47 @@ bv --robot-triage --robot-triage-by-label    # Group by domain`}
           {/* ============================================================= */}
           <GuideSection id="swarm" number="7" title="Launching & Running the Swarm">
             <P>
-              You can create sessions using Claude Code, Codex, and Antigravity CLI in different
-              panes in tmux, or use the{" "}
+              ACFS runs Claude Code, Codex, and Antigravity CLI side by side, one agent per pane, in{" "}
               <a
-                href="https://github.com/Dicklesworthstone/ntm"
+                href="https://herdr.dev"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[#FF5500] hover:text-[#FFBD2E] underline underline-offset-4 decoration-[#FF5500]/30 hover:decoration-[#FFBD2E]/50 transition-colors"
               >
-                ntm project
-              </a>{" "}
-              (Named Tmux Manager) as the command center:
+                herdr
+              </a>
+              , the agent workspace it installs as the command center:
             </P>
 
             <CodeBlock
               language="bash"
-              code={`# Spawn a multi-agent session
-ntm spawn myproject --cc=2 --cod=1 --agy=1
+              code={`# Open herdr in /data/projects, or reattach to it
+agents
 
-# Send a prompt to ALL agents
-ntm send myproject "Your marching orders prompt here"
+# Inside herdr: Ctrl+b v or Ctrl+b - splits a pane;
+# start one agent (claude, codex, agy) in each pane
 
-# Send to specific agent type
-ntm send myproject --cc "Focus on the API layer"
+# List agents and their state
+herdr agent list
 
-# Open the command palette (battle-tested prompts)
-ntm palette`}
+# Send a prompt to one agent
+herdr agent prompt <agent> "Your marching orders prompt here"`}
             />
 
             <P>
-              The preferred ACFS startup path is to run the queue-aware planner, select a ready
-              bead, and generate a bounded packet for each agent. The packet packages live
-              AGENTS.md, README, Beads, Agent Mail, RCH, UBS, and bounded memory context without
-              claiming work or mutating the repository:
-            </P>
-
-            <CodeBlock
-              language="bash"
-              code={`# Check capacity and queue pressure before launch
-acfs swarm plan --agents 4 --profile balanced --workload standard
-
-# Generate the startup prompt for one selected bead and agent
-acfs swarm packet --bead bd-1234 --agent-name BlueLake --role implementation
-
-# Rehearse larger launches without starting agents or mutating project state
-acfs swarm simulate`}
-            />
-
-            <P>
-              NTM is useful but not mandatory. A <strong>mux</strong> is a terminal multiplexer: a
+              herdr is useful but not mandatory. A <strong>mux</strong> is a terminal multiplexer: a
               layer that lets you manage multiple shell sessions inside one higher-level session
               manager. In practice, that usually means some combination of tabs, panes, detached
               sessions, and reconnection to work that is still running on a local or remote machine.
-              tmux is the classic Unix terminal multiplexer, powerful and battle-tested. NTM is
-              built on top of tmux, which is why it is a natural fit for multi-agent work. But tmux
-              is only one mux. WezTerm has its own built-in mux. Zellij is another. The method cares
-              that you have a workable orchestration layer, not that you picked one specific
-              multiplexer.
+              herdr is a mux built for coding agents: its sidebar shows whether each agent is
+              working, waiting for you, done, or blocked. But it is only one mux. WezTerm has its
+              own built-in mux. Zellij is another. The method cares that you have a workable
+              orchestration layer, not that you picked one specific multiplexer.
             </P>
 
             <P>
-              One common alternative is WezTerm because native scrollback and text selection are
-              more convenient than in tmux. A workable setup:
+              One common alternative is WezTerm, for its native scrollback and text selection. A
+              workable setup:
             </P>
 
             <BulletList
@@ -1917,7 +1896,7 @@ acfs swarm simulate`}
             />
 
             <P>
-              There is no single correct operator interface. NTM is one good cockpit. WezTerm tabs
+              There is no single correct operator interface. herdr is one good cockpit. WezTerm tabs
               plus mux is another.{" "}
               <a
                 href="https://github.com/Dicklesworthstone/frankenterm"
@@ -2000,7 +1979,7 @@ When a Rust build or test is needed, offload it with rch (for example, rch exec 
 
               <NumberedList
                 items={[
-                  "Your session manager creates the agent terminals (ntm spawn, WezTerm mux, or equivalent).",
+                  "You start one agent per pane in herdr (or WezTerm's mux, or an equivalent).",
                   "You send the marching-orders prompt to each agent (staggered, not all at once).",
                   "Each agent reads AGENTS.md and the repo docs, inspects the codebase, and joins Agent Mail.",
                   "Each agent checks who else is active, acknowledges waiting messages, and learns the bead-thread naming conventions.",
@@ -2066,12 +2045,12 @@ When a Rust build or test is needed, offload it with rch (for example, rch exec 
 
               <P>
                 Efficiency declines as N grows, but enough ready beads, Agent Mail coordination, and
-                capacity-aware launch admission can still increase throughput. Treat any fixed
-                agent-count ceiling as a dated case-study observation, not a platform guarantee: run{" "}
-                <code>acfs swarm plan</code> against current queue pressure and host capacity. The
-                example ratio <code>--cc=2 --cod=1 --agy=1</code> supplies two Claude execution
-                sessions, one Codex session with complementary strengths, and one Antigravity
-                session pinned to {COMPLETE_GUIDE_MODELS.antigravity} for an independent
+                launches paced to what the host can carry can still increase throughput. Treat any
+                fixed agent-count ceiling as a dated case-study observation, not a platform
+                guarantee: check the ready queue and the host&apos;s load before adding agents. The
+                example ratio of 2 Claude (cc), 1 Codex (cod) and 1 Antigravity (agy) supplies two
+                Claude execution sessions, one Codex session with complementary strengths, and one
+                Antigravity session pinned to {COMPLETE_GUIDE_MODELS.antigravity} for an independent
                 perspective.
               </P>
 
@@ -2089,10 +2068,8 @@ When a Rust build or test is needed, offload it with rch (for example, rch exec 
               <P>
                 Launching many agents into one shared workspace can create a classic
                 &quot;thundering herd&quot;: duplicate claims, reservation collisions, and
-                build-queue saturation. Use <code>acfs swarm plan</code> for current admission
-                guidance, generate a bounded <code>acfs swarm packet</code> for each selected bead,
-                stagger launches according to observed readiness, and confirm each agent claims work
-                before adding more. Older anecdotes such as fixed 30-second spacing, waiting four
+                build-queue saturation. Stagger launches according to observed readiness, and
+                confirm each agent claims work before adding more. Older anecdotes such as fixed 30-second spacing, waiting four
                 seconds before prompt injection, or submitting a terminal buffer twice were
                 environment-specific workarounds, not evergreen requirements.
               </P>
@@ -2159,7 +2136,7 @@ When a Rust build or test is needed, offload it with rch (for example, rch exec 
 
               <P>
                 Taken to its endpoint, this design supports full autonomy: one puppet master agent
-                controlling ntm via robot mode, replacing the human for routine machine-tending. The
+                replacing the human for routine machine-tending. The
                 methodology is building toward a future where the human designs the plan, polishes
                 the beads, and then walks away entirely while agents execute, review, ship, and
                 start the next cycle.
@@ -2663,7 +2640,7 @@ And you can't do this sort of thing using regex or a script, you MUST manually r
 
               <CodeBlock
                 language="text"
-                code={`NTM spawns agents --> Agents read AGENTS.md
+                code={`herdr runs agents --> Agents read AGENTS.md
                   --> Agents register with Agent Mail
                   --> Agents query bv for task priority
                   --> Agents claim beads via br
@@ -2685,7 +2662,7 @@ And you can't do this sort of thing using regex or a script, you MUST manually r
                   ["Shell", "zsh (with oh-my-zsh + powerlevel10k)"],
                   ["Workspace", "/data/projects"],
                   ["Sudo", "Passwordless (vibe mode)"],
-                  ["Tmux prefix", "Ctrl-a"],
+                  ["herdr prefix", "Ctrl+b"],
                 ]}
               />
 
@@ -2816,10 +2793,6 @@ And you can't do this sort of thing using regex or a script, you MUST manually r
                     "Bootstraps projects with full tooling (.git, .beads, .claude, AGENTS.md)",
                   ],
                   ["acfs doctor", "Single command to verify entire installation"],
-                  [
-                    "NTM command palette",
-                    "Battle-tested prompt library accessible via ntm palette",
-                  ],
                   ["Claude Code Skills", "Each tool has a dedicated skill for automated workflows"],
                 ]}
               />
@@ -3791,8 +3764,8 @@ onboard
 # 4. Create your first project
 acfs newproj my-first-project --interactive
 
-# 5. Spawn agents and start building
-ntm spawn my-first-project --cc=2 --cod=1 --agy=1`}
+# 5. Open herdr, start one agent per pane, and start building
+agents`}
               />
 
               <P>

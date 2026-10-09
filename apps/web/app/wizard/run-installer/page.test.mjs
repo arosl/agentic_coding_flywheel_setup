@@ -37,13 +37,13 @@ const profiles = [
   { id: "stack-only", label: "Stack only" },
 ];
 const ids = {
-  full: ["base.system", "agents.claude", "stack.ntm"],
-  safe: ["base.system", "agents.claude", "stack.ntm"],
-  vibe: ["base.system", "agents.claude", "stack.ntm"],
+  full: ["base.system", "agents.claude", "tools.herdr"],
+  safe: ["base.system", "agents.claude", "tools.herdr"],
+  vibe: ["base.system", "agents.claude", "tools.herdr"],
   minimal: ["base.system", "agents.claude"],
   "agents-only": ["base.system", "agents.claude"],
   "cloud-only": ["base.system", "cloud.wrangler"],
-  "stack-only": ["base.system", "stack.ntm"],
+  "stack-only": ["base.system", "tools.herdr"],
 };
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const text = (node) =>
@@ -617,7 +617,7 @@ test("what-installs summary is the resolved profile, not the hard-coded full too
   assert.ok(section);
   assert.match(text(section), /cloud.wrangler/);
   assert.match(text(section), /base.system/);
-  assert.doesNotMatch(text(section), /PostgreSQL|Vault|stack.ntm/);
+  assert.doesNotMatch(text(section), /PostgreSQL|Vault|tools.herdr/);
 });
 
 test("continuation still requires the installer acknowledgement", () => {

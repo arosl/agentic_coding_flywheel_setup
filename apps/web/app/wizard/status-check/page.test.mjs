@@ -725,7 +725,7 @@ test("narrow agent selection omits unselected cloud agents and spot checks acros
   for (const forbidden of [
     "bun --version",
     "ms --version",
-    "which tmux",
+    "herdr --version",
     "codex login --device-auth",
     "agy",
     "vercel login",
@@ -775,7 +775,7 @@ test("empty/no-login selections do not invent a full set of services or quick ch
   const view = await f.settle();
   assert.equal(view.cards.filter((card) => card.props.persistKey?.startsWith("auth-")).length, 0);
   assert.match(view.text(), /No service sign-ins/);
-  assert.doesNotMatch(view.text(), /cc --version|bun --version|ms --version|which tmux/);
+  assert.doesNotMatch(view.text(), /cc --version|bun --version|ms --version|herdr --version/);
 });
 
 test("all 256 service module combinations preserve exact membership without mutating the catalogue", () => {

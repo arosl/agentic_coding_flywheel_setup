@@ -1629,7 +1629,7 @@ test.describe("Step 12: Status Check Page", () => {
     // name; the `cc` alias is a shell convenience, not proof of installation)
     await expect(page.locator('text="claude --version"')).toBeVisible();
     await expect(page.locator('text="bun --version"')).toBeVisible();
-    await expect(page.locator('text="which tmux"')).toBeVisible();
+    await expect(page.locator('text="herdr --version"')).toBeVisible();
   });
 
   test("should have copy buttons for commands", async ({ page }) => {

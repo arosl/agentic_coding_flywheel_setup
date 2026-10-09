@@ -423,7 +423,7 @@ export function CrashRecoveryViz() {
           {killed === 0
             ? "Every agent is fungible. Kill any of them to see the swarm self-heal without downtime or data loss."
             : aliveCount === 0
-              ? `All ${killed} agents killed. In a real swarm, you would spin up replacements with ntm add PROJECT --cc=1 and they would immediately pick up the orphaned beads. Hit Reset to try again.`
+              ? `All ${killed} agents killed. In a real swarm, you would start replacement agents in new herdr panes and they would immediately pick up the orphaned beads. Hit Reset to try again.`
               : recovered > 0
                 ? `${killed} agent${killed > 1 ? "s" : ""} killed, ${recovered} bead${recovered > 1 ? "s" : ""} recovered. The swarm continues. No bottlenecks, no single points of failure. Like RaptorQ fountain codes: any agent catches any bead in any order.`
                 : orphanedCount > 0

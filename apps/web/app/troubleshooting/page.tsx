@@ -216,13 +216,13 @@ const ISSUES: Omit<TroubleshootingIssue, "searchable">[] = [
     causes: ["Network instability", "Idle timeout (no activity)", "VPS ran out of memory"],
     solutions: [
       {
-        title: "Use tmux/ntm to persist sessions",
+        title: "Use herdr to persist sessions",
         steps: [
-          "Always work inside a tmux session using ntm",
-          "Even if disconnected, your work continues",
-          "Just reconnect and reattach to your session",
+          "Always run your agents inside herdr (type agents to open it)",
+          "Even if disconnected, your agents keep running",
+          "Just reconnect and run herdr to reattach",
         ],
-        command: "ntm new myproject",
+        command: "agents",
       },
       {
         title: "Configure SSH keep-alive",
@@ -232,7 +232,7 @@ const ISSUES: Omit<TroubleshootingIssue, "searchable">[] = [
         ],
       },
     ],
-    prevention: "Always work inside tmux sessions. Use 'ntm new projectname' before starting work.",
+    prevention: "Always work inside herdr. Run 'agents' before starting work.",
   },
   {
     id: "install-curl-fails",

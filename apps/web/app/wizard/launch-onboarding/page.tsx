@@ -348,7 +348,7 @@ export default function LaunchOnboardingStep() {
           </div>
           <p className="text-muted-foreground">
             Master your new environment with {TOTAL_LESSONS} guided lessons covering Linux basics,
-            tmux sessions, AI agents, and advanced workflows.
+            herdr, AI agents, and advanced workflows.
           </p>
           {/* A real <button> that navigates (like every wizard CTA) rather than a
               <button> nested inside an <a>, which is invalid HTML and two tab stops. */}
@@ -407,30 +407,12 @@ export default function LaunchOnboardingStep() {
               2
             </div>
             <div className="space-y-2">
-              <h3 className="font-medium">Resume or create a session</h3>
-              <div className="space-y-2">
-                <CommandCard
-                  command="ntm list"
-                  description="See existing sessions"
-                  runLocation="vps"
-                />
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:gap-4">
-                <div className="flex-1">
-                  <CommandCard
-                    command="ntm attach myproject"
-                    description="Resume a session"
-                    runLocation="vps"
-                  />
-                </div>
-                <div className="flex-1">
-                  <CommandCard
-                    command="ntm new myproject"
-                    description="Or create new"
-                    runLocation="vps"
-                  />
-                </div>
-              </div>
+              <h3 className="font-medium">Open herdr</h3>
+              <CommandCard
+                command="agents"
+                description="Start herdr, or reattach to the agents you left running"
+                runLocation="vps"
+              />
             </div>
           </div>
 
@@ -441,6 +423,11 @@ export default function LaunchOnboardingStep() {
             <div className="space-y-2">
               <h3 className="font-medium">Start coding with AI</h3>
               <CommandCard command="cc" description="Launch Claude Code" runLocation="vps" />
+              <p className="text-sm text-muted-foreground">
+                Run one agent per pane: press{" "}
+                <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">Ctrl+b v</code> to
+                split the window, then start another agent in the new pane.
+              </p>
             </div>
           </div>
 
@@ -452,13 +439,13 @@ export default function LaunchOnboardingStep() {
               <h3 className="font-medium">When you&apos;re done for the day</h3>
               <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
                 <div className="flex-1 rounded-lg border border-border/50 bg-card/50 p-3">
-                  <p className="text-sm text-muted-foreground mb-2">Detach from session:</p>
+                  <p className="text-sm text-muted-foreground mb-2">Detach from herdr:</p>
                   <div className="flex items-center gap-1.5">
                     <kbd className="rounded bg-muted px-2 py-1 font-mono text-sm">Ctrl</kbd>
                     <span className="text-muted-foreground">+</span>
-                    <kbd className="rounded bg-muted px-2 py-1 font-mono text-sm">A</kbd>
+                    <kbd className="rounded bg-muted px-2 py-1 font-mono text-sm">b</kbd>
                     <span className="text-muted-foreground mx-1">then</span>
-                    <kbd className="rounded bg-muted px-2 py-1 font-mono text-sm">D</kbd>
+                    <kbd className="rounded bg-muted px-2 py-1 font-mono text-sm">q</kbd>
                   </div>
                 </div>
                 <div className="flex-1">
@@ -466,8 +453,9 @@ export default function LaunchOnboardingStep() {
                 </div>
               </div>
               <p className="text-sm text-muted-foreground">
-                Your session keeps running! Come back tomorrow and everything is exactly where you
-                left it.
+                Your agents keep running! Come back tomorrow, run{" "}
+                <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">herdr</code>, and
+                everything is exactly where you left it.
               </p>
             </div>
           </div>
@@ -475,7 +463,7 @@ export default function LaunchOnboardingStep() {
 
         <div className="mt-6 rounded-lg border border-amber/30 bg-amber/10 p-4 text-center">
           <p className="text-sm font-medium">
-            💡 <strong>Remember:</strong> Connect → Session → Code → Detach
+            💡 <strong>Remember:</strong> Connect → herdr → Code → Detach
           </p>
         </div>
       </Card>
@@ -494,19 +482,25 @@ export default function LaunchOnboardingStep() {
 
         <div className="mt-6 space-y-4">
           <div className="space-y-2">
-            <h3 className="font-medium">1. Create a session for your project</h3>
-            <CommandCard command="ntm new my-awesome-app" runLocation="vps" />
-            <p className="text-sm text-muted-foreground">
-              This creates a persistent workspace named &quot;my-awesome-app&quot;.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <h3 className="font-medium">2. Create and navigate to a project folder</h3>
+            <h3 className="font-medium">1. Create and navigate to a project folder</h3>
             <CommandCard
               command="mkdir /data/projects/my-awesome-app && cd /data/projects/my-awesome-app"
               runLocation="vps"
             />
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="font-medium">2. Give it a herdr workspace</h3>
+            <CommandCard
+              command="herdr workspace create --cwd /data/projects/my-awesome-app"
+              runLocation="vps"
+            />
+            <p className="text-sm text-muted-foreground">
+              Run this in a herdr pane (open herdr with{" "}
+              <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">agents</code>).
+              A workspace keeps one project&apos;s panes and agents together, and keeps running
+              when you disconnect.
+            </p>
           </div>
 
           <div className="space-y-2">
@@ -720,15 +714,10 @@ export default function LaunchOnboardingStep() {
           </div>
 
           <div className="space-y-2">
-            <h3 className="font-medium">3. Resume your session (if using NTM)</h3>
-            <CommandCard command="ntm list" description="See your sessions" runLocation="vps" />
-            <CommandCard
-              command="ntm attach myproject"
-              description="Resume a session"
-              runLocation="vps"
-            />
+            <h3 className="font-medium">3. Reattach to herdr</h3>
+            <CommandCard command="herdr" description="Reattach to your agents" runLocation="vps" />
             <p className="text-sm text-muted-foreground mt-2">
-              This brings back exactly where you left off — including any running Claude sessions!
+              This brings back exactly where you left off — including any running agents!
             </p>
           </div>
         </div>
@@ -784,10 +773,10 @@ export default function LaunchOnboardingStep() {
           </Card>
           <Card className="p-4">
             <h3 className="mb-2 font-medium">
-              Use <Jargon term="tmux">tmux</Jargon> with <Jargon term="ntm">ntm</Jargon>
+              Run agents in <Jargon term="herdr">herdr</Jargon>
             </h3>
-            <p className="mb-3 text-sm text-muted-foreground">Manage terminal sessions</p>
-            <code className="rounded bg-muted px-2 py-1 text-sm">ntm new myproject</code>
+            <p className="mb-3 text-sm text-muted-foreground">Agents keep running after you disconnect</p>
+            <code className="rounded bg-muted px-2 py-1 text-sm">agents</code>
           </Card>
           <Card className="p-4">
             <h3 className="mb-2 font-medium">
@@ -945,41 +934,33 @@ export default function LaunchOnboardingStep() {
             </ul>
           </GuideExplain>
 
-          <GuideExplain term="What is tmux and ntm?">
+          <GuideExplain term="What is herdr?">
             <p>
               <strong>The problem:</strong> When you SSH into your VPS and then close your laptop or
               lose internet, your terminal session dies. Any running commands stop.
             </p>
             <p className="mt-3">
-              <strong>The solution:</strong> <Jargon term="tmux">tmux</Jargon> creates
-              &quot;sessions&quot; that keep running on the VPS even when you disconnect. Your
-              processes continue regardless of your connection state.
-            </p>
-            <p className="mt-3">
-              <strong>NTM</strong> (Named Tmux Manager) makes tmux easier. Instead of cryptic
-              commands, you get simple ones:
+              <strong>The solution:</strong> <Jargon term="herdr">herdr</Jargon> keeps your agents
+              running on the VPS even when you disconnect. It splits your terminal into panes, one
+              agent per pane, and shows whether each agent is working, waiting for you, or done.
             </p>
             <ul className="mt-2 list-disc list-inside space-y-1 text-sm text-muted-foreground">
               <li>
-                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-                  ntm new myproject
-                </code>{" "}
-                — Start a new session
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">agents</code> —
+                Open herdr in your projects folder
               </li>
               <li>
-                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-                  ntm attach myproject
-                </code>{" "}
-                — Resume a session
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">Ctrl+b q</code> —
+                Detach (your agents keep running)
               </li>
               <li>
-                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">ntm list</code> —
-                See all your sessions
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">herdr</code> —
+                Reattach later
               </li>
             </ul>
             <p className="mt-3 text-sm">
               This is why you can start a Claude task, close your laptop, go to bed, and come back
-              to find it completed. The session keeps running on the VPS.
+              to find it completed. The agent keeps running on the VPS.
             </p>
           </GuideExplain>
 
@@ -995,14 +976,12 @@ export default function LaunchOnboardingStep() {
                 </p>
               </div>
               <div>
-                <p className="font-medium text-foreground">ntm (Named Tmux Manager)</p>
+                <p className="font-medium text-foreground">herdr</p>
                 <p className="text-sm text-muted-foreground">
-                  This manages your terminal &quot;sessions&quot;. When you run{" "}
-                  <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-                    ntm new myproject
-                  </code>
-                  , it creates a persistent workspace that stays running even if you disconnect.
-                  Perfect for long-running tasks!
+                  This is where your agents run. When you type{" "}
+                  <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">agents</code>, it
+                  opens a workspace that stays running even if you disconnect. Perfect for
+                  long-running tasks!
                 </p>
               </div>
               <div>
@@ -1035,12 +1014,13 @@ export default function LaunchOnboardingStep() {
                 environment.
               </GuideStep>
 
-              <GuideStep number={2} title="Create your first project session">
-                Type{" "}
+              <GuideStep number={2} title="Open herdr">
+                Type <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">agents</code>{" "}
+                to open herdr, then{" "}
                 <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-                  ntm new hello-world
-                </code>
-                to create a dedicated workspace for a test project.
+                  cd my_first_project
+                </code>{" "}
+                to try things in the starter project.
               </GuideStep>
 
               <GuideStep number={3} title="Try Claude Code">

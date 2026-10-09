@@ -63,9 +63,9 @@ const QUICK_CHECKS = [
     description: "Check Meta Skill is installed",
   },
   {
-    moduleId: "cli.modern",
-    command: "which tmux",
-    description: "Check tmux is installed",
+    moduleId: "tools.herdr",
+    command: "herdr --version",
+    description: "Check herdr is installed",
   },
 ];
 

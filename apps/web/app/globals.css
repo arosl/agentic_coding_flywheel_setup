@@ -1052,7 +1052,7 @@
 /* ============================================
    AA text floor for long-form dark bodies
    ============================================
-   The guides and the 65 lesson bodies reach for `text-white/20…/45` and
+   The guides and the lesson bodies reach for `text-white/20…/45` and
    zinc/slate-500 for secondary text on near-black. Measured on those
    grounds (#020408–#0a0204) `text-white/50` is the lowest alpha that clears
    WCAG 4.5:1 for text; /40 lands at ≈3.5:1 and /20 at ≈1.7:1. The ~1,000

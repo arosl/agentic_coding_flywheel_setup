@@ -420,7 +420,7 @@ const CLOUD_SERVICES = [
 ];
 
 const FLYWHEEL_CYCLE = [
-  { name: "NTM", desc: "Spawns agents", color: "from-sky-400 to-blue-500", icon: Terminal },
+  { name: "herdr", desc: "Runs agents", color: "from-sky-400 to-blue-500", icon: Terminal },
   {
     name: "Mail",
     desc: "Coordinates",
@@ -889,7 +889,7 @@ export default function WorkflowPage() {
                 The Self-Reinforcing Flywheel
               </h3>
               <p className="text-sm text-muted-foreground max-w-lg mx-auto">
-                Each tool enhances the others. Agents spawn → coordinate → prioritize → check safety
+                Each tool enhances the others. Agents run → coordinate → prioritize → check safety
                 (DCG + SLB) → scan bugs → remember → search → back to agents.
               </p>
             </div>
@@ -1044,10 +1044,10 @@ export default function WorkflowPage() {
           </p>
 
           <div className="space-y-2">
-            <WorkflowStep number={1} title="Create Your Project Session" color="bg-emerald-500">
+            <WorkflowStep number={1} title="Open herdr" color="bg-emerald-500">
               <CommandCard
-                command="ntm new myproject"
-                description="Create a new tmux session for your project"
+                command="agents"
+                description="Start or reattach herdr, where your agents keep running if SSH drops"
               />
             </WorkflowStep>
 
@@ -1131,14 +1131,16 @@ export default function WorkflowPage() {
           </p>
 
           <div className="space-y-2">
-            <WorkflowStep number={1} title="Spawn Agent Sessions" color="bg-violet-500">
+            <WorkflowStep number={1} title="Start Agents in herdr Panes" color="bg-violet-500">
               <p className="mb-3">
-                Use <code className="bg-muted px-1.5 py-0.5 rounded text-xs">ntm</code> to create
-                multiple terminal panes, each running a coding agent:
+                Open herdr and split it into panes (
+                <code className="bg-muted px-1.5 py-0.5 rounded text-xs">Ctrl+b v</code> or{" "}
+                <code className="bg-muted px-1.5 py-0.5 rounded text-xs">Ctrl+b -</code>), then
+                start one coding agent (claude, codex or agy) in each pane:
               </p>
               <CommandCard
-                command="ntm spawn myproject 8"
-                description="Create 8 agent panes in your project session"
+                command="agents"
+                description="Open herdr, then start each agent in its own pane"
               />
               <p className="text-xs mt-2">
                 Run 3+ machines with multiple subscriptions (e.g., 5 ChatGPT Pro, 5 Claude Max, 3
@@ -1291,8 +1293,7 @@ export default function WorkflowPage() {
             <WorkflowStep number={3} title="Daily Maintenance Across Projects" color="bg-rose-500">
               <p>
                 Make forward progress on ALL your active projects every day, even when too busy for
-                deep work. Use command palette prompts (single button press) to keep agents
-                productively improving code.
+                deep work. Use the prompt library below to keep agents productively improving code.
               </p>
             </WorkflowStep>
           </div>
@@ -1386,13 +1387,12 @@ export default function WorkflowPage() {
             <GuideSection title="Quick Daily Routine">
               <div className="space-y-4 mt-3">
                 <GuideStep number={1} title="Start your machines">
-                  Launch your VPS instances and open your agent terminals with NTM. Run{" "}
-                  <code className="bg-muted px-1 rounded text-xs">ntm attach myproject</code> to
-                  reconnect.
+                  Launch your VPS instances and open your agent terminals with herdr. Run{" "}
+                  <code className="bg-muted px-1 rounded text-xs">herdr</code> to reconnect.
                 </GuideStep>
                 <GuideStep number={2} title="Send autopilot prompts">
-                  Use the command palette to send &quot;randomly_inspect&quot; or
-                  &quot;check_other_agents&quot; prompts to each agent. One button press per agent.
+                  Send &quot;randomly_inspect&quot; or &quot;check_other_agents&quot; prompts to
+                  each agent in its herdr pane.
                 </GuideStep>
                 <GuideStep number={3} title="Let agents work">
                   Come back in 3+ hours. Agents will have made progress on all your projects while
@@ -1414,8 +1414,7 @@ export default function WorkflowPage() {
           gradient="bg-gradient-to-br from-fuchsia-500 to-pink-600"
         >
           <p className="text-muted-foreground mb-6">
-            Each prompt takes under a second to send using NTM&apos;s command palette. Configure
-            once, then trigger with a single button press. Click any prompt to expand and copy.
+            Click any prompt to expand and copy it into an agent&apos;s pane.
           </p>
 
           {/* Analysis & Review */}
@@ -1559,12 +1558,6 @@ export default function WorkflowPage() {
           </div>
 
           <SimplerGuide>
-            <GuideExplain term="How to set up the command palette">
-              NTM includes a command palette feature. Add prompts to{" "}
-              <code className="bg-muted px-1 rounded">~/.config/ntm/prompts.yaml</code> and bind a
-              keyboard shortcut to open the palette. Each prompt triggers in any active agent
-              session with a single keypress.
-            </GuideExplain>
             <GuideTip>
               <strong>Hardware tip:</strong> A small programmable keypad (~$60 on Temu) can be
               configured to send any prompt with a single button. Keep one next to each of your
@@ -1582,8 +1575,7 @@ export default function WorkflowPage() {
           <Card className="p-4 border-[oklch(0.78_0.16_75/0.3)] bg-[oklch(0.78_0.16_75/0.08)] mb-6">
             <p className="text-sm">
               <strong>Note:</strong> This works with Codex CLI but not Claude Code (which interrupts
-              the agent when you send follow-up messages). For Claude Code, use individual prompts
-              or the NTM palette.
+              the agent when you send follow-up messages). For Claude Code, use individual prompts.
             </p>
           </Card>
 

@@ -9,7 +9,7 @@ import { expect, test } from "@playwright/test";
  *     generateStaticParams/tool-data 404 risk from .2 — the site recently had a
  *     404-cleanup pass; this must not regress)
  *   - the command reference (/learn/commands) shows the agy command + its docs link
- *   - the agents-login lesson + complete-guide teach agy with --agy= spawn usage
+ *   - the complete-guide gives the cc/cod/agy swarm ratio
  *   - the explicitly-legacy gmi display IS still present (regression guard against
  *     over-migration), but no operational gmi-as-primary command remains
  *
@@ -118,11 +118,11 @@ test.describe
           await expect(page.getByText(/Grok 4\.5/).first()).toBeVisible();
         });
 
-        await test.step("--agy= spawn ratio is present", async () => {
+        await test.step("cc/cod/agy swarm ratio is present", async () => {
           // The guide renders responsive duplicates (one hidden via CSS); assert the visible one.
           await expect(
             page
-              .getByText(/--agy=/)
+              .getByText(/1 Antigravity \(agy\)/)
               .filter({ visible: true })
               .first(),
           ).toBeVisible();

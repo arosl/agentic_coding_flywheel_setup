@@ -85,7 +85,7 @@ const STAGES: TimelineStage[] = [
     icon: Rocket,
     who: "You",
     what: "Start 2\u20134 agent sessions and paste the marching orders prompt into each one.",
-    tools: "Terminal, tmux, or ntm",
+    tools: "Terminal tabs or herdr panes",
     insight: "Same generic prompt every time, for every project.",
   },
   {
