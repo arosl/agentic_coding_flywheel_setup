@@ -26,7 +26,7 @@ The sections after this block are this project's own rules. Where they're strict
 
 ## Project rules
 
-1. **The repo is public.** No host-specific content goes into a committed file or a commit message: no home-directory paths, hostnames, email addresses, Agent Mail content or credentials. Commits use the GitHub noreply author that the clone already has set. The bead queue stays local for the same reason ("Coordination", "Bead export").
+1. **The repo is public.** No host-specific content goes into a committed file or a commit message: no path that names this host or its user, such as an absolute `/home/<user>/…` path (a `~/`-relative path to a standard per-user location names neither, and is allowed), hostnames, email addresses, Agent Mail content or credentials. Commits use the GitHub noreply author that the clone already has set. The bead queue stays local for the same reason ("Coordination", "Bead export").
 2. **Dates and times.** ISO 8601 everywhere. Instants are stored in UTC and shown in `UTC`. A date-only value stays date-only.
 3. **Upstream sync.** Upstream's own instruction file is read with `git show upstream/main:AGENTS.md`, and never kept in the tree. When an upstream merge conflicts in `AGENTS.md`, keep ours (`git checkout --ours AGENTS.md`). Then read `git diff <merge-base> upstream/main -- AGENTS.md`, and port each new project fact into the section of the same name below, by hand. Never use a `merge=ours` driver: it drops upstream's facts without anyone seeing them. Rules taken from upstream keep upstream's section names, so that a hunk maps to one section.
 4. **`main` only.** Work, branches and merges target `main`. `master` mirrors `main` for legacy install URLs, and only the coordinator pushes it, with `git push origin main main:master`, never forced. Never reference `master` in code or docs.
@@ -114,7 +114,7 @@ This is the current way of working: agentharness's wave method, with br, Agent M
 - **herdr workspace:** label `agentic_coding_flywheel_setup`; always pass `--workspace` explicitly
 - **Waker:** `herdr-agent-waker@agentic_coding_flywheel_setup.service`, configured by `~/.config/agentharness/agentic_coding_flywheel_setup.env`
 - **Beads:** change only from the main checkout, by the coordinator (claims) and the integrator (closes)
-- **Bead export:** kept local, because this repo is public (the operator's ruling, 2026-10-08), and br writes the user name and the checkout path into every exported bead. The only tracked file under `.beads/` is its `.gitignore`, the single line `*`, so no bead write is ever committed.
+- **Bead export:** kept local, because this repo is public (the operator's ruling, 2026-10-08), and br writes the user name and the checkout path into every exported bead. The only tracked file under `.beads/` is its `.gitignore`, which ignores everything (`*`), so no bead write is ever committed.
 - **Priorities:** P0 a broken install or update on users' machines, or a hole in the checksum boundary; P1 what blocks the current wave or the next upstream sync; P2 the fork's other planned work; P3 is the default and P4 conditional, as everywhere (agentharness `docs/primitives.md`)
 - **Review tiers:** PUSH, LIGHT or FULL per bead (agentharness `docs/tiers.md`); the brief states it with the FULL criterion it trips, or none. FULL only on a named criterion, never on doubt. FULL here also covers: a change to what the installer, `acfs update` or the doctor runs unattended on a user's machine; a change to `checksums.yaml`, a verified installer, or `scripts/lib/security.sh`
 
