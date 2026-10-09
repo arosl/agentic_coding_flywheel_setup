@@ -80,6 +80,7 @@ The fork tracks upstream ACFS and changes its toolset: herdr instead of ntm, wez
   - acfs-rst: `test_swarm_fleet_probe.py` sets its library fixtures' modes, and reads the canonical scripts from a 0644 copy, for the same reason.
   - acfs-a04: `ACFS_REPO_OWNER` defaults to the fork's owner, so the one-liner installs the fork, not upstream.
   - acfs-m3l: the `fail()` helper in 22 `tests/unit/` shell tests returns 0, because upstream's ends in a `&&` list that stops the run at the first failure under `set -e`. Also fixed: two `jq -e` assertions in `test_swarm_plan.sh` that read only the last of a stream, the support inventory fixture's 2099 probe date, and the summary `swarm_plan.sh` gives when RCH reports zero workers.
+  - acfs-xe3: `test_install_fetch_composition.sh` verifies the real checkout and defines its helpers after sourcing `install.sh`, because upstream's dies in `detect_environment` (its temp copy fails the internal checksum ledger), and its A6 resolves against the default owner, not upstream's.
 
 ## Commands and gates
 
