@@ -1,0 +1,11 @@
+[
+  {
+    "name": "dev",
+    "status": "Stopped",
+    "type": "virtual-machine",
+    "config": {},
+    "state": {
+      "network": null
+    }
+  }
+]

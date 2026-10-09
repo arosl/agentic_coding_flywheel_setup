@@ -1,0 +1,47 @@
+[
+  {
+    "name": "dev",
+    "status": "Running",
+    "type": "virtual-machine",
+    "config": {
+      "user.acfs.installed": "0123456789abcdef0123456789abcdef01234567",
+      "user.acfs.provider": "incus"
+    },
+    "state": {
+      "network": {
+        "enp5s0": {
+          "addresses": [
+            {
+              "family": "inet",
+              "address": "192.0.2.20",
+              "netmask": "24",
+              "scope": "global"
+            },
+            {
+              "family": "inet6",
+              "address": "fe80::20",
+              "netmask": "64",
+              "scope": "link"
+            }
+          ]
+        },
+        "lo": {
+          "addresses": [
+            {
+              "family": "inet",
+              "address": "127.0.0.1",
+              "netmask": "8",
+              "scope": "local"
+            },
+            {
+              "family": "inet6",
+              "address": "::1",
+              "netmask": "128",
+              "scope": "local"
+            }
+          ]
+        }
+      }
+    }
+  }
+]
