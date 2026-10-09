@@ -90,7 +90,12 @@ case "$1" in
         done
         shift
         case "$1" in
-            cloud-init) printf 'status: %s\n' "${STUB_CLOUD_INIT:-done}" ;;
+            # Real `cloud-init status` exits 0 (done or running), 1 (error)
+            # or 2 (done with recoverable errors).
+            cloud-init)
+                printf 'status: %s\n' "${STUB_CLOUD_INIT:-done}"
+                exit "${STUB_CLOUD_INIT_EXIT:-0}"
+                ;;
             cat) cat "$STUB_HOST_KEY" ;;
             runuser) echo 'herdr 0.9.3' ;;
             ssh-keygen) echo '256 SHA256:stubfingerprint laptop (ED25519)' ;;
@@ -284,12 +289,21 @@ check "prints the SSH entry but no machine add line" stdout_is_block '' failed
 
 echo "== cloud-init ends in error"
 new_case cloud-init-error absent
-export STUB_CLOUD_INIT=error
+export STUB_CLOUD_INIT=error STUB_CLOUD_INIT_EXIT=1
 run_launcher dev --ssh-key "$WORK/laptop.pub"
-unset STUB_CLOUD_INIT
+unset STUB_CLOUD_INIT STUB_CLOUD_INIT_EXIT
 check "exits 1" rc_is 1
 check "names cloud-init's status" err_has 'status: error'
 check "doesn't install" not_called 'bootstrap-archive'
+
+echo "== cloud-init done with recoverable errors"
+new_case cloud-init-degraded absent
+export STUB_CLOUD_INIT_EXIT=2
+run_launcher dev --ssh-key "$WORK/laptop.pub"
+unset STUB_CLOUD_INIT_EXIT
+check "exits 0" rc_is 0
+check "warns and points at cloud-init status --long" err_has 'cloud-init finished with recoverable errors'
+check "installs" called 'bootstrap-archive'
 
 echo "== uncommitted changes are not installed"
 new_case dirty running-marked

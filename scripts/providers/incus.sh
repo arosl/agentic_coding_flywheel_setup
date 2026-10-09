@@ -207,19 +207,26 @@ launch() {
 }
 
 wait_ready() {
-    local deadline=$((SECONDS + AGENT_TIMEOUT_SECONDS)) state
+    local deadline=$((SECONDS + AGENT_TIMEOUT_SECONDS)) output state exit_code
     log_step "Waiting for the VM agent and cloud-init (sshd, base packages)"
     until incus_run exec "$(qualified "$name")" -- true >/dev/null 2>&1; do
         ((SECONDS < deadline)) || die "the VM agent didn't answer within ${AGENT_TIMEOUT_SECONDS}s" 1
         sleep 3
     done
     # Polled rather than `cloud-init status --wait` under timeout(1), which
-    # macOS doesn't ship.
+    # macOS doesn't ship. `cloud-init status` exits 0 while running or done,
+    # 1 on an error and 2 when done with recoverable errors, so the status
+    # line decides, and exit 2 only adds a warning.
     deadline=$((SECONDS + CLOUD_INIT_TIMEOUT_SECONDS))
     while :; do
-        state="$(incus_run exec "$(qualified "$name")" -- cloud-init status 2>/dev/null | sed -n 's/^status: //p')"
+        exit_code=0
+        output="$(incus_run exec "$(qualified "$name")" -- cloud-init status 2>/dev/null)" || exit_code=$?
+        state="$(sed -n 's/^status: //p' <<<"$output")"
         case "$state" in
-            done) return 0 ;;
+            done)
+                ((exit_code != 2)) || log_warn "cloud-init finished with recoverable errors; see: incus exec $(qualified "$name") -- cloud-init status --long"
+                return 0
+                ;;
             error|disabled) break ;;
         esac
         ((SECONDS < deadline)) || break
