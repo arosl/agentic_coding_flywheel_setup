@@ -15,6 +15,7 @@ log_section() { :; }
 log_success() { :; }
 log_info() { :; }
 unset UBUNTU_TARGET_VERSION UBUNTU_TARGET_VERSION_NUM
+# shellcheck source=scripts/lib/ubuntu_upgrade.sh
 source "$LIB"
 
 # The host OS is the boundary under test. A persistent file models changes
