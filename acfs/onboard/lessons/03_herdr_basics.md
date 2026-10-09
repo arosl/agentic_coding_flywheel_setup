@@ -69,6 +69,18 @@ your own shell.
 
 ---
 
+## Copy Mode (Scrolling)
+
+| Keys | Action |
+|------|--------|
+| `Ctrl+b` then `[` | Enter copy mode |
+| Use `PageUp/PageDown` or `j/k` | Scroll |
+| `q` | Exit copy mode |
+| `v` | Start selection |
+| `y` | Copy selection |
+
+---
+
 ## Try It Now
 
 ```bash

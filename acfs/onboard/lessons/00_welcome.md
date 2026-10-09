@@ -50,7 +50,8 @@ If your SSH connection drops? No problem. Your work continues in herdr.
 2. **SSH fundamentals** - staying connected
 3. **herdr essentials** - persistent agent workspaces
 4. **Agent commands** - talking to Claude, Codex, and Gemini
-5. **The flywheel workflow** - putting it all together
+5. **herdr mastery** - orchestrating multiple agents
+6. **The flywheel workflow** - putting it all together
 
 ---
 

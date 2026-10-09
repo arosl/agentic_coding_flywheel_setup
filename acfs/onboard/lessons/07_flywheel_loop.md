@@ -25,9 +25,9 @@ Each cycle makes the next one better.
 **Command:** `herdr`
 
 Use it to:
-- Run each agent in its own pane, in a workspace per project
-- See at a glance which agents are working, idle or done
-- Send an agent a prompt from a script (`herdr agent prompt`)
+- Spawn agent sessions
+- Send prompts to multiple agents
+- Orchestrate parallel work
 
 ### 2. MCP Agent Mail - Coordination
 **Command:** `am` (starts server)
@@ -60,20 +60,6 @@ Use it to:
 ```bash
 cass  # Opens TUI
 ```
-
-> **CASS first run:** `cass --version` works the moment cass is
-> installed, but search needs an initial index. `cass index --full`
-> builds it, but the command has no bound/limit/timeout flag and can run
-> for a very long time on a long session history. Never wait on it in
-> the foreground; run it detached:
->
-> ```bash
-> mkdir -p ~/.cache
-> nohup cass index --full --json > ~/.cache/cass-index-full.log 2>&1 &
-> disown
-> ```
->
-> Then poll `cass health --json` until it reports `index.status: "fresh"`.
 
 ### 5. CASS Memory (CM) - Procedural Memory
 **Command:** `cm`
@@ -144,15 +130,21 @@ Here's how a real session might look:
 bv --robot-triage               # Check tasks
 br ready --json                 # See what's ready to work on
 
-# 2. Start your agents
-herdr                           # Open the workspace; run claude or codex in each pane
+# 2. Start your agents (the loop and `agents` helper from lesson 5)
+for spec in cc1:claude cc2:claude cod1:codex; do
+  pane=$(herdr pane split --current --direction down --cwd "$PWD" --no-focus |
+    jq -r '.result.pane.pane_id')
+  herdr agent start "myproject-${spec%%:*}" --kind "${spec#*:}" --pane "$pane"
+done
 
 # 3. Set context
 cm context "Implementing user authentication" --json
 
-# 4. Send initial prompt (type it in the agent's pane, or from a script)
-herdr agent prompt <agent> "Let's implement user authentication.
+# 4. Send initial prompt
+for a in $(agents); do
+  herdr agent prompt "$a" "Let's implement user authentication.
 Here's the context: [paste cm output]"
+done
 
 # 5. Monitor and guide
 herdr agent list                # Which agents are working, idle or done
@@ -176,7 +168,7 @@ With each cycle:
 - **CM** distills reusable patterns
 - **UBS** catches more issues
 - **Agent Mail** improves coordination
-- **herdr** shows you sooner which agent needs you
+- **herdr** sessions become more effective
 
 This is why it's called a **flywheel** - it gets better the more you use it.
 
@@ -197,12 +189,19 @@ acfs newproj my-first-project --interactive
 # - AGENTS.md with project guidance
 # - Claude settings
 
-# 2. Open herdr and start your agents, one per pane
-herdr
-# In each pane: cd /data/projects/my-first-project, then claude, codex or agy
+# 2. Spawn your agents (from a herdr pane in the project)
+cd /data/projects/my-first-project
+for spec in cc1:claude cc2:claude cod1:codex agy1:agy; do
+  pane=$(herdr pane split --current --direction down --cwd "$PWD" --no-focus |
+    jq -r '.result.pane.pane_id')
+  herdr agent start "my-first-project-${spec%%:*}" --kind "${spec#*:}" --pane "$pane"
+done
 
-# 3. Start building! Ask an agent:
-#    "Let's build something awesome. What kind of project should we create?"
+# 3. Start building!
+for a in $(agents); do
+  herdr agent prompt "$a" "Let's build something awesome.
+What kind of project should we create?"
+done
 ```
 
 **Why `acfs newproj`?** It sets up everything agents need to work effectively,
