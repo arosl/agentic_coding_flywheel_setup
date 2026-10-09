@@ -30,12 +30,6 @@ setup() {
 }
 
 teardown() {
-    # A services test that fails before its own cleanup must not leave an
-    # isolated tmux server running on the developer's machine.
-    if [[ -n "${ACFS_SVC_TEST_SOCKET:-}" && -n "${ACFS_SVC_TEST_TMUX:-}" ]]; then
-        "$ACFS_SVC_TEST_TMUX" -L "$ACFS_SVC_TEST_SOCKET" kill-server >/dev/null 2>&1 || true
-        unset ACFS_SVC_TEST_SOCKET ACFS_SVC_TEST_TMUX
-    fi
     common_teardown
 }
 
@@ -8878,8 +8872,8 @@ EOF
 
     run bash "$services" --help
     assert_success
-    assert_output --partial "agent-mail      native service or am fallback               [default 127.0.0.1:8765]"
-    assert_output --partial "cm              cm serve (CASS Memory server)               [default 127.0.0.1:8766]"
+    assert_output --partial "agent-mail      agent-mail.service (native) or acfs-agent-mail.service  [default 127.0.0.1:8765]"
+    assert_output --partial "cm              acfs-cm.service: cm serve (CASS Memory server)          [default 127.0.0.1:8766]"
 
     run grep -F 'services|svc)' "$doctor"
     assert_success
@@ -9301,21 +9295,28 @@ EOF
     assert_success
 }
 
-@test "acfs services start propagates an unhealthy existing session" {
+@test "acfs services start fails when a running group does not pass readiness" {
     local services="$PROJECT_ROOT/scripts/lib/acfs-services.sh"
 
     run bash -c '
         source "$1"
         set +e
         _initialize_bins() { :; }
-        _require_tmux() { :; }
-        _session_exists() { return 0; }
-        cmd_repair() { return 0; }
-        cmd_status() { return 23; }
+        _require_systemd_user() { :; }
+        _preflight_services() { :; }
+        _stop_legacy_tmux_session() { :; }
+        _validate_http_endpoints() { :; }
+        _agent_mail_is_healthy() { return 0; }
+        _agent_mail_owner() { echo native; }
+        _enable_service_units() { :; }
+        _wait_for_agent_mail() { return 0; }
+        _wait_for_service_ready() { [[ "$1" != "cass" ]]; }
+        cmd_status() { echo "status-called"; return 23; }
         cmd_start
     ' _ "$services"
-    assert_failure 23
-    assert_output --partial "repairing any service that is not running"
+    assert_failure 1
+    assert_output --partial "failed readiness checks"
+    assert_output --partial "status-called"
 }
 
 @test "acfs services reuses an external owner without requiring am or failing stop" {
@@ -9329,9 +9330,11 @@ EOF
             _CM_BIN="/usr/bin/true"
             _CASS_BIN="/usr/bin/true"
             _CURL_BIN="/usr/bin/true"
+            _TMUX_BIN=""
+            _SYSTEMCTL_BIN=""
         }
-        _require_tmux() { :; }
-        _session_exists() { return 1; }
+        _require_systemd_user() { :; }
+        _systemd_user_available() { return 1; }
         _agent_mail_is_healthy() { return 0; }
         _native_agent_mail_unit_available() { return 1; }
         _native_agent_mail_is_active() { return 1; }
@@ -9344,7 +9347,8 @@ EOF
 
     assert_success
     refute_output --partial "Missing binary: am"
-    assert_output --partial "Would reuse or start Agent Mail"
+    assert_output --partial "Reusing healthy Agent Mail at 127.0.0.1:8765 (external)"
+    refute_output --partial "acfs-agent-mail.service"
     assert_output --partial "it was left untouched"
 }
 
@@ -15475,54 +15479,46 @@ esac'
 }
 
 # ============================================================
-# acfs services: preflight, pane repair, and running-binary drift
+# acfs services: preflight, unit repair, and running-binary drift
 # (issues #381, #382, #383)
 # ============================================================
 
-# Build a self-contained fixture: an isolated tmux server (its own socket, so a
-# test can never touch a live session) plus fake am/cm/cass binaries that exec
-# a non-shell process, exactly like a real service pane.
+# A self-contained systemd fixture: units are written under the test's own
+# XDG_CONFIG_HOME, and `systemctl --user` is a function that records every
+# call and keeps each unit's active state as a file in $SVC_STATE, so a test
+# can never reach the host's real user service manager.
 _svc_fixture() {
-    local dir="$BATS_TEST_TMPDIR/svcfix"
-    local tmux_bin=""
-    local name=""
-
-    tmux_bin="$(command -v tmux 2>/dev/null || true)"
-    [[ -n "$tmux_bin" ]] || return 1
-
-    mkdir -p "$dir"
-    export ACFS_SVC_TEST_SOCKET="acfs-bats-$$-${BATS_TEST_NUMBER:-0}"
-    export ACFS_SVC_TEST_TMUX="$tmux_bin"
-    # Pin the panes' shell and skip any user tmux.conf: with the developer's
-    # SHELL=zsh and the test's empty HOME, zsh-newuser-install reads one
-    # keystroke and eats the first byte of the command typed into the pane.
-    printf '#!/usr/bin/env bash\nexec env SHELL=/bin/bash %q -f /dev/null -L %q "$@"\n' \
-        "$tmux_bin" "$ACFS_SVC_TEST_SOCKET" > "$dir/tmux"
-    chmod +x "$dir/tmux"
-
-    for name in am cm cass; do
-        {
-            printf '#!/usr/bin/env bash\n'
-            printf 'if [[ "${1:-}" == "--version" ]]; then echo "%s 9.9.9"; exit 0; fi\n' "$name"
-            printf 'exec sleep 100000\n'
-        } > "$dir/$name"
-        chmod +x "$dir/$name"
-    done
-
-    export SVCFIX="$dir"
-    return 0
+    export SVC_STATE="$BATS_TEST_TMPDIR/svcstate"
+    export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/config"
+    mkdir -p "$SVC_STATE" "$XDG_CONFIG_HOME"
+    : > "$SVC_STATE/calls"
 }
 
-# Shared stub preamble: real tmux (isolated), fake binaries, and health probes
-# that report Agent Mail and the CM port as up so the tests exercise pane
-# lifecycle rather than HTTP.
+# Shared stub preamble: the systemctl stub above, runnable binaries, and
+# health probes that report Agent Mail and the CM port as up, so the tests
+# exercise unit lifecycle rather than HTTP.
 _svc_stub_preamble() {
     cat <<'STUBS'
 _initialize_bins() {
-    _TMUX_BIN="$SVCFIX/tmux"
-    _CURL_BIN="/usr/bin/curl"
-    _SS_BIN=""; _LSOF_BIN=""; _SYSTEMCTL_BIN=""; _JOURNALCTL_BIN=""
-    _AM_BIN="$SVCFIX/am"; _CM_BIN="$SVCFIX/cm"; _CASS_BIN="$SVCFIX/cass"
+    _TMUX_BIN=""; _CURL_BIN="/usr/bin/true"
+    _SS_BIN=""; _LSOF_BIN=""; _SYSTEMCTL_BIN="/usr/bin/true"; _JOURNALCTL_BIN=""
+    _AM_BIN="/usr/bin/true"; _CM_BIN="/usr/bin/true"; _CASS_BIN="/usr/bin/true"
+}
+_systemctl_user() {
+    printf '%s\n' "$*" >> "$SVC_STATE/calls"
+    local cmd="$1" unit=""
+    shift
+    case "$cmd" in
+        show-environment|daemon-reload|reset-failed) return 0 ;;
+        show) printf '\n' ;;
+        is-active) [[ "${1:-}" == "--quiet" ]] && shift; [[ -e "$SVC_STATE/active-$1" ]] ;;
+        enable|disable) [[ "${1:-}" == "--now" ]] && shift
+            for unit in "$@"; do
+                if [[ "$cmd" == enable ]]; then touch "$SVC_STATE/active-$unit"; else rm -f "$SVC_STATE/active-$unit"; fi
+            done ;;
+        start|restart) for unit in "$@"; do touch "$SVC_STATE/active-$unit"; done ;;
+        stop) for unit in "$@"; do rm -f "$SVC_STATE/active-$unit"; done ;;
+    esac
 }
 _agent_mail_is_healthy() { return 0; }
 _native_agent_mail_unit_available() { return 1; }
@@ -15533,9 +15529,9 @@ _report_binary_drift() { return 0; }
 STUBS
 }
 
-@test "acfs services start repairs a dead service pane without touching live panes (#383)" {
+@test "acfs services start brings back a stopped unit without touching running ones (#383)" {
     local services="$PROJECT_ROOT/scripts/lib/acfs-services.sh"
-    _svc_fixture || skip "tmux is not installed"
+    _svc_fixture
 
     run bash -c "
         source \"\$1\"
@@ -15543,81 +15539,70 @@ STUBS
         $(_svc_stub_preamble)
         cmd_start >/dev/null 2>&1 || { echo 'INITIAL_START_FAILED'; exit 1; }
 
-        cm_pane=\"\$(_pane_id_for_service cm)\"
-        cass_pane=\"\$(_pane_id_for_service cass)\"
-        cm_pid_before=\"\$(\"\$_TMUX_BIN\" display-message -t \"\$cm_pane\" -p '#{pane_pid}')\"
-
-        # Kill only the cass process; its pane survives at a shell prompt.
-        cass_shell=\"\$(\"\$_TMUX_BIN\" display-message -t \"\$cass_pane\" -p '#{pane_pid}')\"
-        pkill -P \"\$cass_shell\" >/dev/null 2>&1
-        sleep 2
-        _pane_service_is_running cass && { echo 'CASS_STILL_RUNNING'; exit 1; }
+        # Only the cass unit goes down.
+        rm -f \"\$SVC_STATE/active-acfs-cass-index.service\"
+        : > \"\$SVC_STATE/calls\"
 
         cmd_start >/dev/null 2>&1
         rc=\$?
-        sleep 2
-        cm_pid_after=\"\$(\"\$_TMUX_BIN\" display-message -t \"\$cm_pane\" -p '#{pane_pid}')\"
-        _pane_service_is_running cass && echo 'CASS_REPAIRED'
-        _pane_service_is_running cm && echo 'CM_STILL_RUNNING'
-        [[ \"\$cm_pid_before\" == \"\$cm_pid_after\" ]] && echo 'CM_PANE_UNTOUCHED'
-        [[ \"\$cm_pane\" == \"\$(_pane_id_for_service cm)\" ]] && echo 'CM_PANE_ID_STABLE'
+        _service_unit_active cass && echo 'CASS_REPAIRED'
+        _service_unit_active cm && echo 'CM_STILL_RUNNING'
+        grep -E '^(stop|restart|disable)' \"\$SVC_STATE/calls\" | grep -q acfs-cm.service || echo 'CM_UNTOUCHED'
         echo \"START_RC=\$rc\"
-        \"\$_TMUX_BIN\" kill-server >/dev/null 2>&1
     " _ "$services"
 
     assert_output --partial "CASS_REPAIRED"
     assert_output --partial "CM_STILL_RUNNING"
-    assert_output --partial "CM_PANE_UNTOUCHED"
-    assert_output --partial "CM_PANE_ID_STABLE"
+    assert_output --partial "CM_UNTOUCHED"
     assert_output --partial "START_RC=0"
     refute_output --partial "INITIAL_START_FAILED"
 }
 
 @test "acfs services restart <service> restarts only the named service (#383)" {
     local services="$PROJECT_ROOT/scripts/lib/acfs-services.sh"
-    _svc_fixture || skip "tmux is not installed"
+    _svc_fixture
 
     run bash -c "
         source \"\$1\"
         set +e
         $(_svc_stub_preamble)
         cmd_start >/dev/null 2>&1 || { echo 'INITIAL_START_FAILED'; exit 1; }
-        cm_pane=\"\$(_pane_id_for_service cm)\"
-        cm_pid_before=\"\$(\"\$_TMUX_BIN\" display-message -t \"\$cm_pane\" -p '#{pane_pid}')\"
+        : > \"\$SVC_STATE/calls\"
 
         cmd_restart cass >/dev/null 2>&1
         echo \"RESTART_RC=\$?\"
-        sleep 2
-        cm_pid_after=\"\$(\"\$_TMUX_BIN\" display-message -t \"\$cm_pane\" -p '#{pane_pid}')\"
-        _pane_service_is_running cass && echo 'CASS_RUNNING'
-        _pane_service_is_running cm && echo 'CM_RUNNING'
-        [[ \"\$cm_pid_before\" == \"\$cm_pid_after\" ]] && echo 'CM_UNTOUCHED'
-        \"\$_TMUX_BIN\" kill-server >/dev/null 2>&1
+        _service_unit_active cass && echo 'CASS_RUNNING'
+        _service_unit_active cm && echo 'CM_RUNNING'
+        grep -qx 'restart acfs-cass-index.service' \"\$SVC_STATE/calls\" && echo 'CASS_RESTARTED'
+        grep -E '^(stop|restart|disable)' \"\$SVC_STATE/calls\" | grep -q acfs-cm.service || echo 'CM_UNTOUCHED'
     " _ "$services"
 
     assert_output --partial "RESTART_RC=0"
     assert_output --partial "CASS_RUNNING"
+    assert_output --partial "CASS_RESTARTED"
     assert_output --partial "CM_RUNNING"
     assert_output --partial "CM_UNTOUCHED"
 }
 
-@test "acfs services start reports an existing healthy session without relaunching anything (#383)" {
+@test "acfs services start on a healthy group reloads and restarts nothing (#383)" {
     local services="$PROJECT_ROOT/scripts/lib/acfs-services.sh"
-    _svc_fixture || skip "tmux is not installed"
+    _svc_fixture
 
     run bash -c "
         source \"\$1\"
         set +e
         $(_svc_stub_preamble)
         cmd_start >/dev/null 2>&1 || { echo 'INITIAL_START_FAILED'; exit 1; }
+        : > \"\$SVC_STATE/calls\"
         cmd_start 2>&1
         echo \"SECOND_START_RC=\$?\"
-        \"\$_TMUX_BIN\" kill-server >/dev/null 2>&1
+        grep -E '^(daemon-reload|restart|stop|disable)' \"\$SVC_STATE/calls\" || echo 'NOTHING_RELAUNCHED'
     " _ "$services"
 
-    assert_output --partial "already running; nothing to repair"
+    assert_output --partial "All services are ready"
     assert_output --partial "SECOND_START_RC=0"
-    refute_output --partial "Relaunched"
+    assert_output --partial "NOTHING_RELAUNCHED"
+    refute_output --partial "INITIAL_START_FAILED"
 }
 
 @test "acfs services restart preflights binaries before stopping anything (#382)" {
@@ -15634,8 +15619,8 @@ STUBS
         _agent_mail_is_healthy() { return 0; }
         _native_agent_mail_unit_available() { return 1; }
         _native_agent_mail_is_active() { return 1; }
-        _session_exists() { return 0; }
-        _pane_service_is_running() { return 0; }
+        _require_systemd_user() { :; }
+        _agent_mail_owner() { echo external; }
         cmd_stop() { echo "STOP_WAS_CALLED"; }
         cmd_start() { echo "START_WAS_CALLED"; }
         cmd_restart
@@ -15669,8 +15654,8 @@ STUBS
         _agent_mail_is_healthy() { return 0; }
         _native_agent_mail_unit_available() { return 1; }
         _native_agent_mail_is_active() { return 1; }
-        _session_exists() { return 0; }
-        _pane_service_is_running() { return 0; }
+        _require_systemd_user() { :; }
+        _agent_mail_owner() { echo external; }
         cmd_stop() { echo "STOP_WAS_CALLED"; }
         cmd_start() { echo "START_WAS_CALLED"; }
         cmd_restart

@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="3eccc39140c210673a6466f238d116e279ff29a264ebf7ac9fc51c58e49d5753"
+ACFS_MANIFEST_SHA256="893450a8144eaa50c5c893f51d0a16c968f2060332d2d433582c1cc5227d3d8b"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -703,7 +703,7 @@ declare -gA ACFS_MODULE_INSTALLED_CHECK=(
   ['base.filesystem']='test -d /data/projects && test -d ~/.acfs'
   ['shell.zsh']='command -v zsh'
   ['shell.omz']='test -d ~/.oh-my-zsh && test -f ~/.acfs/zsh/acfs.zshrc'
-  ['cli.modern']='command -v rg && command -v tmux && command -v fzf'
+  ['cli.modern']='command -v rg && command -v fzf'
   ['tools.lazygit']='command -v lazygit'
   ['network.tailscale']='command -v tailscale'
   ['network.ssh_keepalive']='# Check if ClientAliveInterval is configured (non-zero)

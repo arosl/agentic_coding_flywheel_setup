@@ -364,13 +364,13 @@ acfs_generated_install_cli_modern() {
     log_step "Installing cli.modern"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep tmux fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync (root)"
+        log_info "dry-run: install: apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync (root)"
     else
         if ! run_as_root_shell <<'INSTALL_CLI_MODERN'
-apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep tmux fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync
+apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync
 INSTALL_CLI_MODERN
         then
-            log_error "cli.modern: install command failed: apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep tmux fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync"
+            log_error "cli.modern: install command failed: apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync"
             return 1
         fi
     fi
@@ -461,17 +461,6 @@ rg --version
 INSTALL_CLI_MODERN
         then
             log_error "cli.modern: verify failed: rg --version"
-            return 1
-        fi
-    fi
-    if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: verify: tmux -V (root)"
-    else
-        if ! run_as_root_shell <<'INSTALL_CLI_MODERN'
-tmux -V
-INSTALL_CLI_MODERN
-        then
-            log_error "cli.modern: verify failed: tmux -V"
             return 1
         fi
     fi

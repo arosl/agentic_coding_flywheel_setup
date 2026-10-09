@@ -435,11 +435,11 @@ modules:
       - base.system
     installed_check:
       run_as: current
-      command: "command -v rg && command -v tmux && command -v fzf"
-    # tmux is here only for `acfs services` (scripts/lib/acfs-services.sh),
-    # which runs CM and the CASS indexer in a tmux session. Agents run in herdr.
+      command: "command -v rg && command -v fzf"
+    # No tmux: agents run in herdr, and `acfs services` runs CM and the CASS
+    # indexer as systemd user units (scripts/lib/acfs-services.sh).
     install:
-      - apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep tmux fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync
+      - apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync
       - apt-get -o DPkg::Lock::Timeout=120 install -y lsd || true
       - apt-get -o DPkg::Lock::Timeout=120 install -y eza || true
       - apt-get -o DPkg::Lock::Timeout=120 install -y bat || apt-get -o DPkg::Lock::Timeout=120 install -y batcat || true
@@ -449,7 +449,6 @@ modules:
       - apt-get -o DPkg::Lock::Timeout=120 install -y neovim || true
     verify:
       - rg --version
-      - tmux -V
       - fzf --version
       - gh --version
       - git-lfs version

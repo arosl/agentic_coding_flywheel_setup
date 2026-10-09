@@ -24,7 +24,7 @@ This is [arosl/agentic_coding_flywheel_setup](https://github.com/arosl/agentic_c
 - **No Docker.** Why: the fork avoids Docker wherever it can. ACFS installs no Docker, docker-compose or lazydocker. dsr, which builds through Docker, is off by default.
 - **Incus instead of Docker.** Why: where the fork needs a machine or a container, it uses Incus. `scripts/providers/incus.sh` creates an Incus VM, or with `--container` an unprivileged system container, installs ACFS in it and prints how to attach to it as a herdr remote machine, with no VPS to rent ([guide](scripts/providers/incus.md)). Porting the installer test harness in `tests/vm/` to Incus is still planned.
 
-Two things still lean on what the fork removed: tmux stays installed because `acfs services` runs CM and the CASS indexer in a tmux session, and `acfs swarm` and `acfs capacity` still drive ntm, so they report it missing. The rest of this README is upstream's and still mentions ntm, tmux and Docker in places; where it disagrees with this section, this section is right.
+One thing still leans on what the fork removed: `acfs swarm` and `acfs capacity` still drive ntm, so they report it missing. ACFS installs no tmux; `acfs services` runs CM and the CASS indexer as systemd user units. The rest of this README is upstream's and still mentions ntm, tmux and Docker in places; where it disagrees with this section, this section is right.
 
 <div align="center" style="margin: 1.2em 0;">
   <table>
@@ -196,7 +196,7 @@ flowchart TB
     Verify["Verified upstream installers<br/>(security.sh + checksums.yaml)"]
     AcfsHome["~/.acfs/<br/>configs + scripts + state.json"]
     Commands["Commands<br/>acfs doctor / acfs update / acfs services / acfs services-setup / onboard"]
-    Tools["Installed tools<br/>bun/uv/rust/go + tmux/rg/gh + vault + ..."]
+    Tools["Installed tools<br/>bun/uv/rust/go + rg/gh + vault + ..."]
     Agents["Agent CLIs<br/>claude / codex / agy"]
     Stack["Stack tools<br/>herdr / mcp_agent_mail / ubs / bv / cass / cm / caam / slb / dcg / ru"]
   end
@@ -1098,31 +1098,38 @@ acfs services stop
 ```
 
 Agent Mail keeps its ACFS-reserved `127.0.0.1:8765` endpoint and reuses the native
-user service when one is already healthy. CM runs on `127.0.0.1:8766`, and CM plus
-the CASS watch indexer run in the `acfs-svc` tmux session. `start` and `status`
-return nonzero if any daemon fails its runtime readiness check.
+user service when one is already healthy. CM runs on `127.0.0.1:8766`. CM and the
+CASS watch indexer run as systemd user units, `acfs-cm.service` and
+`acfs-cass-index.service` in `~/.config/systemd/user`; without a native Agent Mail
+unit, Agent Mail gets `acfs-agent-mail.service`. `start` and `status` return
+nonzero if any daemon fails its runtime readiness check, and `logs` follows the
+units' journal.
 
-**Lifecycle contract** (the tmux tradeoff chosen in #196, made explicit per #360):
+**Lifecycle contract** (#196, made explicit per #360; systemd units since acfs-rr2):
 
 - The installer does **not** start this service group; run `acfs services start`
-  yourself after install (and after every reboot).
-- `start` is a **one-shot launcher**, not a foreground supervisor: it brings the
-  daemons up, reports readiness, and exits.
-- Only **Agent Mail** is normally boot-persistent, via its native systemd user
-  service. **CM and the CASS watch indexer live in the `acfs-svc` tmux session**,
-  which does not survive a reboot and does not restart crashed processes -- after
-  a reboot or crash, rerun `acfs services start`.
+  yourself after install.
+- `start` writes the units, enables them and starts them, then reports readiness
+  and exits. From then on systemd supervises them: a crashed daemon restarts
+  (with a start limit, so a held port does not crash-loop), and the units start
+  again after a reboot, because the installer enables linger. `acfs services
+  stop` stops and disables them until the next `start`.
+- `acfs services` needs a systemd user manager (`systemctl --user`). Without one,
+  for example on WSL without systemd, `start` refuses and says how to run the
+  daemons yourself.
+- Older ACFS ran CM and the indexer in an `acfs-svc` tmux session; `start` stops
+  that session once (only if its panes carry ACFS's service tags) so the units can
+  take over its ports.
 - CM's HTTP server is **optional** if you only use `cm context` / `cm reflect`
   from the CLI; those read the store directly.
 - Leaving the CASS watcher off can be deliberate (for example while diagnosing
   indexing or resource problems); `acfs services status` reporting it "not
   running" is not necessarily a fault.
 
-**Converging a partly-down group** (#383): when the `acfs-svc` session already
-exists, `start` repairs it instead of reporting and exiting. It relaunches only
-the services that are not running -- a pane whose process is alive is never
-touched, which matters when the tmux server also hosts long-lived agent panes.
-`acfs services repair` is the same operation under its own name.
+**Converging a partly-down group** (#383): `start` on a group that is already
+partly up starts only the units that are not running; a running unit is never
+stopped or restarted unless its unit settings changed. `acfs services repair` is
+the same operation under its own name.
 
 **Preflight before teardown** (#382): `restart` resolves and validates every
 binary it will need *before* it stops anything. Validation is the post-install
@@ -1435,7 +1442,6 @@ ACFS installs a comprehensive suite of **30+ tools** organized into categories:
 
 | Tool | Command | Description |
 |------|---------|-------------|
-| **tmux** | `tmux` | Terminal multiplexer |
 | **ripgrep** | `rg` | Fast recursive grep |
 | **ast-grep** | `sg` | Structural code search |
 | **lazygit** | `lg` (aliased) | Git TUI |
@@ -3464,7 +3470,7 @@ scripts/generated/
 ├── install_users.sh       # Source-only library; users.ubuntu is orchestration-owned
 ├── install_filesystem.sh  # Directory structure (/data/projects)
 ├── install_shell.sh       # zsh + oh-my-zsh + p10k
-├── install_cli.sh         # ripgrep, tmux, fzf, lazygit, etc.
+├── install_cli.sh         # ripgrep, fzf, lazygit, etc.
 ├── install_network.sh     # Tailscale
 ├── install_lang.sh        # bun, uv, rust, go
 ├── install_tools.sh       # ast-grep, atuin, zoxide, Vault

@@ -8205,7 +8205,7 @@ install_cli_tools() {
         # sqlite provides the headers/libs utils.caut needs at link time
         # (rusqlite without the bundled feature); Arch ships them in the
         # main sqlite package (#372).
-        local -a arch_required_pkgs=(ripgrep tmux fzf direnv jq git-lfs lsof bind strace rsync zstd gum github-cli minisign sqlite)
+        local -a arch_required_pkgs=(ripgrep fzf direnv jq git-lfs lsof bind strace rsync zstd gum github-cli minisign sqlite)
         # openbsd-netcat conflicts with gnu-netcat; only add it when no `nc`
         # provider is present so an existing choice never aborts the batch.
         if ! command_exists nc; then
@@ -8219,7 +8219,7 @@ install_cli_tools() {
             log_detail "Batch install failed, trying packages individually"
             acfs_arch_pkg_install_each "${arch_required_pkgs[@]}" || true
             local req_bin=""
-            for req_bin in rg tmux fzf jq gh; do
+            for req_bin in rg fzf jq gh; do
                 if ! binary_installed "$req_bin"; then
                     log_error "Required tool '$req_bin' could not be installed via pacman"
                     return 1
@@ -8231,7 +8231,7 @@ install_cli_tools() {
         # libsqlite3-dev: utils.caut links the system libsqlite3 (rusqlite
         # without the bundled feature), so the dev package must exist before
         # its cargo build (#372).
-        try_step "Installing required apt packages" $SUDO apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep tmux fzf direnv jq git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev || return 1
+        try_step "Installing required apt packages" $SUDO apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev || return 1
     fi
 
     # GitHub CLI (gh)

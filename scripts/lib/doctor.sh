@@ -2594,7 +2594,6 @@ check_core_tools() {
     check_command "tool.uv" "uv" "uv" "$(fix_for_module "lang.uv")"
     check_command "tool.cargo" "Cargo (Rust)" "cargo" "$(fix_for_module "lang.rust")"
     check_command "tool.go" "Go" "go" "$(doctor_pkg_install_hint golang-go go)"
-    check_command "tool.tmux" "tmux" "tmux" "$(doctor_pkg_install_hint tmux)"
     check_command "tool.rg" "ripgrep" "rg" "$(doctor_pkg_install_hint ripgrep)"
     check_command "tool.gh" "GitHub CLI (gh)" "gh" "sudo apt-get -o DPkg::Lock::Timeout=120 install -y gh"
     check_command "tool.git_lfs" "Git LFS" "git-lfs" "sudo apt-get -o DPkg::Lock::Timeout=120 install -y git-lfs"
@@ -3399,7 +3398,7 @@ _is_bespoke_covered() {
         acfs.workspace|acfs.workspace.*) return 0 ;;
         # check_shell
         shell|shell.*) return 0 ;;
-        # check_core_tools  (cli.modern.* maps to rg, tmux, fzf, gh, etc.)
+        # check_core_tools  (cli.modern.* maps to rg, fzf, gh, etc.)
         cli.modern|cli.modern.*) return 0 ;;
         # check_core_tools  (languages)
         lang.bun|lang.uv|lang.rust|lang.rust.*|lang.go) return 0 ;;
