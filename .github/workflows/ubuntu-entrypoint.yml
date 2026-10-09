@@ -38,7 +38,8 @@ jobs:
       - name: Install test tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq shellcheck
+          sudo apt-get install -y jq
+      - uses: ./.github/actions/setup-shellcheck
       - name: Check installer syntax and lint
         run: |
           bash -n install.sh
@@ -49,7 +50,7 @@ jobs:
           sudo python3 tests/unit/test_ubuntu_upgrade_main.py
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version-file: package.json
       - name: Install manifest dependencies
         working-directory: packages/manifest
         run: bun install

@@ -42,14 +42,15 @@ jobs:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version-file: package.json
+      - uses: ./.github/actions/setup-shellcheck
       - name: Install test dependencies without package lifecycle scripts
         run: |
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts
-          if ! command -v shellcheck || ! command -v jq || ! test -x /usr/sbin/sshd; then
+          if ! command -v jq || ! test -x /usr/sbin/sshd; then
             sudo apt-get update -qq
-            sudo apt-get install -y openssh-server shellcheck jq
+            sudo apt-get install -y openssh-server jq
           fi
       - name: Verify committed runtime distribution and checksums without regeneration
         run: |
