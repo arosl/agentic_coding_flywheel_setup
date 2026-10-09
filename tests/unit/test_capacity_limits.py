@@ -277,7 +277,7 @@ class CapacityModelTests(unittest.TestCase):
         # status, JSON projection and command-line dispatch are production code.
         script = 'source "$1"\ncapacity_process_limits() { '
         script += 'return 1; }\n' if broken else 'printf "%s\\t%s\\t%s\\n" "$BUDGET" "$MEMORY" "$DETAILS"; }\n'
-        script += 'capacity_main --json --recommend-ntm --workload "$2"'
+        script += 'capacity_main --json --recommend-herdr --workload "$2"'
         env = {"PATH": "/usr/bin:/bin", "HOME": os.environ.get("HOME", "/tmp"),
                "ACFS_CAPACITY_CPU_COUNT": "64", "ACFS_CAPACITY_MEM_TOTAL_KB": "268435456",
                "ACFS_CAPACITY_DISK_AVAILABLE_KB": "536870912", "ACFS_CAPACITY_RCH_AVAILABLE": "true",
@@ -312,7 +312,7 @@ class CapacityModelTests(unittest.TestCase):
     def test_below_one_workload_unit_does_not_round_up(self):
         result = self.run_model(499, 268435456, "light")
         self.assertEqual(result["capacity"]["safe_agent_count"], 0)
-        self.assertEqual(result["ntm"]["agent_count"], 0)
+        self.assertEqual(result["herdr"]["agent_count"], 0)
 
 
 def live_smoke():

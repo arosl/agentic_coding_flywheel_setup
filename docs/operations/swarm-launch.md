@@ -2,7 +2,8 @@
 
 The explicit launcher fills the gap between the read-only swarm planner and
 packet preparation, which needs existing stable agent panes. It supports 1–32
-native Claude/Codex agents. It does not use NTM's automatic work assignment.
+native Claude/Codex agents, each in its own tab of a new herdr workspace. It
+sends the agents no work.
 
 Preview first (the standalone entrypoint is also useful from a checkout):
 
@@ -14,16 +15,29 @@ bash scripts/lib/swarm_launch.sh --repo "$PWD" --session implementation \
 
 The installed command is `acfs swarm launch` once the runtime has been installed
 or refreshed. Preview runs the existing live ACFS planner in the selected
-repository and NTM's native spawn dry-run. It does not create a receipt or start
-agents, although upstream tools can write their ordinary telemetry. Use the
-returned `launch_command` to perform the separate hash-bound `--launch` operation.
-Launching can start paid provider processes and NTM's normal session monitor;
-NTM's configured commands, models and normal permission policy remain in effect.
-No prompts, trust-dialog responses, Beads claims, reservations, interrupts,
-existing-session reuse or destructive cleanup are requested.
+repository and checks that herdr can take the launch: herdr, `am` and `jq` are
+installed, `acfs agents` (`herdr_agents.sh`) is beside the launcher, the herdr
+server is running, and no workspace already carries this launch's label. It
+reports the exact herdr commands it would run (`herdr_plan`). It does not create
+a receipt or start agents. Use the returned `launch_command` to perform the
+separate hash-bound `--launch` operation.
 
-Both ACFS and NTM must admit the requested agent count. Unknown or malformed
-admission fails closed. ACFS `wait`, `scale_down`, `fail`, or a count above the
+Launching creates a new herdr workspace labelled
+`swarm-<session>-<first 12 hex of the review hash>`, then starts the agents one at
+a time, in slot order, through `acfs agents spawn --kind <type> --count 1
+--no-prompt`. Each agent gets a new Agent Mail identity, registered in the
+repository's Agent Mail project, and its own tab labelled with that name; its
+herdr name is that name lowercased. Launching can start paid provider processes.
+No prompts, trust-dialog answers, Beads claims, reservations, interrupts,
+existing-workspace reuse or destructive cleanup are requested.
+
+An agent that stops at a first-run dialog, such as Claude Code's or Codex's
+"trust this folder?", counts as launched (`launched_state: "blocked"`): answer it
+in its tab. The launcher never answers it, because trusting the repository is
+the operator's decision.
+
+The ACFS planner is the only admission gate. Unknown or malformed admission
+fails closed. `wait`, `scale_down`, `fail`, or a count above the
 recommended/safe limits always blocks launch. `--accept-warnings` is explicit
 permission for warning-level decisions that still recommend proceeding; it
 never overrides pressure or hard blockers. `--profile` and `--workload` select
@@ -31,44 +45,45 @@ the existing planner policies, not provider/model overrides. No saved admission
 snapshots are accepted as authority to start agents.
 
 Every requested name is bound to its original slot, even when the request
-interleaves Claude and Codex. After NTM reports ready agents, ACFS resolves each
-returned window/pane index to a stable tmux pane ID and verifies the live native
-command, project directory, and session/process identity. A stale title on a
-shell is not sufficient. The result includes `preparation_targets`, such as:
+interleaves Claude and Codex. After each agent starts, ACFS verifies it through
+herdr: its pane, tab, terminal ID and shell PID, the live native process in the
+pane, and its working directory. The result includes `preparation_targets`, such
+as:
 
 ```text
-1:RedFox:claude:%42
-2:BlueLake:codex:%43
+1:GreenCastle:claude:w9:p2
+2:AmberFox:codex:w9:p3
 ```
 
-Pass those values as repeated `--target` options to `acfs swarm packet
---prepare-batch`, then review the generated packets before dispatch. Names are
-intended packet identities, not a claim that Agent Mail registration occurred.
-Register/verify those identities through the normal Agent Mail workflow before
-editing. Process readiness does not establish authentication or successful
-model execution.
+The second field is the slot's Agent Mail name, the last is its herdr pane ID.
+Process readiness does not establish authentication or successful model
+execution.
 
 ## Prepare work directly from a verified launch
 
-There is no need to copy pane IDs into the work preparer. Supply the original
-launch intent and explicitly map each launched slot to its Agent Mail identity:
+Supply the original launch intent; each launched slot's Agent Mail identity
+defaults to the one launch registered:
 
 ```bash
 acfs swarm launch --prepare-batch ./handoff \
   --receipt "$HOME/implementation-launch.json" \
-  --scopes-file scopes.json --roles implementation,documentation \
-  --identity '1:RedFox' --identity '2:BlueLake'
+  --scopes-file scopes.json --roles implementation,documentation
 ```
 
-This reads the private launch intent and result, rechecks the recorded native
-process, stable pane, session creation time, tmux server PID, and repository
-working directory, then delegates to the installed scope-aware packet preparer.
-Repository, session, pane and provider choices come only from the saved launch;
-there is no handoff override that can retarget another session. Provide one
-identity for every launched slot, including slots that may be idle. Names are
-explicit operator input, not verified Agent Mail registrations.
+`--identity SLOT:NAME` overrides the mapping; give one for every launched slot,
+including slots that may be idle. `launch.agent_mail_registration_verified` is
+true only when every name is the one launch registered.
 
-The original slot mapping is preserved even when NTM groups providers by type.
+This reads the private launch intent and result, rechecks each recorded agent
+through herdr (pane, tab, terminal, shell PID, native process and repository
+working directory), then delegates to the installed scope-aware packet preparer.
+Repository, workspace, pane and provider choices come only from the saved launch;
+there is no handoff override that can retarget another workspace.
+
+**Until acfs-qzc (K5) lands,** the installed packet preparer still expects tmux
+pane IDs (`%N`) and refuses herdr pane IDs, so this handoff stops at the
+preparer.
+
 Only selected work produces packets. Use `--assignments assignments.json` instead
 of `--scopes-file` to prepare saved assignments, including reports with idle-slot
 holes. `--ready-file`, `--triage-file`, `--beads-file`, `--no-live-context` and the
@@ -80,7 +95,7 @@ The handoff does not spawn, send prompts, claim Beads or acquire reservations.
 It rechecks the launch again after preparation. A changed agent causes failure
 without advertising a usable handoff; any already-written bundle is retained for
 inspection. Missing or unconfirmed launch receipts never trigger a replacement
-launch or adoption of arbitrary same-named panes. Existing output is not replaced.
+launch or adoption of arbitrary agents. Existing output is not replaced.
 Review every generated packet and then use the returned `preview_command` for
 the separate receipt-checked dispatch workflow below.
 
@@ -91,7 +106,7 @@ no agents were started and no work was dispatched.
 
 ## Dispatch reviewed work to the original launched agents
 
-Preparation from a launch now returns this preview command:
+Preparation from a launch returns this preview command:
 
 ```bash
 acfs swarm launch --dispatch-batch ./handoff/batch.json \
@@ -99,17 +114,18 @@ acfs swarm launch --dispatch-batch ./handoff/batch.json \
 ```
 
 The preview validates every packet using the installed packet-delivery module,
-checks that each target belongs to the recorded launch, and verifies original
-native process/session identity for each pending delivery. It does not send
-prompts or create delivery receipts. Its `send_command` requires a hash binding
-**the launch request and original targets plus the batch and every packet**.
-A hash from the lower-level packet dispatcher does not authorize this command.
+checks that each target belongs to the recorded launch, and rechecks each
+pending delivery's original agent through herdr. It does not send prompts or
+create delivery receipts. Its `send_command` requires a hash binding **the
+launch request and original targets plus the batch and every packet**. A hash
+from the lower-level packet dispatcher does not authorize this command.
 
-Use that returned command only after reviewing the packet Markdown and the
-slot-to-pane mapping. Each new submission rechecks the original native target,
-then uses the existing single-packet sender's live ready-queue check, NTM dry run,
-private durable intent, exact payload hash and stdin transport. It does not create
-sessions, register identities, claim Beads or acquire reservations.
+**Delivery still runs through NTM** (`ntm --robot-send` and its receipts) until
+acfs-qzc (K5) moves it to herdr. Use the returned command only after reviewing the
+packet Markdown and the slot-to-pane mapping. Each new submission rechecks the
+original agent, then uses the existing single-packet sender's live ready-queue
+check, private durable intent, exact payload hash and stdin transport. It does
+not create workspaces, register identities, claim Beads or acquire reservations.
 
 Dispatch is sequential, not transactional. An uncertain submission or failed
 identity check stops the batch, retains earlier submissions, and marks later
@@ -123,15 +139,15 @@ between invocations: an absent receipt cannot prove a previous send did not occu
 Historical submission receipts can be queried after the original agents exit;
 new work still requires the original live identities. A missing upstream receipt,
 wrong operation/payload/target, or malformed response stays `unconfirmed` and
-never authorizes resending. `submitted` means matching NTM submission evidence,
+never authorizes resending. `submitted` means matching submission evidence,
 not task execution or completion. `submission_may_have_occurred` flags uncertain
 child execution even when no valid result was returned.
 
-The native identity check and NTM send are separate operations, not an atomic
+The identity check and the send are separate operations, not an atomic
 compare-and-send. Do not restart agents or replace panes during dispatch. This
 path detects identity changes at its checks but cannot eliminate that final race.
 The launch receipt directory lock excludes concurrent launch-aware dispatchers
-using the same directory, not unrelated NTM callers or all users on the machine.
+using the same directory, not unrelated callers or all users on the machine.
 
 Dispatch exit codes are `0` for a valid preview or confirmed submissions, `1`
 for an unconfirmed submission, and `2` for invalid evidence or a failed preflight.
@@ -145,20 +161,29 @@ The owned receipt parent must already exist and must not be writable by other
 users. Receipts use create-only mode-0600 files; path components and existing
 files cannot be symlinks. An exclusive kernel lock on the receipt directory
 serializes launches using that directory. This is not a machine-wide quota:
-other users or NTM callers can still launch work independently.
+other users or herdr callers can still start agents independently.
 
-The intent is fsynced **before** the real NTM spawn. Full verified success writes
-a separate private `<receipt>.result.json`. Both files are immutable to this
-command. Repeating the same request with an existing intent only verifies the
-saved stable panes; it never invokes spawn or re-runs admission as authority to
-spawn. Replaced sessions, shells and unavailable panes return `unconfirmed`.
+The intent is fsynced **before** the workspace is created. Full verified success
+writes a separate private `<receipt>.result.json` (schema
+`acfs.swarm-launch.v2`). Both files are immutable to this command. Repeating the
+same request with an existing intent only verifies the saved agents; it never
+spawns or re-runs admission as authority to spawn.
+
+Identity is the pane, not the agent's name. herdr can drop an agent's name, for
+example after a Codex context compaction or `codex resume`; a recorded agent whose
+pane, tab, terminal, shell PID and kind still match stays `ready`, and its
+`live` report says `name_lost: true` with the `rename_command`
+(`herdr agent rename <pane> <name>`) to run. Reconciliation never runs it. A new
+terminal or shell in a recorded pane, a missing agent, a shell, or a different
+repository returns `unconfirmed`.
 
 A lost response, timeout, signal, partial startup or failed confirmation can
-leave a working or partial session and an intent without a result. It remains
-`unconfirmed`, and ACFS deliberately does not adopt arbitrary panes based only
-on the session name. Inspect that session manually. Preserve receipts; changing
-the receipt path or deleting an intent is a new launch request, not recovery.
-No session is automatically killed, restarted or cleaned up after failure.
+leave a working or partial workspace and an intent without a result. It remains
+`unconfirmed`, and the error names the workspace label to inspect. Agent Mail
+identities may already be registered for agents that started. Preserve receipts;
+changing the receipt path or deleting an intent is a new launch request, not
+recovery. No workspace or agent is automatically closed, restarted or cleaned
+up after failure.
 
 Exit codes: `0` for an admitted preview or fully verified ready agents, `1` for
 an uncertain launch/reconciliation, `2` for validation, admission or preflight
@@ -172,24 +197,24 @@ python3 -B tests/unit/test_swarm_launch.py
 python3 -B tests/unit/test_swarm_launch_handoff.py
 ```
 
-The regression suites execute the actual Bash/Python launcher against executable
-planner/NTM/tmux contract fixtures. They cover both admissions, exact agent mix,
-original-slot mapping, private receipts, directory exclusion, unready/native
-process failures, response loss and no-relaunch recovery. Handoff and dispatch
-tests also exercise the actual allocator, preparer and packet sender from a
-complete checkout, including receipt-only recovery after native agents exit.
-They do not exercise installed providers, live authentication or a production VPS.
+The regression suites execute the actual Bash/Python launcher, and the real
+`herdr_agents.sh` it calls, against executable planner/herdr/`am` contract
+fixtures. They cover admission, preflight, exact agent mix, original-slot
+mapping, an agent waiting at a dialog, a lost name, replaced terminals, private
+receipts, directory exclusion, response loss and no-relaunch recovery. The
+tests that run the real packet preparer are skipped until acfs-qzc (K5). They do
+not exercise installed providers, live authentication or a production VPS.
 
 ## Lost startup confirmation and receipt-only reconciliation
 
 Use `acfs swarm launch --reconcile --receipt /absolute/path/launch.json` to
 verify an existing launch without retyping its original arguments. This command
-only inspects saved evidence and live native pane identities; it never launches
-agents or sends work.
+only inspects saved evidence and live herdr state; it never launches agents,
+renames them or sends work.
 
 When the original durable intent exists but its result is missing, use
 `acfs swarm launch --recover --receipt /absolute/path/launch.json` to preview
-explicit adoption of the current session. Adoption needs a separate recovery
-digest and `--adopt`. It never retries spawn or replaces an existing result.
-See [launch recovery](swarm-launch-recovery.md) for the identity checks,
-provenance limitations, and return path to scoped work-packet preparation.
+explicit adoption of the agents in the launch's workspace. Adoption needs a
+separate recovery digest and `--adopt`. It never retries spawn or replaces an
+existing result. See [launch recovery](swarm-launch-recovery.md) for the identity
+checks, provenance limitations, and return path to scoped work-packet preparation.

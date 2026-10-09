@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Explicitly adopt observed native panes after an unconfirmed ACFS launch.
+"""Explicitly adopt observed native agents after an unconfirmed ACFS launch.
 
 This is not evidence that the original spawn succeeded. The operator approves
-one exact observed topology. This command never invokes NTM or starts, stops,
-interrupts, or sends input to an agent. Existing results are never replaced.
+one exact observed topology: the agents in the herdr workspace that carries
+this launch's label. This command never starts agents, and never stops,
+interrupts, renames or sends input to one. Existing results are never replaced.
 """
 import argparse
 from collections import Counter
@@ -24,12 +25,14 @@ import sys
 import tempfile
 import time
 
-SCHEMA = "acfs.swarm-launch.v1"
-RECOVERY_SCHEMA = "acfs.swarm-launch-recovery.v1"
+SCHEMA = "acfs.swarm-launch.v2"
+RECOVERY_SCHEMA = "acfs.swarm-launch-recovery.v2"
 LIMIT = 1024 * 1024
-FORMAT = "\t".join(("#{session_name}", "#{session_id}", "#{session_created}",
-    "#{pane_id}", "#{pane_pid}", "#{pid}", "#{pane_current_path}",
-    "#{pane_dead}", "#{pane_current_command}", "#{window_index}", "#{pane_index}"))
+# The same identifier rules as swarm_launch.sh.
+HERDR_ID = r"[A-Za-z0-9][A-Za-z0-9_:.-]{0,63}"
+TERMINAL_ID = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
+HERDR_NAME = r"[a-z][a-z0-9_-]{0,31}"
+MAIL_NAME = r"[A-Za-z][A-Za-z0-9_-]{0,63}"
 PROFILES = ("balanced", "codex-heavy", "review-heavy", "docs-heavy")
 WORKLOADS = ("light", "standard", "heavy")
 
@@ -145,7 +148,6 @@ def validate_request(intent, receipt):
     directory(clean_path(request["repo"]))
     require(isinstance(request["session"], str)
             and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", request["session"])
-            and "--" not in request["session"]
             and request["profile"] in PROFILES and request["workload"] in WORKLOADS
             and type(request["accept_warnings"]) is bool, "Invalid saved launch options.")
     agents = request["agents"]
@@ -173,7 +175,7 @@ def run(argv, repo, timeout):
             require(os.fstat(out.fileno()).st_size + os.fstat(err.fileno()).st_size <= LIMIT,
                     "Pane observation exceeds 1 MiB.")
             out.seek(0)
-            require(process.returncode == 0, "Unable to observe the exact saved session.")
+            require(process.returncode == 0, "Unable to observe the launch's herdr workspace.")
             return out.read(LIMIT + 1)
         finally:
             try:
@@ -183,44 +185,84 @@ def run(argv, repo, timeout):
             process.wait()
 
 
+def workspace_label(request):
+    # Must match swarm_launch.sh: the label carries the intent's review hash.
+    return "swarm-" + request["session"] + "-" + digest(encode({"schema": SCHEMA, "request": request}))[:12]
+
+
+def herdr_result(herdr, args, request, timeout):
+    value = parse(run([herdr, *args], request["repo"], timeout))
+    require(isinstance(value, dict) and isinstance(value.get("result"), dict), "Unrecognized herdr observation.")
+    return value["result"]
+
+
 def observe(request, timeout):
-    tmux = shutil.which("tmux")
-    require(tmux is not None, "tmux is unavailable.")
-    data = run([os.path.abspath(tmux), "list-panes", "-s", "-t",
-                "=" + request["session"], "-F", FORMAT], request["repo"], timeout)
-    rows = data.decode("utf-8").splitlines()
-    require(len(rows) == len(request["agents"]), "Observed pane count does not match the saved launch.")
-    panes = []
+    """The launch's agents, keyed by pane. Names are reported, never trusted:
+    herdr can drop an agent's name (acfs-i7p); the tab label keeps the Agent
+    Mail name spawn gave it."""
+    found = shutil.which("herdr")
+    require(found is not None, "herdr is unavailable.")
+    herdr = os.path.abspath(found)
+    label = workspace_label(request)
+    workspaces = herdr_result(herdr, ["workspace", "list"], request, timeout).get("workspaces")
+    require(isinstance(workspaces, list), "Unrecognized herdr observation.")
+    matches = [w for w in workspaces if isinstance(w, dict) and w.get("label") == label]
+    require(len(matches) == 1 and isinstance(matches[0].get("workspace_id"), str)
+            and re.fullmatch(HERDR_ID, matches[0]["workspace_id"]),
+            "Exactly one herdr workspace must carry this launch's label (" + label + ").")
+    workspace_id = matches[0]["workspace_id"]
+    tabs = herdr_result(herdr, ["tab", "list", "--workspace", workspace_id], request, timeout).get("tabs")
+    agents = herdr_result(herdr, ["agent", "list"], request, timeout).get("agents")
+    require(isinstance(tabs, list) and isinstance(agents, list), "Unrecognized herdr observation.")
+    labels = {t.get("tab_id"): t.get("label") for t in tabs if isinstance(t, dict)}
+    rows = [a for a in agents if isinstance(a, dict) and a.get("workspace_id") == workspace_id]
+    require(len(rows) == len(request["agents"]), "Observed agent count does not match the saved launch.")
+    observed = []
     for row in rows:
-        fields = row.split("\t")
-        require(len(fields) == 11, "Unrecognized pane observation.")
-        session, sid, created, pane, pid, server, cwd, dead, kind, window, index = fields
-        require(session == request["session"] and re.fullmatch(r"\$[0-9]+", sid)
-                and re.fullmatch(r"%[0-9]+", pane)
-                and all(re.fullmatch(r"[0-9]{1,20}", v) for v in (created, pid, server, window, index))
-                and int(pid) > 0 and int(server) > 0 and int(created) > 0
-                and dead == "0" and kind in ("claude", "codex"),
-                "Every observed pane must be a live native agent in the saved session.")
-        current, repo = clean_path(cwd).resolve(strict=True), Path(request["repo"])
-        require(current == repo or repo in current.parents, "A native pane is outside the saved repository.")
-        panes.append({"session_id": sid, "session_created": created, "pane": pane,
-            "pane_pid": pid, "server_pid": server, "agent_type": kind,
-            "position": (int(window), int(index))})
-    require(len({p["pane"] for p in panes}) == len(panes)
-            and len({p["position"] for p in panes}) == len(panes)
-            and len({p["pane_pid"] for p in panes}) == len(panes), "Observed panes are not distinct.")
-    require(len({(p["session_id"], p["session_created"], p["server_pid"]) for p in panes}) == 1,
-            "Observed panes do not belong to one stable session.")
-    require(Counter(p["agent_type"] for p in panes)
+        require(row.get("agent") in ("claude", "codex")
+                and all(isinstance(row.get(k), str) and re.fullmatch(HERDR_ID, row[k]) for k in ("pane_id", "tab_id"))
+                and re.fullmatch(r".*:t[0-9A-Za-z]{1,12}", row["tab_id"])
+                and isinstance(row.get("terminal_id"), str) and re.fullmatch(TERMINAL_ID, row["terminal_id"]),
+                "Every observed agent must be a live native agent in the launch workspace.")
+        mail_name = labels.get(row["tab_id"])
+        require(isinstance(mail_name, str) and re.fullmatch(MAIL_NAME, mail_name)
+                and re.fullmatch(HERDR_NAME, mail_name.lower()),
+                "An agent's tab no longer carries its Agent Mail name; recovery will not guess it.")
+        require(row.get("name") in (None, "", "-", mail_name.lower()),
+                "An agent's herdr name differs from its tab's Agent Mail name; recovery will not guess.")
+        current, repo = clean_path(row.get("cwd")).resolve(strict=True), Path(request["repo"])
+        require(current == repo or repo in current.parents, "A native agent is outside the saved repository.")
+        info = herdr_result(herdr, ["pane", "process-info", "--pane", row["pane_id"]], request, timeout).get("process_info")
+        require(isinstance(info, dict) and info.get("pane_id") == row["pane_id"]
+                and type(info.get("shell_pid")) is int and info["shell_pid"] > 0
+                and isinstance(info.get("foreground_processes"), list)
+                and any(isinstance(p, dict) and p.get("name") == row["agent"] for p in info["foreground_processes"]),
+                "An observed pane is not running the native agent it reports.")
+        observed.append({"agent_type": row["agent"], "agent_mail_name": mail_name, "herdr_name": mail_name.lower(),
+            "workspace_id": workspace_id, "workspace_label": label, "tab_id": row["tab_id"],
+            "pane_id": row["pane_id"], "terminal_id": row["terminal_id"], "shell_pid": info["shell_pid"],
+            "launched_state": "blocked" if row.get("agent_status") == "blocked" else "ready",
+            # herdr counts tabs past 9 with letters (w1:t9, w1:tA, ...); base 36
+            # orders those the way herdr created them.
+            "order": int(row["tab_id"].rsplit(":t", 1)[1], 36)})
+    for key in ("pane_id", "tab_id", "terminal_id", "shell_pid", "herdr_name", "order"):
+        require(len({o[key] for o in observed}) == len(observed), "Observed agents are not distinct.")
+    require(Counter(o["agent_type"] for o in observed)
             == Counter(a["agent_type"] for a in request["agents"]), "Observed native-agent mix changed.")
-    ordered = sorted(panes, key=lambda p: p["position"])
-    by_type = {kind: iter([p for p in ordered if p["agent_type"] == kind]) for kind in ("claude", "codex")}
+    # Sequential start made tab creation order the slot order.
+    ordered = sorted(observed, key=lambda o: o["order"])
+    by_type = {kind: iter([o for o in ordered if o["agent_type"] == kind]) for kind in ("claude", "codex")}
     targets = []
     for slot, agent in enumerate(request["agents"], 1):
-        pane = next(by_type[agent["agent_type"]]).copy()
-        pane.pop("position")
-        targets.append({**pane, "slot": slot, "agent_name": agent["agent_name"]})
+        target = next(by_type[agent["agent_type"]]).copy()
+        target.pop("order")
+        targets.append({**target, "slot": slot, "agent_name": agent["agent_name"]})
     return targets
+
+
+def identity(targets):
+    """What approval binds: everything but the volatile launch state."""
+    return [{k: v for k, v in t.items() if k != "launched_state"} for t in targets]
 
 
 def publish(fd, name, value):
@@ -253,23 +295,24 @@ def main(arguments=None):
         no_result(fd, result_name)
         targets = observe(request, args.timeout)
         approval = {"schema": RECOVERY_SCHEMA, "intent_sha256": digest(raw),
-            "request": request, "targets": targets,
+            "request": request, "targets": identity(targets),
             "policy_sha256": digest(Path(__file__).read_bytes())}
         review_hash = digest(encode(approval))
         require(args.expect_sha256 is None or args.expect_sha256 == review_hash,
                 "Recovery request or native pane identities changed; preview recovery again.")
         report = {"schema": RECOVERY_SCHEMA, "status": "preview", "receipt": str(receipt),
             "review_sha256": review_hash, "targets": targets, "starts_agents": False,
-            "work_dispatched": False, "agent_mail_registered": False,
+            "work_dispatched": False, "agent_mail_registered": True,
             "original_launch_verified": False, "result_created": False,
-            "note": "Approval adopts these current native panes, not proof of the original spawn. "
-                    "Names are intended packet identities, not verified Agent Mail registrations."}
+            "note": "Approval adopts these current native agents, not proof of the original spawn. "
+                    "Agent Mail names are read from each agent's tab label, where spawn put them."}
         if not args.adopt:
             report["adopt_command"] = shlex.join(["acfs", "swarm", "launch", "--recover",
                 "--receipt", str(receipt), "--timeout", str(args.timeout),
                 "--adopt", "--expect-sha256", review_hash])
         else:
-            require(observe(request, args.timeout) == targets, "Native pane identities changed during recovery.")
+            targets = observe(request, args.timeout)
+            require(identity(targets) == approval["targets"], "Native agent identities changed during recovery.")
             current, current_info = read_private(fd, receipt.name)
             require(current == raw and os.path.samestat(current_info, intent_info), "Launch intent changed during recovery.")
             directory(receipt.parent)
@@ -281,10 +324,11 @@ def main(arguments=None):
                     "adopted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}})
             report.update(status="ready", result_created=True)
             try:
-                require(observe(request, args.timeout) == targets, "Native panes changed after result publication.")
+                require(identity(observe(request, args.timeout)) == approval["targets"],
+                        "Native agents changed after result publication.")
             except (RecoveryError, OSError, UnicodeError) as exc:
                 report.update(status="unconfirmed", error=str(exc) if isinstance(exc, RecoveryError)
-                              else "Unable to recheck native panes. Preserve the published result.")
+                              else "Unable to recheck native agents. Preserve the published result.")
         report["recovery"] = "Preserve the launch intent and result. Use ordinary launch reconciliation " \
                              "before preparing work. Never remove receipts to force a duplicate launch."
     print(encode(report).decode(), end="")

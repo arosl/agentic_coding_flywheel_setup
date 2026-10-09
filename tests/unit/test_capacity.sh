@@ -133,7 +133,7 @@ EOF
 
 test_high_capacity_json() {
     local output
-    output="$(run_capacity_json_fixture high_capacity_json 64 268435456 314572800 true true --profile 25-agents --recommend-ntm)"
+    output="$(run_capacity_json_fixture high_capacity_json 64 268435456 314572800 true true --profile 25-agents --recommend-herdr)"
 
     jq -e '
       .schema_version == 1 and
@@ -144,10 +144,12 @@ test_high_capacity_json() {
       .capacity.safe_agent_count == 64 and
       .capacity.recommended_agent_count == 44 and
       .profile_check.status == "pass" and
-      .ntm.agent_count == 44 and
-      (.ntm.profiles | length) == 4 and
-      (.ntm.profiles[] | select(.agents == 25 and .status == "pass" and (.command | contains("ntm spawn myproject --label swarm-25")))) and
-      (.ntm.profiles[] | select(.agents == 50 and .status == "warn" and (.rch_policy | contains("rch exec --"))))
+      .herdr.recommended == true and
+      .herdr.agent_count == 44 and
+      (.herdr.profiles | length) == 4 and
+      (.herdr.profiles[] | select(.agents == 25 and .status == "pass" and .command == "acfs agents spawn --claude=10 --codex=10 --agy=5")) and
+      (.herdr.profiles[] | select(.agents == 50 and .status == "warn" and (.rch_policy | contains("rch exec --")))) and
+      (has("ntm") | not)
     ' <<<"$output" >/dev/null || return 1
 
     pass "high_capacity_json"
@@ -229,9 +231,9 @@ test_human_output() {
         ACFS_CAPACITY_DISK_AVAILABLE_KB=104857600 \
         ACFS_CAPACITY_RCH_AVAILABLE=true \
         ACFS_CAPACITY_HERDR_AVAILABLE=false \
-        bash "$CAPACITY_SH" --workload standard --profile 5 --recommend-ntm
+        bash "$CAPACITY_SH" --workload standard --profile 5 --recommend-herdr
     )"
-    write_fixture_artifact human_output 8 33554432 104857600 true false --workload standard --profile 5 --recommend-ntm
+    write_fixture_artifact human_output 8 33554432 104857600 true false --workload standard --profile 5 --recommend-herdr
     write_output_artifact "human_output" "txt" "$output"
 
     grep -Fq "ACFS Capacity Report" <<<"$output" || return 1

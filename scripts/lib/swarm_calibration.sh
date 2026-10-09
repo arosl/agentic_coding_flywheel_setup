@@ -510,7 +510,7 @@ swarm_calibration_build_report() {
               if ($valid | length) == 0 then
                 ["acfs swarm simulate --mock-rehearsal --artifact-dir <dir>", "acfs swarm calibration --artifact-dir <dir>"]
               elif $posture == "too_aggressive" or $posture == "aggressive_near_limit" then
-                ["acfs swarm simulate --mock-rehearsal --counts 10 --artifact-dir <dir>", "acfs capacity --json --recommend-ntm"]
+                ["acfs swarm simulate --mock-rehearsal --counts 10 --artifact-dir <dir>", "acfs capacity --json --recommend-herdr"]
               else
                 ["acfs swarm simulate --mock-rehearsal --counts 10 --artifact-dir <dir>", "acfs swarm calibration --artifact-dir <dir>"]
               end

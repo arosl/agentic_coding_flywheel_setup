@@ -516,7 +516,7 @@ swarm_sim_capacity_json() {
 
     if [[ -f "$SWARM_CAPACITY_SCRIPT" ]]; then
         set +e
-        output="$(bash "$SWARM_CAPACITY_SCRIPT" --json --workload "$SWARM_SIM_WORKLOAD" --profile "${count}-agents" --recommend-ntm 2>/dev/null)"
+        output="$(bash "$SWARM_CAPACITY_SCRIPT" --json --workload "$SWARM_SIM_WORKLOAD" --profile "${count}-agents" --recommend-herdr 2>/dev/null)"
         exit_status=$?
         set -e
         if [[ $exit_status -eq 0 && -n "$output" ]] && printf '%s' "$output" | "$jq_bin" . >/dev/null 2>&1; then
@@ -539,7 +539,7 @@ swarm_sim_capacity_json() {
                 requested_agents: $count,
                 reason: "capacity.sh unavailable; scenario shape only"
             },
-            ntm: {agent_count: $count, profiles: []}
+            herdr: {agent_count: $count, profiles: []}
         }'
 }
 

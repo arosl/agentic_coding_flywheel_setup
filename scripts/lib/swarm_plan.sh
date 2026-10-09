@@ -187,7 +187,7 @@ swarm_plan_collect_capacity_json() {
         --json \
         --workload "$SWARM_PLAN_WORKLOAD" \
         --profile "${SWARM_PLAN_AGENTS}-agents" \
-        --recommend-ntm
+        --recommend-herdr
 }
 
 # A trailing sentinel preserves whitespace through command substitution. Bash
@@ -403,7 +403,7 @@ $status as $s
        elif ($c.status == "warn" or $c.profile_check.status == "warn") then "Capacity model reports warnings requiring review"
        else "Requested count is within the capacity recommendation" end);
       ($c.recommendations // []);
-      ["acfs capacity --json --profile " + ($requested_agents | tostring) + "-agents --recommend-ntm"]
+      ["acfs capacity --json --profile " + ($requested_agents | tostring) + "-agents --recommend-herdr"]
     ),
     check(
       "host_pressure";
@@ -417,7 +417,7 @@ $status as $s
         if ($host_cpu_count > 0 and $host_load_ratio >= 1.25) then "load_1m=" + ($host_load_1m | tostring) + " cpu_count=" + ($host_cpu_count | tostring) else empty end,
         if ($host.mem_available_kb != null and $host_mem_available_kb < 4194304) then "mem_available_kb=" + ($host_mem_available_kb | tostring) else empty end
       ]);
-      ["acfs swarm status --json", "acfs capacity --json --recommend-ntm"]
+      ["acfs swarm status --json", "acfs capacity --json --recommend-herdr"]
     ),
     check(
       "rch_pressure";
@@ -556,11 +556,9 @@ $status as $s
       mix: $mix,
       command:
         (if ($launch_agents // 0) > 0 then
-          "ntm spawn myproject --label swarm-" + ($launch_agents | tostring)
-          + " --cc=" + ($mix.cc | tostring)
-          + " --cod=" + ($mix.cod | tostring)
+          "acfs agents spawn --claude=" + ($mix.cc | tostring)
+          + " --codex=" + ($mix.cod | tostring)
           + " --agy=" + ($mix.agy | tostring)
-          + " --assign --stagger-mode=smart"
         else null end)
     },
     rch_policy: {
@@ -609,7 +607,7 @@ swarm_plan_jq_error_report() {
                     status: "fail",
                     summary: $message,
                     details: [],
-                    commands: ["acfs swarm status --json", "acfs capacity --json --recommend-ntm"]
+                    commands: ["acfs swarm status --json", "acfs capacity --json --recommend-herdr"]
                 }
             ],
             launch_profile: {recommended: false, not_executed: true, agent_count: null, label: null, mix: null, command: null},
@@ -621,7 +619,7 @@ swarm_plan_jq_error_report() {
                 does_not: ["kill sessions", "delete files", "release reservations", "mutate Beads"]
             },
             warnings: [$message],
-            next_commands: ["acfs swarm status --json", "acfs capacity --json --recommend-ntm"],
+            next_commands: ["acfs swarm status --json", "acfs capacity --json --recommend-herdr"],
             examples: []
         }'
 }

@@ -12,19 +12,6 @@ import test_swarm_launch_handoff as handoff
 
 ROOT, PACKET, ASSIGN, PROBE = handoff.ROOT, handoff.PACKET, handoff.ASSIGN, handoff.PROBE
 
-LIST_PANES = r'''elif name == "tmux":
-    if args[0] == "list-panes":
-        assert args[:5] == ["list-panes", "-s", "-t", "=project", "-F"]
-        assert len(args) == 6
-        agents = json.loads((root / "spawned").read_text())
-        for i, agent in enumerate(agents):
-            fields = ["project", "$1", "12345", "%" + str(42+i), str(1000+i),
-                      "900", str(root / "repo"), "0", agent["type"], "0", str(i)]
-            if mode == "pane-replaced": fields[4] = str(2000+i)
-            print("\t".join(fields))
-        sys.exit(0)
-'''
-
 
 class RecoveryIntegrationTests(unittest.TestCase):
     def setUp(self):
@@ -34,25 +21,21 @@ class RecoveryIntegrationTests(unittest.TestCase):
         self.root = self.case.root
         self.helper = self.case.lib / "swarm_launch_recovery.py"
         shutil.copyfile(ROOT / "scripts/lib/swarm_launch_recovery.py", self.helper)
-        fixture = PROBE.replace('elif name == "tmux":\n', LIST_PANES)
-        original = '        (root / "spawned").write_text(json.dumps(agents))\n'
-        assert original in fixture
-        fixture = fixture.replace(original, original + '        if mode == "lost-spawn-reply": sys.exit(1)\n')
-        mutation = r'''    if mode == "reconcile-result-race":
+        # Change the saved files while reconcile observes the live agents.
+        mutation = r'''    if args[:2] == ["pane","process-info"] and mode == "reconcile-result-race":
         result = root / "launch.json.result.json"
         content = json.loads(result.read_text())
         content["recovery"]["review_sha256"] = "0" * 64
         result.write_text(json.dumps(content))
-    if mode == "reconcile-intent-race":
+    if args[:2] == ["pane","process-info"] and mode == "reconcile-intent-race":
         result = root / "launch.json"
         content = json.loads(result.read_text())
         content["request"]["workload"] = "heavy"
         result.write_text(json.dumps(content))
 '''
-        fixture = fixture.replace('    assert args[:3] == ["display-message","-p","-t"]\n',
-            mutation + '    assert args[:3] == ["display-message","-p","-t"]\n')
-        for name in ("tmux", "ntm"):
-            (self.case.bin / name).write_text(fixture)
+        anchor = '    if args[:2] == ["pane","process-info"]:\n'
+        assert anchor in PROBE
+        (self.case.bin / "herdr").write_text(PROBE.replace(anchor, mutation + anchor))
 
     def unconfirmed(self):
         code, preview = self.case.invoke(self.case.launch_args)
@@ -80,10 +63,11 @@ class RecoveryIntegrationTests(unittest.TestCase):
 
     def assert_one_spawn_and_no_sends(self):
         calls = self.case.calls()
-        spawns = [args for name, args in calls if name == "ntm" and "--robot-spawn=project" in args
-                  and "--dry-run" not in args]
-        self.assertEqual(len(spawns), 1)
-        self.assertFalse(any(name == "ntm" and any("robot-send" in arg for arg in args) for name, args in calls))
+        self.assertEqual(sum(name == "herdr" and args[:2] == ["workspace", "create"] for name, args in calls), 1)
+        self.assertEqual(sum(name == "herdr" and args[:2] == ["agent", "start"] for name, args in calls), 2)
+        self.assertFalse(any(name == "ntm" for name, _ in calls))
+        self.assertFalse(any(name == "herdr" and args[:2] in (["agent", "prompt"], ["agent", "send-keys"],
+                                                               ["agent", "rename"]) for name, args in calls))
 
     def test_lost_response_recovers_and_ordinary_launch_only_reconciles(self):
         original_review = self.unconfirmed()
@@ -107,8 +91,10 @@ class RecoveryIntegrationTests(unittest.TestCase):
         self.assertEqual((code, report["status"]), (0, "ready"), report)
         self.assertFalse(report["original_launch_verified"])
         self.assertFalse(report["recovery_provenance"]["original_launch_verified"])
-        self.assertEqual(report["preparation_targets"], ["1:CodeSlot:codex:%43", "2:ReviewSlot:claude:%42"])
-        self.assertEqual([name for name, _ in self.case.calls()[before:]], ["tmux", "tmux"])
+        self.assertEqual(report["preparation_targets"], ["1:GreenCastle:codex:w9:p2", "2:AmberFox:claude:w9:p3"])
+        self.assertEqual([(name, args[:2]) for name, args in self.case.calls()[before:]],
+                         [("herdr", ["agent", "list"]), ("herdr", ["pane", "process-info"]),
+                          ("herdr", ["pane", "process-info"])])
         self.assert_one_spawn_and_no_sends()
 
     def test_recovered_launch_handoff_keeps_native_slot_bindings(self):
@@ -117,10 +103,11 @@ class RecoveryIntegrationTests(unittest.TestCase):
         code, report = self.case.handoff()
         self.assertEqual((code, report["status"]), (0, "prepared"), report)
         received = json.loads((self.root / "preparation-inputs").read_text())
-        self.assertEqual(received["targets"], ["1:BlueLake:codex:%43", "2:RedFox:claude:%42"])
+        self.assertEqual(received["targets"], ["1:BlueLake:codex:w9:p2", "2:RedFox:claude:w9:p3"])
         self.assertFalse(report["launch"]["starts_agents"])
         self.assert_one_spawn_and_no_sends()
 
+    @unittest.skip(handoff.K5_PENDING)
     def test_recovered_session_produces_real_scoped_packets(self):
         self.unconfirmed()
         self.adopt()

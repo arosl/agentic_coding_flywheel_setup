@@ -206,7 +206,7 @@ test_constrained_host_warns_when_recommended_tier_fails() {
       .calibration.posture == "too_aggressive" and
       .summary.valid_scenarios == 1 and
       .scenarios[0].classification == "model_too_aggressive" and
-      (.next_commands | index("acfs capacity --json --recommend-ntm"))
+      (.next_commands | index("acfs capacity --json --recommend-herdr"))
     ' <<< "$output" >/dev/null || return 1
 
     pass "constrained_host_warns_when_recommended_tier_fails"

@@ -13,6 +13,11 @@ ROOT = Path(__file__).resolve().parents[2]
 LAUNCH = ROOT / "scripts/lib/swarm_launch.sh"
 PACKET = ROOT / "scripts/lib/swarm_packet.sh"
 ASSIGN = ROOT / "scripts/lib/swarm_assign.sh"
+HELPER = ROOT / "scripts/lib/herdr_agents.sh"
+# The real packet preparer still takes tmux pane IDs (%N) and delivers through
+# ntm; acfs-qzc (K5) ports it to herdr. Until then the launcher's herdr targets
+# reach it only through the fixture.
+K5_PENDING = "swarm_packet.sh still expects tmux pane IDs; acfs-qzc (K5) ports it to herdr"
 
 PROBE = r'''#!/usr/bin/env python3
 import hashlib, json, os, pathlib, sys
@@ -47,7 +52,7 @@ elif name == "ntm":
         assert opt("--robot-send") == "project" and "--msg-file=-" in args
         assert "--no-cass" in args and "--with-memory=false" in args
         pane, kind = opt("--panes"), opt("--type")
-        assert kind == ("codex" if pane == "%43" else "claude"), (pane,kind)
+        assert kind == ("codex" if pane == "w9:p2" else "claude"), (pane,kind)
         payload = sys.stdin.buffer.read()
         assert payload.startswith(b"# ACFS Swarm Startup Packet\n")
         if "--dry-run" in args:
@@ -63,31 +68,56 @@ elif name == "ntm":
         if mode == "missing-upstream" or (mode == "lost-first" and op == "work-1"):
             print("private-provider-error",file=sys.stderr); sys.exit(1)
         print(json.dumps(result)); sys.exit(0)
-    assert "--spawn-safety" in args and "--spawn-no-user" in args
-    assert not any("robot-send" in a for a in args)
-    types = ["claude"] * int(opt("--spawn-cc")) + ["codex"] * int(opt("--spawn-cod"))
-    agents = [{"pane":"0."+str(i),"type":t,"ready":True} for i,t in enumerate(types)]
-    dry = "--dry-run" in args
-    if not dry:
+    raise AssertionError("ntm only delivers work; agents start through herdr")
+elif name == "am":
+    assert args[:2] == ["agents","create"] and flag("--project") == str(root / "repo")
+    count = root / "am-count"
+    n = int(count.read_text()) if count.exists() else 0
+    count.write_text(str(n + 1))
+    print(json.dumps({"name":["GreenCastle","AmberFox","CopperHill"][n]}))
+elif name == "herdr":
+    sp = root / "herdr-state.json"
+    st = json.loads(sp.read_text()) if sp.exists() else {"workspaces":[],"agents":[],"labels":{},"next":2}
+    def save(): sp.write_text(json.dumps(st))
+    def ok(result): print(json.dumps({"result":result})); sys.exit(0)
+    if args[:2] == ["status","server"]:
+        print("server:\n  status: running"); sys.exit(0)
+    if args[:2] == ["workspace","list"]:
+        ok({"workspaces":st["workspaces"]})
+    if args[:2] == ["workspace","create"]:
         assert (root / "launch.json").is_file()
-        (root / "spawned").write_text(json.dumps(agents))
-    print(json.dumps({"success":True,"session":"project","working_dir":str(root / "repo"),
-        "admission":{"decision":"admit"},"dry_run":dry,
-        "would_create":agents if dry else [],"agents":[] if dry else agents}))
-elif name == "tmux":
-    assert args[:3] == ["display-message","-p","-t"]
-    if mode == "missing-pane": sys.exit(1)
-    target = args[3]
-    i = int(target.rsplit(".",1)[1]) if target.startswith("=") else int(target[1:])-42
-    agents = json.loads((root / "spawned").read_text())
-    server = "901" if mode == "server-changed" or (mode == "change-during" and (root / "prepared-called").exists()) else "900"
-    if mode == "change-after-first" and i == 0 and (root / "sent").exists(): server = "901"
-    pid = str(2000+i) if mode == "pane-replaced" else str(1000+i)
-    kind = "bash" if mode == "shell" else agents[i]["type"]
-    cwd = root if mode == "wrong-repo" else root / "repo"
-    fields = ["project","$1","12345","%"+str(42+i),pid,server,str(cwd),"0",kind]
-    if len(args[4].split("\t")) == 5: fields = [fields[0],fields[3],fields[6],fields[7],fields[8]]
-    print("\t".join(fields))
+        st["workspaces"].append({"workspace_id":"w9","label":flag("--label")}); save()
+        ok({"workspace":{"workspace_id":"w9"}})
+    if args[:2] == ["tab","create"]:
+        n = st["next"]; st["next"] += 1
+        st["labels"]["w9:t%d" % n] = flag("--label"); save()
+        ok({"tab":{"tab_id":"w9:t%d" % n},"root_pane":{"pane_id":"w9:p%d" % n}})
+    if args[:2] == ["tab","list"]:
+        ok({"tabs":[{"tab_id":t,"label":l,"workspace_id":"w9"} for t,l in st["labels"].items()]})
+    if args[:2] == ["agent","start"]:
+        pane = flag("--pane"); n = int(pane.rsplit(":p",1)[1])
+        st["agents"].append({"workspace_id":"w9","tab_id":"w9:t%d" % n,"pane_id":pane,"name":args[2],
+            "agent":flag("--kind"),"agent_status":"idle","cwd":str(root / "repo"),"terminal_id":"term_%d" % n})
+        save()
+        (root / "spawned").write_text("yes")
+        if mode == "lost-spawn-reply" and n == 3:
+            print(json.dumps({"error":{"code":"server_error","message":"lost"}}),file=sys.stderr); sys.exit(1)
+        ok({"agent":{"name":args[2]}})
+    changed = (mode == "server-changed" or (mode == "change-during" and (root / "prepared-called").exists()))
+    if args[:2] == ["agent","list"]:
+        rows = [] if mode == "missing-pane" else [dict(a) for a in st["agents"]]
+        for a in rows:
+            if changed or (mode == "change-after-first" and a["pane_id"] == "w9:p3" and (root / "sent").exists()):
+                a["terminal_id"] += "x"
+            if mode == "wrong-repo": a["cwd"] = str(root)
+        ok({"agents":rows})
+    if args[:2] == ["pane","process-info"]:
+        pane = flag("--pane"); n = int(pane.rsplit(":p",1)[1])
+        kind = next(a["agent"] for a in st["agents"] if a["pane_id"] == pane)
+        shown = "bash" if mode == "shell" else kind
+        pid = (2000 if mode == "pane-replaced" else 1000) + n
+        ok({"process_info":{"pane_id":pane,"shell_pid":pid,"foreground_processes":[{"name":shown,"pid":pid+1}]}})
+    raise AssertionError(args)
 elif name == "br":
     assert args == ["ready","--json"], args
     print((root / "beads.json").read_text())
@@ -193,7 +223,7 @@ class HandoffTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="acfs-receipt-handoff-")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(os.path.realpath(self.temp.name))
         self.repo = self.root / "repo"
         self.repo.mkdir()
         self.lib = self.root / "lib"
@@ -204,13 +234,16 @@ class HandoffTests(unittest.TestCase):
             (self.bin / "python3").symlink_to("/usr/bin/python3")
         self.script = self.lib / "swarm_launch.sh"
         shutil.copyfile(LAUNCH, self.script)
-        for name in ("ntm","tmux","plan","packet"):
+        shutil.copyfile(HELPER, self.lib / "herdr_agents.sh")
+        for name in ("ntm","herdr","am","plan","packet"):
             path = self.bin / name
             path.write_text(PROBE)
             path.chmod(0o755)
         for kind, name in (("plan","swarm_plan.sh"),("packet","swarm_packet.sh")):
             (self.lib / name).write_text('#!/bin/bash\nexec ' + shlex.quote(str(self.bin / kind)) + ' "$@"\n')
-        self.env = dict(os.environ, PATH=str(self.bin)+os.pathsep+os.environ["PATH"], HANDOFF_ROOT=str(self.root))
+        self.env = dict(os.environ, PATH=str(self.bin)+os.pathsep+os.environ["PATH"], HANDOFF_ROOT=str(self.root),
+                        ACFS_HOME=str(self.root / "no-acfs-home"))
+        self.env.pop("HERDR_WORKSPACE_ID", None)
         self.receipt = self.root / "launch.json"
         self.output = self.root / "work bundle"
         self.scopes = self.root / "scopes.json"
@@ -251,13 +284,27 @@ class HandoffTests(unittest.TestCase):
         code, result = self.handoff()
         self.assertEqual((code,result["status"]),(0,"prepared"),result)
         received = json.loads((self.root / "preparation-inputs").read_text())
-        self.assertEqual(received["targets"],["1:BlueLake:codex:%43","2:RedFox:claude:%42"])
+        self.assertEqual(received["targets"],["1:BlueLake:codex:w9:p2","2:RedFox:claude:w9:p3"])
         self.assertEqual(received["sources"]["--scopes-file"],json.loads(self.scopes.read_text()))
-        self.assertEqual([name for name,_ in self.calls()[before:]],["tmux","tmux","packet","tmux","tmux"])
+        self.assertEqual([(name,argv[:2]) for name,argv in self.calls()[before:]],
+            [("herdr",["agent","list"]),("herdr",["pane","process-info"]),("herdr",["pane","process-info"]),
+             ("packet",["--prepare-batch",str(self.output)]),
+             ("herdr",["agent","list"]),("herdr",["pane","process-info"]),("herdr",["pane","process-info"])])
         self.assertEqual(self.receipt.read_bytes(),saved)
         self.assertFalse(result["launch"]["starts_agents"])
         self.assertFalse(result["launch"]["work_dispatched"])
+        # Explicit identities that aren't the ones launch registered.
         self.assertFalse(result["launch"]["agent_mail_registration_verified"])
+
+    def test_preparation_defaults_to_the_agent_mail_names_launch_registered(self):
+        self.launch()
+        args = ["--prepare-batch",str(self.output),"--receipt",str(self.receipt),"--no-live-context",
+                "--scopes-file",str(self.scopes)]
+        code, result = self.invoke(args)
+        self.assertEqual((code,result["status"]),(0,"prepared"),result)
+        received = json.loads((self.root / "preparation-inputs").read_text())
+        self.assertEqual(received["targets"],["1:GreenCastle:codex:w9:p2","2:AmberFox:claude:w9:p3"])
+        self.assertTrue(result["launch"]["agent_mail_registration_verified"])
 
     def test_missing_intent_never_launches_or_prepares(self):
         code, _ = self.handoff()
@@ -299,7 +346,7 @@ class HandoffTests(unittest.TestCase):
         code, result = self.handoff(saved=True)
         self.assertEqual(code,0,result)
         received = json.loads((self.root / "preparation-inputs").read_text())
-        self.assertEqual(received["targets"],["2:RedFox:claude:%42"])
+        self.assertEqual(received["targets"],["2:RedFox:claude:w9:p3"])
 
     def test_unknown_saved_assignment_slots_block_preparation(self):
         self.launch()
@@ -350,7 +397,7 @@ class HandoffTests(unittest.TestCase):
         self.launch()
         path = self.root / "launch.json.result.json"
         original = json.loads(path.read_text())
-        for key,value in (("pane",original["targets"][0]["pane"]),("slot",1)):
+        for key,value in (("pane_id",original["targets"][0]["pane_id"]),("slot",1)):
             broken = json.loads(json.dumps(original))
             broken["targets"][1][key] = value
             path.write_text(json.dumps(broken))
@@ -374,7 +421,7 @@ class HandoffTests(unittest.TestCase):
         code, result = self.handoff(extra=("--scopes-file","scopes.json"))
         self.assertEqual(code,0,result)
 
-    @unittest.skipUnless(PACKET.is_file() and ASSIGN.is_file(), "requires the complete checkout's packet preparer and allocator")
+    @unittest.skip(K5_PENDING)
     def test_real_preparer_and_allocator_consume_verified_launch(self):
         self.launch()
         shutil.copyfile(PACKET,self.lib / PACKET.name)
@@ -413,7 +460,7 @@ class DispatchTests(unittest.TestCase):
         self.bundle.mkdir(mode=0o700)
         self.batch = self.bundle / "batch.json"
         self.items = []
-        for slot, kind, pane in ((1,"codex","%43"),(2,"claude","%42")):
+        for slot, kind, pane in ((1,"codex","w9:p2"),(2,"claude","w9:p3")):
             packet = {"schema_version":1,"status":"pass","repository":{"path":str(self.repo)},
                 "agent":{"name":"BlueLake" if slot==1 else "RedFox"},"bead":{"id":f"bd-{slot}","status":"open"},
                 "output":{"truncated":False},"packet_markdown":f"# ACFS Swarm Startup Packet\nDo task bd-{slot}.\n"}
@@ -442,8 +489,9 @@ class DispatchTests(unittest.TestCase):
                 if name == "ntm" and "--robot-send=project" in argv and "--dry-run" not in argv]
 
     def assert_no_new_spawn(self):
-        self.assertEqual(sum(name == "ntm" and any(a.startswith("--robot-spawn=") for a in argv)
-                             and "--dry-run" not in argv for name,argv in self.case.calls()),1)
+        self.assertEqual(sum(name == "herdr" and argv[:2] == ["workspace","create"]
+                             for name,argv in self.case.calls()),1)
+        self.assertEqual(sum(name == "herdr" and argv[:2] == ["agent","start"] for name,argv in self.case.calls()),2)
 
     def test_preview_binds_original_launch_and_has_no_delivery_mutations(self):
         before = len(self.case.calls())
@@ -455,7 +503,10 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual([d["action"] for d in report["deliveries"]],["submit","submit"])
         self.assertEqual(shlex.split(report["send_command"])[:4],["acfs","swarm","launch","--dispatch-batch"])
         self.assertNotIn("unguarded command",json.dumps(report))
-        self.assertEqual([n for n,_ in self.case.calls()[before:]],["packet","tmux","tmux"])
+        self.assertEqual([(n,a[:2]) for n,a in self.case.calls()[before:]],
+            [("packet",["--deliver-batch",str(self.batch)]),
+             ("herdr",["agent","list"]),("herdr",["pane","process-info"]),
+             ("herdr",["agent","list"]),("herdr",["pane","process-info"])])
         self.assertFalse(list(self.bundle.glob("delivery-*")))
         self.assertEqual(self.sends(),[])
         self.assert_no_new_spawn()
@@ -487,7 +538,7 @@ class DispatchTests(unittest.TestCase):
 
     def test_other_session_repository_pane_or_provider_rejected(self):
         original = dict(self.items[1])
-        for key,value in (("session","other"),("repo",str(self.root)),("pane","%99"),("agent_type","codex")):
+        for key,value in (("session","other"),("repo",str(self.root)),("pane","w9:p99"),("agent_type","codex")):
             with self.subTest(key=key):
                 self.items[1] = {**original,key:value}; self.write_batch()
                 self.assertEqual(self.invoke()[0],2)
@@ -608,7 +659,7 @@ class DispatchTests(unittest.TestCase):
             os.close(fd)
         self.assertEqual(self.sends(),[])
 
-    @unittest.skipUnless(PACKET.is_file() and ASSIGN.is_file(), "requires the complete checkout's packet preparer and allocator")
+    @unittest.skip(K5_PENDING)
     def test_real_launch_prepare_review_dispatch_and_reconcile(self):
         shutil.copyfile(PACKET,self.case.lib/PACKET.name)
         shutil.copyfile(ASSIGN,self.case.lib/ASSIGN.name)

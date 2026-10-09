@@ -56,7 +56,7 @@ sample_inventory_fixture() {
       "last_probe_at": "$probe_at",
       "probe_source": "manual",
       "resources": {"cpu_count": 64, "mem_total_mib": 262144, "disk_available_mib": 524288},
-      "capacity": {"workload": "standard", "recommended_agents": 25, "safe_agents": 44, "source": "acfs capacity --json --recommend-ntm"},
+      "capacity": {"workload": "standard", "recommended_agents": 25, "safe_agents": 44, "source": "acfs capacity --json --recommend-herdr"},
       "rch": {"worker": false, "controller": true, "workers_total": 8, "workers_healthy": 8},
       "herdr": {"can_launch": true, "preferred_labels": ["swarm-25"]},
       "ru": {"can_sync_repos": true},

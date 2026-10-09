@@ -40,7 +40,7 @@ The planner accepts:
 | `requested_agents` | yes | CLI flag such as `--agents 25` or profile name such as `25-agents` |
 | `workload` | yes | `light`, `standard`, or `heavy`; same vocabulary as `capacity.sh` |
 | `swarm_status` | yes | `acfs swarm status --json` or `scripts/lib/swarm_status.sh --json` |
-| `capacity` | yes | `acfs capacity --json --profile <N> --recommend-ntm` |
+| `capacity` | yes | `acfs capacity --json --profile <N> --recommend-herdr` |
 | `simulation` | recommended | `acfs swarm simulate --json --counts 10,25,50` or selected counts |
 | `agent_mail_pressure` | optional | future reservation summary, degraded to warning when unavailable |
 | `repo_policy` | advisory | local `AGENTS.md` and README presence/read freshness |

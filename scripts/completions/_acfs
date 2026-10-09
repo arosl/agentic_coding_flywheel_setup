@@ -55,7 +55,7 @@ _acfs() {
                         '--json[JSON output for scripting]' \
                         '--workload[Workload model]:workload:(light standard heavy)' \
                         '--profile[Target agent count]:agents:' \
-                        '--recommend-ntm[Include NTM launch profile]' \
+                        '--recommend-herdr[Include herdr launch profile]' \
                         '-h[Show help message]' \
                         '--help[Show help message]'
                     ;;

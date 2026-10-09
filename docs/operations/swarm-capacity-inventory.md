@@ -77,7 +77,7 @@ a known sensitive field name.
         "workload": "standard",
         "recommended_agents": 44,
         "safe_agents": 64,
-        "source": "acfs capacity --json --recommend-ntm"
+        "source": "acfs capacity --json --recommend-herdr"
       },
       "rch": {
         "worker": false,
@@ -291,7 +291,7 @@ JSON output:
   "hosts": [],
   "warnings": [],
   "next_commands": [
-    "acfs capacity --json --recommend-ntm",
+    "acfs capacity --json --recommend-herdr",
     "rch status --json",
     "acfs swarm plan --agents 25"
   ]

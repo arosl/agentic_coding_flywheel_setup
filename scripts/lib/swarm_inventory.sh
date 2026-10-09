@@ -695,9 +695,9 @@ swarm_inventory_report_json() {
             warnings: $warnings,
             next_commands: (
               if ($hosts | length) == 0 then
-                ["acfs swarm inventory import --input hosts.inventory.json", "acfs capacity --json --recommend-ntm"]
+                ["acfs swarm inventory import --input hosts.inventory.json", "acfs capacity --json --recommend-herdr"]
               else
-                ["acfs capacity --json --recommend-ntm", "rch status --json", "acfs swarm plan --agents 25"]
+                ["acfs capacity --json --recommend-herdr", "rch status --json", "acfs swarm plan --agents 25"]
               end
             )
           }

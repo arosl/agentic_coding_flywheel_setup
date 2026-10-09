@@ -205,7 +205,7 @@ test_healthy_ten_agents_passes_with_launch_command() {
       .recommendation == "launch" and
       .launch_profile.recommended == true and
       .launch_profile.agent_count == 10 and
-      (.launch_profile.command | startswith("ntm spawn myproject")) and
+      (.launch_profile.command | test("^acfs agents spawn --claude=[0-9]+ --codex=[0-9]+ --agy=[0-9]+$")) and
       .quiesce_advisory.recommendation == "proceed" and
       .quiesce_advisory.recommended_agents == 10 and
       .safety.read_only == true and

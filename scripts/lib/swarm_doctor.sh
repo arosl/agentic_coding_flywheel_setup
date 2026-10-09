@@ -294,7 +294,7 @@ def check($id; $status; $summary; $details; $commands):
        elif ($disk_gib < 50) then "Available disk is low for a large swarm"
        else "Local resource pressure is acceptable" end);
       ($host.warnings // []);
-      ["acfs capacity --recommend-ntm", "acfs swarm status --json"]
+      ["acfs capacity --recommend-herdr", "acfs swarm status --json"]
     ),
     check(
       "active_work";

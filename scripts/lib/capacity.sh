@@ -10,7 +10,7 @@ set -uo pipefail
 CAPACITY_JSON=false
 CAPACITY_WORKLOAD="standard"
 CAPACITY_PROFILE=""
-CAPACITY_RECOMMEND_NTM=false
+CAPACITY_RECOMMEND_HERDR=false
 CAPACITY_RESOURCE_PROFILE=false
 CAPACITY_RESOURCE_PROFILE_APPLY=false
 CAPACITY_RESOURCE_PROFILE_DISABLE=false
@@ -24,7 +24,7 @@ Options:
   --json                  Emit machine-readable JSON
   --workload <name>       light, standard, or heavy (default: standard)
   --profile <agents>      Check a target agent count, e.g. 25 or 25-agents
-  --recommend-ntm         Include an NTM launch recommendation
+  --recommend-herdr       Include a herdr launch recommendation (acfs agents spawn)
   --resource-profile      Report opt-in systemd resource profile wrappers
   --apply-resource-profile
                           Write opt-in ACFS wrapper files under ~/.acfs
@@ -62,8 +62,8 @@ capacity_parse_args() {
                 CAPACITY_PROFILE="$2"
                 shift 2
                 ;;
-            --recommend-ntm)
-                CAPACITY_RECOMMEND_NTM=true
+            --recommend-herdr)
+                CAPACITY_RECOMMEND_HERDR=true
                 shift
                 ;;
             --resource-profile)
@@ -996,7 +996,7 @@ capacity_emit_json() {
         --argjson recommended_agents "$CAPACITY_RECOMMENDED_AGENTS" \
         --argjson rch_available "$CAPACITY_RCH_AVAILABLE" \
         --argjson herdr_available "$CAPACITY_HERDR_AVAILABLE" \
-        --argjson recommend_ntm "$CAPACITY_RECOMMEND_NTM" \
+        --argjson recommend_herdr "$CAPACITY_RECOMMEND_HERDR" \
         --arg status "$CAPACITY_STATUS" '
         {
             schema_version: 1,
@@ -1044,12 +1044,12 @@ capacity_emit_json() {
                     if $recommended_agents > 0 then "Start at the recommended tier, then increase only after status/doctor checks stay clean." else empty end
                 ]
             ),
-            ntm: {
-                recommended: $recommend_ntm,
-                agent_count: (if $recommend_ntm then $recommended_agents else null end),
-                launch_plan: (if $recommend_ntm then "Create one coordinator session plus focused worker sessions sized to the recommended agent count." else null end),
+            herdr: {
+                recommended: $recommend_herdr,
+                agent_count: (if $recommend_herdr then $recommended_agents else null end),
+                launch_plan: (if $recommend_herdr then "Run acfs agents spawn inside the herdr workspace of the project, sized to the recommended agent count; each agent gets its own tab and the kickoff prompt from the command palette." else null end),
                 profiles: (
-                    if $recommend_ntm then
+                    if $recommend_herdr then
                         def profile_status($count):
                             if $count <= $recommended_agents then "pass"
                             elif $count <= $safe_agents then "warn"
@@ -1062,7 +1062,7 @@ capacity_emit_json() {
                             {agents: 50, cc: 20, cod: 20, agy: 10, label: "swarm-50"}
                         ] | map(. + {
                             status: profile_status(.agents),
-                            command: ("ntm spawn myproject --label " + .label + " --cc=" + (.cc | tostring) + " --cod=" + (.cod | tostring) + " --agy=" + (.agy | tostring) + " --assign --stagger-mode=smart"),
+                            command: ("acfs agents spawn --claude=" + (.cc | tostring) + " --codex=" + (.cod | tostring) + " --agy=" + (.agy | tostring)),
                             rch_policy: "Use rch exec -- for cargo build/test/check/clippy/bench/run/doc commands inside every agent pane.",
                             agent_mail: "Register agents, send a start message on the bead thread, and reserve files before edits.",
                             beads: "Use br ready --json and bv --robot-triage for assignment truth; never launch bare bv."
@@ -1111,17 +1111,17 @@ capacity_emit_human() {
         echo "  Reason:              $CAPACITY_PROFILE_REASON"
     fi
 
-    if [[ "$CAPACITY_RECOMMEND_NTM" == "true" ]]; then
+    if [[ "$CAPACITY_RECOMMEND_HERDR" == "true" ]]; then
         echo ""
-        echo "NTM Recommendation"
+        echo "herdr Recommendation"
         echo "  Agent count:         $CAPACITY_RECOMMENDED_AGENTS"
-        echo "  Plan:                one coordinator session plus focused worker sessions"
+        echo "  Plan:                acfs agents spawn in the project's herdr workspace, one tab per agent"
         echo ""
         echo "Launch Profiles"
-        echo "  5 agents:            ntm spawn myproject --label swarm-5 --cc=2 --cod=2 --agy=1 --assign --stagger-mode=smart"
-        echo "  10 agents:           ntm spawn myproject --label swarm-10 --cc=4 --cod=4 --agy=2 --assign --stagger-mode=smart"
-        echo "  25 agents:           ntm spawn myproject --label swarm-25 --cc=10 --cod=10 --agy=5 --assign --stagger-mode=smart"
-        echo "  50 agents:           ntm spawn myproject --label swarm-50 --cc=20 --cod=20 --agy=10 --assign --stagger-mode=smart"
+        echo "  5 agents:            acfs agents spawn --claude=2 --codex=2 --agy=1"
+        echo "  10 agents:           acfs agents spawn --claude=4 --codex=4 --agy=2"
+        echo "  25 agents:           acfs agents spawn --claude=10 --codex=10 --agy=5"
+        echo "  50 agents:           acfs agents spawn --claude=20 --codex=20 --agy=10"
         echo ""
         echo "Coordination"
         echo "  RCH:                 use rch exec -- for CPU-heavy Rust build/test commands"
