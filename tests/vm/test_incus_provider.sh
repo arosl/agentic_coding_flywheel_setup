@@ -125,20 +125,36 @@ for address in "${blocked[@]}"; do
 done
 
 echo "== IPv6 under the ACL"
-# fe80::/10 is rejected, so check that the bridge's IPv6 still works: router
-# advertisements (a global address and a default route) and the VM's
-# neighbour advertisements, the one ND message the ACL could catch: a unicast
-# reply to the gateway's link-local address.
+# fe80::/10 and fc00::/7 are rejected, so check that the bridge's IPv6 still
+# works. Router advertisements come in, which the egress ACL doesn't filter:
+# a global address and a default route show them. The VM's neighbour
+# advertisements go out, as unicast replies to whichever address solicited
+# them, so each range gets a solicitation from the host's address in it. The
+# ping's echo reply is rejected either way, so nothing but an advertisement
+# can confirm the entry: an existing one goes DELAY, then PROBE (about 5 s,
+# then up to 3 probes 1 s apart) and ends REACHABLE, or FAILED without one.
 vm_global6="$(vm_ssh "ip -6 -o addr show dev $nic scope global | awk '{split(\$4, a, \"/\"); print a[1]; exit}'" 2>/dev/null || true)"
+vm_link6="$(vm_ssh "ip -6 -o addr show dev $nic scope link | awk '{split(\$4, a, \"/\"); print a[1]; exit}'" 2>/dev/null || true)"
 gateway6="$(vm_ssh "ip -6 route show default | awk '$route_via'" 2>/dev/null || true)"
+bridge_dev="$(ip -6 -o addr show scope link | awk -v a="$gateway6" '{split($4, x, "/"); if (x[1] == a) {print $2; exit}}')"
 check "the VM has a global IPv6 address (SLAAC)" test -n "$vm_global6"
 check "the VM has an IPv6 default route" test -n "$gateway6"
-if [[ -n "$vm_global6" ]]; then
-    ping -6 -c 1 -W 2 "$vm_global6" >/dev/null 2>&1 || true
-    check "the host resolves the VM's IPv6 neighbour entry (its advertisement passes the ACL)" \
-        bash -c 'ip -6 neigh show "$1" | grep -q -E "REACHABLE|STALE|DELAY|PROBE"' _ "$vm_global6"
+# neighbour_confirmed <address> <ping target>
+neighbour_confirmed() {
+    ping -6 -c 1 -W 2 "$2" >/dev/null 2>&1 || true
+    sleep 10
+    ip -6 neigh show "$1" dev "$bridge_dev" | grep -q -w REACHABLE
+}
+if [[ -n "$bridge_dev" && -n "$vm_global6" ]]; then
+    check "the VM answers neighbour solicitation from the host's global address (fc00::/7)" \
+        neighbour_confirmed "$vm_global6" "$vm_global6"
 fi
-bridge_dev="$(ip -6 -o addr show scope link | awk -v a="$gateway6" '{split($4, x, "/"); if (x[1] == a) {print $2; exit}}')"
+if [[ -n "$bridge_dev" && -n "$vm_link6" ]]; then
+    check "the VM answers neighbour solicitation from the host's link-local address (fe80::/10)" \
+        neighbour_confirmed "$vm_link6" "$vm_link6%$bridge_dev"
+else
+    fail "the VM's link-local address and the host's bridge device are known"
+fi
 if [[ -n "$gateway6" && -n "$bridge_dev" ]] && timeout 5 bash -c "</dev/tcp/$gateway6%$bridge_dev/22" 2>/dev/null; then
     check "the VM can't open the gateway's link-local :22 (the host accepts there)" \
         not vm_ssh "timeout 5 bash -c '</dev/tcp/$gateway6%$nic/22'"
@@ -180,17 +196,18 @@ fi
 
 echo "== Ctrl-C stops a command run the way the launcher runs the installer"
 # The launcher runs the installer as `incus exec ... </dev/null` in the
-# foreground; a terminal's Ctrl-C sends SIGINT to that whole process group.
-# The probe has the installer's shape: the launcher's wrapper around a bash
-# that waits on a child, which a bare SIGINT to the remote pid doesn't stop.
+# foreground. The probe has the installer's shape: the launcher's wrapper
+# around a bash that waits on a child, which a bare SIGINT to the remote pid
+# doesn't stop. The ^C is typed into a real pty with script(1), as in a
+# terminal; a signal to a background job wouldn't do, since a
+# non-interactive shell's & starts it with SIGINT ignored.
 wrapper="$(sed -n "s/^REMOTE_GROUP_WRAPPER='\(.*\)'\$/\1/p" "$LAUNCHER")"
 check "the launcher's REMOTE_GROUP_WRAPPER line is readable" test -n "$wrapper"
-setsid bash -c 'exec incus exec "$1" -- bash -c "$2" probe bash -c "sleep 900; true" </dev/null' _ "$NAME" "$wrapper" &
-probe=$!
-sleep 5
-kill -INT -- "-$probe" 2>/dev/null || true
+printf -v probe_command 'incus exec %q -- bash -c %q probe bash -c %q </dev/null' \
+    "$NAME" "$wrapper" 'sleep 900; true'
 probe_rc=0
-wait "$probe" 2>/dev/null || probe_rc=$?
+{ sleep 5; printf '\003'; sleep 20; } \
+    | timeout 60 script -q -e -c "$probe_command" /dev/null >/dev/null 2>&1 || probe_rc=$?
 sleep 2
 check "the client exits 130 on SIGINT (exit $probe_rc)" test "$probe_rc" -eq 130
 check "SIGINT to the client ends the bash and its child in the VM" \

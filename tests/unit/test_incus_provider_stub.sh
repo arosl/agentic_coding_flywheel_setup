@@ -337,6 +337,20 @@ check "keeps the install marked as started, so a re-run resumes" grep -qx "user.
 check "says re-run resumes, not the installer's hint" err_has 're-run this command to resume'
 check "prints the SSH entry but no machine add line" stdout_is_block '' failed
 
+# Ctrl-C: the wrapper stops the installer's process group, and the client
+# exits 130. (If the launcher's own bash dies of the signal instead, nothing
+# prints; tests/vm/test_incus_provider.sh checks the VM side.)
+echo "== install interrupted with Ctrl-C (the client exits 130)"
+new_case install-interrupted running-started
+export STUB_INSTALL_EXIT=130
+run_launcher dev
+unset STUB_INSTALL_EXIT
+check "exits 1" rc_is 1
+check "names the installer's exit" err_has 'Install failed (exit 130)'
+check "records no installed sha" bash -c '! grep -q "^user.acfs.installed=" "$1"' _ "$CASE/config-set"
+check "says re-run resumes" err_has 're-run this command to resume'
+check "prints the SSH entry but no machine add line" stdout_is_block '' failed
+
 echo "== cloud-init ends in error"
 new_case cloud-init-error absent
 export STUB_CLOUD_INIT=error STUB_CLOUD_INIT_EXIT=1
