@@ -2927,10 +2927,12 @@ agentic_coding_flywheel_setup/
 │   │   ├── manifest_index.sh     # Runtime module metadata
 │   │   ├── doctor_checks.sh      # Verification checks
 │   │   └── internal_checksums.sh # Schema-1 critical-script checksum data
-│   └── providers/                # VPS provider guides
-│       ├── ovh.md
-│       ├── contabo.md
-│       └── hetzner.md
+│   ├── providers/                # VPS provider guides
+│   │   ├── ovh.md
+│   │   ├── contabo.md
+│   │   └── hetzner.md
+│   └── sync/
+│       └── sync_ntm_palette.sh   # Sync NTM command palette
 │
 ├── .github/
 │   └── workflows/
@@ -3098,6 +3100,26 @@ curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setu
 # Web E2E tests
 ./tests/web/run_e2e.sh
 ```
+
+### Sync Scripts
+
+Sync scripts keep ACFS documentation aligned with upstream projects:
+
+```bash
+# Sync NTM command palette from upstream
+./scripts/sync/sync_ntm_palette.sh
+
+# Check if update available (without downloading)
+./scripts/sync/sync_ntm_palette.sh --check
+```
+
+**Current Sync Sources:**
+
+| Script | Source | Destination |
+|--------|--------|-------------|
+| `sync_ntm_palette.sh` | NTM repo `command_palette.md` | `acfs/onboard/docs/ntm/` |
+
+All sync scripts use the security library for HTTPS enforcement and content hashing.
 
 ### Website Design System
 
