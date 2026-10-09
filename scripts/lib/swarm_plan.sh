@@ -423,7 +423,7 @@ $status as $s
       "rch_pressure";
       $rch_check_status;
       (if (b($rch.available) | not) then "RCH is unavailable for CPU-heavy build/test offload"
-       elif (b($rch.status_json_ok) | not) or $rch.status == "fail" then "RCH status JSON failed or timed out"
+       elif (b($rch.status_json_ok) | not) or ($rch.status == "fail" and $rch.workers_total != 0) then "RCH status JSON failed or timed out"
        elif ($rch_workers_total < 1) then "RCH reports no workers"
        elif ($rch_workers_total > 0 and $rch_workers_healthy < 1) then "RCH reports no healthy workers"
        elif (b($rch.queue_json_ok) | not) then "RCH queue telemetry failed or is unavailable; wait for a fresh probe"
