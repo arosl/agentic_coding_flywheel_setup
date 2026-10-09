@@ -122,7 +122,7 @@ lazygit --use-config-dir ~/.config/lazygit`}
 # Press Ctrl-R, then type to fuzzy-search
 
 # Search from command line
-atuin search "docker build"
+atuin search "cargo build"
 
 # Show statistics about your command usage
 atuin stats
@@ -145,7 +145,7 @@ atuin import auto`}
         <div className="mt-8">
           <TipBox variant="tip">
             atuin stores full command context: working directory, exit code, duration, and
-            timestamp. Search for &ldquo;that docker command I ran last week in the api
+            timestamp. Search for &ldquo;that migration command I ran last week in the api
             project&rdquo; and actually find it.
           </TipBox>
         </div>
@@ -242,7 +242,7 @@ env | fzf
         <div className="mt-8">
           <TipBox variant="tip">
             fzf&apos;s real power is piping. Any list of strings can be fuzzy-searched:{" "}
-            <InlineCode>docker images | fzf</InlineCode>,{" "}
+            <InlineCode>git branch | fzf</InlineCode>,{" "}
             <InlineCode>kubectl get pods | fzf</InlineCode>,{" "}
             <InlineCode>brew list | fzf</InlineCode>. If it outputs lines, fzf can filter it.
           </TipBox>

@@ -103,7 +103,7 @@ export function SSHBasicsLesson() {
         delay={0.2}
       >
         <TipBox variant="info">
-          No worries! SSH connections drop sometimes. Just reconnect—your work is safe in tmux (next
+          No worries! SSH connections drop sometimes. Just reconnect—your work is safe in herdr (next
           lesson).
         </TipBox>
       </Section>
@@ -260,7 +260,7 @@ const SCENARIO_META: Record<
   reconnect: {
     label: "Reconnect",
     icon: <RefreshCw className="h-3.5 w-3.5" />,
-    description: "Connection drops happen -- mosh and tmux keep your session alive",
+    description: "Connection drops happen -- mosh and herdr keep your agents running",
   },
 };
 
@@ -1528,7 +1528,7 @@ function ScenarioReconnect({ active }: { active: boolean }) {
           </motion.g>
         )}
 
-        {/* Tmux session preserved badge */}
+        {/* herdr agents preserved badge */}
         {(phase === 2 || phase === 3) && (
           <motion.g
             initial={{ opacity: 0, y: 5 }}
@@ -1556,7 +1556,7 @@ function ScenarioReconnect({ active }: { active: boolean }) {
               strokeWidth={1.5}
             />
             <text x="230" y="192" fill="#22c55e" fontSize="9" fontWeight="600">
-              tmux session preserved on VPS
+              agents keep running in herdr
             </text>
           </motion.g>
         )}
@@ -1750,7 +1750,7 @@ function InteractiveSSHTunnel() {
             {scenario === "connect" && "ssh -i ~/.ssh/acfs_ed25519 ubuntu@YOUR_VPS_IP"}
             {scenario === "keyauth" && "ssh-keygen -t ed25519 -f ~/.ssh/acfs_ed25519"}
             {scenario === "portforward" && "ssh -L 5432:localhost:5432 ubuntu@YOUR_VPS_IP"}
-            {scenario === "reconnect" && "mosh ubuntu@YOUR_VPS_IP -- tmux attach"}
+            {scenario === "reconnect" && "mosh ubuntu@YOUR_VPS_IP -- herdr"}
           </span>
           <motion.span
             className="inline-block w-1.5 h-3.5 bg-emerald-400/80 ml-1 align-middle"
@@ -1938,7 +1938,7 @@ function QuizCards() {
     },
     {
       question: "What happens if SSH drops?",
-      answer: "Reconnect; tmux saves your work",
+      answer: "Reconnect; herdr keeps your work running",
     },
     {
       question: "What's the quick way to reconnect?",

@@ -44,8 +44,7 @@ export function DebuggingAgentsLesson() {
   return (
     <div className="space-y-8">
       <GoalBanner>
-        Diagnose agent failures, rate limits, cost overruns, and network issues using RANO, CAUT,
-        WA, and CASS together.
+        Diagnose rate limits, network failures, and cost overruns with RANO, CAUT, and CASS.
       </GoalBanner>
 
       {/* Section 1: The Debugging Toolkit */}
@@ -55,7 +54,7 @@ export function DebuggingAgentsLesson() {
           <Highlight>
             Is it a rate limit? A network issue? A cost overrun? A bug in the prompt?
           </Highlight>
-          Four tools give you complete observability.
+          Three tools give you complete observability.
         </Paragraph>
 
         <div className="mt-8">
@@ -71,12 +70,6 @@ export function DebuggingAgentsLesson() {
               title="CAUT"
               description="Cost tracking — per-session spend analysis"
               gradient="from-emerald-500/20 to-teal-500/20"
-            />
-            <FeatureCard
-              icon={<Activity className="h-5 w-5" />}
-              title="WA"
-              description="Terminal state — pattern detection across panes"
-              gradient="from-violet-500/20 to-purple-500/20"
             />
             <FeatureCard
               icon={<Search className="h-5 w-5" />}
@@ -114,14 +107,11 @@ rano status
 caut breakdown
 # Shows per-provider token consumption
 
-# Step 3: Check WA for rate limit patterns across panes
-wa robot events --rule-id "claude_code.rate_limit" --unhandled-only
-
-# Step 4: Rotate to a fresh account
+# Step 3: Rotate to a fresh account
 caam status --verbose
 caam rotate
 
-# Step 5: Check CASS for how you solved this before
+# Step 4: Check CASS for how you solved this before
 cass search "rate limit workaround rotation" --limit 3`}
           filename="Rate Limit Workflow"
         />
@@ -209,27 +199,20 @@ rano log --session <session-id> --verbose
       {/* Section 5: Stuck Agent Detection */}
       <Section title="Stuck Agent Detection" icon={<Activity className="h-5 w-5" />} delay={0.3}>
         <Paragraph>
-          WA detects when agents go silent. An idle pane usually means the agent is waiting for
-          approval, hit an error, or is genuinely stuck.
+          The herdr sidebar shows each agent&apos;s state: working, idle, done, or blocked. An agent
+          that sits idle or blocked usually is waiting for approval, hit an error, or is genuinely
+          stuck.
         </Paragraph>
 
         <CodeBlock
-          code={`# Check all pane states
-wa robot state | jq '.data.panes[] |
-  select(.idle_seconds > 120) |
-  {id, title, idle_seconds, last_output_preview}'
+          code={`# List agents and their state
+herdr agent list
 
-# Get the last 50 lines from a stuck pane
-wa robot get-text <pane_id> --tail 50
+# Read a stuck agent's recent output
+herdr agent read <agent>
 
-# Search for error patterns in pane output
-wa search "error|failed|panic|traceback" --pane <pane_id>
-
-# Check if agent is waiting for SLB approval
-wa robot events --rule-id "claude_code.waiting_approval"
-
-# Force-send a nudge to wake up a stuck agent
-wa robot send <pane_id> "Continue with the task"`}
+# Send a nudge to wake up a stuck agent
+herdr agent prompt <agent> "Continue with the task"`}
           filename="Stuck Agent Diagnosis"
         />
       </Section>
@@ -248,7 +231,7 @@ wa robot send <pane_id> "Continue with the task"`}
 cass search "ECONNREFUSED anthropic API fix" --limit 5
 
 # Find sessions that worked with a specific tool
-cass search "successfully deployed with docker" --limit 3
+cass search "successfully deployed with systemd" --limit 3
 
 # Search across all agent types
 cass search "memory leak node process" --robot --limit 5
@@ -267,7 +250,9 @@ cm context "debugging API connection failures" --json`}
           </div>
           <div className="p-3 rounded-lg bg-violet-500/10 border border-violet-500/30">
             <span className="text-violet-400 font-semibold">Deep Investigation</span>
-            <p className="text-white/80 text-sm mt-1">WA events + RANO logs = full request trace</p>
+            <p className="text-white/80 text-sm mt-1">
+              herdr agent read + RANO logs = full request trace
+            </p>
           </div>
           <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30">
             <span className="text-emerald-400 font-semibold">Cost Audit</span>
@@ -388,7 +373,7 @@ function makeScenarios(): DebugScenario[] {
         {
           rank: 1,
           label: "Kill loop and reset context",
-          command: 'wa robot send pane-1 "/clear"',
+          command: 'herdr agent prompt <agent> "/clear"',
           confidence: 95,
         },
         {
@@ -400,7 +385,7 @@ function makeScenarios(): DebugScenario[] {
         {
           rank: 3,
           label: "Break task into two separate steps",
-          command: 'ntm send myproject --pane=1 "Fix only the type error first"',
+          command: 'herdr agent prompt <agent> "Fix only the type error first"',
           confidence: 78,
         },
       ],
@@ -473,19 +458,19 @@ function makeScenarios(): DebugScenario[] {
         {
           rank: 1,
           label: "Force context refresh",
-          command: 'wa robot send pane-2 "Read the file again"',
+          command: 'herdr agent prompt <agent> "Read the file again"',
           confidence: 92,
         },
         {
           rank: 2,
           label: "Clear conversation and restart",
-          command: 'wa robot send pane-2 "/clear"',
+          command: 'herdr agent prompt <agent> "/clear"',
           confidence: 88,
         },
         {
           rank: 3,
           label: "Pull latest changes first",
-          command: 'ntm send myproject --pane=2 "Run git pull first"',
+          command: 'herdr agent prompt <agent> "Run git pull first"',
           confidence: 85,
         },
       ],
@@ -564,7 +549,7 @@ function makeScenarios(): DebugScenario[] {
         {
           rank: 2,
           label: "Be explicit about file path",
-          command: 'ntm send myproject --pane=1 "Edit app/utils.ts specifically"',
+          command: 'herdr agent prompt <agent> "Edit app/utils.ts specifically"',
           confidence: 90,
         },
         {
@@ -639,19 +624,19 @@ function makeScenarios(): DebugScenario[] {
         {
           rank: 1,
           label: "Fix the shared test fixture",
-          command: 'ntm send myproject --pane=1 "Fix test/fixtures.ts to match new API shape"',
+          command: 'herdr agent prompt <agent> "Fix test/fixtures.ts to match new API shape"',
           confidence: 96,
         },
         {
           rank: 2,
           label: "Show agent the failure pattern",
-          command: 'ntm send myproject --pane=1 "All 23 failures share fixtures.ts"',
+          command: 'herdr agent prompt <agent> "All 23 failures share fixtures.ts"',
           confidence: 91,
         },
         {
           rank: 3,
           label: "Regenerate fixtures from types",
-          command: 'ntm send myproject --pane=1 "Generate fixtures from types/api.ts"',
+          command: 'herdr agent prompt <agent> "Generate fixtures from types/api.ts"',
           confidence: 84,
         },
       ],
@@ -729,14 +714,8 @@ function makeScenarios(): DebugScenario[] {
         },
         {
           rank: 2,
-          label: "Stagger agent requests",
-          command: "ntm spawn myproject --cc=3 --stagger-mode=smart",
-          confidence: 87,
-        },
-        {
-          rank: 3,
-          label: "Interrupt the agents",
-          command: "ntm interrupt myproject",
+          label: "See which agents are blocked",
+          command: "herdr agent list",
           confidence: 80,
         },
       ],

@@ -243,9 +243,9 @@ rch update --fleet`}
             transition={{ delay: 0.45 }}
             className="p-4 rounded-xl border border-border/50 bg-card/30"
           >
-            <h3 className="font-semibold text-primary mb-2">RCH + NTM</h3>
+            <h3 className="font-semibold text-primary mb-2">RCH + herdr</h3>
             <p className="text-muted-foreground text-sm">
-              Agents spawned by NTM automatically use RCH for their builds. Multiple agents can
+              Agents running in herdr panes use RCH for their builds. Multiple agents can
               compile in parallel without overwhelming local CPU.
             </p>
           </motion.div>

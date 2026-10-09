@@ -100,7 +100,7 @@ export function WelcomeLesson() {
             the VPS.
           </Paragraph>
           <Paragraph>
-            If your SSH connection drops? No problem. Your work continues in tmux.
+            If your SSH connection drops? No problem. Your work continues in herdr.
           </Paragraph>
         </div>
       </Section>
@@ -120,16 +120,12 @@ export function WelcomeLesson() {
               description: "Staying connected to your VPS",
             },
             {
-              title: "tmux essentials",
-              description: "Persistent sessions that survive disconnects",
+              title: "herdr essentials",
+              description: "Persistent agent workspaces that survive disconnects",
             },
             {
               title: "Agent commands",
               description: "Talking to Claude, Codex, and Antigravity",
-            },
-            {
-              title: "NTM mastery",
-              description: "Orchestrating multiple agents at once",
             },
             {
               title: "The flywheel workflow",
@@ -263,12 +259,12 @@ const archLayers: ArchLayer[] = [
         status: "active",
       },
       {
-        id: "tmux",
-        name: "tmux Sessions",
-        shortName: "tmux",
+        id: "herdr",
+        name: "herdr Workspaces",
+        shortName: "herdr",
         description:
-          "Terminal multiplexer that keeps sessions alive when SSH disconnects. Your agents keep running no matter what happens to your connection.",
-        commands: ["tmux new -s work", "tmux attach", "tmux ls"],
+          "Terminal workspace manager for coding agents. Splits your terminal into panes, tabs and workspaces, and keeps your agents running no matter what happens to your SSH connection.",
+        commands: ["agents", "herdr", "herdr agent list"],
         dependencies: ["zsh"],
         status: "active",
       },
@@ -339,7 +335,7 @@ const archLayers: ArchLayer[] = [
         description:
           "Anthropic's agentic coding tool. The most capable agent for complex refactoring, architecture decisions, and multi-file changes.",
         commands: ["cc", "cc 'fix the login bug'", "cc --resume"],
-        dependencies: ["tmux", "runtimes", "git"],
+        dependencies: ["herdr", "runtimes", "git"],
         status: "active",
       },
       {
@@ -349,7 +345,7 @@ const archLayers: ArchLayer[] = [
         description:
           "OpenAI's command-line coding agent. Great for quick edits, code generation, and working with GPT-4 models.",
         commands: ["cod", "cod 'add unit tests'"],
-        dependencies: ["tmux", "runtimes", "git"],
+        dependencies: ["herdr", "runtimes", "git"],
         status: "ready",
       },
       {
@@ -359,7 +355,7 @@ const archLayers: ArchLayer[] = [
         description:
           "Google's coding assistant, pinned to Gemini 3.8 Flash (High). Excellent for research-heavy tasks, fresh-eyes review, and large codebases. (Successor to the retired Gemini CLI / gmi.)",
         commands: ["agy", "agy -p 'explain this codebase'"],
-        dependencies: ["tmux", "runtimes", "git"],
+        dependencies: ["herdr", "runtimes", "git"],
         status: "ready",
       },
     ],
@@ -372,20 +368,6 @@ const archLayers: ArchLayer[] = [
     glowColor: "from-rose-500/20 to-pink-500/10",
     icon: <Network className="h-4 w-4" />,
     components: [
-      {
-        id: "ntm",
-        name: "NTM (Neo-Terminal Manager)",
-        shortName: "ntm",
-        description:
-          "The orchestrator. Launches multiple agents in parallel tmux panes so you can run Claude, Codex, and Antigravity simultaneously on different tasks.",
-        commands: [
-          "ntm spawn myproject --cc=2 --cod=2",
-          "ntm status myproject",
-          "ntm kill myproject",
-        ],
-        dependencies: ["tmux", "claude", "codex", "antigravity"],
-        status: "active",
-      },
       {
         id: "beads",
         name: "Beads (Task Tracking)",
@@ -421,7 +403,7 @@ const archLayers: ArchLayer[] = [
         name: "acfs doctor",
         shortName: "doctor",
         description:
-          "Diagnostic tool that checks your entire stack for problems: SSH keys, API keys, tool versions, tmux health, and more. Your first stop when something feels off.",
+          "Diagnostic tool that checks your entire stack for problems: SSH keys, API keys, tool versions, and more. Your first stop when something feels off.",
         commands: ["acfs doctor", "acfs doctor --fix"],
         dependencies: ["acfs-shell"],
         status: "active",
@@ -452,11 +434,11 @@ const archLayers: ArchLayer[] = [
 
 const terminalCommands = [
   { prompt: "~", cmd: "acfs status", output: "All systems nominal" },
-  { prompt: "~", cmd: "ntm spawn myproject --cc=3", output: "Spawning 3 agent panes..." },
+  { prompt: "~", cmd: "herdr agent list", output: "3 agents: 2 working, 1 idle" },
   { prompt: "~", cmd: "acfs doctor", output: "14/14 checks passed" },
   { prompt: "~", cmd: "cc 'fix the auth bug'", output: "Claude Code starting..." },
   { prompt: "~/proj", cmd: "br list", output: "3 open, 2 done" },
-  { prompt: "~", cmd: "tmux ls", output: "work: 4 panes (attached)" },
+  { prompt: "~", cmd: "agents", output: "Reattaching to herdr..." },
 ];
 
 function InteractiveArchitecture() {
@@ -891,9 +873,8 @@ function InteractiveArchitecture() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-6">
               <DataFlowArrow from="Your Laptop" to="SSH Tunnel" color="text-sky-400" />
-              <DataFlowArrow from="SSH Tunnel" to="tmux" color="text-violet-400" />
-              <DataFlowArrow from="tmux" to="Agents" color="text-amber-400" />
-              <DataFlowArrow from="NTM" to="All Agents" color="text-rose-400" />
+              <DataFlowArrow from="SSH Tunnel" to="herdr" color="text-violet-400" />
+              <DataFlowArrow from="herdr" to="Agents" color="text-amber-400" />
             </div>
             <div className="flex items-center gap-1.5 text-[10px] text-white/25">
               <Lock className="h-3 w-3" />

@@ -277,8 +277,9 @@ to operate in 'plan space' before implementing!"`}
 
         <div className="mt-6">
           <CodeBlock
-            code={`# Launch agents
-ntm spawn slb --cc=3 --cod=2
+            code={`# Launch agents: open herdr, then start each agent
+# in its own pane (3 Claude Code, 2 Codex)
+agents
 
 # Each agent runs:
 bv --robot-triage        # What's ready?
@@ -411,8 +412,8 @@ cc "Convert the plan into 50-100 beads with
 dependencies. Use br CLI."
 
 # Hour 4+: Implementation
-ntm spawn myproject --cc=2 --cod=1
-# Let the swarm work!
+agents   # open herdr; start each agent in its own pane
+# (2 Claude Code, 1 Codex). Let the swarm work!
 
 # Every 15-20 min: Commit agent
 cc "Commit all changes with detailed messages."`}

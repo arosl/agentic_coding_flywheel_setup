@@ -72,30 +72,6 @@ const L = (name: string) => `${LESSONS}/${name}`;
 const O = (name: string) => `${ONBOARD}/${name}`;
 
 const ROWS: ExampleRow[] = [
-  // ---------------------------------------------------------------- #393
-  {
-    issue: "#393",
-    cli: "ntm",
-    // `ntm palette` is an interactive TUI: its only local flag is --help.
-    wrong: /ntm palette\b[^\n"'`]*--(send|list)\b/,
-    right: {
-      // The non-interactive sender is `ntm send <session> ...`.
-      pattern: /ntm send myproject/,
-      in: [L("ntm-palette-lesson.tsx")],
-    },
-  },
-  {
-    issue: "#393",
-    cli: "ntm",
-    // `ntm quick` scaffolds a project; it never sent a prompt. The palette
-    // lesson's quick actions map to `ntm send -t <template>`.
-    wrong: /ntm quick (review|test|fix|docs)\b/,
-    right: {
-      pattern: /ntm send <session> -t (code_review|test|fix|document)\b/,
-      in: [L("ntm-palette-lesson.tsx")],
-    },
-  },
-
   // ---------------------------------------------------------------- #394
   // apr 1.3.0: rounds are `apr run <round>`; there is no refine/--pass.
   {
@@ -136,10 +112,11 @@ const ROWS: ExampleRow[] = [
   {
     issue: "#394",
     cli: "ru",
-    // The old `ru agent-sweep --prompt "..."` broadcast is `ntm send --all`.
+    // The old `ru agent-sweep --prompt "..."` broadcast is now one
+    // `herdr agent prompt` per agent; herdr has no broadcast.
     wrong: /--prompt "Update AGENTS\.md/,
     right: {
-      pattern: /ntm send myproject --all "Update AGENTS\.md/,
+      pattern: /herdr agent prompt <agent> "Update AGENTS\.md/,
       in: [L("agents-md-lesson.tsx")],
     },
   },
@@ -300,7 +277,7 @@ const ROWS: ExampleRow[] = [
     // v1.2.3) and there is no --sign (signing is part of the pipeline).
     wrong:
       /dsr release(['"`]|\s*$)|dsr release \w+ (--version )?v\d|dsr release\b[^\n"'`]*--sign\b/m,
-    right: { pattern: /dsr fallback ntm --version/, in: [L("dsr-lesson.tsx")] },
+    right: { pattern: /dsr fallback dcg --version/, in: [L("dsr-lesson.tsx")] },
   },
   // caam 0.1.18: next (alias rotate) <tool>; history --limit.
   {
@@ -337,37 +314,6 @@ const ROWS: ExampleRow[] = [
     cli: "dcg",
     wrong: /dcg test\b[^\n"'`]*--strict\b/,
     right: { pattern: /dcg test "/, in: [L("flywheel-loop-lesson.tsx")] },
-  },
-  // ntm 1.33.0: spawn/interrupt/view/zoom/overlay; no launch/layout/pause.
-  {
-    issue: "#394",
-    cli: "ntm",
-    wrong: /ntm (launch|layout|pause)\b|ntm spawn\b[^\n"'`]*--(agents|task)\b/,
-    right: {
-      pattern: /ntm spawn myproject --cc=/,
-      in: [L("welcome-lesson.tsx"), L("flywheel-loop-lesson.tsx")],
-    },
-  },
-  {
-    issue: "#394",
-    cli: "ntm",
-    wrong: /ntm interrupt\b[^\n"'`]*pane-\d/,
-    right: {
-      pattern: /ntm interrupt (myproject|<session>)/,
-      in: [L("debugging-agents-lesson.tsx"), L("ntm-palette-lesson.tsx")],
-    },
-  },
-  {
-    issue: "#394",
-    cli: "ntm",
-    wrong: /ntm send\b[^\n"'`]*--target\b|ntm send pane-\d/,
-    right: { pattern: /ntm (view|zoom) <session>/, in: [L("ntm-palette-lesson.tsx")] },
-  },
-  {
-    issue: "#394",
-    cli: "ntm",
-    wrong: /ntm config set rate-stagger\b/,
-    right: { pattern: /--stagger-mode=smart/, in: [L("debugging-agents-lesson.tsx")] },
   },
   // am 0.3.34: mail send with the five required flags; no broadcast.
   {

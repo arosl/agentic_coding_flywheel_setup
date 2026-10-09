@@ -50,9 +50,9 @@ export function CaamLesson() {
           next available account.
         </Paragraph>
         <Paragraph>
-          When running agent swarms with NTM, each agent consumes API quota fast. CAAM tracks
-          per-account rate limit state and rotates credentials so agents experience near-zero
-          downtime from throttling.
+          When you run many agents side by side in herdr panes, each one consumes API quota fast.
+          CAAM tracks per-account rate limit state and rotates credentials so agents experience
+          near-zero downtime from throttling.
         </Paragraph>
 
         <div className="mt-8">
@@ -178,18 +178,15 @@ caam rotate  # → switches to "personal"`}
 
       <Divider />
 
-      {/* Section 5: NTM Integration */}
+      {/* Section 5: Agent Swarms */}
       <Section title="CAAM + Agent Swarms" icon={<ShieldCheck className="h-5 w-5" />} delay={0.3}>
         <Paragraph>
-          When NTM spawns multiple agents, each one can be assigned a different CAAM account to
+          When you run several agents at once, each one can use a different CAAM account to
           maximize throughput.
         </Paragraph>
 
         <CodeBlock
-          code={`# In your NTM spawn config, assign accounts per agent:
-# Agent 1 uses work-account, Agent 2 uses personal, etc.
-
-# Check which agents are using which accounts
+          code={`# Check which agents are using which accounts
 caam status --by-session
 
 # Monitor aggregate usage across all agents
@@ -201,12 +198,6 @@ caam budget --daily 100 --provider anthropic`}
         />
 
         <div className="mt-6 grid gap-3 sm:grid-cols-2">
-          <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/30">
-            <span className="text-blue-400 font-semibold">CAAM + NTM</span>
-            <p className="text-white/80 text-sm mt-1">
-              Assign accounts per spawned agent for parallel throughput
-            </p>
-          </div>
           <div className="p-3 rounded-lg bg-violet-500/10 border border-violet-500/30">
             <span className="text-violet-400 font-semibold">CAAM + CAUT</span>
             <p className="text-white/80 text-sm mt-1">

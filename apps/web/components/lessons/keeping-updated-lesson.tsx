@@ -121,7 +121,7 @@ export function KeepingUpdatedLesson() {
 
           <UpdatePattern
             title="Skip Stack Tools"
-            description="The Agent Flywheel stack (ntm, slb, ubs, etc.) is included by default. Skip it when you want a faster run:"
+            description="The Agent Flywheel stack (herdr, slb, ubs, etc.) is included by default. Skip it when you want a faster run:"
             command="acfs-update --no-stack"
           />
         </div>
@@ -619,9 +619,9 @@ const REPOS: RepoNode[] = [
     dependsOn: ["apt"],
   },
   {
-    id: "ntm",
-    name: "NTM Stack",
-    shortName: "NTM",
+    id: "ubs",
+    name: "UBS Scanner",
+    shortName: "UBS",
     versionFrom: "0.9.3",
     versionTo: "0.9.4",
     category: "stack",
@@ -664,7 +664,7 @@ const SCENARIOS: Scenario[] = [
       { repoId: "wrangler", finalStatus: "updated", delay: 900 },
       { repoId: "supabase", finalStatus: "updated", delay: 1000 },
       { repoId: "vercel", finalStatus: "updated", delay: 1100 },
-      { repoId: "ntm", finalStatus: "updated", delay: 1300 },
+      { repoId: "ubs", finalStatus: "updated", delay: 1300 },
       { repoId: "dcg", finalStatus: "updated", delay: 1400 },
     ],
     terminalLines: [
@@ -680,7 +680,7 @@ const SCENARIOS: Scenario[] = [
       "[cloud] wrangler 3.91.0 -> 3.92.0",
       "[cloud] supabase 1.200.3 -> 1.201.0",
       "[cloud] vercel 37.8.0 -> 37.9.0",
-      "[stack] ntm 0.9.3 -> 0.9.4",
+      "[stack] ubs 0.9.3 -> 0.9.4",
       "[stack] dcg 0.4.1 -> 0.4.2",
       "All 12 components updated successfully!",
     ],
@@ -707,7 +707,7 @@ const SCENARIOS: Scenario[] = [
       },
       { repoId: "supabase", finalStatus: "updated", delay: 1000 },
       { repoId: "vercel", finalStatus: "updated", delay: 1100 },
-      { repoId: "ntm", finalStatus: "updated", delay: 1300 },
+      { repoId: "ubs", finalStatus: "updated", delay: 1300 },
       { repoId: "dcg", finalStatus: "conflict", delay: 1400, errorMsg: "Depends on wrangler@^3" },
     ],
     terminalLines: [
@@ -729,7 +729,7 @@ const SCENARIOS: Scenario[] = [
     id: "conflict",
     label: "Version Conflict",
     description:
-      "NTM and Supabase CLI have conflicting dependency requirements. The resolver detects and handles it.",
+      "UBS and Supabase CLI have conflicting dependency requirements. The resolver detects and handles it.",
     command: "acfs-update",
     repoSequence: [
       { repoId: "apt", finalStatus: "updated", delay: 0 },
@@ -747,7 +747,7 @@ const SCENARIOS: Scenario[] = [
         errorMsg: "Needs @supabase/auth@2.x",
       },
       { repoId: "vercel", finalStatus: "updated", delay: 1100 },
-      { repoId: "ntm", finalStatus: "conflict", delay: 1300, errorMsg: "Needs @supabase/auth@1.x" },
+      { repoId: "ubs", finalStatus: "conflict", delay: 1300, errorMsg: "Needs @supabase/auth@1.x" },
       { repoId: "dcg", finalStatus: "updated", delay: 1400 },
     ],
     terminalLines: [
@@ -758,10 +758,10 @@ const SCENARIOS: Scenario[] = [
       "[cloud] wrangler updated",
       "[cloud] supabase 1.200.3 -> 1.201.0",
       "CONFLICT: supabase@1.201.0 needs @supabase/auth@2.x",
-      "  but ntm@0.9.4 requires @supabase/auth@1.x",
+      "  but ubs@0.9.4 requires @supabase/auth@1.x",
       "[cloud] vercel updated",
-      "[stack] ntm: dependency conflict detected",
-      "Resolution: Pin supabase@1.200.3 until ntm updates",
+      "[stack] ubs: dependency conflict detected",
+      "Resolution: Pin supabase@1.200.3 until ubs updates",
       "10/12 components updated, 2 conflicts resolved",
     ],
   },
@@ -782,7 +782,7 @@ const SCENARIOS: Scenario[] = [
       { repoId: "wrangler", finalStatus: "updated", delay: 900 },
       { repoId: "supabase", finalStatus: "updated", delay: 1000 },
       { repoId: "vercel", finalStatus: "updated", delay: 1100 },
-      { repoId: "ntm", finalStatus: "updated", delay: 1300 },
+      { repoId: "ubs", finalStatus: "updated", delay: 1300 },
       { repoId: "dcg", finalStatus: "updated", delay: 1400 },
     ],
     terminalLines: [
@@ -822,7 +822,7 @@ const SCENARIOS: Scenario[] = [
       { repoId: "wrangler", finalStatus: "updated", delay: 900 },
       { repoId: "supabase", finalStatus: "updated", delay: 1000 },
       { repoId: "vercel", finalStatus: "updated", delay: 1100 },
-      { repoId: "ntm", finalStatus: "updated", delay: 1300 },
+      { repoId: "ubs", finalStatus: "updated", delay: 1300 },
       { repoId: "dcg", finalStatus: "updated", delay: 1400 },
     ],
     terminalLines: [
@@ -857,7 +857,7 @@ const SCENARIOS: Scenario[] = [
       { repoId: "wrangler", finalStatus: "updated", delay: 1000 },
       { repoId: "supabase", finalStatus: "updated", delay: 1100 },
       { repoId: "vercel", finalStatus: "updated", delay: 1200 },
-      { repoId: "ntm", finalStatus: "updated", delay: 1400 },
+      { repoId: "ubs", finalStatus: "updated", delay: 1400 },
       { repoId: "dcg", finalStatus: "updated", delay: 1500 },
     ],
     terminalLines: [
@@ -872,7 +872,7 @@ const SCENARIOS: Scenario[] = [
       "[cloud] Wrangler, Supabase, Vercel updated",
       "[fleet] Smoke check (--version)... all binaries green",
       "[fleet] Category 4/4: Stack tools",
-      "[stack] NTM, DCG updated",
+      "[stack] UBS, DCG updated",
       "Update complete: 12/12 components, exit code 0",
     ],
   },
@@ -1544,7 +1544,7 @@ function DependencyGraph({
     wrangler: { x: 450, y: 75 },
     supabase: { x: 160, y: 130 },
     vercel: { x: 350, y: 130 },
-    ntm: { x: 160, y: 185 },
+    ubs: { x: 160, y: 185 },
     dcg: { x: 400, y: 185 },
   };
 
@@ -1722,7 +1722,7 @@ function VersionComparisonPanel({
     wrangler: ["D1 export support", "Hyperdrive GA", "Pages build caching"],
     supabase: ["Edge Functions v2", "Branching GA", "Realtime improvements"],
     vercel: ["Fluid compute support", "Faster deploys", "Improved DX for monorepos"],
-    ntm: ["New migration engine", "Schema diffing", "Better TypeScript types"],
+    ubs: ["Faster scans", "Fewer false positives", "Better JSON output"],
     dcg: ["Parallel generation", "Template caching", "New output formats"],
   };
 

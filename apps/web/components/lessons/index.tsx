@@ -48,8 +48,8 @@ const LESSON_COMPONENTS = new Map<string, ComponentType>([
     }),
   ],
   [
-    "tmux-basics",
-    dynamic(() => import("./tmux-basics-lesson").then((m) => ({ default: m.TmuxBasicsLesson })), {
+    "herdr-basics",
+    dynamic(() => import("./herdr-basics-lesson").then((m) => ({ default: m.HerdrBasicsLesson })), {
       loading: LessonLoading,
     }),
   ],
@@ -68,18 +68,6 @@ const LESSON_COMPONENTS = new Map<string, ComponentType>([
   [
     "agent-commands",
     dynamic(() => import("./agents-login-lesson").then((m) => ({ default: m.AgentsLoginLesson })), {
-      loading: LessonLoading,
-    }),
-  ],
-  [
-    "ntm-core",
-    dynamic(() => import("./ntm-core-lesson").then((m) => ({ default: m.NtmCoreLesson })), {
-      loading: LessonLoading,
-    }),
-  ],
-  [
-    "ntm-palette",
-    dynamic(() => import("./ntm-palette-lesson").then((m) => ({ default: m.NtmPaletteLesson })), {
       loading: LessonLoading,
     }),
   ],
@@ -209,12 +197,6 @@ const LESSON_COMPONENTS = new Map<string, ComponentType>([
   [
     "rch",
     dynamic(() => import("./rch-lesson").then((m) => ({ default: m.RchLesson })), {
-      loading: LessonLoading,
-    }),
-  ],
-  [
-    "wa",
-    dynamic(() => import("./wa-lesson").then((m) => ({ default: m.WaLesson })), {
       loading: LessonLoading,
     }),
   ],

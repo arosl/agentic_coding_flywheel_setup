@@ -5,12 +5,10 @@ import {
   ArrowRight,
   Bot,
   Columns,
-  Copy,
   Keyboard,
   LayoutGrid,
   List,
   Monitor,
-  Pause,
   Play,
   PlugZap,
   Plus,
@@ -32,22 +30,23 @@ import {
   TipBox,
 } from "./lesson-components";
 
-export function TmuxBasicsLesson() {
+export function HerdrBasicsLesson() {
   return (
     <div className="space-y-8">
-      <GoalBanner>Never lose work when SSH drops.</GoalBanner>
+      <GoalBanner>Never lose work when SSH drops, and see every agent at a glance.</GoalBanner>
 
-      {/* What Is tmux */}
-      <Section title="What Is tmux?" icon={<LayoutGrid className="h-5 w-5" />} delay={0.1}>
+      {/* What Is herdr */}
+      <Section title="What Is herdr?" icon={<LayoutGrid className="h-5 w-5" />} delay={0.1}>
         <Paragraph>
-          <Highlight>tmux</Highlight> is a <strong>terminal multiplexer</strong>. It lets you:
+          <Highlight>herdr</Highlight> is a{" "}
+          <strong>terminal workspace manager for coding agents</strong>. It lets you:
         </Paragraph>
         <div className="mt-6">
           <BulletList
             items={[
-              "Keep sessions running after you disconnect",
-              "Split your terminal into panes",
-              "Have multiple windows in one connection",
+              "Keep agents running after you disconnect",
+              "Split your terminal into panes, tabs and workspaces",
+              "See each agent's state (working, idle, done, blocked) in the sidebar",
             ]}
           />
         </div>
@@ -58,11 +57,11 @@ export function TmuxBasicsLesson() {
       {/* Interactive Pane Simulator */}
       <Section title="Try Splitting Panes" icon={<Monitor className="h-5 w-5" />} delay={0.12}>
         <Paragraph>
-          Click panes to select them, then use the buttons to split or close. This simulates what{" "}
-          <Highlight>Ctrl+a</Highlight> shortcuts do in a real tmux session.
+          Click panes to select them, then use the buttons to split, open tabs, detach and
+          reattach. This simulates what the <Highlight>Ctrl+b</Highlight> shortcuts do in herdr.
         </Paragraph>
         <div className="mt-6">
-          <InteractiveTmuxSimulator />
+          <InteractiveHerdrSimulator />
         </div>
       </Section>
 
@@ -70,32 +69,25 @@ export function TmuxBasicsLesson() {
 
       {/* Essential Commands */}
       <Section title="Essential Commands" icon={<Play className="h-5 w-5" />} delay={0.15}>
-        {/* Start Session */}
         <div className="space-y-8">
           <CommandSection
-            title="Start a New Session"
-            code="tmux new -s myproject"
-            description='This creates a session named "myproject".'
+            title="Start or Reattach"
+            code={`herdr
+# Or, from anywhere, open it in /data/projects:
+agents`}
+            description="The first run starts herdr's server and opens it. Every later run reattaches to the same session, with everything still running."
           />
 
           <CommandSection
-            title="Detach (Leave Session Running)"
-            keyCombo={["Ctrl+a", "d"]}
-            description="Your session continues running in the background!"
+            title="Detach (Leave Everything Running)"
+            keyCombo={["Ctrl+b", "q"]}
+            description="Your agents keep working in the background."
           />
 
           <CommandSection
-            title="List Sessions"
-            code="tmux ls"
-            description="See all running sessions."
-          />
-
-          <CommandSection
-            title="Reattach to a Session"
-            code={`tmux attach -t myproject
-# Or just:
-tmux a`}
-            description="Attaches to the most recent session."
+            title="List Your Agents"
+            code="herdr agent list"
+            description="See every agent and whether it is working, idle or done, without opening herdr."
           />
         </div>
       </Section>
@@ -105,34 +97,40 @@ tmux a`}
       {/* The Prefix Key */}
       <Section title="The Prefix Key" icon={<Keyboard className="h-5 w-5" />} delay={0.2}>
         <TipBox variant="info">
-          In ACFS, the prefix key is <InlineCode>Ctrl+a</InlineCode> (not the default{" "}
-          <InlineCode>Ctrl+b</InlineCode>). All tmux commands start with the prefix.
+          herdr&apos;s prefix key is <InlineCode>Ctrl+b</InlineCode>. Press it, let go, then press
+          the action key. Press <InlineCode>Ctrl+b</InlineCode> then <InlineCode>?</InlineCode> to
+          see every key binding.
         </TipBox>
       </Section>
 
       <Divider />
 
-      {/* Splitting Panes */}
-      <Section title="Splitting Panes" icon={<Columns className="h-5 w-5" />} delay={0.25}>
+      {/* Panes */}
+      <Section title="Panes" icon={<Columns className="h-5 w-5" />} delay={0.25}>
         <KeyboardShortcutGrid
           shortcuts={[
             {
-              keys: ["Ctrl+a", "|"],
+              keys: ["Ctrl+b", "v"],
               action: "Split vertically",
               icon: <Columns className="h-4 w-4" />,
             },
             {
-              keys: ["Ctrl+a", "-"],
+              keys: ["Ctrl+b", "-"],
               action: "Split horizontally",
               icon: <Rows className="h-4 w-4" />,
             },
             {
-              keys: ["Ctrl+a", "h/j/k/l"],
+              keys: ["Ctrl+b", "h/j/k/l"],
               action: "Move between panes",
               icon: <ArrowLeftRight className="h-4 w-4" />,
             },
             {
-              keys: ["Ctrl+a", "x"],
+              keys: ["Ctrl+b", "z"],
+              action: "Zoom the current pane",
+              icon: <Monitor className="h-4 w-4" />,
+            },
+            {
+              keys: ["Ctrl+b", "x"],
               action: "Close current pane",
               icon: <Scissors className="h-4 w-4" />,
             },
@@ -142,55 +140,46 @@ tmux a`}
 
       <Divider />
 
-      {/* Windows */}
-      <Section title="Windows (Tabs)" icon={<LayoutGrid className="h-5 w-5" />} delay={0.3}>
+      {/* Tabs and Workspaces */}
+      <Section title="Tabs and Workspaces" icon={<LayoutGrid className="h-5 w-5" />} delay={0.3}>
         <KeyboardShortcutGrid
           shortcuts={[
             {
-              keys: ["Ctrl+a", "c"],
-              action: "New window",
+              keys: ["Ctrl+b", "c"],
+              action: "New tab",
               icon: <Play className="h-4 w-4" />,
             },
             {
-              keys: ["Ctrl+a", "n"],
-              action: "Next window",
+              keys: ["Ctrl+b", "n"],
+              action: "Next tab",
               icon: <ArrowLeftRight className="h-4 w-4" />,
             },
             {
-              keys: ["Ctrl+a", "p"],
-              action: "Previous window",
+              keys: ["Ctrl+b", "p"],
+              action: "Previous tab",
               icon: <ArrowLeftRight className="h-4 w-4 rotate-180" />,
             },
             {
-              keys: ["Ctrl+a", "0-9"],
-              action: "Go to window number",
+              keys: ["Ctrl+b", "1-9"],
+              action: "Go to tab number",
               icon: <List className="h-4 w-4" />,
             },
-          ]}
-        />
-      </Section>
-
-      <Divider />
-
-      {/* Copy Mode */}
-      <Section title="Copy Mode (Scrolling)" icon={<Copy className="h-5 w-5" />} delay={0.35}>
-        <KeyboardShortcutGrid
-          shortcuts={[
             {
-              keys: ["Ctrl+a", "["],
-              action: "Enter copy mode",
-              icon: <Play className="h-4 w-4" />,
+              keys: ["Ctrl+b", "w"],
+              action: "Pick a workspace",
+              icon: <LayoutGrid className="h-4 w-4" />,
             },
             {
-              keys: ["j/k", "or arrows"],
-              action: "Scroll",
-              icon: <ArrowLeftRight className="h-4 w-4 rotate-90" />,
+              keys: ["Ctrl+b", "Shift+n"],
+              action: "New workspace",
+              icon: <Plus className="h-4 w-4" />,
             },
-            { keys: ["q"], action: "Exit copy mode", icon: <Pause className="h-4 w-4" /> },
-            { keys: ["v"], action: "Start selection", icon: <Copy className="h-4 w-4" /> },
-            { keys: ["y"], action: "Copy selection", icon: <Copy className="h-4 w-4" /> },
           ]}
         />
+        <Paragraph>
+          A workspace usually holds one project. Its tabs and panes hold your agents and your own
+          shell.
+        </Paragraph>
       </Section>
 
       <Divider />
@@ -198,26 +187,23 @@ tmux a`}
       {/* Try It Now */}
       <Section title="Try It Now" icon={<Play className="h-5 w-5" />} delay={0.4}>
         <CodeBlock
-          code={`# Create a session
-$ tmux new -s practice
+          code={`# Open herdr
+$ herdr
 
 # Split the screen
-# Press Ctrl+a, then |
+# Press Ctrl+b, then v
 
 # Move to the new pane
-# Press Ctrl+a, then l
+# Press Ctrl+b, then l
 
 # Run something
 $ ls -la
 
 # Detach
-# Press Ctrl+a, then d
+# Press Ctrl+b, then q
 
-# Verify it's still running
-$ tmux ls
-
-# Reattach
-$ tmux attach -t practice`}
+# Reattach: everything is still there
+$ herdr`}
           showLineNumbers
         />
       </Section>
@@ -336,10 +322,15 @@ function WhyItMattersCard() {
           <Bot className="h-7 w-7 text-white" />
         </div>
         <div>
-          <h3 className="text-lg font-bold text-white mb-2">Your Agents Run in tmux</h3>
+          <h3 className="text-lg font-bold text-white mb-2">Your Agents Run in herdr</h3>
           <p className="text-white/60">
-            Your coding agents (Claude, Codex, Antigravity) run in tmux panes. If SSH drops, they
-            keep running. When you reconnect and reattach, they&apos;re still there!
+            Your coding agents (Claude, Codex, Antigravity) run in herdr panes. herdr detects each
+            agent and shows in the sidebar whether it is working, waiting for you, or done. ACFS
+            also installs herdr&apos;s integration for each agent it supports.
+          </p>
+          <p className="mt-2 text-white/60">
+            If SSH drops, they keep running. When you reconnect and run <code>herdr</code>,
+            they&apos;re still there!
           </p>
         </div>
       </div>
@@ -348,7 +339,7 @@ function WhyItMattersCard() {
 }
 
 // =============================================================================
-// INTERACTIVE TMUX SIMULATOR V2 - Realistic tmux experience
+// INTERACTIVE HERDR SIMULATOR - panes, tabs, detach and reattach
 // =============================================================================
 
 /** Simulated terminal output for each pane to make it feel alive */
@@ -391,7 +382,7 @@ const PANE_OUTPUTS: string[][] = [
   ],
 ];
 
-/** Content for different windows */
+/** Content for different tabs */
 const WINDOW_CONFIGS = [
   { name: "editor", output: PANE_OUTPUTS[0] },
   { name: "git", output: PANE_OUTPUTS[1] },
@@ -450,7 +441,7 @@ function makePane(outputIndex: number): SimPane {
 
 const MAX_SIM_PANES = 4;
 
-function InteractiveTmuxSimulator() {
+function InteractiveHerdrSimulator() {
   const rootRef = useRef<HTMLDivElement>(null);
   const inView = useInView(rootRef, { amount: 0.15 });
   const time = useSimulatedClock(inView);
@@ -594,27 +585,27 @@ function InteractiveTmuxSimulator() {
           onClick={handleSplitHorizontal}
           disabled={!isLive || totalPanesInWindow >= MAX_SIM_PANES}
           label="Split Horizontal"
-          shortcut='Ctrl+b "'
+          shortcut="Ctrl+b -"
           icon={<Rows className="h-3.5 w-3.5" />}
         />
         <SimButton
           onClick={handleSplitVertical}
           disabled={!isLive || totalPanesInWindow >= MAX_SIM_PANES}
           label="Split Vertical"
-          shortcut="Ctrl+b %"
+          shortcut="Ctrl+b v"
           icon={<Columns className="h-3.5 w-3.5" />}
         />
         <SimButton
           onClick={handleNewWindow}
           disabled={!isLive || windows.length >= 4}
-          label="New Window"
+          label="New Tab"
           shortcut="Ctrl+b c"
           icon={<Plus className="h-3.5 w-3.5" />}
         />
         <SimButton
           onClick={handleSwitchWindow}
           disabled={!isLive || windows.length <= 1}
-          label="Switch Window"
+          label="Next Tab"
           shortcut="Ctrl+b n"
           icon={<ArrowRight className="h-3.5 w-3.5" />}
         />
@@ -622,7 +613,7 @@ function InteractiveTmuxSimulator() {
           onClick={handleDetach}
           disabled={phase !== "live"}
           label="Detach"
-          shortcut="Ctrl+b d"
+          shortcut="Ctrl+b q"
           icon={<Unplug className="h-3.5 w-3.5" />}
           variant="warning"
         />
@@ -630,7 +621,7 @@ function InteractiveTmuxSimulator() {
           onClick={handleReattach}
           disabled={phase !== "detached"}
           label="Reattach"
-          shortcut="tmux a"
+          shortcut="herdr"
           icon={<PlugZap className="h-3.5 w-3.5" />}
           variant="success"
         />
@@ -646,7 +637,7 @@ function InteractiveTmuxSimulator() {
             <div className="h-3 w-3 rounded-full bg-green-500/70" />
           </div>
           <span className="ml-2 text-xs font-mono text-white/40">
-            {phase === "detached" ? "Terminal - disconnected" : "tmux - myproject"}
+            {phase === "detached" ? "Terminal - disconnected" : "herdr - myproject"}
           </span>
         </div>
 
@@ -705,7 +696,7 @@ function InteractiveTmuxSimulator() {
                 >
                   <Unplug className="h-10 w-10 text-red-400/60" />
                   <span className="text-sm font-mono text-red-400/80">
-                    [detached (from session myproject)]
+                    Detached from herdr
                   </span>
                   <span className="text-xs font-mono text-white/30">$</span>
                 </motion.div>
@@ -717,7 +708,7 @@ function InteractiveTmuxSimulator() {
                   className="mt-4 px-4 py-2 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.06]"
                 >
                   <p className="text-xs text-emerald-400/80 text-center">
-                    Session is still running in the background!
+                    Your agents are still running in the background!
                     <br />
                     <span className="text-white/40">
                       Click &quot;Reattach&quot; to reconnect with everything preserved.
@@ -752,8 +743,8 @@ function InteractiveTmuxSimulator() {
           </AnimatePresence>
         </div>
 
-        {/* tmux status bar (green, realistic) */}
-        <TmuxStatusBar
+        {/* Tab bar */}
+        <SimTabBar
           windows={windows}
           activeWindowId={activeWindowId}
           phase={phase}
@@ -765,7 +756,7 @@ function InteractiveTmuxSimulator() {
       {/* Informational hints */}
       {phase === "live" && totalPanesInWindow >= MAX_SIM_PANES && (
         <p className="text-xs text-white/40 text-center">
-          Maximum of {MAX_SIM_PANES} panes per window. Try creating a new window!
+          Maximum of {MAX_SIM_PANES} panes per tab. Try creating a new tab!
         </p>
       )}
     </motion.div>
@@ -773,10 +764,10 @@ function InteractiveTmuxSimulator() {
 }
 
 // =============================================================================
-// TMUX STATUS BAR - Realistic green bar at bottom
+// TAB BAR - The simulated session's tabs, at the bottom
 // =============================================================================
 
-function TmuxStatusBar({
+function SimTabBar({
   windows,
   activeWindowId,
   phase,
@@ -802,7 +793,7 @@ function TmuxStatusBar({
       {/* Left: session name */}
       <span className="shrink-0">[myproject]</span>
 
-      {/* Center: window list */}
+      {/* Center: tab list */}
       <div className="flex items-center gap-1 overflow-x-auto mx-2">
         <AnimatePresence mode="popLayout">
           {windows.map((w, i) => {

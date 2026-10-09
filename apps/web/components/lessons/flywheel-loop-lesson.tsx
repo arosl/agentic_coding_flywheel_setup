@@ -82,15 +82,15 @@ export function FlywheelLoopLesson() {
           <ToolCard
             {...{
               number: 1,
-              name: "NTM",
+              name: "herdr",
               subtitle: "Your Cockpit",
-              command: "ntm",
+              command: "herdr",
               icon: <Cpu className="h-5 w-5" />,
               gradient: "from-violet-500/20 to-purple-500/20",
               useCases: [
-                "Spawn agent sessions",
-                "Send prompts to multiple agents",
-                "Orchestrate parallel work",
+                "Run each agent in its own pane, in a workspace per project",
+                "See at a glance which agents are working, idle or done",
+                "Send an agent a prompt from a script (herdr agent prompt)",
               ],
             }}
           />
@@ -272,17 +272,17 @@ bv --robot-triage                # Check tasks
 br ready                        # See what's ready to work on
 
 # 2. Start your agents
-ntm spawn myproject --cc=2 --cod=1
+herdr                           # Open the workspace; run claude or codex in each pane
 
 # 3. Set context
 cm context "Implementing user authentication" --json
 
-# 4. Send initial prompt
-ntm send myproject "Let's implement user authentication.
+# 4. Send initial prompt (type it in the agent's pane, or from a script)
+herdr agent prompt <agent> "Let's implement user authentication.
 Here's the context: [paste cm output]"
 
 # 5. Monitor and guide
-ntm attach myproject            # Watch progress
+herdr agent list                # Which agents are working, idle or done
 
 # 6. Scan before committing
 ubs .                           # Check for bugs
@@ -357,12 +357,13 @@ git branch beads-sync main
 git push -u origin beads-sync
 br config set sync.branch=beads-sync
 
-# 4. Spawn your agents
-ntm spawn my-first-project --cc=2 --cod=1 --agy=1
+# 4. Open herdr, give the project its own workspace from a pane,
+#    and start each agent in its own pane: cc, cod, agy
+herdr
+herdr workspace create --cwd /data/projects/my-first-project
 
-# 5. Start building!
-ntm send my-first-project "Let's build something awesome.
-What kind of project should we create?"`,
+# 5. Start building! Type into an agent's pane:
+#    "Let's build something awesome. What kind of project should we create?"`,
               showLineNumbers: true,
             }}
           />
@@ -389,8 +390,8 @@ What kind of project should we create?"`,
           />
           <HelpCard
             {...{
-              command: "ntm --help",
-              description: "NTM help",
+              command: "herdr --help",
+              description: "herdr help",
               gradient: "from-violet-500/20 to-purple-500/20",
             }}
           />
@@ -439,9 +440,9 @@ const FLYWHEEL_NODES: FlywheelToolNode[] = [
   },
   {
     label: "Execute",
-    sublabel: "NTM + Agents",
-    command: "ntm",
-    cases: ["Spawn agents", "Send prompts", "Monitor progress"],
+    sublabel: "herdr + Agents",
+    command: "herdr",
+    cases: ["Agent panes", "Send prompts", "Monitor progress"],
     color: "#10b981",
     glowColor: "rgba(16,185,129,0.6)",
   },
@@ -940,7 +941,7 @@ function FlywheelEffectList() {
     { tool: "UBS", effect: "catches more issues" },
     { tool: "DCG", effect: "blocks before damage happens" },
     { tool: "Agent Mail", effect: "improves coordination" },
-    { tool: "NTM", effect: "sessions become more effective" },
+    { tool: "herdr", effect: "shows you sooner which agent needs you" },
   ];
 
   return (
@@ -1049,12 +1050,12 @@ const FLYWHEEL_STAGES_V2: FlywheelStageData[] = [
     icon: FileCode,
     color: "#3b82f6",
     warmColor: "#60a5fa",
-    tools: ["NTM spawn", "Agent Mail (am)"],
-    agent: "NTM Swarm",
+    tools: ["herdr panes", "Agent Mail (am)"],
+    agent: "herdr Workspace",
     description:
-      "Spawn parallel coding agents with NTM. Each agent works on a slice of the task, coordinating via Agent Mail.",
+      "Start parallel coding agents, each in its own herdr pane. Each agent works on a slice of the task, coordinating via Agent Mail.",
     commands: [
-      "ntm spawn myproject --cc=3",
+      "herdr agent list",
       'am mail send --project myproject --from cc-1 --to cc-2 --subject "merge ready" --body "auth slice done"',
     ],
   },

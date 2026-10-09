@@ -111,7 +111,7 @@ export function DsrLesson() {
               description: "Upload the built artifacts as a GitHub release",
             },
             {
-              command: "dsr build --repo ntm",
+              command: "dsr build --repo mytool",
               description: "Build a tool's artifacts without publishing",
             },
             { command: "dsr status", description: "Check release readiness" },
@@ -134,13 +134,13 @@ export function DsrLesson() {
 dsr status
 
 # Build release artifacts locally
-dsr build --repo ntm
+dsr build --repo mytool
 
 # Upload the built artifacts as a GitHub release (the tag must exist)
-dsr release ntm 1.2.3
+dsr release mytool 1.2.3
 
 # Or run the whole pipeline: check -> build -> release
-dsr fallback ntm`}
+dsr fallback mytool`}
         />
       </Section>
     </div>
@@ -190,13 +190,13 @@ const PLATFORM_TARGETS: PlatformTarget[] = [
 
 const TOOL_SCENARIOS: ToolScenario[] = [
   {
-    id: "ntm",
-    label: "NTM Release",
+    id: "dcg",
+    label: "DCG Release",
     icon: Layers,
-    toolName: "ntm",
+    toolName: "dcg",
     version: "v2.4.1",
-    description: "Node Tool Manager release with cross-platform binaries",
-    command: "dsr release ntm 2.4.1",
+    description: "Destructive Command Guard release with cross-platform binaries",
+    command: "dsr release dcg 2.4.1",
     targets: PLATFORM_TARGETS,
     checksumPrefix: "a3f8c2",
   },
@@ -248,10 +248,10 @@ const TOOL_SCENARIOS: ToolScenario[] = [
     id: "batch",
     label: "Full Fallback Pipeline",
     icon: Globe,
-    toolName: "ntm",
+    toolName: "dcg",
     version: "v2025.03",
     description: "Check, build, sign, and release in one run when Actions is throttled",
-    command: "dsr fallback ntm --version 2025.03",
+    command: "dsr fallback dcg --version 2025.03",
     targets: PLATFORM_TARGETS,
     checksumPrefix: "c1a9e6",
   },

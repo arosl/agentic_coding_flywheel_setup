@@ -246,9 +246,9 @@ ru list --paths | while read -r repo; do
   diff <(head -50 "$repo/AGENTS.md") <(head -50 ~/reference/AGENTS.md)
 done
 
-# Mass update: broadcast the same instruction to every agent in a swarm
-# (one pane per repo), then review the diffs before committing
-ntm send myproject --all "Update AGENTS.md to match
+# Mass update: send the same instruction to each agent
+# (one herdr pane per repo), then review the diffs before committing
+herdr agent prompt <agent> "Update AGENTS.md to match
 the gold standard template structure while preserving
 all project-specific sections"`}
             language="bash"

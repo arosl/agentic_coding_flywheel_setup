@@ -171,8 +171,7 @@ export function RuLesson() {
       <Section title="AI Code Review" icon={<CheckCircle className="h-5 w-5" />} delay={0.23}>
         <Paragraph>
           RU can orchestrate AI-assisted code reviews across your repos using{" "}
-          <Highlight>ru review</Highlight>. The review system integrates with ntm&apos;s robot mode
-          to spawn Claude agents for thorough analysis.
+          <Highlight>ru review</Highlight>.
         </Paragraph>
 
         <CommandList
@@ -213,7 +212,7 @@ AUTOSTASH=false`}
 
         <CodeBlock
           code={`# Shorthand
-Dicklesworthstone/ntm
+Dicklesworthstone/mcp_agent_mail
 Dicklesworthstone/beads_viewer
 
 # With branch
@@ -239,18 +238,6 @@ git@github.com:owner/repo.git as myrepo`}
         <Paragraph>RU becomes more powerful when combined with other flywheel tools.</Paragraph>
 
         <div className="space-y-4">
-          <motion.div
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.35 }}
-            className="p-4 rounded-xl border border-border/50 bg-card/30"
-          >
-            <h3 className="font-semibold text-primary mb-2">RU + NTM</h3>
-            <p className="text-muted-foreground text-sm">
-              <code className="text-primary">ru review --mode=ntm</code> drives its Claude sessions
-              through NTM. NTM manages the tmux panes, RU orchestrates the review workflow.
-            </p>
-          </motion.div>
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -401,7 +388,7 @@ const SCENARIOS: Scenario[] = [
 
 const ALL_REPOS: SyncRepo[] = [
   {
-    name: "ntm",
+    name: "cm",
     owner: "Dicklesworthstone",
     status: "pending",
     progress: 0,
@@ -586,7 +573,7 @@ function InteractiveRepoSync() {
   // ---- Scenario: Parallel Sync ----
   const runParallelSync = useCallback(() => {
     const order = [
-      "ntm",
+      "cm",
       "beads_rust",
       "slb",
       "ru",
@@ -702,7 +689,7 @@ function InteractiveRepoSync() {
 
   // ---- Scenario: Initial Clone ----
   const runInitialClone = useCallback(() => {
-    const cloneOrder = ["ntm", "beads_rust", "cass", "slb", "dcg"];
+    const cloneOrder = ["cm", "beads_rust", "cass", "slb", "dcg"];
     const delay = 200;
 
     addTerminalLine("$ ru sync --clone");
@@ -751,7 +738,7 @@ function InteractiveRepoSync() {
   // ---- Scenario: Dirty Detection ----
   const runDirtyDetect = useCallback(() => {
     const dirtyRepos = ["cass", "dcg", "caam", "bv"];
-    const cleanRepos = ["ntm", "beads_rust", "slb", "ubs", "ru", "flywheel"];
+    const cleanRepos = ["cm", "beads_rust", "slb", "ubs", "ru", "flywheel"];
     const delay = 200;
 
     addTerminalLine("$ ru status --fetch");
@@ -860,7 +847,7 @@ function InteractiveRepoSync() {
 
   // ---- Scenario: Conflict Resolution ----
   const runConflictResolve = useCallback(() => {
-    const syncRepos = ["ntm", "dcg", "bv", "slb"];
+    const syncRepos = ["cm", "dcg", "bv", "slb"];
     const delay = 200;
 
     addTerminalLine("$ ru sync --autostash");
@@ -921,7 +908,7 @@ function InteractiveRepoSync() {
 
   // ---- Scenario: Full Sweep ----
   const runFullSweep = useCallback(() => {
-    const sweepRepos = ["cass", "dcg", "caam", "bv", "ntm", "slb"];
+    const sweepRepos = ["cass", "dcg", "caam", "bv", "cm", "slb"];
     const delay = 200;
 
     addTerminalLine("$ ru commit-sweep --execute");

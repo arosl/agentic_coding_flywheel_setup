@@ -188,19 +188,19 @@ ubs . --comparison=scans/20260310.json
 
         <CodeBlock
           code={`# Build artifacts locally
-dsr build ntm
+dsr build mytool
 
 # Build only one target
-dsr build ntm --target linux/amd64
+dsr build mytool --target linux/amd64
 
 # Build a tagged version explicitly
-dsr build ntm --version 1.2.3
+dsr build mytool --version 1.2.3
 
 # Upload the verified artifacts as a draft release
-dsr release ntm 1.2.3 --draft
+dsr release mytool 1.2.3 --draft
 
 # Verify an existing release later
-dsr release verify ntm 1.2.3`}
+dsr release verify mytool 1.2.3`}
           filename="DSR Commands"
         />
 

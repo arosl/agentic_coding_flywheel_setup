@@ -178,10 +178,6 @@ caut alert --daily-budget 50`}
               Track usage per account for billing insights
             </p>
           </div>
-          <div className="p-3 rounded-lg bg-violet-500/10 border border-violet-500/30">
-            <span className="text-violet-400 font-semibold">CAUT + NTM</span>
-            <p className="text-white/80 text-sm mt-1">See cost per agent in multi-agent swarms</p>
-          </div>
           <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
             <span className="text-amber-400 font-semibold">CAUT + TRU</span>
             <p className="text-white/80 text-sm mt-1">
@@ -300,13 +296,12 @@ const SCENARIO_STEPS: ScenarioStep[] = [
     alerts: [
       { level: "error", message: "SPIKE: Burn rate jumped from $4.20/hr to $12.60/hr" },
       { level: "warn", message: "Budget will be exhausted in ~38 minutes at current rate" },
-      { level: "info", message: "5 new NTM agents spawned in session #47" },
+      { level: "info", message: "5 new agent sessions detected" },
     ],
     logLines: [
       "13:05:44  ALERT  Cost spike detected: 3x normal burn rate",
-      "13:05:44  INFO   NTM session #47 spawned 5 agents",
+      "13:05:44  INFO   5 new agent sessions detected",
       "13:05:44  WARN   Budget exhaustion ETA: 38 min",
-      "13:05:45  INFO   Auto-throttle recommendation sent to NTM",
     ],
   },
   {

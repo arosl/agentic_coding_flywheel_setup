@@ -199,7 +199,7 @@ s2p
             rules for your memory playbook.
           </li>
           <li>
-            <strong>NTM:</strong> Launch S2P in a dedicated tmux pane while your agent works in
+            <strong>herdr:</strong> Run S2P in its own herdr pane while your agent works in
             another.
           </li>
         </ul>

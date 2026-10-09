@@ -182,8 +182,10 @@ rano logs --timing`}
             <p className="text-white/80 text-sm mt-1">See which account each request uses</p>
           </div>
           <div className="p-3 rounded-lg bg-violet-500/10 border border-violet-500/30">
-            <span className="text-violet-400 font-semibold">RANO + NTM</span>
-            <p className="text-white/80 text-sm mt-1">Monitor traffic across all spawned agents</p>
+            <span className="text-violet-400 font-semibold">RANO + herdr</span>
+            <p className="text-white/80 text-sm mt-1">
+              Monitor traffic across all the agents in your herdr panes
+            </p>
           </div>
           <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
             <span className="text-amber-400 font-semibold">RANO + Beads</span>

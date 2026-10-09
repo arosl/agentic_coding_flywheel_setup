@@ -660,7 +660,7 @@ const SCENARIOS: Scenario[] = [
       {
         pid: 8200,
         ppid: 1,
-        name: "docker (pull)",
+        name: "tar (extract)",
         cpu: 5.0,
         memory: 450,
         ioRead: 90.0,
@@ -669,7 +669,7 @@ const SCENARIOS: Scenario[] = [
         uptime: "25m",
         dangerScore: 0.6,
         verdict: "suspicious",
-        reason: "Docker pull competing for I/O. Multiple layers extracting concurrently.",
+        reason: "Archive extraction competing for I/O. Thousands of small files being written.",
       },
       {
         pid: 1842,

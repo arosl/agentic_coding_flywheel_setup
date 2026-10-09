@@ -55,7 +55,7 @@ export function AcfsDoctorLesson() {
             <FeatureCard
               icon={<LayoutDashboard className="h-5 w-5" />}
               title="Workspace"
-              description="/data/projects plus NTM sessions that survive disconnects"
+              description="/data/projects plus herdr, where agents survive disconnects"
               gradient="from-primary/20 to-violet-500/20"
             />
             <FeatureCard
@@ -92,7 +92,7 @@ acfs doctor
 # ✓ go ........................ 1.23.0
 # ✓ tmux ...................... 3.5a
 # ✓ claude-code ............... 1.0.32
-# ✓ ntm ....................... 2.1.0
+# ✓ herdr ..................... installed
 # ...
 #
 # Results: 68/70 checks passed, 2 issues found
@@ -169,26 +169,29 @@ systemctl --user enable --now acfs-nightly-update.timer`}
       {/* Section 4: Workspace Setup */}
       <Section title="Workspace Setup" icon={<LayoutDashboard className="h-5 w-5" />} delay={0.25}>
         <Paragraph>
-          ACFS sets up a project folder and tmux/NTM so your agent sessions keep running when SSH
+          ACFS sets up a project folder and herdr so your agents keep running when SSH
           disconnects. You can SSH back in and pick up exactly where you left off.
         </Paragraph>
 
         <div className="mt-6">
           <CodeBlock
             code={`# Where things live after installation:
-# /data/projects/          — Your projects (NTM's projects_base)
+# /data/projects/          — Your projects
 # ~/.acfs/                 — ACFS scripts, state and logs
-# ~/.acfs/tmux/tmux.conf   — Tmux configuration
 # ~/.acfs/zsh/acfs.zshrc   — Shell configuration
 
 # Create a project (in /data/projects/myproject)
 acfs newproj myproject
 
-# Start agents in a named session (session name = project folder)
-ntm spawn myproject --cc=1 --cod=1
+# Open herdr
+agents
 
-# Reconnect after SSH drops
-ntm attach myproject`}
+# From a herdr pane, give the project its own workspace,
+# then start one agent per pane (claude, codex, agy)
+herdr workspace create --cwd /data/projects/myproject
+
+# Reconnect after SSH drops: run herdr again to reattach
+herdr`}
             showLineNumbers
           />
         </div>
@@ -196,9 +199,9 @@ ntm attach myproject`}
         <div className="mt-6">
           <TipBox variant="tip">
             The workspace is designed so you can SSH in, run{" "}
-            <code className="text-amber-300">ntm attach myproject</code> (or{" "}
-            <code className="text-amber-300">tmux attach</code>), and immediately start working.
-            Agent sessions persist across disconnections.
+            <code className="text-amber-300">agents</code> (or{" "}
+            <code className="text-amber-300">herdr</code>), and immediately start working.
+            Agents keep running across disconnections.
           </TipBox>
         </div>
       </Section>

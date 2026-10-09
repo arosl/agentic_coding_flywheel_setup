@@ -202,7 +202,7 @@ $ sysmoni
         />
 
         <TipBox variant="tip">
-          Your terminal emulator, tmux sessions, and input handling stay at normal priority. Heavy
+          Your terminal emulator, herdr panes, and input handling stay at normal priority. Heavy
           builds run in the background without freezing your interactive work.
         </TipBox>
       </Section>
@@ -241,7 +241,7 @@ $ sudo systemctl restart ananicy-cpp`}
           <BulletList
             items={[
               <>
-                <Highlight>ntm:</Highlight> Keeps tmux sessions responsive when agents spawn heavy
+                <Highlight>herdr:</Highlight> Keeps herdr panes responsive when agents spawn heavy
                 builds
               </>,
               <>

@@ -260,9 +260,9 @@ bv --robot-label-health`}
             </p>
           </div>
           <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/30">
-            <span className="text-blue-400 font-semibold">BV + NTM</span>
+            <span className="text-blue-400 font-semibold">BV + herdr</span>
             <p className="text-white/80 text-sm mt-1">
-              Use triage-by-label to assign work across spawned agents
+              Use triage-by-label to assign work across the agents in your herdr panes
             </p>
           </div>
           <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30">

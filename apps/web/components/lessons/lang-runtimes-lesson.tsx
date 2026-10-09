@@ -156,7 +156,7 @@ uv python list`}
       {/* Section 4: Rust & Cargo */}
       <Section title="Rust & Cargo" icon={<Cog className="h-5 w-5" />} delay={0.25}>
         <Paragraph>
-          The Agent Flywheel stack (NTM, BV, CAAM, DCG, etc.) is built in Rust. Cargo is the build
+          The Agent Flywheel stack (BV, CAAM, DCG, etc.) is built in Rust. Cargo is the build
           system, package manager, and test runner.
         </Paragraph>
 
@@ -206,7 +206,7 @@ rch exec -- cargo test`}
       {/* Section 5: Go for Cloud Tools */}
       <Section title="Go for Cloud Tools" icon={<Cloud className="h-5 w-5" />} delay={0.3}>
         <Paragraph>
-          Many DevOps and cloud tools are written in Go (lazygit, lazydocker, goreleaser). Go is
+          Many DevOps and cloud tools are written in Go (lazygit, goreleaser). Go is
           also used to build some Agent Flywheel tools (SLB, DSR).
         </Paragraph>
 
@@ -233,7 +233,7 @@ GOOS=linux GOARCH=amd64 go build -o myapp-linux
 GOOS=darwin GOARCH=arm64 go build -o myapp-macos
 
 # Common Go tools installed by ACFS
-# lazygit, lazydocker, goreleaser, gum`}
+# lazygit, goreleaser, gum`}
             showLineNumbers
           />
         </div>
