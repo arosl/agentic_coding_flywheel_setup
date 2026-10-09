@@ -225,18 +225,18 @@ for (const missing of ["plugin.json", "README.md", "LICENSE"]) {
     assert.throws(() => buildPluginArchive(directory), /missing/);
   });
 }
-for (const json of [
-  '{"a":1,"a":2}',
-  '{"a":1,"\\u0061":2}',
-  "\ufeff{}",
-  '{"number":1e999}',
-  "[]",
-  "{} trailing",
-]) {
+for (const [json, expected] of [
+  ['{"a":1,"a":2}', /^Plugin JSON contains duplicate object keys$/],
+  ['{"a":1,"\\u0061":2}', /^Plugin JSON contains duplicate object keys$/],
+  ["\ufeff{}", /^Plugin JSON must be valid UTF-8 JSON$/],
+  ['{"number":1e999}', /^Plugin JSON numbers must be finite$/],
+  ["[]", /^Plugin manifest must be a JSON object$/],
+  ["{} trailing", /^Plugin JSON must be valid UTF-8 JSON$/],
+] as const) {
   test(`refuses ambiguous or invalid manifest ${JSON.stringify(json)}`, () => {
     const item = fixture();
     writeFileSync(join(item.source, "plugin.json"), json);
-    assert.throws(() => buildPluginArchive(item.source), refused);
+    assert.throws(() => buildPluginArchive(item.source), refusedWith(expected));
   });
 }
 
