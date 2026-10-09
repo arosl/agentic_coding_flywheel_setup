@@ -561,7 +561,7 @@ chown -hR "${TARGET_USER:-ubuntu}:${TARGET_USER:-ubuntu}" "$target_home/.acfs"
 
 # Save the workspace AGENTS.md template into ACFS-owned storage.
 # ACFS may freely refresh this canonical copy on every install/update.
-ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
+ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
 CURL_ARGS=(-q -fsSL)
 if curl -q --help all 2>/dev/null | grep -q -- '--proto'; then
   CURL_ARGS=(-q --proto '=https' --proto-redir '=https' -fsSL)

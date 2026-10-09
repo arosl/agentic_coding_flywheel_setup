@@ -724,7 +724,7 @@ if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "${ACFS_BOOTSTRAP_DIR}/packages/o
 elif [[ -f "packages/onboard/onboard.sh" ]]; then
   cp "packages/onboard/onboard.sh" "$onboard_tmp"
 else
-  ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
+  ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
   CURL_ARGS=(-q -fsSL)
   if curl -q --help all 2>/dev/null | grep -q -- '--proto'; then
     CURL_ARGS=(-q --proto '=https' --proto-redir '=https' -fsSL)
@@ -790,7 +790,7 @@ if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "${ACFS_BOOTSTRAP_DIR}/scripts/li
 elif [[ -f "scripts/lib/nightly_update.sh" ]]; then
   cp "scripts/lib/nightly_update.sh" ~/.acfs/scripts/nightly-update.sh
 else
-  ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
+  ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
   CURL_ARGS=(-q -fsSL)
   if curl -q --help all 2>/dev/null | grep -q -- '--proto'; then
     CURL_ARGS=(-q --proto '=https' --proto-redir '=https' -fsSL)
@@ -973,7 +973,7 @@ if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "${ACFS_BOOTSTRAP_DIR}/scripts/ac
 elif [[ -f "scripts/acfs-update" ]]; then
   cp "scripts/acfs-update" "$update_tmp"
 else
-  ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
+  ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
   CURL_ARGS=(-q -fsSL)
   if curl -q --help all 2>/dev/null | grep -q -- '--proto'; then
     CURL_ARGS=(-q --proto '=https' --proto-redir '=https' -fsSL)
@@ -1052,7 +1052,7 @@ if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "${ACFS_BOOTSTRAP_DIR}/scripts/li
 elif [[ -f "scripts/lib/nightly_update.sh" ]]; then
   cp "scripts/lib/nightly_update.sh" ~/.acfs/scripts/nightly-update.sh
 else
-  ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
+  ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
   CURL_ARGS=(-q -fsSL)
   if curl -q --help all 2>/dev/null | grep -q -- '--proto'; then
     CURL_ARGS=(-q --proto '=https' --proto-redir '=https' -fsSL)
@@ -1089,7 +1089,7 @@ if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "${ACFS_BOOTSTRAP_DIR}/scripts/te
 elif [[ -f "scripts/templates/acfs-nightly-update.timer" ]]; then
   cp "scripts/templates/acfs-nightly-update.timer" ~/.config/systemd/user/acfs-nightly-update.timer
 else
-  ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
+  ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
   CURL_ARGS=(-q -fsSL)
   if curl -q --help all 2>/dev/null | grep -q -- '--proto'; then
     CURL_ARGS=(-q --proto '=https' --proto-redir '=https' -fsSL)
@@ -1125,7 +1125,7 @@ if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "${ACFS_BOOTSTRAP_DIR}/scripts/te
 elif [[ -f "scripts/templates/acfs-nightly-update.service" ]]; then
   cp "scripts/templates/acfs-nightly-update.service" ~/.config/systemd/user/acfs-nightly-update.service
 else
-  ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
+  ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
   CURL_ARGS=(-q -fsSL)
   if curl -q --help all 2>/dev/null | grep -q -- '--proto'; then
     CURL_ARGS=(-q --proto '=https' --proto-redir '=https' -fsSL)
@@ -1388,7 +1388,7 @@ if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "${ACFS_BOOTSTRAP_DIR}/scripts/li
 elif [[ -f "scripts/lib/doctor.sh" ]]; then
   cp "scripts/lib/doctor.sh" "$doctor_tmp"
 else
-  ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
+  ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
   CURL_ARGS=(-q -fsSL)
   if curl -q --help all 2>/dev/null | grep -q -- '--proto'; then
     CURL_ARGS=(-q --proto '=https' --proto-redir '=https' -fsSL)

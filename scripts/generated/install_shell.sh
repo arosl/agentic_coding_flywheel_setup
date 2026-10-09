@@ -533,7 +533,7 @@ INSTALL_SHELL_OMZ
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Install ACFS zshrc
-ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
+ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
 mkdir -p ~/.acfs/zsh
 CURL_ARGS=(-q -fsSL)
 if curl -q --help all 2>/dev/null | grep -q -- '--proto'; then
@@ -551,7 +551,7 @@ INSTALL_SHELL_OMZ
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Install ACFS shell completions (zsh)
-ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
+ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
 mkdir -p ~/.acfs/completions
 CURL_ARGS=(-q -fsSL)
 if curl -q --help all 2>/dev/null | grep -q -- '--proto'; then
@@ -571,7 +571,7 @@ INSTALL_SHELL_OMZ
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Install pre-configured Powerlevel10k settings (prevents config wizard on first login)
-ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
+ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
 CURL_ARGS=(-q -fsSL)
 if curl -q --help all 2>/dev/null | grep -q -- '--proto'; then
   CURL_ARGS=(-q --proto '=https' --proto-redir '=https' -fsSL)
