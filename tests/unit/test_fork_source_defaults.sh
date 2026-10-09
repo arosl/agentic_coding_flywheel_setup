@@ -2,7 +2,8 @@
 # ============================================================
 # Fork source defaults: no runtime file and no install
 # instruction points at upstream ACFS
-# (Dicklesworthstone/agentic_coding_flywheel_setup).
+# (Dicklesworthstone/agentic_coding_flywheel_setup), or at a short
+# URL that serves upstream's installer.
 #
 # The installer and acfs update choose their source from
 # ACFS_REPO_OWNER, whose default is the fork's owner. An upstream
@@ -27,9 +28,14 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
+# Upstream's short install URLs: both serve upstream's install.sh
+# (agent-flywheel.com/install through apps/web/app/install/route.ts).
+UPSTREAM_SHORT_URLS='agent-flywheel\.com/install|https://acfs\.sh'
+
 # Files that run, or are installed, on a user's machine: any mention
-# of this repo upstream, or an upstream owner default, is flagged.
-RUNTIME_PATTERN='Dicklesworthstone/agentic_coding_flywheel_setup|:-Dicklesworthstone\}|"Dicklesworthstone"'
+# of this repo upstream, an upstream owner default, or a short URL
+# that installs upstream is flagged.
+RUNTIME_PATTERN="Dicklesworthstone/agentic_coding_flywheel_setup|:-Dicklesworthstone\\}|\"Dicklesworthstone\"|${UPSTREAM_SHORT_URLS}"
 RUNTIME_FILES=(
     install.sh
     acfs.manifest.yaml
@@ -55,7 +61,7 @@ RUNTIME_FILES+=("${RAW_FETCHED[@]}")
 
 # Install instructions: only a fetch from upstream is flagged, so
 # attribution links to upstream stay allowed.
-DOCS_PATTERN='(raw\.githubusercontent\.com|cdn\.jsdelivr\.net/gh|api\.github\.com/repos)/Dicklesworthstone/agentic_coding_flywheel_setup'
+DOCS_PATTERN="(raw\\.githubusercontent\\.com|cdn\\.jsdelivr\\.net/gh|api\\.github\\.com/repos)/Dicklesworthstone/agentic_coding_flywheel_setup|${UPSTREAM_SHORT_URLS}"
 DOCS_FILES=(
     README.md
     docs/operations/*.md
@@ -64,6 +70,9 @@ DOCS_FILES=(
 # file|fixed string|reason
 ALLOWED=(
     'install.sh|"$resume_repo_owner" != "Dicklesworthstone"|the acfs.sh short URL serves upstream'"'"'s installer, so the resume hint offers it only to the upstream owner'
+    'install.sh|install_url="https://acfs.sh"|the resume hint'"'"'s branch for the upstream owner and name only; every other owner gets the raw URL'
+    'install.sh|local fallback_url="https://acfs.sh"|print_resume_hint'"'"'s fallback; the lines after it replace it with the raw URL for any owner or name other than upstream'"'"'s'
+    'scripts/lib/report.sh|install_url="https://acfs.sh"|unreachable: only install.sh sources report.sh, and it always sets ACFS_RAW, whose branch comes first'
     'scripts/lib/errors.sh|https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues|an issue link; it fetches nothing'
     'scripts/lib/security.sh|https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues|an issue link; it fetches nothing'
     'scripts/lib/update.sh|# See: https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues/125|a comment citing the upstream issue behind the code'
