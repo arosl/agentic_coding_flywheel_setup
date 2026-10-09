@@ -91,7 +91,7 @@ The fork tracks upstream ACFS and changes its toolset: herdr instead of ntm, wez
   - the fork's own workflows: `.github/workflows/incus-provider.yml` runs `HOME="$(mktemp -d)" bash tests/unit/test_incus_provider_stub.sh`, the Incus launcher against a stub `incus`;
   - `apps/web`: `bun run type-check`, `bun run lint`, `bun run build` and `bun run test`, from `apps/web`.
 - **Heavy tests (opt-in):** `tests/vm/test_incus_provider.sh <new-instance-name>` creates a real Incus VM with `scripts/providers/incus.sh`, installs ACFS from the committed `HEAD`, and checks it through the printed SSH entry. It needs a machine with Incus and KVM, and skips, naming what's missing, without Incus, KVM or `images:`; it stops the VM but never deletes it. Upstream's `tests/vm/test_install_ubuntu.sh` runs the whole installer in Docker, which the fork drops; its Incus port is acfs-g5f. Upstream's external `automated_flywheel_setup_checker` isn't available to the fork.
-- **Formatters and linters:** shellcheck 0.9.0 with `.shellcheckrc`, which CI installs from the upstream release through `.github/actions/setup-shellcheck`, pinned by version and SHA-256 (0.11.0 adds 382 SC2329 notes, so bumping it is a gate change); bun, pinned for CI by `packageManager` in the root `package.json`, which every `setup-bun` step reads; TypeScript 5.9.3 and eslint 9.39.2 (`apps/web/eslint.config.mjs`), pinned in `bun.lock`. Nothing else formats this tree, and nothing formats on save.
+- **Formatters and linters:** shellcheck 0.9.0 with `.shellcheckrc`, which CI installs from the upstream release through `.github/actions/setup-shellcheck`, pinned by version and SHA-256 (0.11.0 adds 382 SC2329 notes, so bumping it is a gate change). Where shellcheck 0.9.0 isn't installed, fetch it the way that action does, checking the tarball's SHA-256, into your scratch directory; bun, pinned for CI by `packageManager` in the root `package.json`, which every `setup-bun` step reads; TypeScript 5.9.3 and eslint 9.39.2 (`apps/web/eslint.config.mjs`), pinned in `bun.lock`. Nothing else formats this tree, and nothing formats on save.
 - **Running from a worktree** (an upstream sync): a worktree has no `node_modules`. Run `bun install --frozen-lockfile --filter '@acfs/manifest'` at its root first.
 - **Pre-commit hook:** Agent Mail's reservation guard, installed per clone with `am guard install`. It refuses a commit that touches a file another agent holds an exclusive reservation on, and it guards `git push` too. It needs your Agent Mail name: run `git commit` and `git push` as `AGENT_NAME=<AgentMailName> git …`.
 
@@ -118,6 +118,11 @@ What the fork adds to upstream's sections below. `scripts/lib/policy_lint.sh` re
 - **Waking an agent:** after you mail it, `herdr agent prompt <herdr name> "Check your Agent Mail inbox."`.
 - **Agent Mail project key:** the repo's absolute path, `git rev-parse --show-toplevel`.
 - **Reservations:** reserve files in Agent Mail before you edit them (`file_reservation_paths`, with the bead id as the reason), and release them when you're done.
+- **Committing and pushing** (the operator's ruling, 2026-10-09). Everyone shares one checkout, one index and one local `main`:
+  - Build and commit in the shared checkout, so every commit lands on local `main` first. Commit with a pathspec, `git commit -- <your files>`, never a bare `git commit`: the index may hold other agents' staging.
+  - A worktree is only for running the gate on a clean tree, at the commit you're about to push. Never commit in one or push from one.
+  - Before every push: `git fetch origin`. If `origin/main` moved, merge it into local `main`. Never rebase or reset the shared checkout. Then run the full gate on the result and push with `AGENT_NAME=<you> git push origin main main:master`.
+  - If the pre-push guard refuses because a commit already on `main` touches a file another agent now holds, ask that agent to release it for the push. Don't bypass the guard.
 - **Bead export:** kept local, because this repo is public (the operator's ruling, 2026-10-08), and br writes the user name and the checkout path into every exported bead. The only tracked file under `.beads/` is its `.gitignore`, which ignores everything (`*`), so no bead write is ever committed. Where upstream's sections below say to `git add .beads/`, skip that step.
 - **Priorities:** P0 a broken install or update on users' machines, or a hole in the checksum boundary; P1 what blocks other agents' work or the next upstream sync; P2 the fork's other planned work; P3 is the default, and P4 for work that waits on a condition.
 - **The palette:** `acfs/onboard/docs/ntm/command_palette.md` holds upstream's prompts, sent with `herdr agent prompt`. Run `fresh_review` on your own change before you commit it. Before you push a change to what the installer, `acfs update` or the doctor runs unattended on a user's machine, or to `checksums.yaml`, a verified installer or `scripts/lib/security.sh`, have another agent run `check_other_agents_work` on it.
@@ -514,10 +519,10 @@ br sync --flush-only  # Export to JSONL (NO git operations)
 
 ```bash
 git status                       # Check what changed
-git add <files>                  # Stage code changes
 br sync --flush-only             # Export beads to JSONL (stays local)
-git commit -m "..."              # Commit the code
-git push origin main main:master # Push main and its master mirror
+git commit -m "..." -- <files>   # Commit your files only (shared index)
+git fetch origin                 # Merge origin/main into main if it moved, then gate
+git push origin main main:master # Push main and its master mirror (with AGENT_NAME)
 ```
 
 ### Best Practices
