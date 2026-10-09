@@ -1145,7 +1145,7 @@ _check_herdr() {
         _smoke_pass "herdr: installed"
         return 0
     else
-        _smoke_fail "herdr: not found" "Re-run: curl -fsSL https://agent-flywheel.com/install | bash -s -- --yes --force-reinstall --only tools.herdr"
+        _smoke_fail "herdr: not found" "Re-run: curl -fsSL https://raw.githubusercontent.com/${ACFS_REPO_OWNER:-arosl}/${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}/main/install.sh | bash -s -- --yes --force-reinstall --only tools.herdr"
         return 1
     fi
 }

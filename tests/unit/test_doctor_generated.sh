@@ -193,7 +193,7 @@ test_fix_suggestion_format() {
         return 1
     fi
 
-    if echo "$fix_output" | grep -q 'agent-flywheel.com/install'; then
+    if echo "$fix_output" | grep -q "https://raw.githubusercontent.com/${ACFS_REPO_OWNER:-arosl}/${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}/main/install.sh"; then
         harness_pass "Fix suggestion uses correct URL"
     else
         harness_fail "Fix suggestion missing correct URL"
@@ -328,7 +328,7 @@ test_fix_hint_uses_module_id() {
     # their module. Some modules intentionally return bespoke prose guidance
     # instead of an ACFS reinstall command, so skip those here.
     local samples
-    samples=$(echo "$output" | jq -r '.checks[] | select(.fix and .id and (.fix | contains("agent-flywheel.com/install"))) | "\(.id)|\(.fix)"' 2>/dev/null | head -5)
+    samples=$(echo "$output" | jq -r '.checks[] | select(.fix and .id and (.fix | test("raw\\.githubusercontent\\.com/[^ ]+/install\\.sh"))) | "\(.id)|\(.fix)"' 2>/dev/null | head -5)
 
     local checks_passed=0
     local checks_total=0

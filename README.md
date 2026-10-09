@@ -1634,7 +1634,7 @@ Doctor checks are generated from the manifest (`scripts/generated/doctor_checks.
 **Example output with fix suggestion:**
 ```
   ✗ tools.lazygit - Lazygit terminal UI not found
-    Fix: curl -fsSL https://agent-flywheel.com/install | bash -s -- --yes --force-reinstall --only tools.lazygit
+    Fix: curl -fsSL https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --force-reinstall --only tools.lazygit
 ```
 
 This architecture ensures doctor checks stay in sync with the installer—if a tool is in the manifest, it will be verified.
@@ -4090,7 +4090,7 @@ To debug:
    ```bash
    # Use the exact command from the failure output
    # Or use the generic resume command:
-   curl -fsSL https://acfs.sh | bash -s -- --resume --yes --mode vibe
+   curl -fsSL https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --resume --yes --mode vibe
    ```
 
 4. **Check state file** (advanced):
@@ -4396,22 +4396,22 @@ Doctor checks are generated directly from the manifest, so they verify the exact
 
 ```
   ✗ tools.lazygit - Lazygit terminal UI not found
-    Fix: curl -fsSL https://agent-flywheel.com/install | bash -s -- --yes --force-reinstall --only tools.lazygit
+    Fix: curl -fsSL https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --force-reinstall --only tools.lazygit
 ```
 
 **Solutions**:
 
 1. **Re-run the specific module** (use the fix suggestion):
    ```bash
-   curl -fsSL https://agent-flywheel.com/install | bash -s -- --yes --force-reinstall --only tools.lazygit
-   curl -fsSL https://agent-flywheel.com/install | bash -s -- --yes --force-reinstall --only lang.go
-   curl -fsSL https://agent-flywheel.com/install | bash -s -- --yes --force-reinstall --only stack.dcg
+   curl -fsSL https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --force-reinstall --only tools.lazygit
+   curl -fsSL https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --force-reinstall --only lang.go
+   curl -fsSL https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --force-reinstall --only stack.dcg
    ```
 
 2. **Re-run an entire phase** (for multiple failures in one category):
    ```bash
-   curl -fsSL https://agent-flywheel.com/install | bash -s -- --yes --force-reinstall --only-phase cli
-   curl -fsSL https://agent-flywheel.com/install | bash -s -- --yes --force-reinstall --only-phase stack
+   curl -fsSL https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --force-reinstall --only-phase cli
+   curl -fsSL https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --force-reinstall --only-phase stack
    ```
 
 3. **Run auto-fix mode** (applies safe, deterministic fixes):

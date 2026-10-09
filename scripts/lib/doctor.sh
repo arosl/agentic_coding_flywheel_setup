@@ -831,7 +831,7 @@ build_fix_suggestion() {
     done
 
     # Base URL
-    local install_url="https://agent-flywheel.com/install"
+    local install_url="https://raw.githubusercontent.com/${ACFS_REPO_OWNER:-arosl}/${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}/main/install.sh"
     local install_url_q=""
 
     # Build flags based on current state

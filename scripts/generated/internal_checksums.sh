@@ -10,15 +10,15 @@
 ACFS_INTERNAL_CHECKSUMS_SCHEMA=1
 
 declare -gA ACFS_INTERNAL_CHECKSUMS=(
-  [install.sh]="fcab616015069ea19b06fa57dbae110df2d02a7d2e34eff150ff6b83dd07078f"
+  [install.sh]="09a9524ea35d07d962bf9fef5ab9db1807ecf9e23f6ee4a17397d800a92ff28e"
   [checksums.yaml]="478f16cca50d76516691142e9c415bf31fe98d4fc610b797624702a5af69fedd"
   [scripts/preflight.sh]="5b72d882fc73dc2f9140f1d9e4ef1ca604985f4c8f5a5ca1893ba3cefb41ea6e"
   [scripts/lib/security.sh]="005663b9640e0cce93fb3c4f9464c80196c47545d188de094c3375c153c20b3b"
   [scripts/lib/holds.sh]="7aca60222e56ce4034739b92ed3332c7118d918526d60ce189f59c595a930015"
   [scripts/lib/github_api.sh]="80699922df2e924694f5682457e614dedf9181d7c071472cc8a6db4f17373d3d"
   [scripts/lib/contract.sh]="22c148f44ddbaccd559196196ef903f26f65fc77e3b1b6b4efc62b77d3b97aa3"
-  [scripts/lib/update.sh]="9d2240b3566029f6ec665c15cb0058ab32a6791e3509a0af93f0998394f6db39"
-  [scripts/lib/doctor.sh]="e301f12288e2d0e15d979942f2eae42a2ccc140669b45b48423cc4daebafab12"
+  [scripts/lib/update.sh]="a2607b50ff78fbaeebd3cc0950f64b2e4f4091d60932661ff1a7e183e9f1775b"
+  [scripts/lib/doctor.sh]="11a142b7f0110d633b594f41aeef53ec04a6db14526909eebcbe235688d177c7"
   [scripts/lib/acfs-services.sh]="01e543d418c0ca5c45d42acb81510fce03150ff98e8bfd05438c863708daf359"
   [scripts/lib/doctor_fix.sh]="5ef96e8bdf79bec0722959754c035e680b44cd8f00dbcdae0d4269822a962ce1"
   [scripts/lib/offline_artifact_pack.sh]="123d0bffad48fdc501f456e2cf06907d4ad66821492b8d112327c66269efd38d"
@@ -74,7 +74,7 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/lib/info.sh]="85073206ee1d0dfcaf104012c5974825007256993d875f5c85e54c52a396e8f8"
   [scripts/lib/landing_plane.sh]="7c353f5940dd0f4e49bfd1af395970306ad78d60771351610edd6311e80d1a09"
   [scripts/lib/module_selector.sh]="3f908ddd8c2d87d26f5de5a2b7654dd3abc18b08135e9fee989224ca036d922c"
-  [scripts/lib/newproj.sh]="ae188e7e73180d1ee6000886b5052f03152fb3ab80dfb6a1a72b76fe78854dac"
+  [scripts/lib/newproj.sh]="10dc3af20205878e8ad4079465d16410a0fc3c5993dd4261047d1c41e7e78208"
   [scripts/lib/newproj_agents.sh]="b16dec3eb311081fe378b1a3340d10ee46015d918d58c9010446352a9486fdbc"
   [scripts/lib/newproj_detect.sh]="83afadac698055f9bf5f96eae0a2d2abed0a600bc13cfe18142ac7a749e5ccba"
   [scripts/lib/newproj_errors.sh]="159a9d97bfb58be0c55e7d6c729e7ab40ddec86d3789344fcd4831558a0f05cb"
