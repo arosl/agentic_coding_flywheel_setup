@@ -406,14 +406,8 @@ autofix_refresh_state_paths() {
 autofix_refresh_state_paths
 
 # In-memory change records
-if declare -gA _acfs_test_assoc &>/dev/null; then
-    unset _acfs_test_assoc 2>/dev/null || true
-    declare -gA ACFS_CHANGE_RECORDS=()
-    declare -ga ACFS_CHANGE_ORDER=()
-else
-    declare -A ACFS_CHANGE_RECORDS=() 2>/dev/null || ACFS_CHANGE_RECORDS=()
-    declare -a ACFS_CHANGE_ORDER=() 2>/dev/null || ACFS_CHANGE_ORDER=()
-fi
+declare -gA ACFS_CHANGE_RECORDS=()
+declare -ga ACFS_CHANGE_ORDER=()
 
 # Session management
 ACFS_SESSION_ID=""
