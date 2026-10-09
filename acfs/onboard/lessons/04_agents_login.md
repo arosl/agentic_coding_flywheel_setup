@@ -188,8 +188,8 @@ If your organization uses a shared ACFS team profile (`acfs-team-profile.json`):
 
 ## Next
 
-Now let's put the agents to work together in the flywheel loop:
+Now let's learn herdr's agent commands - the tools that orchestrate all these agents:
 
 ```bash
-onboard 7
+onboard 5
 ```
