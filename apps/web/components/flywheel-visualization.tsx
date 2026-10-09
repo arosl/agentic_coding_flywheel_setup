@@ -1372,7 +1372,7 @@ function DesktopVisualization({
 
         {/* SVG connections */}
         <svg
-          className="absolute inset-0"
+          className="pointer-events-none absolute inset-0"
           width={DESKTOP_CONFIG.containerSize}
           height={DESKTOP_CONFIG.containerSize}
           aria-hidden="true"
