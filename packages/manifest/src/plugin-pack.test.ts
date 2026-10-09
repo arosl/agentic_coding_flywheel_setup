@@ -66,8 +66,12 @@ function unchanged(item: ReturnType<typeof fixture>): void {
     assert.deepEqual(readFileSync(join(item.source, path)), Buffer.from(bytes));
   assert.ok(!existsSync(item.output));
 }
-const refused = (error: unknown): boolean =>
+const refused = (error: unknown): error is PluginPackError | PluginArchiveError =>
   error instanceof PluginPackError || error instanceof PluginArchiveError;
+const refusedWith =
+  (expected: RegExp) =>
+  (error: unknown): boolean =>
+    refused(error) && expected.test(error.message);
 
 test("builds and validates a real package without extracting, executing or writing anything", () => {
   const item = fixture({
@@ -192,12 +196,19 @@ test("exposes frozen manifest metadata and refuses fabricated build objects", ()
   unchanged(item);
 });
 
-for (const name of [".env", ".git", "docs/unlisted.md", "review.json", "install.sh"]) {
+// Dot-files never reach the declaration check: the source walk refuses them as nonportable.
+for (const [name, expected] of [
+  [".env", /nonportable member path/],
+  [".git", /nonportable member path/],
+  ["docs/unlisted.md", /undeclared member/],
+  ["review.json", /undeclared member/],
+  ["install.sh", /undeclared member/],
+] as const) {
   test(`refuses undeclared or private workspace member ${name}`, () => {
     const item = fixture();
     mkdirSync(dirname(join(item.source, name)), { recursive: true, mode: 0o755 });
     writeFileSync(join(item.source, name), "not declared", { mode: 0o644 });
-    assert.throws(() => buildPluginArchive(item.source), refused);
+    assert.throws(() => buildPluginArchive(item.source), refusedWith(expected));
     assert.ok(!existsSync(item.output));
   });
 }
