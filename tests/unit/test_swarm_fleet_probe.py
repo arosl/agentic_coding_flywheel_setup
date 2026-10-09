@@ -69,7 +69,7 @@ def inventory():
                        "last_probe_at": "2026-01-01T00:00:00Z",
                        "resources": {"cpu_count": 8, "mem_total_mib": 16384, "disk_available_mib": 100000},
                        "capacity": {"workload": "standard", "recommended_agents": 5, "safe_agents": 8},
-                       "rch": {"worker": False}, "ntm": {"can_launch": True}, "ru": {},
+                       "rch": {"worker": False}, "herdr": {"can_launch": True}, "ru": {},
                        "notes": "operator policy"} for ident in ("alpha", "beta", "untouched")]}
 
 
@@ -88,7 +88,7 @@ def response(ident="alpha", when=None):
     host["probe_source"] = "acfs swarm inventory probe-local"
     host["resources"]["cpu_count"] = 12
     host["capacity"].update(recommended_agents=6, safe_agents=9)
-    host["local_observation"] = {"capacity_status": "pass", "ntm_available": True,
+    host["local_observation"] = {"capacity_status": "pass", "herdr_available": True,
                                   "rch_available": False, "live_admission_checked": False}
     return {"schema_version": 1, "hosts": [host]}
 
@@ -258,7 +258,7 @@ class FleetTests(unittest.TestCase):
             value["hosts"][0]["capacity"][field] = bad
             with self.subTest(field=field), self.assertRaises(m.Refused):
                 self.observe(value)
-        for field, bad in (("capacity_status", "fail"), ("ntm_available", "true"), ("rch_available", 1), ("live_admission_checked", True)):
+        for field, bad in (("capacity_status", "fail"), ("herdr_available", "true"), ("rch_available", 1), ("live_admission_checked", True)):
             value = response()
             value["hosts"][0]["local_observation"][field] = bad
             with self.subTest(field=field), self.assertRaises(m.Refused):
@@ -273,21 +273,21 @@ class FleetTests(unittest.TestCase):
     def test_merge_preserves_disabled_status_role_veto_and_other_hosts(self):
         base = inventory()
         base["hosts"][0].update(role="rch-worker", status="disabled")
-        base["hosts"][0]["ntm"]["can_launch"] = False
+        base["hosts"][0]["herdr"]["can_launch"] = False
         before = copy.deepcopy(base)
         actual = m.merge(base, [{"id": "alpha", "status": "measured", "observation": self.observe(response())}])
         self.assertEqual(base, before)
         self.assertEqual(actual["hosts"][1:], before["hosts"][1:])
         host = actual["hosts"][0]
-        self.assertEqual((host["role"], host["status"], host["ntm"]["can_launch"]), ("rch-worker", "disabled", False))
+        self.assertEqual((host["role"], host["status"], host["herdr"]["can_launch"]), ("rch-worker", "disabled", False))
         self.assertEqual(host["notes"], "operator policy")
         self.assertEqual(host["resources"]["cpu_count"], 12)
 
-    def test_missing_ntm_can_withdraw_but_not_grant_launch_permission(self):
+    def test_missing_herdr_can_withdraw_but_not_grant_launch_permission(self):
         fresh = self.observe(response())
-        fresh["local_observation"]["ntm_available"] = False
+        fresh["local_observation"]["herdr_available"] = False
         actual = m.merge(inventory(), [{"id": "alpha", "status": "measured", "observation": fresh}])
-        self.assertFalse(actual["hosts"][0]["ntm"]["can_launch"])
+        self.assertFalse(actual["hosts"][0]["herdr"]["can_launch"])
 
     def test_failed_probe_cannot_leave_stale_positive_recommendations(self):
         actual = m.merge(inventory(), [{"id": "alpha", "status": "failed", "code": "probe_timeout"}])
@@ -295,7 +295,7 @@ class FleetTests(unittest.TestCase):
         self.assertEqual(host["capacity"]["recommended_agents"], 0)
         self.assertEqual(host["capacity"]["safe_agents"], 0)
         self.assertIsNone(host["last_probe_at"])
-        self.assertTrue(host["ntm"]["can_launch"])
+        self.assertTrue(host["herdr"]["can_launch"])
         self.assertEqual(actual["hosts"][1], inventory()["hosts"][1])
 
     def test_probe_executes_exact_command_against_executable_transport_fixture(self):
@@ -607,7 +607,7 @@ LogLevel ERROR
         assert code == 0 and report["status"] == "measured", report
         measured = m.decode(path.read_bytes())
         assert measured["hosts"][0]["capacity"]["recommended_agents"] == 6
-        assert measured["hosts"][0]["ntm"]["can_launch"] is True
+        assert measured["hosts"][0]["herdr"]["can_launch"] is True
         assert measured["hosts"][1:] == inventory()["hosts"][1:]
         assert base.read_bytes() == m.encoded(inventory()), "Input inventory changed"
         # Now use the real installed CLI and runtime updater, not an imported

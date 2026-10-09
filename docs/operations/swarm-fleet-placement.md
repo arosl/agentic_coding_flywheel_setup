@@ -13,7 +13,7 @@ A successful placement is not proof that a host is currently ready.
 ## Placement policy
 
 Only active controller, swarm-worker, or explicitly launch-enabled support
-hosts qualify. `ntm.can_launch` must be the boolean `true`. A missing flag,
+hosts qualify. `herdr.can_launch` must be the boolean `true`. A missing flag,
 null, or `false` is not permission. Both capacity counts must be known, positive
 integers. The per-host limit is the smaller of `recommended_agents` and
 `safe_agents`; zero remains zero. Recommendations above a safe maximum are
@@ -115,9 +115,9 @@ request, or RCH service request is made. Executable availability is not service
 health, authentication, or a live queue admission check.
 
 New records default to role `swarm-worker`, status `active`, and
-`ntm.can_launch: false`. `--role` selects another inventory role for a new record;
+`herdr.can_launch: false`. `--role` selects another inventory role for a new record;
 `--allow-launch` explicitly enables the new record's recommendation hint only
-when NTM is installed and the role permits agent launches. It does **not** start
+when herdr is installed and the role permits agent launches. It does **not** start
 agents. Omit it for a record that should remain excluded until separately reviewed.
 
 To refresh one local host in an existing fleet snapshot:
@@ -135,7 +135,7 @@ Other hosts retain their exact records, including their original probe times.
 Existing role, status, notes, tags, RCH/RU settings, and unrelated metadata are
 preserved. Existing workload is retained unless `--workload` explicitly changes
 it; new records use the inventory default. An old launch veto stays false.
-Missing NTM withdraws an existing positive hint. `--role` and `--allow-launch`
+Missing herdr withdraws an existing positive hint. `--role` and `--allow-launch`
 are rejected for existing records: changing operator policy needs a separate
 review, not a side effect of measurement. Refreshing a host never re-enables a
 disabled host or repurposes a build-only worker.

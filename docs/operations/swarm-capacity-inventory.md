@@ -86,7 +86,7 @@ a known sensitive field name.
         "workers_total": 8,
         "workers_healthy": 8
       },
-      "ntm": {
+      "herdr": {
         "can_launch": true,
         "preferred_labels": ["swarm-25", "review"]
       },
@@ -120,7 +120,7 @@ a known sensitive field name.
         "slots_total": 12,
         "slots_available": 10
       },
-      "ntm": {
+      "herdr": {
         "can_launch": false,
         "preferred_labels": []
       },
@@ -154,7 +154,7 @@ Required host fields:
 | `resources` | object | CPU, memory, and disk summary. |
 | `capacity` | object | Recommended and safe agent counts for this host role. |
 | `rch` | object | RCH relationship summary. |
-| `ntm` | object | Whether NTM launches are appropriate on this host. |
+| `herdr` | object | Whether starting herdr agents is appropriate on this host. |
 | `ru` | object | Whether RU repo sync is appropriate on this host. |
 
 Sensitive fields are forbidden at any depth:

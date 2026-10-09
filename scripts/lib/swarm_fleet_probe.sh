@@ -280,7 +280,7 @@ def observation(data, target, started, finished):
         if (cap["workload"] != target["workload"] or recommended > safe or
                 local["capacity_status"] not in ("pass", "warn", "fail") or
                 (local["capacity_status"] == "fail" and safe != 0) or
-                type(local["ntm_available"]) is not bool or type(local["rch_available"]) is not bool or
+                type(local["herdr_available"]) is not bool or type(local["rch_available"]) is not bool or
                 local["live_admission_checked"] is not False):
             refuse("probe_evidence_invalid")
         # Copy only reviewed scalar fields. Remote policy, notes, names and any
@@ -289,7 +289,7 @@ def observation(data, target, started, finished):
                 "recommended_agents": recommended, "safe_agents": safe, "source": "acfs capacity --json"},
                 "last_probe_at": host["last_probe_at"],
                 "local_observation": {k: local[k] for k in
-                    ("capacity_status", "ntm_available", "rch_available", "live_admission_checked")}}
+                    ("capacity_status", "herdr_available", "rch_available", "live_admission_checked")}}
     except (KeyError, TypeError):
         refuse("probe_evidence_invalid")
 
@@ -318,7 +318,7 @@ def merge(inventory, results):
             host["capacity"].update(fresh["capacity"])
             host["last_probe_at"] = fresh["last_probe_at"]
             host["local_observation"] = fresh["local_observation"]
-            host["ntm"]["can_launch"] = host["ntm"].get("can_launch") is True and fresh["local_observation"]["ntm_available"]
+            host["herdr"]["can_launch"] = host["herdr"].get("can_launch") is True and fresh["local_observation"]["herdr_available"]
         else:
             # A failed refresh must not leave yesterday's positive recommendation.
             # Preserve operator status/role and launch permission for later review.

@@ -4,8 +4,8 @@
 #
 # Implements the v1 local-first swarm capacity inventory contract.
 # Local commands read or explicitly write JSON files. The separate, explicitly
-# approved probe-fleet command measures named SSH targets. None launch NTM,
-# run RU, send Agent Mail, mutate Beads, or change RCH configuration.
+# approved probe-fleet command measures named SSH targets. None start herdr
+# agents, run RU, send Agent Mail, mutate Beads, or change RCH configuration.
 # ============================================================
 
 set -euo pipefail
@@ -54,9 +54,10 @@ Options:
   --artifact-dir DIR    Write deterministic error artifacts on failure
   --help, -h            Show this help
 
-Local commands are advisory and never SSH. No command launches NTM, runs RU,
-sends Agent Mail, mutates Beads, or changes RCH configuration. Import/export
-write only to explicit output targets or the canonical inventory file.
+Local commands are advisory and never SSH. No command starts herdr agents,
+runs RU, sends Agent Mail, mutates Beads, or changes RCH configuration.
+Import/export write only to explicit output targets or the canonical inventory
+file.
 Plan distributes a target total across eligible hosts, not additional agents.
 It requires fresh live admission on each host before any actual launch.
 Probe-local measures this machine with the installed capacity calculator.
@@ -373,7 +374,7 @@ swarm_inventory_error_json() {
             next_commands: $next_commands,
             advisory_only: true,
             mutations: {
-              ntm: false,
+              herdr: false,
               ru: false,
               agent_mail: false,
               beads: false,
@@ -524,8 +525,8 @@ swarm_inventory_validation_json() {
                 (if is_object($h.rch) then empty else
                    err("invalid_rch"; "hosts[" + ($idx | tostring) + "].rch"; "rch must be an object")
                  end),
-                (if is_object($h.ntm) then empty else
-                   err("invalid_ntm"; "hosts[" + ($idx | tostring) + "].ntm"; "ntm must be an object")
+                (if is_object($h.herdr) then empty else
+                   err("invalid_herdr"; "hosts[" + ($idx | tostring) + "].herdr"; "herdr must be an object")
                  end),
                 (if is_object($h.ru) then empty else
                    err("invalid_ru"; "hosts[" + ($idx | tostring) + "].ru"; "ru must be an object")
@@ -541,9 +542,9 @@ swarm_inventory_validation_json() {
                        err("invalid_capacity_counter"; "hosts[" + ($idx | tostring) + "].capacity." + $key; "capacity counters must be integers from 0 to 1000000 or null")
                      end
                  else empty end),
-                (if is_object($h.ntm) then
-                   if $h.ntm.can_launch == null or ($h.ntm.can_launch | type) == "boolean" then empty else
-                     err("invalid_launch_flag"; "hosts[" + ($idx | tostring) + "].ntm.can_launch"; "can_launch must be boolean or null")
+                (if is_object($h.herdr) then
+                   if $h.herdr.can_launch == null or ($h.herdr.can_launch | type) == "boolean" then empty else
+                     err("invalid_launch_flag"; "hosts[" + ($idx | tostring) + "].herdr.can_launch"; "can_launch must be boolean or null")
                    end
                  else empty end)
               end
@@ -560,7 +561,7 @@ swarm_inventory_validation_json() {
             duplicate_ids: $duplicates,
             unknown_field_count: (
               unknown_count($inventory_obj; ["schema_version", "updated_at", "defaults", "hosts"])
-              + ([ $host_list[]? | unknown_count(.; ["id", "display_name", "role", "status", "manual_tags", "last_probe_at", "probe_source", "resources", "capacity", "rch", "ntm", "ru", "notes"]) ] | add // 0)
+              + ([ $host_list[]? | unknown_count(.; ["id", "display_name", "role", "status", "manual_tags", "last_probe_at", "probe_source", "resources", "capacity", "rch", "herdr", "ru", "notes"]) ] | add // 0)
             ),
             warnings: []
           }
@@ -606,7 +607,7 @@ swarm_inventory_report_json() {
               | [
                   (if $h.status != "active" then "host_not_active" else empty end),
                   (if launch_role($h.role) | not then "role_not_launchable" else empty end),
-                  (if $h.ntm.can_launch != true then "launch_not_enabled" else empty end),
+                  (if $h.herdr.can_launch != true then "launch_not_enabled" else empty end),
                   (if $probe_state != "fresh" then "probe_" + $probe_state else empty end),
                   (if $h.capacity.recommended_agents == null or $h.capacity.safe_agents == null
                    then "capacity_unknown" else empty end),
@@ -642,9 +643,9 @@ swarm_inventory_report_json() {
                     workers_total: (n($h.rch.workers_total)),
                     workers_healthy: (n($h.rch.workers_healthy))
                   },
-                  ntm: {
-                    can_launch: ($h.ntm.can_launch // false),
-                    preferred_labels: ($h.ntm.preferred_labels // [])
+                  herdr: {
+                    can_launch: ($h.herdr.can_launch // false),
+                    preferred_labels: ($h.herdr.preferred_labels // [])
                   },
                   ru: {
                     can_sync_repos: ($h.ru.can_sync_repos // false)
@@ -670,7 +671,7 @@ swarm_inventory_report_json() {
             advisory_only: true,
             evidence: {source: "operator_inventory", live_verified: false, requires_live_admission: true},
             mutations: {
-              ntm: false,
+              herdr: false,
               ru: false,
               agent_mail: false,
               beads: false,
@@ -740,7 +741,7 @@ swarm_inventory_emit_action_human() {
       (if .output_file then "Output: \(.output_file)" else empty end),
       (if .inventory_file then "Inventory: \(.inventory_file)" else empty end),
       (if .summary then "Hosts: \(.summary.hosts_total // .summary.imported_hosts // .summary.exported_hosts // 0)" else empty end),
-      "Advisory only: no NTM, RU, Agent Mail, Beads, or RCH state was mutated."
+      "Advisory only: no herdr, RU, Agent Mail, Beads, or RCH state was mutated."
     ' <<< "$action_json"
 }
 
@@ -1034,25 +1035,25 @@ try:
     safe = count(result["capacity"]["safe_agent_count"])
     if recommended > safe or (result["status"] == "fail" and safe != 0):
         reject()
-    ntm = result["tools"]["herdr"]["available"]
+    herdr = result["tools"]["herdr"]["available"]
     rch = result["tools"]["rch"]["available"]
-    if type(ntm) is not bool or type(rch) is not bool:
+    if type(herdr) is not bool or type(rch) is not bool:
         reject()
-    if allow_launch == "true" and (not ntm or role not in ("swarm-controller", "swarm-worker", "support")):
+    if allow_launch == "true" and (not herdr or role not in ("swarm-controller", "swarm-worker", "support")):
         raise ValueError("launch opt-in needs herdr and a launch-capable role")
     if existing is None:
         existing = {"id": host_id, "role": role, "status": "disabled" if role == "disabled" else "active",
-                    "resources": {}, "capacity": {}, "ntm": {"can_launch": allow_launch == "true"}, "rch": {}, "ru": {}}
+                    "resources": {}, "capacity": {}, "herdr": {"can_launch": allow_launch == "true"}, "rch": {}, "ru": {}}
         inventory["hosts"].append(existing)
     existing["resources"].update(resources)
     existing["capacity"].update({"workload": workload, "recommended_agents": recommended,
                                  "safe_agents": safe, "source": "acfs capacity --json"})
     # A measurement can withdraw capability, but never override an old veto,
     # re-enable a disabled host, or convert a build worker into a launch host.
-    existing["ntm"]["can_launch"] = existing["ntm"].get("can_launch") is True and ntm
+    existing["herdr"]["can_launch"] = existing["herdr"].get("can_launch") is True and herdr
     existing["last_probe_at"] = observed_at
     existing["probe_source"] = "acfs swarm inventory probe-local"
-    existing["local_observation"] = {"capacity_status": result["status"], "ntm_available": ntm,
+    existing["local_observation"] = {"capacity_status": result["status"], "herdr_available": herdr,
                                       "rch_available": rch, "live_admission_checked": False}
     inventory["updated_at"] = observed_at
     data = (json.dumps(inventory, ensure_ascii=True, allow_nan=False, separators=(",", ":")) + "\n").encode()
@@ -1112,7 +1113,7 @@ finally:
     "$jq_bin" -n --arg id "$SWARM_INV_HOST_ID" --arg output "$SWARM_INV_OUTPUT" \
         '{schema_version:1, operation:"probe-local", status:"pass", host_id:$id, output_file:$output,
           advisory_only:true, live_admission_checked:false,
-          mutations:{ntm:false, ru:false, agent_mail:false, beads:false, rch_config:false}}'
+          mutations:{herdr:false, ru:false, agent_mail:false, beads:false, rch_config:false}}'
 }
 
 swarm_inventory_command_import() {
@@ -1151,7 +1152,7 @@ swarm_inventory_command_import() {
             unknown_field_count: ($validation.unknown_field_count // 0)
           },
           advisory_only: true,
-          mutations: {ntm:false, ru:false, agent_mail:false, beads:false, rch_config:false}
+          mutations: {herdr:false, ru:false, agent_mail:false, beads:false, rch_config:false}
         }')"
 
     if [[ "$SWARM_INV_JSON" == true ]]; then
@@ -1196,7 +1197,7 @@ swarm_inventory_command_export() {
             unknown_field_count: ($validation.unknown_field_count // 0)
           },
           advisory_only: true,
-          mutations: {ntm:false, ru:false, agent_mail:false, beads:false, rch_config:false}
+          mutations: {herdr:false, ru:false, agent_mail:false, beads:false, rch_config:false}
         }')"
 
     if [[ "$SWARM_INV_JSON" == true && -n "$output_file" ]]; then

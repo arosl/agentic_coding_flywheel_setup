@@ -56,7 +56,7 @@ class InventoryPlacementTests(unittest.TestCase):
 
     def test_excluded_hosts_never_supply_capacity(self):
         self.data["hosts"] = [host("a", 20, 24), host("veto", 100, 120), host("old", 100, 120)]
-        self.data["hosts"][1]["ntm"]["can_launch"] = False
+        self.data["hosts"][1]["herdr"]["can_launch"] = False
         self.data["hosts"][2]["last_probe_at"] = stamp(48)
         result = self.plan(25, code=1)
         self.assertEqual(result["assigned_agents"], 20)

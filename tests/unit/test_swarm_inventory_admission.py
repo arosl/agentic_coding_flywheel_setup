@@ -18,7 +18,7 @@ def stamp(hours=0):
 def host(name="alpha", recommended=10, safe=16):
     return {"id": name, "role": "swarm-worker", "status": "active", "last_probe_at": stamp(),
             "resources": {}, "capacity": {"workload": "standard", "recommended_agents": recommended, "safe_agents": safe},
-            "rch": {}, "ntm": {"can_launch": True}, "ru": {}}
+            "rch": {}, "herdr": {"can_launch": True}, "ru": {}}
 
 
 class InventoryAdmissionTests(unittest.TestCase):
@@ -56,13 +56,13 @@ class InventoryAdmissionTests(unittest.TestCase):
         self.assertTrue(result["evidence"]["requires_live_admission"])
 
     def test_explicit_launch_veto_is_not_defaulted_to_true(self):
-        self.data["hosts"][0]["ntm"]["can_launch"] = False
+        self.data["hosts"][0]["herdr"]["can_launch"] = False
         self.excluded("launch_not_enabled")
 
     def test_missing_and_null_launch_flags_are_not_authorization(self):
         for value in ({}, {"can_launch": None}):
             with self.subTest(value=value):
-                self.data["hosts"][0]["ntm"] = value
+                self.data["hosts"][0]["herdr"] = value
                 self.excluded("launch_not_enabled")
 
     def test_missing_null_and_invalid_timestamps_exclude_host(self):
@@ -108,7 +108,7 @@ class InventoryAdmissionTests(unittest.TestCase):
     def test_invalid_launch_flag_is_rejected(self):
         for value in ("true", "false", 1, 0, [], {}):
             with self.subTest(value=value):
-                self.data["hosts"][0]["ntm"]["can_launch"] = value
+                self.data["hosts"][0]["herdr"]["can_launch"] = value
                 _, result = self.call(code=2)
                 self.assertEqual(result["error_code"], "invalid_launch_flag")
 

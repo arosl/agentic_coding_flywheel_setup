@@ -89,7 +89,7 @@ in private anonymous files during SSH execution rather than reopened by pathname
 
 Successful measurements update only capacity/resource fields and observation
 metadata. Existing roles, disabled states, launch vetoes, notes and unrelated
-hosts are preserved. A measurement may withdraw `ntm.can_launch`, never grant it
+hosts are preserved. A measurement may withdraw `herdr.can_launch`, never grant it
 against local policy. Restoring a withdrawn permission is a separate operator
 review, not an automatic response to the next probe.
 
