@@ -9648,10 +9648,6 @@ install_stack_phase() {
         return "$stack_phase_rc"
     fi
 
-    # herdr (tools.herdr). This hand-written path is the default on every
-    # distro (and the only one on Arch); the manifest installer has no apt step.
-    acfs_legacy_run_manifest_module "tools.herdr" || stack_phase_rc=1
-
     # MCP Agent Mail
     if ! acfs_legacy_module_selected "stack.mcp_agent_mail"; then
         log_detail "Skipping MCP Agent Mail (stack.mcp_agent_mail is not selected)"
@@ -10142,6 +10138,9 @@ UNIT_EOF
         fi
 
         if [[ "$am_service_ready" != "true" ]]; then
+            # This return skips the herdr call below, so install herdr here.
+            # The phase already fails for Agent Mail.
+            acfs_legacy_run_manifest_module "tools.herdr" || true
             return 1
         fi
     fi
@@ -10484,6 +10483,12 @@ UNIT_EOF
             try_step "Linking opencode into $ACFS_BIN_DIR" acfs_link_primary_bin_command "$TARGET_HOME/.opencode/bin/opencode" "opencode" || log_warn "Could not link opencode into $ACFS_BIN_DIR"
         fi
     fi
+
+    # herdr (tools.herdr). This hand-written path is the default on every
+    # distro (and the only one on Arch); the manifest installer has no apt step.
+    # It runs after the Grok, oh-my-pi and OpenCode installs above, because its
+    # install step adds a herdr integration only for agent CLIs already on PATH.
+    acfs_legacy_run_manifest_module "tools.herdr" || stack_phase_rc=1
 
     # Network Observer (rano)
     if binary_installed "rano"; then

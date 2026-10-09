@@ -10,7 +10,7 @@
 ACFS_INTERNAL_CHECKSUMS_SCHEMA=1
 
 declare -gA ACFS_INTERNAL_CHECKSUMS=(
-  [install.sh]="559cd78d1e566efc009f33e72ecae02aad92e405a76cb00aec86e98f27c951a9"
+  [install.sh]="fcab616015069ea19b06fa57dbae110df2d02a7d2e34eff150ff6b83dd07078f"
   [checksums.yaml]="478f16cca50d76516691142e9c415bf31fe98d4fc610b797624702a5af69fedd"
   [scripts/preflight.sh]="5b72d882fc73dc2f9140f1d9e4ef1ca604985f4c8f5a5ca1893ba3cefb41ea6e"
   [scripts/lib/security.sh]="005663b9640e0cce93fb3c4f9464c80196c47545d188de094c3375c153c20b3b"
@@ -55,7 +55,7 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/templates/acfs-nightly-update.timer]="aa4fbad4fadabe0b61d202b4bf4311ce71c1132ad0ce8453099b593aa04988c3"
   [packages/onboard/onboard.sh]="000f69590602ada34f6b9181760327e16d42f903fe66b4a2b9dacb33aaa2cf79"
   [VERSION]="dc24feb5bd35084d8ae32a4eafbec12352707d4662401fcbcc9bbd696cde77a9"
-  [acfs.manifest.yaml]="050e39709b3ecd14150de0affdb9d7796c0b757e0dd2a984b71023832d6d0163"
+  [acfs.manifest.yaml]="3eccc39140c210673a6466f238d116e279ff29a264ebf7ac9fc51c58e49d5753"
   [acfs/AGENTS.md]="cb9e83c4bef3dd7f75037c084a50f0b68f42f60b0cdc6214f6c63b9ef48efb2c"
   [acfs/zsh/acfs.zshrc]="1979c09af0337b6cf74b32a3e9c1ab2ff9bbfe4d553d71d885eaf68665593463"
   [acfs/zsh/p10k.zsh]="c0f940424680a295d52559684c7d63d9dae8d0586b2ef964c449fa6054653c4d"
@@ -109,7 +109,7 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/lib/swarm_simulation.sh]="be385316f0528c1eb604acaf9fc22d5b6f245243162f6a1297e04d842a329349"
   [scripts/lib/swarm_status.sh]="877711378fbb0af375921ab6002d7458fb818bee5987f9ff69bd7460e87e10eb"
   [scripts/services-setup.sh]="871e486a344d7c8728f742f41049ad754eca3773523b8e87ce03d586695e367d"
-  [scripts/generated/manifest_index.sh]="7980ff27b364b728735118a130072409ba580c9e5a791b8b9b985efdb3392867"
+  [scripts/generated/manifest_index.sh]="6d6ed4ed7adae17749429906cc678e824997ac0515dab9d64a07fdacbd1b862a"
   [scripts/generated/doctor_checks.sh]="7dab917a08a196bb11ec4d5ab2874535f24a987d6024ea5e3f3a7f5c9769a149"
   [scripts/generated/install_all.sh]="b02daedf33e2defc2a240c251cdbdb030cb5cdcb6bcce4f9c16cf60887358558"
   [scripts/generated/install_base.sh]="492bed92b4ad52fa2cd2d2289ba87230f8654f3a3014ef1d8ac28e58d587a8c1"
