@@ -1710,8 +1710,12 @@ modules:
           target="${pair#*:}"
           command -v "$cli" >/dev/null 2>&1 || continue
           # herdr refuses when the agent's config directory does not exist yet.
+          # acfs update retries each target recorded in the pending file.
           if ! herdr integration install "$target"; then
-            echo "herdr: no $target integration yet; start $cli once, then run: herdr integration install $target" >&2
+            echo "herdr: no $target integration yet; start $cli once, and acfs update installs it" >&2
+            pending="$HOME/.acfs/herdr-integrations-pending"
+            mkdir -p "${pending%/*}"
+            grep -qxF "$target" "$pending" 2>/dev/null || printf '%s\n' "$target" >> "$pending"
           fi
         done
     verify:
@@ -1719,7 +1723,8 @@ modules:
     notes:
       - "checksums.yaml pins the installer script (herdr.dev/install.sh), not a herdr version"
       - "The installer installs the stable release named in herdr.dev/latest.json into ~/.local/bin and verifies the binary's sha256 against that manifest"
-      - "An agent whose config directory doesn't exist yet gets no integration; run `herdr integration install <agent>` after its first start"
+      - "An agent whose config directory doesn't exist yet gets no integration at install; its target goes into ~/.acfs/herdr-integrations-pending, and acfs update installs it after the agent's first start"
+      - "acfs update also reinstalls each integration that herdr reports as outdated after a herdr update"
 
   - id: stack.mcp_agent_mail
     description: Like gmail for coding agents; MCP HTTP server + token; installs beads tools

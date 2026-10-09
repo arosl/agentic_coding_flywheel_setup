@@ -7210,6 +7210,75 @@ update_go() {
     log_to_file "Go version: $go_version (path: $go_path)"
 }
 
+# herdr integrations. tools.herdr's install step records each integration herdr
+# refused (the agent had no config directory yet) in
+# ~/.acfs/herdr-integrations-pending; retry those, and reinstall the ones herdr
+# reports as outdated, which a herdr update leaves behind. Never adds a hook
+# for an agent ACFS did not ask for.
+update_herdr_integrations() {
+    local herdr_bin=""
+    local target_home=""
+    local pending_file=""
+    local bash_bin=""
+    local target=""
+    local line=""
+    local -a pending=()
+    local -a outdated=()
+    local -a still_pending=()
+
+    herdr_bin="$(update_binary_path herdr 2>/dev/null || true)"
+    [[ -n "$herdr_bin" ]] || return 0
+    target_home="$(update_target_home "$(update_target_user 2>/dev/null || true)" 2>/dev/null || true)"
+    [[ -n "$target_home" && "$target_home" == /* ]] || return 0
+    pending_file="$target_home/.acfs/herdr-integrations-pending"
+
+    if [[ -f "$pending_file" ]]; then
+        while IFS= read -r target || [[ -n "$target" ]]; do
+            [[ "$target" =~ ^[a-z][a-z0-9-]*$ ]] && pending+=("$target")
+        done < "$pending_file"
+    fi
+    # herdr has no machine-readable status, and --outdated-only prints prose;
+    # act only on full-status lines of the form
+    # "<target>[ (experimental)]: outdated (v8 < v10) (<hook path>)".
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^([a-z][a-z0-9-]*)(\ \(experimental\))?:\ outdated\  ]]; then
+            outdated+=("${BASH_REMATCH[1]}")
+        fi
+    done < <(update_run_in_target_context "" "$herdr_bin" integration status 2>/dev/null || true)
+
+    (( ${#pending[@]} + ${#outdated[@]} > 0 )) || return 0
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_item "skip" "herdr integrations" "dry-run: would install ${pending[*]} ${outdated[*]}"
+        return 0
+    fi
+
+    for target in "${pending[@]}"; do
+        if update_run_in_target_context "" "$herdr_bin" integration install "$target" >/dev/null 2>&1; then
+            log_item "ok" "herdr $target integration" "installed"
+        else
+            still_pending+=("$target")
+            log_item "skip" "herdr $target integration" "start the agent once; acfs update retries it"
+        fi
+    done
+    for target in "${outdated[@]}"; do
+        if update_run_in_target_context "" "$herdr_bin" integration install "$target" >/dev/null 2>&1; then
+            log_item "ok" "herdr $target integration" "refreshed"
+        else
+            log_item "fail" "herdr $target integration" "refresh failed: herdr integration install $target"
+        fi
+    done
+
+    if (( ${#pending[@]} > 0 )); then
+        bash_bin="$(update_system_binary_path bash 2>/dev/null || true)"
+        if [[ -z "$bash_bin" ]] || ! update_run_in_target_context "" "$bash_bin" -c \
+                'f="$1"; shift; if (( $# )); then printf "%s\n" "$@" > "$f"; else : > "$f"; fi' \
+                _ "$pending_file" "${still_pending[@]}"; then
+            log_to_file "Could not rewrite $pending_file"
+        fi
+    fi
+    return 0
+}
+
 update_stack() {
     if [[ "$UPDATE_STACK" != "true" ]]; then
         return 0
@@ -7238,6 +7307,7 @@ update_stack() {
     if capture_version_after "herdr"; then
         update_say "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[herdr]}" "${VERSION_AFTER[herdr]}"
     fi
+    update_herdr_integrations
 
     # minisign (issue #375): the MCP Agent Mail and CAAM installers fail
     # closed without it, so provision it once here, before either runs.
