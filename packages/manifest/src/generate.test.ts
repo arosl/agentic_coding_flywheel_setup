@@ -441,6 +441,29 @@ describe("Generated verified installer args", () => {
     expect(slbInstaller).not.toContain("git clone");
   });
 
+  test("cli.modern manifest install packages maintain parity with install.sh required apt packages", () => {
+    const parseResult = parseManifestFile(MANIFEST_PATH);
+    expect(parseResult.success).toBe(true);
+    const cliModern = parseResult.data?.modules.find((m) => m.id === "cli.modern");
+    expect(cliModern).toBeDefined();
+
+    const installContent = readFileSync(resolve(PROJECT_ROOT, "install.sh"), "utf-8");
+    const match = installContent.match(
+      /try_step "Installing required apt packages" \$SUDO apt-get [^\n]* install -y\s+([a-z0-9_\-\s]+?)\s*\|\|\s*return 1/,
+    );
+    expect(match).not.toBeNull();
+    const requiredPkgs = (match?.[1] ?? "").trim().split(/\s+/).filter(Boolean);
+    expect(requiredPkgs.length).toBeGreaterThan(0);
+
+    const manifestInstallCmd = cliModern?.install?.[0] ?? "";
+    for (const pkg of requiredPkgs) {
+      expect(manifestInstallCmd).toContain(pkg);
+    }
+    expect(manifestInstallCmd).toContain("minisign");
+    expect(manifestInstallCmd).toContain("zstd");
+    expect(manifestInstallCmd).toContain("libsqlite3-dev");
+  });
+
   test("generated verified installers never stream verification output into an interpreter", () => {
     for (const filename of [
       "install_shell.sh",

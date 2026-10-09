@@ -364,10 +364,10 @@ acfs_generated_install_tools_lazygit() {
     log_step "Installing tools.lazygit"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: if apt-get -o DPkg::Lock::Timeout=120 install -y lazygit; then (root)"
+        log_info "dry-run: install: if apt-get -o DPkg::Lock::Timeout=120 install -y lazygit 2>/dev/null; then (root)"
     else
         if ! run_as_root_shell <<'INSTALL_TOOLS_LAZYGIT'
-if apt-get -o DPkg::Lock::Timeout=120 install -y lazygit; then
+if apt-get -o DPkg::Lock::Timeout=120 install -y lazygit 2>/dev/null; then
   exit 0
 fi
 # Fallback to binary install
@@ -375,7 +375,10 @@ LG_VER="0.44.1"
 ARCH=$(uname -m)
 case "$ARCH" in
   x86_64) LG_SHA="84682f4ad5a449d0a3ffbc8332200fe8651aee9dd91dcd8d87197ba6c2450dbc" ;;
-  aarch64) LG_SHA="26a435f47b691325c086dad2f84daa6556df5af8efc52b6ed624fa657605c976" ;;
+  aarch64|arm64)
+    ARCH="arm64"
+    LG_SHA="26a435f47b691325c086dad2f84daa6556df5af8efc52b6ed624fa657605c976"
+    ;;
   *) echo "Unsupported arch for lazygit binary: $ARCH"; exit 0 ;;
 esac
 
@@ -391,7 +394,7 @@ chmod +x /usr/local/bin/lazygit
 rm "$TMP_FILE"
 INSTALL_TOOLS_LAZYGIT
         then
-            log_error "tools.lazygit: install command failed: if apt-get -o DPkg::Lock::Timeout=120 install -y lazygit; then"
+            log_error "tools.lazygit: install command failed: if apt-get -o DPkg::Lock::Timeout=120 install -y lazygit 2>/dev/null; then"
             return 1
         fi
     fi

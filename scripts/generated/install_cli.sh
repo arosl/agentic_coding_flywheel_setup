@@ -364,13 +364,13 @@ acfs_generated_install_cli_modern() {
     log_step "Installing cli.modern"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync (root)"
+        log_info "dry-run: install: apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev (root)"
     else
         if ! run_as_root_shell <<'INSTALL_CLI_MODERN'
-apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync
+apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev
 INSTALL_CLI_MODERN
         then
-            log_error "cli.modern: install command failed: apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync"
+            log_error "cli.modern: install command failed: apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev"
             return 1
         fi
     fi
@@ -516,6 +516,17 @@ strace --version
 INSTALL_CLI_MODERN
         then
             log_error "cli.modern: verify failed: strace --version"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: minisign -v (root)"
+    else
+        if ! run_as_root_shell <<'INSTALL_CLI_MODERN'
+minisign -v
+INSTALL_CLI_MODERN
+        then
+            log_error "cli.modern: verify failed: minisign -v"
             return 1
         fi
     fi

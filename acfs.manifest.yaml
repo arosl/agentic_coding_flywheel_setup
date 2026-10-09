@@ -439,7 +439,7 @@ modules:
     # No tmux: agents run in herdr, and `acfs services` runs CM and the CASS
     # indexer as systemd user units (scripts/lib/acfs-services.sh).
     install:
-      - apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync
+      - apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev
       - apt-get -o DPkg::Lock::Timeout=120 install -y lsd || true
       - apt-get -o DPkg::Lock::Timeout=120 install -y eza || true
       - apt-get -o DPkg::Lock::Timeout=120 install -y bat || apt-get -o DPkg::Lock::Timeout=120 install -y batcat || true
@@ -454,6 +454,7 @@ modules:
       - git-lfs version
       - rsync --version
       - strace --version
+      - minisign -v
       - command -v lsof
       - command -v dig
       - command -v nc
@@ -474,7 +475,7 @@ modules:
       command: "command -v lazygit"
     install:
       - |
-        if apt-get -o DPkg::Lock::Timeout=120 install -y lazygit; then
+        if apt-get -o DPkg::Lock::Timeout=120 install -y lazygit 2>/dev/null; then
           exit 0
         fi
         # Fallback to binary install
@@ -482,7 +483,10 @@ modules:
         ARCH=$(uname -m)
         case "$ARCH" in
           x86_64) LG_SHA="84682f4ad5a449d0a3ffbc8332200fe8651aee9dd91dcd8d87197ba6c2450dbc" ;;
-          aarch64) LG_SHA="26a435f47b691325c086dad2f84daa6556df5af8efc52b6ed624fa657605c976" ;;
+          aarch64|arm64)
+            ARCH="arm64"
+            LG_SHA="26a435f47b691325c086dad2f84daa6556df5af8efc52b6ed624fa657605c976"
+            ;;
           *) echo "Unsupported arch for lazygit binary: $ARCH"; exit 0 ;;
         esac
         
