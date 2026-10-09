@@ -1686,7 +1686,7 @@ EOF
             fi
         else
             echo -e "${YELLOW}Warning: br not found, skipping beads initialization${NC}"
-            echo -e "${YELLOW}Install with: curl -fsSL https://agent-flywheel.com/install | bash -s -- --yes --only stack.beads_rust${NC}"
+            echo -e "${YELLOW}Install with: curl -fsSL https://raw.githubusercontent.com/${ACFS_REPO_OWNER:-arosl}/${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}/main/install.sh | bash -s -- --yes --only stack.beads_rust${NC}"
         fi
     fi
 

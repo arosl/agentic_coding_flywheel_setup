@@ -4174,7 +4174,7 @@ update_require_security() {
         echo "" >&2
         echo "  TO FIX: Re-run the ACFS installer:" >&2
         echo "" >&2
-        echo "    curl -fsSL https://agent-flywheel.com/install | bash -s -- --yes" >&2
+        echo "    curl -fsSL https://raw.githubusercontent.com/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/main/install.sh | bash -s -- --yes" >&2
         echo "" >&2
         echo "═══════════════════════════════════════════════════════════════" >&2
         echo "" >&2

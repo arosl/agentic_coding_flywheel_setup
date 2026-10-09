@@ -10993,7 +10993,7 @@ _smoke_run_as_target() {
 }
 
 acfs_smoke_install_fix_command() {
-    local install_url="https://agent-flywheel.com/install"
+    local install_url="https://raw.githubusercontent.com/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/main/install.sh"
     local install_url_q=""
     local flags=""
     local module_id=""

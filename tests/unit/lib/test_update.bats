@@ -12860,8 +12860,14 @@ EOF
     ACFS_REF_INPUT="main"
     run acfs_smoke_install_fix_command "tools.herdr"
     assert_success
-    assert_output --partial "https://agent-flywheel.com/install"
+    assert_output --partial "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh"
     refute_output --partial "--ref"
+
+    ACFS_REPO_OWNER="arosl"
+    run acfs_smoke_install_fix_command "tools.herdr"
+    assert_success
+    assert_output --partial "curl -fsSL https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh | bash -s --"
+    refute_output --partial "agent-flywheel.com"
 }
 
 @test "doctor.sh: state mode is validated before sudo policy and fix suggestions" {
@@ -12992,7 +12998,7 @@ EOF
 
     run build_fix_suggestion "tools.herdr"
     assert_success
-    assert_output --partial "curl -fsSL https://agent-flywheel.com/install | bash -s --"
+    assert_output --partial "curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh | bash -s --"
     refute_output --partial "--ref"
 }
 
