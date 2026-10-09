@@ -3889,10 +3889,11 @@ modules:
     optional: true
     enabled_by_default: true
     tags: [workspace, agents]
+    # What the steps use: /data/projects (base.filesystem) and the herdr the
+    # alias starts. The agent CLIs are only named in the quick reference, so
+    # the workspace must not be why skipping one fails selection.
     dependencies:
-      - agents.claude
-      - agents.codex
-      - agents.antigravity
+      - base.filesystem
       - tools.herdr
     installed_check:
       run_as: target_user

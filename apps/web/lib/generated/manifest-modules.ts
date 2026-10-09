@@ -41,7 +41,7 @@ export interface ManifestProvenanceMetadata {
 
 export const manifestProvenance = {
   acfsVersion: "0.10.0",
-  manifestSha256: "17020e5a69ac59a3a3433f662fdfa8e2e26eccb1159c7f72fe6f739a17848fab",
+  manifestSha256: "2fc6ede93117a6ee8489061c0804d020456dfba0bf930e0d95878f32a32584a9",
   checksumsYamlSha256: "478f16cca50d76516691142e9c415bf31fe98d4fc610b797624702a5af69fedd",
 } as const satisfies ManifestProvenanceMetadata;
 
@@ -1114,9 +1114,7 @@ export const manifestModules: ManifestModuleMetadata[] = [
     category: "acfs",
     phase: 10,
     dependencies: [
-      "agents.claude",
-      "agents.codex",
-      "agents.antigravity",
+      "base.filesystem",
       "tools.herdr",
       "users.ubuntu",
     ],
