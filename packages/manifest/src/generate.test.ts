@@ -455,13 +455,10 @@ describe("Generated verified installer args", () => {
     const requiredPkgs = (match?.[1] ?? "").trim().split(/\s+/).filter(Boolean);
     expect(requiredPkgs.length).toBeGreaterThan(0);
 
-    const manifestInstallCmd = cliModern?.install?.[0] ?? "";
+    const manifestWords = (cliModern?.install?.[0] ?? "").trim().split(/\s+/);
     for (const pkg of requiredPkgs) {
-      expect(manifestInstallCmd).toContain(pkg);
+      expect(manifestWords).toContain(pkg);
     }
-    expect(manifestInstallCmd).toContain("minisign");
-    expect(manifestInstallCmd).toContain("zstd");
-    expect(manifestInstallCmd).toContain("libsqlite3-dev");
   });
 
   test("generated verified installers never stream verification output into an interpreter", () => {

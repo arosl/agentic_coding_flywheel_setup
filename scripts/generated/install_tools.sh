@@ -364,11 +364,15 @@ acfs_generated_install_tools_lazygit() {
     log_step "Installing tools.lazygit"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: if apt-get -o DPkg::Lock::Timeout=120 install -y lazygit 2>/dev/null; then (root)"
+        log_info "dry-run: install: if apt-cache policy lazygit 2>/dev/null | grep -q 'Candidate: [^(]'; then (root)"
     else
         if ! run_as_root_shell <<'INSTALL_TOOLS_LAZYGIT'
-if apt-get -o DPkg::Lock::Timeout=120 install -y lazygit 2>/dev/null; then
-  exit 0
+# Only try apt when a repo offers lazygit (none does on 24.04), and keep
+# its stderr, so a real apt or dpkg failure stays visible.
+if apt-cache policy lazygit 2>/dev/null | grep -q 'Candidate: [^(]'; then
+  if apt-get -o DPkg::Lock::Timeout=120 install -y lazygit; then
+    exit 0
+  fi
 fi
 # Fallback to binary install
 LG_VER="0.44.1"
@@ -394,7 +398,7 @@ chmod +x /usr/local/bin/lazygit
 rm "$TMP_FILE"
 INSTALL_TOOLS_LAZYGIT
         then
-            log_error "tools.lazygit: install command failed: if apt-get -o DPkg::Lock::Timeout=120 install -y lazygit 2>/dev/null; then"
+            log_error "tools.lazygit: install command failed: if apt-cache policy lazygit 2>/dev/null | grep -q 'Candidate: [^(]'; then"
             return 1
         fi
     fi
