@@ -77,10 +77,15 @@ case "$1" in
     launch)
         shift
         printf '%s\n' "$@" >"$STUB_DIR/launch.args"
-        cp "$STUB_FIXTURES/list-running-marked.json" "$STUB_DIR/list.json"
+        cp "$STUB_FIXTURES/list-running-started.json" "$STUB_DIR/list.json"
         ;;
-    start) cp "$STUB_FIXTURES/list-running-marked.json" "$STUB_DIR/list.json" ;;
-    file) cp "$3" "$STUB_DIR/pushed-${4##*/}" ;;
+    start) cp "$STUB_FIXTURES/list-running-started.json" "$STUB_DIR/list.json" ;;
+    # Real `incus file push` writes its progress to stdout unless --quiet.
+    file)
+        shift 2
+        if [[ "$1" == --quiet ]]; then shift; else printf '\rPushing %s: 100%%\n' "$1"; fi
+        cp "$1" "$STUB_DIR/pushed-${2##*/}"
+        ;;
     config) printf '%s\n' "$4" >>"$STUB_DIR/config-set" ;;
     exec)
         shift 2
@@ -136,6 +141,11 @@ not_called() { ! grep -q -- "$1" "$CASE/calls"; }
 no_launch() { not_called $'\tlaunch '; }
 err_has() { grep -q -- "$1" "$CASE/err"; }
 launch_has() { grep -qx -- "$1" "$CASE/launch.args"; }
+only_the_lookup() { [[ "$(cut -f2 "$CASE/calls" | cut -d' ' -f1 | sort -u)" == list ]]; }
+two_quiet_pushes() {
+    [[ "$(grep -c $'\tfile push --quiet ' "$CASE/calls")" -eq 2 \
+        && "$(grep -c $'\tfile push ' "$CASE/calls")" -eq 2 ]]
+}
 # The only -d values allowed: the root disk size and the NIC's ACL keys.
 only_expected_devices() {
     local previous="" arg
@@ -186,6 +196,7 @@ check "limits: 4 vCPU" launch_has 'limits.cpu=4'
 check "limits: 8 GiB" launch_has 'limits.memory=8GiB'
 check "root disk 40 GiB" launch_has 'root,size=40GiB'
 check "marks the instance as the launcher's" launch_has 'user.acfs.provider=incus'
+check "marks the install as started at launch" launch_has "user.acfs.install-started=$SHA"
 check "attaches the egress ACL to the profile's NIC" launch_has 'eth0,security.acls=acfs-vm-egress'
 check "unmatched egress passes the ACL" launch_has 'eth0,security.acls.default.egress.action=allow'
 check "unmatched ingress passes the ACL" launch_has 'eth0,security.acls.default.ingress.action=allow'
@@ -200,6 +211,7 @@ check "every incus call but the ACL's YAML gets /dev/null on stdin" only_null_st
 check "pushes HEAD as a bootstrap archive with GitHub's prefix" \
     bash -c 'tar -tzf "$1" | grep -qx "agentic_coding_flywheel_setup-$2/install.sh"' _ "$CASE/pushed-acfs.tar.gz" "$SHA"
 check "pushes HEAD's install.sh" grep -qx 'echo committed installer' "$CASE/pushed-install.sh"
+check "both pushes are quiet (no progress lines on stderr)" two_quiet_pushes
 check "runs the installer for ubuntu" grep -qx 'TARGET_USER=ubuntu' "$CASE/exec-env"
 check "passes the fork as the repo owner" grep -qx 'ACFS_REPO_OWNER=arosl' "$CASE/exec-env"
 check "runs the installer with --bootstrap-archive" called '--bootstrap-archive /root/acfs.tar.gz < /root/install.sh'
@@ -254,8 +266,24 @@ echo "== existing instance the launcher didn't create"
 new_case unmarked running-unmarked
 run_launcher dev
 check "exits 2" rc_is 2
-check "says it refuses" err_has "wasn't created by this launcher"
-check "makes no call but the lookup" bash -c '[[ "$(cut -f2 "$1" | cut -d" " -f1 | sort -u)" == list ]]' _ "$CASE/calls"
+check "says it refuses" err_has "refusing to touch it"
+check "names the key that marks an install as done" err_has 'incus config set dev user.acfs.installed=<commit>'
+check "makes no call but the lookup" only_the_lookup
+
+# The provider mark is a label: a VM marked by hand carries it without the
+# launcher ever having started an install there (devbox, 2026-10-09).
+echo "== running VM with only the provider mark: refused, untouched"
+new_case marked-only running-marked
+run_launcher dev
+check "exits 2" rc_is 2
+check "says it refuses" err_has "refusing to touch it"
+check "makes no call but the lookup (no push, no exec, no installer)" only_the_lookup
+
+echo "== stopped VM with only the provider mark: refused, not started"
+new_case marked-only-stopped stopped-marked
+run_launcher dev
+check "exits 2" rc_is 2
+check "makes no call but the lookup (no start)" only_the_lookup
 
 echo "== installed VM: re-run prints and changes nothing"
 new_case installed running-installed
@@ -267,23 +295,34 @@ check "sets no config" bash -c '[[ ! -e "$1" ]]' _ "$CASE/config-set"
 check "points at acfs update" err_has 'Update inside the VM with: acfs update'
 check "stdout is the attach block" stdout_is_block box
 
+echo "== VM installed by hand and marked user.acfs.installed: prints only"
+new_case handmarked running-handmarked
+run_launcher dev
+check "exits 0" rc_is 0
+check "pushes no files" not_called $'\tfile push'
+check "runs no installer" not_called 'bootstrap-archive'
+check "sets no config" bash -c '[[ ! -e "$1" ]]' _ "$CASE/config-set"
+check "stdout is the attach block" stdout_is_block ''
+
 echo "== stopped VM whose install never completed: start and resume"
-new_case resume stopped-marked
+new_case resume stopped-started
 run_launcher dev --ssh-key "$WORK/laptop.pub"
 check "exits 0" rc_is 0
 check "starts the VM" called $'\tstart dev'
+check "re-marks the install as started at HEAD" grep -qx "user.acfs.install-started=$SHA" "$CASE/config-set"
 check "warns that --ssh-key is ignored" err_has '--ssh-key is ignored for an existing VM'
 check "launches nothing" no_launch
 check "runs the installer" called 'bootstrap-archive'
 check "records the installed sha" grep -qx "user.acfs.installed=$SHA" "$CASE/config-set"
 
 echo "== installer fails"
-new_case install-fails running-marked
+new_case install-fails running-started
 export STUB_INSTALL_EXIT=7
 run_launcher dev
 unset STUB_INSTALL_EXIT
 check "exits 1" rc_is 1
-check "records no installed sha" bash -c '[[ ! -e "$1" ]]' _ "$CASE/config-set"
+check "records no installed sha" bash -c '! grep -q "^user.acfs.installed=" "$1"' _ "$CASE/config-set"
+check "keeps the install marked as started, so a re-run resumes" grep -qx "user.acfs.install-started=$SHA" "$CASE/config-set"
 check "says re-run resumes, not the installer's hint" err_has 're-run this command to resume'
 check "prints the SSH entry but no machine add line" stdout_is_block '' failed
 
@@ -306,7 +345,7 @@ check "warns and points at cloud-init status --long" err_has 'cloud-init finishe
 check "installs" called 'bootstrap-archive'
 
 echo "== uncommitted changes are not installed"
-new_case dirty running-marked
+new_case dirty running-started
 printf '#!/usr/bin/env bash\necho uncommitted\n' >"$REPO/install.sh"
 run_launcher dev
 git -C "$REPO" checkout -q -- install.sh
@@ -326,7 +365,7 @@ check "queries the remote's network" called 'query far:/1.0/networks/incusbr0'
 check "creates the ACL on the remote" called 'network acl create far:acfs-vm-egress'
 check "launches on the remote" grep -qx 'far:dev' "$CASE/launch.args"
 check "every exec, push and config names the remote" \
-    bash -c '! cut -f2 "$1" | grep -E "^(exec|file|config|start)" | grep -v -E "^(exec far:dev|file push [^ ]+ far:dev/|config set far:dev )" | grep -q .' _ "$CASE/calls"
+    bash -c '! cut -f2 "$1" | grep -E "^(exec|file|config|start)" | grep -v -E "^(exec far:dev|file push --quiet [^ ]+ far:dev/|config set far:dev )" | grep -q .' _ "$CASE/calls"
 check "the block names the instance without the remote" grep -qx 'Host dev' "$CASE/out"
 
 echo "== usage errors"

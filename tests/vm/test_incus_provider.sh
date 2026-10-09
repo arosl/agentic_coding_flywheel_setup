@@ -57,6 +57,8 @@ set -e
 echo "  launcher exit: $create_rc after $((SECONDS - create_started)) s; its last stderr lines:"
 tail -n 15 "$WORK/create.log" | sed 's/^/  | /'
 check "create exits 0" test "$create_rc" -eq 0
+check "stdout carries only the block (no progress lines, no carriage returns)" \
+    bash -c 'head -n 1 "$1" | grep -q "^# Add to ~/.ssh/config " && ! grep -q $'"'"'\r'"'"' "$1"' _ "$WORK/block"
 
 # Split the printed block into the two files the user would write.
 sed -n '/^Host /,/^#/p' "$WORK/block" | grep -v '^#' >"$WORK/ssh_config"
@@ -98,13 +100,16 @@ gateway="$(vm_ssh "ip -4 route show default | awk '{print \$3; exit}'" 2>/dev/nu
 check "DNS resolves in the VM" vm_ssh getent hosts github.com
 check "the VM reaches the internet over HTTPS" vm_ssh curl -fsS -o /dev/null --max-time 15 https://github.com
 nic="$(vm_ssh "ip -4 route show default | awk '{print \$5; exit}'" 2>/dev/null || true)"
-check "a DHCP renew keeps the VM's address" \
-    vm_ssh "sudo networkctl renew $nic && sleep 5 && ip -4 -o addr show dev $nic scope global | grep -q inet"
+vm_address() { vm_ssh "ip -4 -o addr show dev $nic scope global | awk '{print \$4; exit}'" 2>/dev/null || true; }
+address_before="$(vm_address)"
+vm_ssh "sudo networkctl renew $nic && sleep 5" || true
+check "a DHCP renew keeps the VM's address ($address_before)" \
+    bash -c '[[ -n "$1" && "$1" == "$2" ]]' _ "$address_before" "$(vm_address)"
 # Each blocked address is only tested where the host itself accepts on :22
 # there, so a refusal from the VM is the ACL and not a closed port.
 blocked=("$gateway")
 while read -r address; do
-    blocked+=("$address")
+    [[ "$address" == "$gateway" ]] || blocked+=("$address")
 done < <(ip -4 -o addr show scope global | awk '{split($4, a, "/"); print a[1]}' \
     | grep -E '^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.)' || true)
 for address in "${blocked[@]}"; do
@@ -128,6 +133,7 @@ if [[ "$create_rc" -eq 0 ]]; then
     check "a re-run says it's already installed" grep -q 'Already installed' "$WORK/rerun.log"
     check "a re-run doesn't touch the install" test "$before" = "$(vm_ssh 'stat -c %Y ~/.acfs/state.json' 2>/dev/null || true)"
     check "a re-run prints the same block" diff -q "$WORK/block" "$WORK/block2"
+    diff -u "$WORK/block" "$WORK/block2" | cat -A | head -n 40 | sed 's/^/  | /' || true
 else
     echo "  (not tested: the install didn't complete, so a re-run resumes it by design)"
 fi

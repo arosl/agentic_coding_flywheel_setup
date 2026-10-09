@@ -2,7 +2,7 @@
 
 **Real data or synthetic:** captured from real Incus, then trimmed and made host-neutral. This repo is public, so no fixture keeps an address, MAC or name of the host it was captured on.
 
-All of them were captured on 2026-10-09 from Incus 6.0.5 (client and server), with one `images:ubuntu/26.04/cloud` VM. Each `list-*` state was produced for real, by setting or unsetting the `user.acfs.*` keys with `incus config set` or `unset` and starting or stopping the VM, never by editing the JSON.
+All of them were captured on 2026-10-09 from Incus 6.0.5 (client and server), from `images:ubuntu/26.04/cloud` VMs. Each `list-*` state was produced for real, by setting or unsetting the `user.acfs.*` keys with `incus config set` or `unset` and starting or stopping the VM, never by editing the JSON.
 
 | File | Captured with | State |
 |---|---|---|
@@ -11,7 +11,10 @@ All of them were captured on 2026-10-09 from Incus 6.0.5 (client and server), wi
 | `list-stopped-marked.json` | same | stopped, `user.acfs.provider=incus` |
 | `list-running-unmarked.json` | same | running, with an IPv4 lease, no `user.acfs.*` keys |
 | `list-running-marked.json` | same | running, `user.acfs.provider=incus` |
+| `list-stopped-started.json` | same | stopped, plus `user.acfs.install-started=<sha>` |
+| `list-running-started.json` | same | running, plus `user.acfs.install-started=<sha>` |
 | `list-running-installed.json` | same | running, plus `user.acfs.installed=<sha>` |
+| `list-running-handmarked.json` | same | running, only `user.acfs.installed=<sha>` (an install marked by hand) |
 | `profile-default.json` | `incus query /1.0/profiles/default` | the profile `incus admin init --minimal` creates |
 | `network-incusbr0.json` | `incus query /1.0/networks/incusbr0` | the managed bridge `incus admin init --minimal` creates |
 
@@ -21,7 +24,8 @@ All of them were captured on 2026-10-09 from Incus 6.0.5 (client and server), wi
 - **Made host-neutral:**
   - the VM's name is replaced with `dev`;
   - its global IPv4 address with `192.0.2.20` (RFC 5737 documentation range);
-  - its link-local IPv6 address with `fe80::20`.
+  - its link-local IPv6 address with `fe80::20`;
+  - a global IPv6 address, which carries the bridge's prefix, is dropped.
 - `profile-default.json`: kept `name` and `devices`.
 - `network-incusbr0.json`: kept `name`, `managed` and `type`, and dropped `config` (the bridge's addresses).
 

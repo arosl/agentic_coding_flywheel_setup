@@ -21,7 +21,7 @@ scripts/providers/incus.sh dev --ssh-key laptop.pub --jump myhost
 
 - `dev` is the VM's name.
 - `--jump myhost` is how your laptop reaches this host over SSH: a `Host` from your laptop's `~/.ssh/config`. Leave it out when you'll attach from the Incus host itself.
-- **Time:** about half a minute until the VM has booted (a one-time check on 2026-10-09, with the image already cached), then the ACFS install. That install's length isn't measured yet: the only timed run, 604 s on 2026-10-09, stopped on a checksum failure that `main` has since fixed.
+- **Time:** about 12 minutes in all. One complete run took 697 s from the command to the printed block, with the image already cached (a one-time check on 2026-10-09). About half a minute of that is the VM booting.
 - **Output:** the installer's output streams to stderr. When it's done, stdout carries only this block:
 
 ```
@@ -60,11 +60,15 @@ Re-running the same command is safe:
 | The VM… | The launcher… |
 |---|---|
 | doesn't exist | creates it, installs ACFS, prints the block |
-| exists, but its install never finished | starts it if it's stopped, and runs the installer again, which resumes where it stopped |
+| was created by the launcher, but its install never finished | starts it if it's stopped, and runs the installer again, which resumes where it stopped |
 | is installed | starts it if it's stopped and prints the block again. **It never reinstalls.** Update ACFS inside the VM with `acfs update`. |
-| wasn't created by this launcher | refuses to touch it |
+| is anything else | refuses, exits 2, and doesn't start, copy into or run anything in it |
 
-- **How it decides:** the launcher records the installed commit on the instance (`user.acfs.installed`) only when the installer exits 0. ACFS's own `state.json` can list a failed install as complete, so the launcher doesn't read it.
+- **How it decides,** before it touches the VM, by two keys on the instance:
+  - `user.acfs.install-started`, set when the launcher creates the VM and again before each installer run;
+  - `user.acfs.installed`, set only when the installer exits 0. ACFS's own `state.json` can list a failed install as complete, so the launcher doesn't read it.
+- **`user.acfs.provider=incus`** is also set at creation, as a label: `incus list user.acfs.provider=incus` lists the launcher's VMs. The launcher doesn't decide by it.
+- **A VM you installed ACFS in yourself:** to have the launcher print its block, mark it installed with `incus config set dev user.acfs.installed=<commit>`. That's a promise: from then on the launcher never touches that VM's install, so set it only for an install that finished.
 - **If the install fails:** the VM is kept, and the block leaves out the `herdr machine add` line, because herdr may not be installed yet. Ignore the installer's own resume hint, which names a GitHub URL; re-run the launcher instead.
 - **Uncommitted changes aren't installed.** The launcher archives the committed `HEAD`, through the installer's own `--bootstrap-archive` option, and warns when the checkout has changes it leaves out.
 - **Stop or remove:** `incus stop dev`, or `incus delete dev`. The launcher never deletes anything.
@@ -94,7 +98,8 @@ The VM sits on Incus's NAT bridge, so nothing outside reaches it except through 
 - **Where it applies:** it's attached to each launcher VM's NIC (`security.acls`). Other instances aren't affected.
 - **It needs a managed bridge.** On any other network, the launcher stops before creating the VM.
 - **What it doesn't cover:** the host's addresses outside those ranges, such as a public IP, stay reachable from the VM. The host's sshd still needs a key the VM doesn't have.
-- **To lift it for one VM,** for example when a development VM needs a service on the host, such as Agent Mail on the bridge's gateway address:
+- **Agent Mail:** the agents in the VM use the Agent Mail that ACFS installs inside it, so they don't need the host's.
+- **To lift it for one VM,** when that VM needs a service on the host:
 
   ```bash
   incus config device unset dev eth0 security.acls

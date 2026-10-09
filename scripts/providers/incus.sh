@@ -6,9 +6,10 @@
 # this checkout, and prints the ssh_config entry and the `herdr machine add`
 # command for attaching to it. The guide is scripts/providers/incus.md.
 #
-# Re-running it is safe: an absent VM is created, a VM whose install never
-# completed resumes it, and a VM that is installed is never changed (the
-# block is printed again). It never deletes an instance, image or ACL.
+# Re-running it is safe: an absent VM is created, a VM where it started an
+# install that never completed resumes it, a VM that is installed is never
+# changed (the block is printed again), and any other instance is refused
+# untouched. It never deletes an instance, image or ACL.
 #
 # Progress goes to stderr; stdout carries only the attach block.
 # ============================================================
@@ -193,12 +194,13 @@ EOF
 }
 
 launch() {
-    local keys_json="$1" nic
+    local keys_json="$1" sha="$2" nic
     nic="$(check_managed_bridge)"
     ensure_acl
     log_step "Creating VM $(qualified "$name") from $IMAGE (4 vCPU, 8 GiB RAM, 40 GiB disk)"
     incus_run launch "$IMAGE" "$(qualified "$name")" "${LAUNCH_ARGS[@]}" \
         -c user.acfs.provider=incus \
+        -c "user.acfs.install-started=$sha" \
         -c "cloud-init.user-data=$(user_data "$keys_json")" \
         -d "$nic,security.acls=$ACL_NAME" \
         -d "$nic,security.acls.default.egress.action=allow" \
@@ -246,8 +248,8 @@ install_acfs() {
     work="$(mktemp -d "${TMPDIR:-/tmp}/acfs-incus.XXXXXX")" || die "mktemp failed" 1
     git -C "$REPO_ROOT" archive --format=tar.gz --prefix="$REPO_NAME-$sha/" "$sha" >"$work/acfs.tar.gz" \
         && git -C "$REPO_ROOT" show "$sha:install.sh" >"$work/install.sh" \
-        && incus_run file push "$work/acfs.tar.gz" "$(qualified "$name")/root/acfs.tar.gz" \
-        && incus_run file push "$work/install.sh" "$(qualified "$name")/root/install.sh" \
+        && incus_run file push --quiet "$work/acfs.tar.gz" "$(qualified "$name")/root/acfs.tar.gz" \
+        && incus_run file push --quiet "$work/install.sh" "$(qualified "$name")/root/install.sh" \
         || status=$?
     rm -f -- "$work/acfs.tar.gz" "$work/install.sh"
     rmdir -- "$work"
@@ -309,7 +311,7 @@ main() {
     parse_args "$@"
     require_commands
 
-    local json sha keys_json status=0
+    local json sha keys_json installed="" status=0
     sha="$(git -C "$REPO_ROOT" rev-parse HEAD)"
     json="$(instance_json)"
 
@@ -317,10 +319,18 @@ main() {
         ((${#ssh_key_files[@]} > 0)) \
             || die "--ssh-key is required: pass the public key of the machine you'll attach from" 2
         keys_json="$(read_public_keys | jq -R . | jq -s -c .)"
-        launch "$keys_json"
+        launch "$keys_json" "$sha"
     else
-        jq -e '.config["user.acfs.provider"] == "incus"' <<<"$json" >/dev/null \
-            || die "instance $(qualified "$name") exists and wasn't created by this launcher; refusing to touch it" 2
+        # Decided before anything touches the VM, and only by the install
+        # keys: user.acfs.provider is a label, which a VM marked by hand can
+        # carry without this launcher having started an install there.
+        installed="$(jq -r '.config["user.acfs.installed"] // empty' <<<"$json")"
+        if [[ -z "$installed" ]] && ! jq -e '.config["user.acfs.install-started"] != null' <<<"$json" >/dev/null; then
+            log_error "instance $(qualified "$name") exists, and this launcher didn't start an install in it; refusing to touch it."
+            log_error "If ACFS is already installed there and you only want the attach block, mark it installed:"
+            log_error "  incus config set $(qualified "$name") user.acfs.installed=<commit>"
+            die "The launcher then never touches that VM's install, so set it only for an install you made." 2
+        fi
         ((${#ssh_key_files[@]} == 0)) \
             || log_warn "--ssh-key is ignored for an existing VM; add keys with ssh-copy-id"
         if [[ "$(jq -r '.status' <<<"$json")" != "Running" ]]; then
@@ -330,11 +340,11 @@ main() {
     fi
     wait_ready
 
-    local installed
-    installed="$(instance_json | jq -r '.config["user.acfs.installed"] // empty')"
     if [[ -n "$installed" ]]; then
         log_info "Already installed at ${installed:0:12}; the checkout is at ${sha:0:12}. Update inside the VM with: acfs update"
     else
+        incus_run config set "$(qualified "$name")" "user.acfs.install-started=$sha" \
+            || die "could not record user.acfs.install-started" 1
         install_acfs "$sha" || status=$?
         if ((status == 0)); then
             incus_run config set "$(qualified "$name")" "user.acfs.installed=$sha" \
