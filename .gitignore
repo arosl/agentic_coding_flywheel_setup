@@ -297,3 +297,6 @@ packages/manifest/test-*.ts
 # === multi-repo ephemeral cleanup 2026-08-03 ===
 # Pre-edit install.sh backups left by agent/editor flows (install.sh.pre-*).
 install.sh.pre-*
+/..gitignore.*.tmp
+/..gitignore.*.bak
+/..gitignore.*.replaced
