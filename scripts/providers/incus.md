@@ -21,7 +21,7 @@ scripts/providers/incus.sh dev --ssh-key laptop.pub --jump myhost
 
 - `dev` is the VM's name.
 - `--jump myhost` is how your laptop reaches this host over SSH: a `Host` from your laptop's `~/.ssh/config`. Leave it out when you'll attach from the Incus host itself.
-- **Time:** about half a minute until the VM has booted, then the ACFS install. One run on 2026-10-09 took 604 s (a one-time check; the image was already cached).
+- **Time:** about half a minute until the VM has booted (a one-time check on 2026-10-09, with the image already cached), then the ACFS install. That install's length isn't measured yet: the only timed run, 604 s on 2026-10-09, stopped on a checksum failure that `main` has since fixed.
 - **Output:** the installer's output streams to stderr. When it's done, stdout carries only this block:
 
 ```
@@ -44,7 +44,7 @@ On your laptop:
 2. Paste the `known_hosts` line into `~/.ssh/known_hosts`. The launcher read the VM's host key over Incus, so you never accept an unknown key on first connect.
 3. Run `herdr machine add dev`.
 
-**Fixed settings:** the VM gets 4 vCPUs, 8 GiB of RAM and a 40 GiB disk. A full install used 12 GiB of that (one-time check, 2026-10-09). To resize later:
+**Fixed settings:** the VM gets 4 vCPUs, 8 GiB of RAM and a 40 GiB disk. An install that stopped on a checksum failure near its end had used 12 GiB of that (one-time check, 2026-10-09). To resize later:
 
 ```bash
 incus stop dev
@@ -65,7 +65,7 @@ Re-running the same command is safe:
 | wasn't created by this launcher | refuses to touch it |
 
 - **How it decides:** the launcher records the installed commit on the instance (`user.acfs.installed`) only when the installer exits 0. ACFS's own `state.json` can list a failed install as complete, so the launcher doesn't read it.
-- **If the install fails:** the VM is kept. Ignore the installer's own resume hint, which names a GitHub URL; re-run the launcher instead.
+- **If the install fails:** the VM is kept, and the block leaves out the `herdr machine add` line, because herdr may not be installed yet. Ignore the installer's own resume hint, which names a GitHub URL; re-run the launcher instead.
 - **Uncommitted changes aren't installed.** The launcher archives the committed `HEAD`, through the installer's own `--bootstrap-archive` option, and warns when the checkout has changes it leaves out.
 - **Stop or remove:** `incus stop dev`, or `incus delete dev`. The launcher never deletes anything.
 
@@ -129,11 +129,9 @@ Untested, because there was no Mac. What should apply:
 
 ## Known limits
 
-- **`acfs update` inside the VM follows upstream ACFS, not this fork,** until the fork's install and update default to the fork's repository.
-- **On the fork's `main` as of 2026-10-09, the install exits 1 on stale checksums** (uv, dcg, fmd, slb, mcp_agent_mail). `stack.dcg` is required, so the launcher reports a failed install and resumes it on every re-run, until `checksums.yaml` is refreshed. It still prints the block, because the VM can be reached.
 - **The IP isn't pinned.** If the VM's address changes, SSH fails loudly on the host key, through `HostKeyAlias` and strict checking. Re-run the launcher to print the new address.
 
 ## Tests
 
 - `bash tests/unit/test_incus_provider_stub.sh`: the launcher's calls and output, against a stub `incus`.
-- `tests/vm/test_incus_provider.sh <new-name>`: a real VM, checked through the printed block. It's opt-in and takes about 10 minutes, and it skips with the reason when Incus, KVM or `images:` isn't available.
+- `tests/vm/test_incus_provider.sh <new-name>`: a real VM, checked through the printed block. It's opt-in and runs a full ACFS install, and it skips with the reason when Incus, KVM or `images:` isn't available.

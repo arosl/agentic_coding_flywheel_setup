@@ -5,7 +5,7 @@
 # Creates a real VM with the launcher, then checks it the way a user would
 # reach it: only through the ssh_config entry and known_hosts line the
 # launcher printed. It needs Incus with a KVM-capable host and network
-# access to images: and GitHub, and it runs the full ACFS install (~10 min).
+# access to images: and GitHub, and it runs the full ACFS install.
 #
 # Usage: tests/vm/test_incus_provider.sh <instance-name>
 #
@@ -44,15 +44,17 @@ if incus info "$NAME" </dev/null >/dev/null 2>&1; then
 fi
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/acfs-incus-vm.XXXXXX")"
-trap 'rm -rf "$WORK"' EXIT
+# The directory is flat: remove its files, then the directory, nothing else.
+trap 'rm -f -- "$WORK"/*; rmdir -- "$WORK"' EXIT
 ssh-keygen -q -t ed25519 -N '' -C acfs-incus-vm-test -f "$WORK/key"
 
-echo "== create $NAME (full install; ~10 min)"
+echo "== create $NAME (full install)"
+create_started=$SECONDS
 set +e
 "$LAUNCHER" "$NAME" --ssh-key "$WORK/key.pub" >"$WORK/block" 2>"$WORK/create.log"
 create_rc=$?
 set -e
-echo "  launcher exit: $create_rc; its last stderr lines:"
+echo "  launcher exit: $create_rc after $((SECONDS - create_started)) s; its last stderr lines:"
 tail -n 15 "$WORK/create.log" | sed 's/^/  | /'
 check "create exits 0" test "$create_rc" -eq 0
 

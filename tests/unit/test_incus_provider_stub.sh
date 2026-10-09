@@ -90,6 +90,7 @@ case "$1" in
         done
         shift
         case "$1" in
+            cloud-init) printf 'status: %s\n' "${STUB_CLOUD_INIT:-done}" ;;
             cat) cat "$STUB_HOST_KEY" ;;
             runuser) echo 'herdr 0.9.3' ;;
             ssh-keygen) echo '256 SHA256:stubfingerprint laptop (ED25519)' ;;
@@ -144,8 +145,9 @@ only_null_stdin_except_acl_create() {
     ! grep -v $'^null\t' "$CASE/calls" | grep -v $'^other\tnetwork acl create ' | grep -q .
 }
 
+# expected_block <jump> [failed]
 expected_block() {
-    local jump="$1"
+    local jump="$1" failed="${2:-}"
     if [[ -n "$jump" ]]; then
         echo '# Add to ~/.ssh/config on the machine you attach from, ABOVE any "Host *" block:'
     else
@@ -160,10 +162,14 @@ expected_block() {
     echo '    ForwardAgent no'
     echo '# Add to ~/.ssh/known_hosts on that machine:'
     echo "dev $(awk '{print $1, $2}' "$WORK/hostkey.pub")"
-    echo '# Then run there (dev runs herdr 0.9.3):'
-    echo 'herdr machine add dev'
+    if [[ -z "$failed" ]]; then
+        echo '# Then run there (dev runs herdr 0.9.3):'
+        echo 'herdr machine add dev'
+    else
+        echo '# The install failed: re-run this command; it prints the herdr machine add line once ACFS is installed.'
+    fi
 }
-stdout_is_block() { diff -u <(expected_block "$1") "$CASE/out" >&2; }
+stdout_is_block() { diff -u <(expected_block "$@") "$CASE/out" >&2; }
 
 echo "== absent VM: create, install, print (with --jump)"
 new_case create absent
@@ -196,6 +202,8 @@ check "records the installed sha" grep -qx "user.acfs.installed=$SHA" "$CASE/con
 check "stdout is exactly the attach block (installer output stays on stderr)" stdout_is_block box
 check "installer output went to stderr" err_has 'INSTALLER OUTPUT'
 check "stderr names the keys ubuntu accepts" err_has 'ubuntu accepts: 256 SHA256:stubfingerprint'
+check "stderr names the given key's fingerprint before the launch" \
+    bash -c 'f="$(ssh-keygen -l -f "$2" | cut -d" " -f2)"; n="$(grep -n "Authorizing for ubuntu: .*$f" "$1" | head -1 | cut -d: -f1)"; c="$(grep -n "Creating VM" "$1" | head -1 | cut -d: -f1)"; [[ -n "$n" && -n "$c" && "$n" -lt "$c" ]]' _ "$CASE/err" "$WORK/laptop.pub"
 
 echo "== absent VM, no --jump"
 new_case nojump absent
@@ -210,6 +218,7 @@ run_launcher dev --ssh-key "$WORK/laptop.pub"
 check "exits 0" rc_is 0
 check "does not create the ACL again" not_called 'network acl create'
 check "does not change the ACL" grep -qx existing "$CASE/acl.yaml"
+check "says it uses the existing ACL unchecked" err_has 'Using the existing network ACL acfs-vm-egress'
 
 echo "== key refusals (absent VM)"
 new_case no-key absent
@@ -271,7 +280,16 @@ unset STUB_INSTALL_EXIT
 check "exits 1" rc_is 1
 check "records no installed sha" bash -c '[[ ! -e "$1" ]]' _ "$CASE/config-set"
 check "says re-run resumes, not the installer's hint" err_has 're-run this command to resume'
-check "still prints the attach block" stdout_is_block ''
+check "prints the SSH entry but no machine add line" stdout_is_block '' failed
+
+echo "== cloud-init ends in error"
+new_case cloud-init-error absent
+export STUB_CLOUD_INIT=error
+run_launcher dev --ssh-key "$WORK/laptop.pub"
+unset STUB_CLOUD_INIT
+check "exits 1" rc_is 1
+check "names cloud-init's status" err_has 'status: error'
+check "doesn't install" not_called 'bootstrap-archive'
 
 echo "== uncommitted changes are not installed"
 new_case dirty running-marked
@@ -302,7 +320,9 @@ new_case usage absent
 run_launcher
 check "no name: exits 2" rc_is 2
 run_launcher 1dev --ssh-key "$WORK/laptop.pub"
-check "invalid name: exits 2" rc_is 2
+check "name starting with a digit: exits 2" rc_is 2
+run_launcher dev- --ssh-key "$WORK/laptop.pub"
+check "name ending with a dash: exits 2" rc_is 2
 run_launcher dev --bogus
 check "unknown option: exits 2" rc_is 2
 run_launcher dev other

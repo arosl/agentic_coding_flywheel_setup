@@ -106,8 +106,8 @@ parse_args() {
     else
         name="$target"
     fi
-    [[ "$name" =~ ^[A-Za-z][A-Za-z0-9-]{0,62}$ ]] \
-        || die "invalid instance name '$name': letters, digits and dashes, starting with a letter" 2
+    [[ "$name" =~ ^[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]] \
+        || die "invalid instance name '$name': letters, digits and dashes, starting with a letter and not ending with a dash" 2
     [[ "$jump" =~ ^[^[:space:]]*$ ]] || die "--jump must not contain whitespace" 2
 }
 
@@ -131,16 +131,20 @@ instance_json() {
     incus_run "${list_args[@]}" | jq -c --arg name "$name" '.[] | select(.name == $name)'
 }
 
-# Validates each --ssh-key file and prints its keys, one per line.
+# Validates each --ssh-key file, logs its fingerprints and prints its keys,
+# one per line.
 read_public_keys() {
-    local file
+    local file fingerprints line
     for file in "${ssh_key_files[@]}"; do
         [[ -f "$file" && -r "$file" ]] || die "--ssh-key $file: not a readable file" 2
         if grep -q 'PRIVATE KEY' "$file"; then
             die "--ssh-key $file is a private key; pass the .pub file" 2
         fi
-        ssh-keygen -l -f "$file" >/dev/null 2>&1 \
+        fingerprints="$(ssh-keygen -l -f "$file" 2>/dev/null)" \
             || die "--ssh-key $file: not an OpenSSH public key" 2
+        while IFS= read -r line; do
+            log_info "Authorizing for $TARGET_USER: $line ($file)"
+        done <<<"$fingerprints"
         grep -v -e '^[[:space:]]*$' -e '^[[:space:]]*#' "$file"
     done
 }
@@ -174,6 +178,7 @@ check_managed_bridge() {
 # Creates the ACL when it's absent. An existing ACL is never changed.
 ensure_acl() {
     if incus_run network acl show "$(qualified "$ACL_NAME")" >/dev/null 2>&1; then
+        log_info "Using the existing network ACL $ACL_NAME as it is (its rules aren't checked)"
         return 0
     fi
     log_info "Creating network ACL $ACL_NAME (rejects egress to $ACL_REJECT_DESTINATIONS)"
@@ -202,14 +207,25 @@ launch() {
 }
 
 wait_ready() {
-    local deadline=$((SECONDS + AGENT_TIMEOUT_SECONDS))
+    local deadline=$((SECONDS + AGENT_TIMEOUT_SECONDS)) state
     log_step "Waiting for the VM agent and cloud-init (sshd, base packages)"
     until incus_run exec "$(qualified "$name")" -- true >/dev/null 2>&1; do
         ((SECONDS < deadline)) || die "the VM agent didn't answer within ${AGENT_TIMEOUT_SECONDS}s" 1
         sleep 3
     done
-    timeout "$CLOUD_INIT_TIMEOUT_SECONDS" incus </dev/null exec "$(qualified "$name")" -- cloud-init status --wait >/dev/null \
-        || die "cloud-init didn't finish cleanly; see: incus exec $(qualified "$name") -- cloud-init status --long" 1
+    # Polled rather than `cloud-init status --wait` under timeout(1), which
+    # macOS doesn't ship.
+    deadline=$((SECONDS + CLOUD_INIT_TIMEOUT_SECONDS))
+    while :; do
+        state="$(incus_run exec "$(qualified "$name")" -- cloud-init status 2>/dev/null | sed -n 's/^status: //p')"
+        case "$state" in
+            done) return 0 ;;
+            error|disabled) break ;;
+        esac
+        ((SECONDS < deadline)) || break
+        sleep 3
+    done
+    die "cloud-init didn't finish cleanly (status: ${state:-unknown}); see: incus exec $(qualified "$name") -- cloud-init status --long" 1
 }
 
 # Installs committed HEAD through the installer's own --bootstrap-archive path.
@@ -242,8 +258,10 @@ vm_exec() {
     incus_run exec "$(qualified "$name")" -- "$@"
 }
 
+# Prints the attach block. After a failed install ($1 != 0) it leaves out the
+# `herdr machine add` line: herdr may not be installed yet.
 print_block() {
-    local ip host_key herdr_version
+    local install_status="$1" ip host_key herdr_version
     ip="$(instance_json | jq -r '[.state.network // {} | to_entries[] | select(.key != "lo")
         | .value.addresses[] | select(.family == "inet" and .scope == "global") | .address][0] // empty')"
     [[ -n "$ip" ]] || die "the VM has no IPv4 address yet; re-run once it has one" 1
@@ -265,8 +283,12 @@ print_block() {
     printf '    ForwardAgent no\n'
     printf '# Add to ~/.ssh/known_hosts on that machine:\n'
     printf '%s %s\n' "$name" "$host_key"
-    printf '# Then run there (%s runs %s):\n' "$name" "${herdr_version:-no herdr yet}"
-    printf 'herdr machine add %s\n' "$name"
+    if ((install_status == 0)); then
+        printf '# Then run there (%s runs %s):\n' "$name" "${herdr_version:-no herdr found}"
+        printf 'herdr machine add %s\n' "$name"
+    else
+        printf '# The install failed: re-run this command; it prints the herdr machine add line once ACFS is installed.\n'
+    fi
 }
 
 report_authorized_keys() {
@@ -316,7 +338,7 @@ main() {
         fi
     fi
 
-    print_block
+    print_block "$status"
     if ((status != 0)); then
         log_error "Install failed (exit $status); the VM is kept."
         log_error "Ignore the installer's resume hint: re-run this command to resume."
