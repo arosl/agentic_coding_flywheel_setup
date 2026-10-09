@@ -3666,17 +3666,24 @@ Agent B: reserve_paths(["src/auth/*"]) → CONFLICT: held by Agent A
 Agent B: reserve_paths(["src/api/*"]) → GRANTED
 ```
 
-### Agents in herdr
+### The herdr Orchestration Pattern
 
-Each agent runs in its own [herdr](https://herdr.dev) pane. A workspace usually holds one project, and its tabs and panes hold the agents and your own shell:
+`acfs agents spawn` is the **one-command swarm spawn**. It starts each agent in its own [herdr](https://herdr.dev) tab, labelled with the agent's Agent Mail name:
 
+```bash
+# Spawn 5 agents, each in its own herdr tab
+acfs agents spawn --claude 3 --codex 1 --agy 1
+```
+
+Result:
 ```
 herdr workspace: my-project
-├── pane: Claude working on auth
-├── pane: Claude working on api
-├── pane: Codex reviewing changes
-├── pane: Antigravity writing docs
-└── pane: your shell
+├── BlueLake: Claude working on auth
+├── GreenCastle: Claude working on api
+├── RedCat: Claude working on tests
+├── IcyKnoll: Codex reviewing PRs
+├── PearlGlen: Antigravity writing docs
+└── your shell
 ```
 
 herdr's sidebar shows whether each agent is working, waiting for you, or done. The agents keep running when SSH drops: run `herdr` again to reattach. `onboard 3` teaches the keys.
