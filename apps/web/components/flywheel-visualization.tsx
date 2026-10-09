@@ -345,6 +345,7 @@ interface DesktopToolNodeProps {
   position: { x: number; y: number };
   size: number;
   isSelected: boolean;
+  isHovered: boolean;
   isConnected: boolean;
   isDimmed: boolean;
   onSelect: () => void;
@@ -358,6 +359,7 @@ function DesktopToolNode({
   position,
   size,
   isSelected,
+  isHovered,
   isConnected,
   isDimmed,
   onSelect,
@@ -380,7 +382,7 @@ function DesktopToolNode({
         height: size,
         opacity: isDimmed ? 0.3 : 1,
         transform: `scale(${isSelected ? 1.15 : isConnected ? 1.05 : 1})`,
-        zIndex: isSelected ? 30 : isConnected ? 20 : 10,
+        zIndex: isHovered ? 40 : isSelected ? 30 : isConnected ? 20 : 10,
         filter: isDimmed ? "grayscale(0.5)" : "none",
         // Subtle floating animation for primary tools
         animation: isPrimary && !isDimmed ? `float${index % 3} 4s ease-in-out infinite` : "none",
@@ -1366,7 +1368,7 @@ function DesktopVisualization({
       >
         {/* Ambient background glow */}
         <div
-          className="absolute inset-0 rounded-full bg-primary/5 blur-3xl"
+          className="pointer-events-none absolute inset-0 rounded-full bg-primary/5 blur-3xl"
           style={{ transform: "scale(1.2)" }}
         />
 
@@ -1495,6 +1497,7 @@ function DesktopVisualization({
             position={positions[tool.id]}
             size={DESKTOP_CONFIG.innerNodeSize}
             isSelected={tool.id === selectedToolId}
+            isHovered={tool.id === hoveredToolId}
             isConnected={isToolConnected(tool.id)}
             isDimmed={!!activeToolId && tool.id !== activeToolId && !isToolConnected(tool.id)}
             onSelect={() => onSelectTool(tool.id)}
@@ -1512,6 +1515,7 @@ function DesktopVisualization({
             position={positions[tool.id]}
             size={DESKTOP_CONFIG.outerNodeSize}
             isSelected={tool.id === selectedToolId}
+            isHovered={tool.id === hoveredToolId}
             isConnected={isToolConnected(tool.id)}
             isDimmed={!!activeToolId && tool.id !== activeToolId && !isToolConnected(tool.id)}
             onSelect={() => onSelectTool(tool.id)}

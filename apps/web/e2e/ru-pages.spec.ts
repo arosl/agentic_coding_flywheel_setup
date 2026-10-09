@@ -233,13 +233,13 @@ test.describe
         await page.goto("/flywheel");
         await page.waitForLoadState("networkidle");
 
-        // Find RU in the flywheel visualization - it should exist
-        // Desktop-only badges precede the visible ones in DOM order on phones; assert a visible instance.
+        // Click the visible tool button so hover transitions cannot move the tiny label out from under the pointer.
         const ruElement = page
-          .getByText(/\bRU\b|Repo Updater/i)
+          .getByRole("button", { name: /^RU\b/i })
           .filter({ visible: true })
           .first();
         await expect(ruElement).toBeVisible({ timeout: 5000 });
+        await ruElement.scrollIntoViewIfNeeded();
         await ruElement.click();
         // After clicking, some detail should appear
         await expect(
