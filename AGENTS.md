@@ -78,6 +78,7 @@ The fork tracks upstream ACFS and changes its toolset: herdr instead of ntm, wez
   - acfs-bnz: CI pins shellcheck 0.9.0 and bun, which upstream's CI leaves unpinned.
   - acfs-0pj: the plugin-pack tests set their fixtures' file modes, because upstream's tests fail under umask 0002.
   - acfs-a04: `ACFS_REPO_OWNER` defaults to the fork's owner, so the one-liner installs the fork, not upstream.
+  - acfs-m3l: the `fail()` helper in 22 `tests/unit/` shell tests returns 0, because upstream's ends in a `&&` list that stops the run at the first failure under `set -e`. Also fixed: two `jq -e` assertions in `test_swarm_plan.sh` that read only the last of a stream, the support inventory fixture's 2099 probe date, and the summary `swarm_plan.sh` gives when RCH reports zero workers.
 
 ## Commands and gates
 

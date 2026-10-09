@@ -23,6 +23,7 @@ fail() {
     TESTS_FAILED=$((TESTS_FAILED + 1))
     echo "FAIL: $1"
     [[ -n "${2:-}" ]] && echo "  Reason: $2"
+    return 0
 }
 
 test_support_capture_resource_profile_sanitizes_paths() {
@@ -97,9 +98,11 @@ test_support_capture_resource_profile_sanitizes_paths() {
 # Compliant inventory: no forbidden sensitive field names, so the fail-closed
 # validator in swarm_inventory.sh (44c2074b) lets the report summarize it.
 write_inventory_fixture() {
-    local path="$1"
+    local path="$1" probe_at
+    # swarm_inventory.sh excludes a host whose probe is in the future or stale.
+    probe_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     mkdir -p "$(dirname "$path")"
-    cat > "$path" <<'JSON'
+    cat > "$path" <<JSON
 {
   "schema_version": 1,
   "updated_at": "2026-05-08T00:00:00Z",
@@ -110,7 +113,7 @@ write_inventory_fixture() {
       "display_name": "prod-controller.example.com",
       "role": "swarm-controller",
       "status": "active",
-      "last_probe_at": "2099-01-01T00:00:00Z",
+      "last_probe_at": "$probe_at",
       "resources": {"cpu_count": 64, "mem_total_mib": 262144, "disk_available_mib": 524288},
       "capacity": {"workload": "standard", "recommended_agents": 25, "safe_agents": 44},
       "rch": {"worker": false, "controller": true, "workers_total": 8, "workers_healthy": 8},
@@ -121,7 +124,7 @@ write_inventory_fixture() {
       "id": "rch-worker-a",
       "role": "rch-worker",
       "status": "active",
-      "last_probe_at": "2099-01-01T00:00:00Z",
+      "last_probe_at": "$probe_at",
       "resources": {},
       "capacity": {"recommended_agents": 0, "safe_agents": 0},
       "rch": {"worker": true, "controller": false},
