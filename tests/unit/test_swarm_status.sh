@@ -407,6 +407,34 @@ test_human_output() {
     pass "human_output"
 }
 
+# A VM's wall clock can step backwards; probe durations must stay
+# non-negative integers rather than turning into null.
+test_wall_clock_stepping_back_keeps_durations() {
+    local stub_dir
+    stub_dir="$(make_stub_dir)"
+    write_executable "$stub_dir/date" '#!/usr/bin/env bash
+dir="$(dirname "$0")"
+case "$1" in
+  +%s%3N|+%s)
+    now="$(cat "$dir/date.ms" 2>/dev/null || echo 2000000000000)"
+    now=$((now - 1000))
+    printf "%s\n" "$now" > "$dir/date.ms"
+    if [[ "$1" == "+%s" ]]; then echo $((now / 1000)); else echo "$now"; fi ;;
+  *) exec /bin/date "$@" ;;
+esac'
+
+    local output
+    output="$(run_and_capture clock_step_back env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 bash "$SWARM_STATUS_SH" --json)"
+    write_artifact "clock_step_back.json" "$output"
+
+    jq -e '
+      [.host.duration_ms, (.probes[] | .duration_ms)]
+      | length == 6 and all(type == "number" and . >= 0)
+    ' <<<"$output" >/dev/null || return 1
+
+    pass "wall_clock_stepping_back_keeps_durations"
+}
+
 run_test() {
     local name="$1"
     if "$name"; then
@@ -429,6 +457,7 @@ main() {
     run_test test_timeout_becomes_structured_warning
     run_test test_rch_queue_timeout_becomes_structured_warning
     run_test test_human_output
+    run_test test_wall_clock_stepping_back_keeps_durations
 
     echo "Results: $TESTS_PASSED passed, $TESTS_FAILED failed"
     echo "Artifacts: $ARTIFACT_DIR"

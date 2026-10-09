@@ -223,6 +223,38 @@ test_mock_rehearsal_small_counts_produces_artifacts() {
     pass "mock_rehearsal_small_counts_produces_artifacts"
 }
 
+# A VM's wall clock can step backwards; the timing check must still pass.
+test_wall_clock_stepping_back_keeps_timing() {
+    local fixture output run_dir stub_dir
+    fixture="$(high_capacity_status_fixture)"
+    stub_dir="$(mktemp -d "$ARTIFACT_DIR/stubs.XXXXXX")"
+    cat > "$stub_dir/date" <<'STUB'
+#!/usr/bin/env bash
+dir="$(dirname "$0")"
+case "$1" in
+  +%s%3N|+%s)
+    now="$(cat "$dir/date.ms" 2>/dev/null || echo 2000000000000)"
+    now=$((now - 1000))
+    printf '%s\n' "$now" > "$dir/date.ms"
+    if [[ "$1" == "+%s" ]]; then echo $((now / 1000)); else echo "$now"; fi ;;
+  *) exec /bin/date "$@" ;;
+esac
+STUB
+    chmod +x "$stub_dir/date"
+
+    output="$(PATH="$stub_dir:$PATH" run_sim_json clock_step_back "$fixture" --mock-rehearsal --counts 2 --mock-duration 1)"
+    run_dir="$(jq -r '.artifact_dir' <<<"$output")"
+
+    jq -e '
+      .status == "pass" and
+      all(.scenarios[].checks[]; select(.id == "timing") | .status == "pass")
+    ' <<<"$output" >/dev/null || return 1
+    jq -e '.duration_ms >= 0' "$run_dir/scenario_2/timing.json" >/dev/null || return 1
+    jq -e '.timing.duration_ms >= 0' "$run_dir/scenario_2/mock_rehearsal.json" >/dev/null || return 1
+
+    pass "wall_clock_stepping_back_keeps_timing"
+}
+
 test_mock_rehearsal_high_counts_require_flag() {
     local fixture output status
     fixture="$(high_capacity_status_fixture)"
@@ -260,6 +292,7 @@ main() {
     run_test test_human_output_declares_simulation_only
     run_test test_mock_rehearsal_small_counts_produces_artifacts
     run_test test_mock_rehearsal_high_counts_require_flag
+    run_test test_wall_clock_stepping_back_keeps_timing
 
     echo "Results: $TESTS_PASSED passed, $TESTS_FAILED failed"
     echo "Artifacts: $ARTIFACT_DIR"

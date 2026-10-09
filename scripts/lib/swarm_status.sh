@@ -117,8 +117,16 @@ swarm_status_binary_path() {
     printf '%s\n' "$path_value"
 }
 
+# Milliseconds for measuring durations, not a timestamp. The wall clock can
+# step backwards (NTP on a VM), which made durations negative, so prefer the
+# monotonic /proc/uptime (10 ms resolution) and fall back to date.
 swarm_status_now_ms() {
-    local now=""
+    local now="" uptime=""
+    if [[ -r /proc/uptime ]] && read -r uptime _ < /proc/uptime &&
+        [[ "$uptime" =~ ^([0-9]+)\.([0-9]{2})$ ]]; then
+        printf '%s\n' "$((BASH_REMATCH[1] * 1000 + 10#${BASH_REMATCH[2]} * 10))"
+        return 0
+    fi
     now="$(date +%s%3N 2>/dev/null || true)"
     if [[ "$now" =~ ^[0-9]+$ ]]; then
         printf '%s\n' "$now"
@@ -132,7 +140,12 @@ swarm_status_duration_ms() {
     local start_ms="$1"
     local end_ms=""
     end_ms="$(swarm_status_now_ms)"
-    printf '%s\n' "$((end_ms - start_ms))"
+    # Only the date fallback can step backwards; never report a negative span.
+    if ((end_ms < start_ms)); then
+        printf '0\n'
+    else
+        printf '%s\n' "$((end_ms - start_ms))"
+    fi
 }
 
 swarm_status_run_with_timeout() {

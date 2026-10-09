@@ -80,6 +80,31 @@ swarm_sim_now_ms() {
     printf '%s000\n' "$now"
 }
 
+# Milliseconds for measuring durations. The wall clock behind swarm_sim_now_ms
+# can step backwards (NTP on a VM), which failed the timing check, so prefer
+# the monotonic /proc/uptime (10 ms resolution) and fall back to the wall clock.
+swarm_sim_monotonic_ms() {
+    local uptime=""
+    if [[ -r /proc/uptime ]] && read -r uptime _ < /proc/uptime &&
+        [[ "$uptime" =~ ^([0-9]+)\.([0-9]{2})$ ]]; then
+        printf '%s\n' "$((BASH_REMATCH[1] * 1000 + 10#${BASH_REMATCH[2]} * 10))"
+        return 0
+    fi
+    swarm_sim_now_ms
+}
+
+swarm_sim_elapsed_ms() {
+    local start="$1"
+    local end=""
+    end="$(swarm_sim_monotonic_ms)"
+    # Only the wall-clock fallback can step backwards; never report a negative span.
+    if ((end < start)); then
+        printf '0\n'
+    else
+        printf '%s\n' "$((end - start))"
+    fi
+}
+
 swarm_sim_parse_counts() {
     local raw="$1"
     local part=""
@@ -386,6 +411,7 @@ swarm_sim_run_mock_rehearsal() {
     local start_ms=""
     local end_ms=""
     local duration_ms=""
+    local monotonic_start=""
     local alive=0
     local completed=0
     local failures=0
@@ -394,6 +420,7 @@ swarm_sim_run_mock_rehearsal() {
 
     : > "$launch_log"
     start_ms="$(swarm_sim_now_ms)"
+    monotonic_start="$(swarm_sim_monotonic_ms)"
     swarm_sim_collect_status_json "$jq_bin" > "$before_status_file"
     swarm_sim_mock_resource_snapshot_json "$jq_bin" "$count" before 0 > "$sample_before_file"
 
@@ -437,7 +464,7 @@ swarm_sim_run_mock_rehearsal() {
         > "$status_snapshots_file"
 
     end_ms="$(swarm_sim_now_ms)"
-    duration_ms=$((end_ms - start_ms))
+    duration_ms="$(swarm_sim_elapsed_ms "$monotonic_start")"
     "$jq_bin" -n \
         --arg scenario_dir "$scenario_dir" \
         --arg launch_log "$launch_log" \
@@ -705,6 +732,7 @@ swarm_sim_run_scenario() {
     local start_ms=""
     local end_ms=""
     local duration_ms=""
+    local monotonic_start=""
     local launch_plan_file="$scenario_dir/launch_plan.json"
     local telemetry_file="$scenario_dir/telemetry.json"
     local capacity_file="$scenario_dir/capacity.json"
@@ -715,6 +743,7 @@ swarm_sim_run_scenario() {
 
     mkdir -p "$scenario_dir"
     start_ms="$(swarm_sim_now_ms)"
+    monotonic_start="$(swarm_sim_monotonic_ms)"
 
     swarm_sim_launch_plan_json "$jq_bin" "$count" > "$launch_plan_file"
     cp "$status_file" "$telemetry_file"
@@ -727,7 +756,7 @@ swarm_sim_run_scenario() {
     fi
 
     end_ms="$(swarm_sim_now_ms)"
-    duration_ms=$((end_ms - start_ms))
+    duration_ms="$(swarm_sim_elapsed_ms "$monotonic_start")"
     "$jq_bin" -n \
         --argjson start_ms "$start_ms" \
         --argjson end_ms "$end_ms" \
