@@ -18,6 +18,7 @@ TEST_GIT_STATUS=""
 TEST_ORIGIN_MAIN="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 TEST_ORIGIN_MASTER="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 TEST_CHANGED_FILES=""
+TEST_VERSION_STATUS="pass"
 TEST_SHELLCHECK_STATUS="pass"
 TEST_MANIFEST_STATUS="pass"
 TEST_CHECKSUM_STATUS="pass"
@@ -30,6 +31,7 @@ reset_fakes() {
     TEST_ORIGIN_MAIN="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TEST_ORIGIN_MASTER="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TEST_CHANGED_FILES=""
+    TEST_VERSION_STATUS="pass"
     TEST_SHELLCHECK_STATUS="pass"
     TEST_MANIFEST_STATUS="pass"
     TEST_CHECKSUM_STATUS="pass"
@@ -46,6 +48,7 @@ run_release_doctor() {
             ACFS_RELEASE_DOCTOR_ORIGIN_MAIN="$TEST_ORIGIN_MAIN" \
             ACFS_RELEASE_DOCTOR_ORIGIN_MASTER="$TEST_ORIGIN_MASTER" \
             ACFS_RELEASE_DOCTOR_CHANGED_FILES="$TEST_CHANGED_FILES" \
+            ACFS_RELEASE_DOCTOR_FAKE_VERSION_CONSISTENCY_STATUS="$TEST_VERSION_STATUS" \
             ACFS_RELEASE_DOCTOR_FAKE_SHELLCHECK_STATUS="$TEST_SHELLCHECK_STATUS" \
             ACFS_RELEASE_DOCTOR_FAKE_MANIFEST_DRIFT_STATUS="$TEST_MANIFEST_STATUS" \
             ACFS_RELEASE_DOCTOR_FAKE_CHECKSUM_CANDIDATE_STATUS="$TEST_CHECKSUM_STATUS" \
@@ -66,6 +69,7 @@ run_release_doctor_human() {
             ACFS_RELEASE_DOCTOR_ORIGIN_MAIN="$TEST_ORIGIN_MAIN" \
             ACFS_RELEASE_DOCTOR_ORIGIN_MASTER="$TEST_ORIGIN_MASTER" \
             ACFS_RELEASE_DOCTOR_CHANGED_FILES="$TEST_CHANGED_FILES" \
+            ACFS_RELEASE_DOCTOR_FAKE_VERSION_CONSISTENCY_STATUS="$TEST_VERSION_STATUS" \
             ACFS_RELEASE_DOCTOR_FAKE_SHELLCHECK_STATUS="$TEST_SHELLCHECK_STATUS" \
             ACFS_RELEASE_DOCTOR_FAKE_MANIFEST_DRIFT_STATUS="$TEST_MANIFEST_STATUS" \
             ACFS_RELEASE_DOCTOR_FAKE_CHECKSUM_CANDIDATE_STATUS="$TEST_CHECKSUM_STATUS" \
@@ -138,6 +142,56 @@ test_skipped_network_check() {
     assert_jq '
       .ok == true and
       (.checks[] | select(.id == "checksum_candidate").status) == "skip"
+    '
+}
+
+# A repo root holding only VERSION and, unless installer_version is empty,
+# an install.sh that sets ACFS_VERSION.
+write_version_fixture() {
+    local name="$1"
+    local version="$2"
+    local installer_version="$3"
+    local fixture="$ARTIFACT_DIR/$name"
+    mkdir -p "$fixture"
+    printf '%s\n' "$version" > "$fixture/VERSION"
+    if [[ -n "$installer_version" ]]; then
+        printf '#!/usr/bin/env bash\nACFS_VERSION="%s"\n' "$installer_version" > "$fixture/install.sh"
+    fi
+    printf '%s\n' "$fixture"
+}
+
+test_version_consistency_match_passes() {
+    TEST_REPO_ROOT="$(write_version_fixture version-match 1.2.3 1.2.3)"
+    TEST_VERSION_STATUS=""
+    run_release_doctor --network=skip --web=never
+    [[ "$LAST_STATUS" -eq 0 ]] || return 1
+    assert_jq '
+      .ok == true and
+      (.checks[] | select(.id == "version_consistency").status) == "pass"
+    '
+}
+
+test_version_consistency_mismatch_fails() {
+    TEST_REPO_ROOT="$(write_version_fixture version-mismatch 1.2.3 1.2.4)"
+    TEST_VERSION_STATUS=""
+    run_release_doctor --network=skip --web=never
+    [[ "$LAST_STATUS" -eq 1 ]] || return 1
+    assert_jq '
+      .ok == false and
+      (.checks[] | select(.id == "version_consistency").status) == "fail" and
+      (.checks[] | select(.id == "version_consistency").detail | contains("VERSION file (1.2.3) != install.sh ACFS_VERSION (1.2.4)"))
+    '
+}
+
+test_version_consistency_missing_installer_fails() {
+    TEST_REPO_ROOT="$(write_version_fixture version-no-installer 1.2.3 "")"
+    TEST_VERSION_STATUS=""
+    run_release_doctor --network=skip --web=never
+    [[ "$LAST_STATUS" -eq 1 ]] || return 1
+    assert_jq '
+      .ok == false and
+      (.checks[] | select(.id == "version_consistency").status) == "fail" and
+      (.checks[] | select(.id == "version_consistency").detail | contains("could not read ACFS_VERSION"))
     '
 }
 
@@ -312,6 +366,9 @@ run_test "pass report" test_pass_report
 run_test "fail report" test_fail_report
 run_test "warning report" test_warning_report
 run_test "skipped network check" test_skipped_network_check
+run_test "version consistency match passes" test_version_consistency_match_passes
+run_test "version consistency mismatch fails" test_version_consistency_mismatch_fails
+run_test "version consistency missing install.sh fails" test_version_consistency_missing_installer_fails
 run_test "checksum candidate ignores progress stderr" test_checksum_candidate_ignores_progress_stderr
 run_test "checksum candidate target diff fails" test_checksum_candidate_target_diff_fails
 run_test "checksum candidate unrelated diff fails" test_checksum_candidate_unrelated_diff_fails
