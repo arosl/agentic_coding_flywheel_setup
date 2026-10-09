@@ -92,8 +92,8 @@ Re-running the same command is safe:
 The VM sits on Incus's NAT bridge, so nothing outside reaches it except through SSH on the host.
 
 **In the other direction,** a VM on a plain bridge can reach the host and everything the host can route to: its LAN, and its tailnet when the host runs Tailscale. The launcher limits that with an Incus network ACL:
-- **The ACL is `acfs-vm-egress`.** It rejects outgoing traffic to `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` (CGNAT, which includes tailnets), `169.254.0.0/16` and `fc00::/7`.
-- **Everything else passes,** including the internet, the bridge's DNS and DHCP, and the replies to your SSH sessions.
+- **The ACL is `acfs-vm-egress`.** It rejects outgoing traffic to `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` (CGNAT, which includes tailnets), `169.254.0.0/16`, `fc00::/7` and `fe80::/10` (IPv6 link-local, on which the host and every other instance on the bridge are reachable).
+- **Everything else passes,** including the internet and the replies to your SSH sessions. The bridge's own DNS and DHCP pass too: Incus allows its own services ahead of any ACL.
 - **When it's created:** on the first run, if it doesn't exist. The launcher never changes an existing one.
 - **Where it applies:** it's attached to each launcher VM's NIC (`security.acls`). Other instances aren't affected.
 - **It needs a managed bridge.** On any other network, the launcher stops before creating the VM.

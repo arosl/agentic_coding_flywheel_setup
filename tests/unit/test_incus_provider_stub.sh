@@ -71,7 +71,11 @@ case "$1" in
     network)
         case "$3" in
             show) [[ -f "$STUB_DIR/acl.yaml" ]] || { echo 'Error: Network ACL not found' >&2; exit 1; } ;;
-            create) cat >"$STUB_DIR/acl.yaml" ;;
+            # Like the real client, it reports the creation on stdout unless --quiet.
+            create)
+                cat >"$STUB_DIR/acl.yaml"
+                [[ "$4" == --quiet ]] || echo "Network ACL ${4#*:} created"
+                ;;
         esac
         ;;
     launch)
@@ -206,7 +210,7 @@ check "user-data authorizes exactly the given key" \
 check "user-data installs openssh-server" grep -q 'packages: \[openssh-server, curl, git, jq, ca-certificates, unzip\]' "$CASE/launch.args"
 check "user-data leaves ssh_pwauth unset (sshd keeps the packaged config)" bash -c '! grep -q ssh_pwauth "$1"' _ "$CASE/launch.args"
 check "creates the ACL, rejecting private, CGNAT and link-local egress" \
-    grep -q 'destination: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16,fc00::/7' "$CASE/acl.yaml"
+    grep -q 'destination: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16,fc00::/7,fe80::/10' "$CASE/acl.yaml"
 check "every incus call but the ACL's YAML gets /dev/null on stdin" only_null_stdin_except_acl_create
 check "pushes HEAD as a bootstrap archive with GitHub's prefix" \
     bash -c 'tar -tzf "$1" | grep -qx "agentic_coding_flywheel_setup-$2/install.sh"' _ "$CASE/pushed-acfs.tar.gz" "$SHA"
@@ -297,8 +301,13 @@ check "stdout is the attach block" stdout_is_block box
 
 echo "== VM installed by hand and marked user.acfs.installed: prints only"
 new_case handmarked running-handmarked
+# An install made by hand may be on an image without cloud-init: the block
+# needs only the VM agent, so cloud-init's state mustn't matter.
+export STUB_CLOUD_INIT=disabled
 run_launcher dev
+unset STUB_CLOUD_INIT
 check "exits 0" rc_is 0
+check "doesn't wait for cloud-init" not_called 'cloud-init'
 check "pushes no files" not_called $'\tfile push'
 check "runs no installer" not_called 'bootstrap-archive'
 check "sets no config" bash -c '[[ ! -e "$1" ]]' _ "$CASE/config-set"
@@ -362,7 +371,7 @@ check "exits 0" rc_is 0
 check "lists on the remote" called $'\tlist far: ^dev\\$ -f json'
 check "queries the remote's profile" called 'query far:/1.0/profiles/default'
 check "queries the remote's network" called 'query far:/1.0/networks/incusbr0'
-check "creates the ACL on the remote" called 'network acl create far:acfs-vm-egress'
+check "creates the ACL on the remote" called 'network acl create --quiet far:acfs-vm-egress'
 check "launches on the remote" grep -qx 'far:dev' "$CASE/launch.args"
 check "every exec, push and config names the remote" \
     bash -c '! cut -f2 "$1" | grep -E "^(exec|file|config|start)" | grep -v -E "^(exec far:dev|file push --quiet [^ ]+ far:dev/|config set far:dev )" | grep -q .' _ "$CASE/calls"

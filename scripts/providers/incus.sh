@@ -30,8 +30,9 @@ REPO_OWNER="arosl"
 REPO_NAME="agentic_coding_flywheel_setup"
 TARGET_USER="ubuntu"
 ACL_NAME="acfs-vm-egress"
-# Private, CGNAT (tailnet) and link-local ranges: the host's LAN and tailnet.
-ACL_REJECT_DESTINATIONS="10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16,fc00::/7"
+# Private, CGNAT (tailnet) and link-local ranges: the host's LAN and tailnet,
+# and the host and other instances over the bridge's IPv6 link-local.
+ACL_REJECT_DESTINATIONS="10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16,fc00::/7,fe80::/10"
 AGENT_TIMEOUT_SECONDS=300
 CLOUD_INIT_TIMEOUT_SECONDS=600
 
@@ -184,7 +185,8 @@ ensure_acl() {
     fi
     log_info "Creating network ACL $ACL_NAME (rejects egress to $ACL_REJECT_DESTINATIONS)"
     # The one incus call whose stdin is meant: the ACL's YAML.
-    incus network acl create "$(qualified "$ACL_NAME")" <<EOF || die "could not create network ACL $ACL_NAME" 1
+    # --quiet: the client reports the creation on stdout, which is the block's.
+    incus network acl create --quiet "$(qualified "$ACL_NAME")" <<EOF || die "could not create network ACL $ACL_NAME" 1
 description: "ACFS VMs: no egress to private, CGNAT or link-local ranges"
 egress:
   - action: reject
@@ -208,18 +210,24 @@ launch() {
         >/dev/null || die "incus launch failed" 1
 }
 
-wait_ready() {
-    local deadline=$((SECONDS + AGENT_TIMEOUT_SECONDS)) output state exit_code
-    log_step "Waiting for the VM agent and cloud-init (sshd, base packages)"
+wait_agent() {
+    local deadline=$((SECONDS + AGENT_TIMEOUT_SECONDS))
+    log_step "Waiting for the VM agent"
     until incus_run exec "$(qualified "$name")" -- true >/dev/null 2>&1; do
         ((SECONDS < deadline)) || die "the VM agent didn't answer within ${AGENT_TIMEOUT_SECONDS}s" 1
         sleep 3
     done
+}
+
+# Only before an install: an installed VM may have been installed by hand,
+# on an image without cloud-init.
+wait_cloud_init() {
+    local deadline=$((SECONDS + CLOUD_INIT_TIMEOUT_SECONDS)) output state exit_code
+    log_step "Waiting for cloud-init (sshd, base packages)"
     # Polled rather than `cloud-init status --wait` under timeout(1), which
     # macOS doesn't ship. `cloud-init status` exits 0 while running or done,
     # 1 on an error and 2 when done with recoverable errors, so the status
     # line decides, and exit 2 only adds a warning.
-    deadline=$((SECONDS + CLOUD_INIT_TIMEOUT_SECONDS))
     while :; do
         exit_code=0
         output="$(incus_run exec "$(qualified "$name")" -- cloud-init status 2>/dev/null)" || exit_code=$?
@@ -338,7 +346,8 @@ main() {
             incus_run start "$(qualified "$name")" || die "incus start failed" 1
         fi
     fi
-    wait_ready
+    wait_agent
+    [[ -n "$installed" ]] || wait_cloud_init
 
     if [[ -n "$installed" ]]; then
         log_info "Already installed at ${installed:0:12}; the checkout is at ${sha:0:12}. Update inside the VM with: acfs update"

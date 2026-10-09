@@ -96,7 +96,9 @@ jq -r '.checks[]? | select(.status == "fail") | "  | fail: \(.id // .name // "?"
 check "acfs doctor --json reports no failures" test "$doctor_failures" = "0"
 
 echo "== network ACL"
-gateway="$(vm_ssh "ip -4 route show default | awk '{print \$3; exit}'" 2>/dev/null || true)"
+# The field after "via": an IPv6 route puts "nhid <n>" before it.
+route_via='{for (i = 1; i < NF; i++) if ($i == "via") {print $(i + 1); exit}}'
+gateway="$(vm_ssh "ip -4 route show default | awk '$route_via'" 2>/dev/null || true)"
 check "DNS resolves in the VM" vm_ssh getent hosts github.com
 check "the VM reaches the internet over HTTPS" vm_ssh curl -fsS -o /dev/null --max-time 15 https://github.com
 nic="$(vm_ssh "ip -4 route show default | awk '{print \$5; exit}'" 2>/dev/null || true)"
@@ -121,6 +123,28 @@ for address in "${blocked[@]}"; do
         echo "  (not tested: the host itself doesn't accept on $address:22)"
     fi
 done
+
+echo "== IPv6 under the ACL"
+# fe80::/10 is rejected, so check that the bridge's IPv6 still works: router
+# advertisements (a global address and a default route) and the VM's
+# neighbour advertisements, the one ND message the ACL could catch: a unicast
+# reply to the gateway's link-local address.
+vm_global6="$(vm_ssh "ip -6 -o addr show dev $nic scope global | awk '{split(\$4, a, \"/\"); print a[1]; exit}'" 2>/dev/null || true)"
+gateway6="$(vm_ssh "ip -6 route show default | awk '$route_via'" 2>/dev/null || true)"
+check "the VM has a global IPv6 address (SLAAC)" test -n "$vm_global6"
+check "the VM has an IPv6 default route" test -n "$gateway6"
+if [[ -n "$vm_global6" ]]; then
+    ping -6 -c 1 -W 2 "$vm_global6" >/dev/null 2>&1 || true
+    check "the host resolves the VM's IPv6 neighbour entry (its advertisement passes the ACL)" \
+        bash -c 'ip -6 neigh show "$1" | grep -q -E "REACHABLE|STALE|DELAY|PROBE"' _ "$vm_global6"
+fi
+bridge_dev="$(ip -6 -o addr show scope link | awk -v a="$gateway6" '{split($4, x, "/"); if (x[1] == a) {print $2; exit}}')"
+if [[ -n "$gateway6" && -n "$bridge_dev" ]] && timeout 5 bash -c "</dev/tcp/$gateway6%$bridge_dev/22" 2>/dev/null; then
+    check "the VM can't open the gateway's link-local :22 (the host accepts there)" \
+        not vm_ssh "timeout 5 bash -c '</dev/tcp/$gateway6%$nic/22'"
+else
+    echo "  (not tested: the host itself doesn't accept on the gateway's link-local :22)"
+fi
 
 echo "== re-run"
 if [[ "$create_rc" -eq 0 ]]; then
