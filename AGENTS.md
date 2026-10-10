@@ -118,11 +118,12 @@ What the fork adds to upstream's sections below. `scripts/lib/policy_lint.sh` re
 - **Quota:** before you dispatch a round or spawn, run `acfs agents quota`. It shows each plan's 5-hour and weekly windows, their resets (UTC) and the live agents per kind. `acfs agents spawn` refuses a kind at 90% of its 5-hour window, or one with a limit reached (`--force` overrides). Claude's windows reach it only through its statusLine (`agent_quota.sh record-claude`).
 - **Agent Mail project key:** the repo's absolute path, `git rev-parse --show-toplevel`.
 - **Reservations:** reserve files in Agent Mail before you edit them (`file_reservation_paths`, with the bead id as the reason), and release them when you're done.
-- **Committing and pushing** (the operator's ruling, 2026-10-09). Everyone shares one checkout, one index and one local `main`:
-  - Build and commit in the shared checkout, so every commit lands on local `main` first. Commit with a pathspec, `git commit -- <your files>`, never a bare `git commit`: the index may hold other agents' staging.
+- **Committing and pushing** (upstream's way, the operator, 2026-10-10: one agent at a time is designated to handle organized commits and pushes). Everyone shares one checkout, one index and one local `main`:
+  - Build and commit in the shared checkout, so every commit lands on local `main` first. Commit with a pathspec, `git commit -- <your files>`, never a bare `git commit`: the index may hold other agents' staging. Then go on to your next bead. Don't push unless you are the designated pusher; its mail says so.
+  - The designated pusher gates local `main` and pushes the batch, by the steps below. Each push carries every commit on local `main`.
   - A worktree is only for running the gate on a clean tree, at the commit you're about to push. Never commit in one or push from one; the one exception is an upstream sync's merge commit (project rule 3). Make it under your scratch directory on `/data/tmp`, never in `/tmp`, which is a RAM-backed tmpfs with a per-user quota. Once its commit is on `origin/main`, remove it with `git worktree remove --force <path>` (the operator's standing rule, 2026-10-09: "always make sure the temp worktrees are cleaned up after they have been merged"). Codex's auto-reviewer refuses the removal, so a Codex agent asks a Claude agent to remove it.
   - Before every push: `git fetch origin`. If `origin/main` moved, merge it into local `main`. Never rebase or reset the shared checkout. Then run the full gate on the result and push with `AGENT_NAME=<you> git push origin main main:master`.
-  - After the push, watch CI for it: `gh run list -R arosl/agentic_coding_flywheel_setup --commit <sha>` until every run has finished. A red run is yours: fix it, or file it as a P0 bead at once.
+  - After the push, watch CI for it: `gh run list -R arosl/agentic_coding_flywheel_setup --commit <sha>` until every run has finished. A red run is the pusher's: fix it, or file it as a P0 bead at once, and mail the authors of the commits involved.
   - If the pre-push guard refuses because a commit already on `main` touches a file another agent now holds, ask that agent to release it for the push. Don't bypass the guard.
 - **Bead export:** kept local, because this repo is public (the operator's ruling, 2026-10-08), and br writes the user name and the checkout path into every exported bead. The only tracked file under `.beads/` is its `.gitignore`, which ignores everything (`*`), so no bead write is ever committed. Where upstream's sections below say to `git add .beads/`, skip that step.
 - **Priorities:** P0 a broken install or update on users' machines, or a hole in the checksum boundary; P1 what blocks other agents' work or the next upstream sync; P2 the fork's other planned work; P3 is the default, and P4 for work that waits on a condition.
@@ -148,7 +149,7 @@ What the fork adds to upstream's sections below. `scripts/lib/policy_lint.sh` re
 - **Never run `install.sh`, `acfs update` or any install step against the machine you develop on.** It replaces the live tools that the other agents there use. Test the installer only on a disposable machine. ACFS's own `acfs-nightly-update.timer` stays disabled there for the same reason (the operator, 2026-10-10, after it ran `acfs update` on the development machine at 04:04Z).
 - Never commit with `--no-verify`. If a check is wrong or slow, fix the check. `AGENT_MAIL_BYPASS=1` skips only the reservation guard, and only with the operator's OK.
 - **Read-only toward:** upstream ACFS on GitHub (fetched, never pushed to), and the third-party installers that `checksums.yaml` pins (fetched to verify, never written).
-- Host installs and unit changes happen only on the operator's word. Pushes happen under a standing authorization from the operator (2026-10-09): every agent pushes its own work, `main` and `master` together, once the full gate passes and the commits carry no private content (rule 1).
+- Host installs and unit changes happen only on the operator's word. Pushes happen under a standing authorization from the operator (2026-10-09). The designated pusher pushes `main` and `master` together, once the full gate passes and the commits carry no private content (rule 1).
 
 ---
 
@@ -495,8 +496,8 @@ br sync --flush-only  # Export to JSONL (NO git operations)
 git status                       # Check what changed
 br sync --flush-only             # Export beads to JSONL (stays local)
 git commit -m "..." -- <files>   # Commit your files only (shared index)
-git fetch origin                 # Merge origin/main into main if it moved, then gate
-git push origin main main:master # Push main and its master mirror (with AGENT_NAME)
+git fetch origin                 # Designated pusher only: merge origin/main if it moved, then gate
+git push origin main main:master # Designated pusher only: push main and its master mirror (with AGENT_NAME)
 ```
 
 ### Best Practices
