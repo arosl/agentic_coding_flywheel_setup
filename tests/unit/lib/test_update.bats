@@ -1552,6 +1552,68 @@ EOF
     [[ -f "$HOME/apr-ran" ]]
 }
 
+# acfs-zad: xf and rano are opt-in modules (enabled_by_default: false).
+# update_stack ran their installers on every host; xf v0.4.2 then failed on
+# Ubuntu 24.04 (glibc 2.39 < 2.43) and every update exited 2.
+_opt_in_stack_fixture() {
+    update_ensure_minisign() { return 0; }
+    QUIET=true
+    VERBOSE=false
+    DRY_RUN=false
+    UPDATE_STACK=true
+    ABORT_ON_FAILURE=false
+    FORCE_MODE=false
+    UPDATE_LOG_FILE="$HOME/update.log"
+    SUCCESS_COUNT=0
+    FAIL_COUNT=0
+    SKIP_COUNT=0
+    declare -gA KNOWN_INSTALLERS=([mcp_agent_mail]="https://example.test/install-am.sh")
+    update_require_security() { return 0; }
+    get_checksum() { printf '%s\n' "abc123"; }
+    verify_checksum() { printf '%s\n' '#!/usr/bin/env bash' 'exit 0'; }
+    update_target_user() { id -un; }
+    update_target_home() { printf '%s\n' "$HOME"; }
+    update_run_logged_passthrough() { return 0; }
+    update_source_stack_lib() { return 1; }
+    capture_version_before() { :; }
+    capture_version_after() { return 1; }
+    # INSTALLED lists the binaries the host already has.
+    update_binary_exists() { [[ " ${INSTALLED:-} " == *" $1 "* ]]; }
+    update_run_verified_installer() { printf '%s\n' "${1:-}" >> "$HOME/installers-run"; return 0; }
+    update_run_verified_installer_with_env() { return 0; }
+    update_run_slb_verified_install() { return 0; }
+    update_run_fsfs_installer() { return 0; }
+    : > "$HOME/installers-run"
+}
+
+@test "update_stack leaves opt-in xf and rano alone on a host without them" {
+    _opt_in_stack_fixture
+    INSTALLED=""
+    run update_stack
+    assert_success
+    run grep -cxE 'xf|rano' "$HOME/installers-run"
+    assert_output "0"
+    # Default tools still update.
+    grep -qx mdwb "$HOME/installers-run"
+}
+
+@test "update_stack updates xf and rano where they are installed, or with --force" {
+    _opt_in_stack_fixture
+    INSTALLED="xf rano"
+    run update_stack
+    assert_success
+    grep -qx xf "$HOME/installers-run"
+    grep -qx rano "$HOME/installers-run"
+
+    _opt_in_stack_fixture
+    INSTALLED=""
+    FORCE_MODE=true
+    run update_stack
+    assert_success
+    grep -qx xf "$HOME/installers-run"
+    grep -qx rano "$HOME/installers-run"
+}
+
 @test "update_stack records MCP Agent Mail target-home failure and continues" {
     update_ensure_minisign() { return 0; }  # the minisign gate (#375) has its own tests
     QUIET=true

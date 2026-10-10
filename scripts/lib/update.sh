@@ -7514,8 +7514,13 @@ update_stack() {
     # Process Triage (pt) - always install/update
     run_cmd "Process Triage" update_run_verified_installer pt
 
-    # xf (X Archive Search) - always install/update
-    run_cmd "xf" update_run_verified_installer xf --easy-mode
+    # xf (X Archive Search) - opt-in (utils.xf): update when installed, or
+    # install with --force. Run unconditionally, it installed xf on every host,
+    # and xf v0.4.2's binary needs glibc 2.43, so each update on Ubuntu 24.04
+    # failed (acfs-zad).
+    if update_binary_exists xf || [[ "$FORCE_MODE" == "true" ]]; then
+        run_cmd "xf" update_run_verified_installer xf --easy-mode
+    fi
 
     # JeffreysPrompts (jfp) - only update if already installed
     # Note: JFP requires a paid subscription to jeffreysprompts.com
@@ -7591,8 +7596,10 @@ update_stack() {
     # TRU (Toon Rust) - always install/update
     run_cmd "TRU" update_run_verified_installer tru
 
-    # RANO - always install/update
-    run_cmd "RANO" update_run_verified_installer rano
+    # RANO - opt-in (utils.rano): update when installed, or install with --force
+    if update_binary_exists rano || [[ "$FORCE_MODE" == "true" ]]; then
+        run_cmd "RANO" update_run_verified_installer rano
+    fi
 
     # MDWB (Markdown Web Browser) - always install/update
     run_cmd "MDWB" update_run_verified_installer mdwb --yes
