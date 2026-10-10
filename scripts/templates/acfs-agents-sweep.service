@@ -1,0 +1,13 @@
+[Unit]
+Description=ACFS: remove stale temp dirs that tests and browsers left behind
+
+# Nothing installs this unit: deleting temp dirs unattended is the operator's
+# call. Copy it and its timer to ~/.config/systemd/user/, then 'systemctl
+# --user enable --now acfs-agents-sweep.timer'. 'acfs agents sweep --help'
+# says what is removed; the installed acfs must be one that has sweep.
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.acfs/bin:%h/.local/bin:%h/.bun/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.acfs/bin/acfs agents sweep
+TimeoutStartSec=600
