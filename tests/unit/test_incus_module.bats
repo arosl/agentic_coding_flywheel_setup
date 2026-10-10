@@ -44,8 +44,8 @@ resolve_selection() {
 
 # Runs the Incus block from install.sh on the given distro family. With
 # "skip" as the second argument, tools.incus is skipped; otherwise the
-# selection is a default install. ROOT_SUBUID=yes makes root already own a
-# subordinate id range.
+# selection is a default install. ROOT_SUBUID=yes (ROOT_SUBGID=yes) makes
+# root already own a subordinate uid (gid) range.
 run_incus_block() {
     local family="$1" skip="${2:-}"
     run bash -c '
@@ -71,13 +71,13 @@ run_incus_block() {
         try_step() { shift; "$@"; }
         command_exists() { [[ "$1" == systemctl ]]; }
         getent() { [[ "$1 $2" == "group incus-admin" ]]; }
+        # Called with 2>/dev/null, which is not part of "$*".
         grep() {
-            if [[ "$*" == "-q ^root: /etc/subuid" || "$*" == "-q ^root: /etc/subgid" ]]; then
-                # Called with 2>/dev/null, which is not part of "$*".
-                [[ "${ROOT_SUBUID:-no}" == yes ]]
-                return
-            fi
-            command grep "$@"
+            case "$*" in
+                "-q ^root: /etc/subuid") [[ "${ROOT_SUBUID:-no}" == yes ]] ;;
+                "-q ^root: /etc/subgid") [[ "${ROOT_SUBGID:-no}" == yes ]] ;;
+                *) command grep "$@" ;;
+            esac
         }
         acfs_arch_pkg_install() { printf "pacman %s\n" "$*" >> "$calls"; }
         systemctl() { printf "systemctl %s\n" "$*" >> "$calls"; }
@@ -96,26 +96,43 @@ $(sed -n "/^    # Incus (tools.incus) is the default/,/^    fi$/p" "$root/instal
 }
 
 # Runs doctor.sh's check_incus with a fake incus (or none) and a fake KVM
-# device path, and prints each check() call.
+# device path, and prints each check() call. db_groups is the user's entry in
+# the group database (id -nG USER); proc_groups, this process's groups (id
+# -nG), defaults to the same. The fake daemon answers `incus info` with
+# FAKE_INFO_RC (default 0) and `incus storage list` with FAKE_STORAGE
+# (default one pool); FAKE_CONTAINER=yes makes systemd-detect-virt report a
+# container.
 run_check_incus() {
-    local have_incus="$1" kvm="$2" groups="$3"
+    local have_incus="$1" kvm="$2" db_groups="$3" proc_groups="${4:-$3}"
     local bin="$BATS_TEST_TMPDIR/bin"
     mkdir -p "$bin"
     if [[ "$have_incus" == yes ]]; then
-        printf '#!/bin/sh\necho 6.0.5\n' > "$bin/incus"
+        cat > "$bin/incus" <<'FAKE'
+#!/bin/sh
+case "$1" in
+    --version) echo 6.0.5 ;;
+    info) exit "${FAKE_INFO_RC:-0}" ;;
+    storage) printf '%s' "${FAKE_STORAGE-default,dir,,,CREATED}" ;;
+esac
+FAKE
         chmod 0755 "$bin/incus"
     fi
     run bash -c '
         set -uo pipefail
-        root="$1"; bin="$2"; kvm="$3"; groups="$4"
+        # Named apart from check_incus locals, which would shadow them.
+        root="$1"; bin="$2"; kvm="$3"; stub_db_groups="$4"; stub_proc_groups="$5"
         eval "$(sed -n "/^check_incus() {/,/^}/p" "$root/scripts/lib/doctor.sh")"
         check() { printf "check %s|%s|%s|%s|%s\n" "$1" "$2" "$3" "${4:-}" "${5:-}"; }
         doctor_binary_path() { [[ -x "$bin/$1" ]] && printf "%s\n" "$bin/$1"; }
         get_version_line() { "$1" --version; }
-        id() { printf "%s\n" "$groups"; }
+        id() {
+            if [[ "$*" == "-nG" ]]; then printf "%s\n" "$stub_proc_groups"; else printf "%s\n" "$stub_db_groups"; fi
+        }
+        systemd-detect-virt() { [[ "${FAKE_CONTAINER:-no}" == yes ]]; }
+        export FAKE_INFO_RC FAKE_STORAGE
         ACFS_DOCTOR_KVM_DEVICE="$kvm"
         check_incus
-    ' _ "$PROJECT_ROOT" "$bin" "$kvm" "$groups"
+    ' _ "$PROJECT_ROOT" "$bin" "$kvm" "$db_groups" "$proc_groups"
 }
 
 @test "a default install selects tools.incus" {
@@ -144,12 +161,20 @@ run_check_incus() {
     [[ "$output" == *"usermod -aG incus-admin alice"* ]]
 }
 
-@test "Arch leaves an existing root subordinate id range alone" {
+@test "Arch leaves existing root subordinate id ranges alone" {
+    ROOT_SUBUID=yes ROOT_SUBGID=yes run_incus_block arch
+    [[ "$status" -eq 0 ]]
+    run cat "$CALLS"
+    [[ "$output" != *"--add-sub"* ]]
+    [[ "$output" == *"usermod -aG incus-admin alice"* ]]
+}
+
+@test "Arch adds only the subordinate range root lacks" {
     ROOT_SUBUID=yes run_incus_block arch
     [[ "$status" -eq 0 ]]
     run cat "$CALLS"
+    [[ "$output" == *"usermod --add-subgids 1000000-1000999999 root"* ]]
     [[ "$output" != *"--add-subuids"* ]]
-    [[ "$output" == *"usermod -aG incus-admin alice"* ]]
 }
 
 @test "a default Ubuntu legacy install runs the manifest module" {
@@ -175,11 +200,12 @@ run_check_incus() {
     [[ "$output" -ge 1 ]]
 }
 
-@test "doctor: Incus with /dev/kvm passes for containers and VMs" {
+@test "doctor: an initialised Incus with /dev/kvm passes for containers and VMs" {
     touch "$BATS_TEST_TMPDIR/kvm"
     run_check_incus yes "$BATS_TEST_TMPDIR/kvm" "alice incus-admin"
     [[ "$status" -eq 0 ]]
     [[ "$output" == *"check tools.incus|Incus (6.0.5)|pass|containers and VMs|"* ]]
+    [[ "$output" == *"check tools.incus.daemon|Incus daemon|pass|reachable and initialised|"* ]]
 }
 
 @test "doctor: Incus without /dev/kvm passes as containers only" {
@@ -188,16 +214,43 @@ run_check_incus() {
     [[ "$output" == *"check tools.incus|Incus (6.0.5)|pass|containers only (no /dev/kvm, so no VMs)|"* ]]
 }
 
-@test "doctor: a user outside incus-admin gets a warning with the fix" {
+@test "doctor: an installed but uninitialised Incus warns with incus admin init" {
+    FAKE_STORAGE="" run_check_incus yes "$BATS_TEST_TMPDIR/no-kvm" "alice incus-admin"
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"check tools.incus.daemon|Incus daemon|warn|reachable, but not initialised (no storage pool)|incus admin init --minimal"* ]]
+}
+
+@test "doctor: an unreachable daemon warns" {
+    FAKE_INFO_RC=1 run_check_incus yes "$BATS_TEST_TMPDIR/no-kvm" "alice incus-admin"
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"check tools.incus.daemon|Incus daemon|warn|daemon not reachable|"*"incus.socket"* ]]
+}
+
+@test "doctor: an unreachable daemon inside a container names security.nesting" {
+    FAKE_INFO_RC=1 FAKE_CONTAINER=yes run_check_incus yes "$BATS_TEST_TMPDIR/no-kvm" "alice incus-admin"
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"daemon not reachable (inside a container, Incus needs security.nesting=true)"* ]]
+}
+
+@test "doctor: a user outside incus-admin gets a warning with the fix, and no daemon check" {
     run_check_incus yes "$BATS_TEST_TMPDIR/no-kvm" "alice sudo"
     [[ "$status" -eq 0 ]]
     [[ "$output" == *"check tools.incus.group|Incus access|warn|"*"not in incus-admin"*"usermod -aG incus-admin"* ]]
+    [[ "$output" != *"tools.incus.daemon"* ]]
 }
 
-@test "doctor: root is never warned about incus-admin" {
+@test "doctor: a membership that needs a new login says so" {
+    run_check_incus yes "$BATS_TEST_TMPDIR/no-kvm" "alice incus-admin" "alice sudo"
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"check tools.incus.group|Incus access|warn|"*"predates it|Log out and in again"* ]]
+    [[ "$output" != *"tools.incus.daemon"* ]]
+}
+
+@test "doctor: root is never warned about incus-admin and gets the daemon check" {
     USER=root run_check_incus yes "$BATS_TEST_TMPDIR/no-kvm" "root"
     [[ "$status" -eq 0 ]]
     [[ "$output" != *"tools.incus.group"* ]]
+    [[ "$output" == *"check tools.incus.daemon|Incus daemon|pass|"* ]]
 }
 
 @test "doctor: no incus is a skip, not a failure" {

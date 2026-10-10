@@ -8349,9 +8349,13 @@ install_cli_tools() {
         acfs_legacy_run_manifest_module "tools.incus" || log_warn "Incus installation failed (see summary)"
     elif acfs_arch_pkg_install incus; then
         # Unprivileged containers map root's subordinate ids; Debian's postinst
-        # adds this range, pacman doesn't.
-        if ! grep -q '^root:' /etc/subuid 2>/dev/null || ! grep -q '^root:' /etc/subgid 2>/dev/null; then
-            try_step "Adding subordinate ids for root (Incus)" $SUDO usermod --add-subuids 1000000-1000999999 --add-subgids 1000000-1000999999 root || log_warn "Could not add root's subordinate ids; unprivileged Incus containers won't start"
+        # adds this range, pacman doesn't. Each file gets it only where root
+        # has none, so an existing range is never duplicated.
+        local -a incus_subid_args=()
+        grep -q '^root:' /etc/subuid 2>/dev/null || incus_subid_args+=(--add-subuids 1000000-1000999999)
+        grep -q '^root:' /etc/subgid 2>/dev/null || incus_subid_args+=(--add-subgids 1000000-1000999999)
+        if (( ${#incus_subid_args[@]} > 0 )); then
+            try_step "Adding subordinate ids for root (Incus)" $SUDO usermod "${incus_subid_args[@]}" root || log_warn "Could not add root's subordinate ids; unprivileged Incus containers won't start"
         fi
         if command_exists systemctl && [[ -d /run/systemd/system ]]; then
             try_step "Enabling Incus socket" $SUDO systemctl enable --now incus.socket || log_warn "Incus installed but its socket could not be started (optional)"

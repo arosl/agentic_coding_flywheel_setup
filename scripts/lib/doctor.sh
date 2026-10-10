@@ -3353,9 +3353,13 @@ check_service_binary_drift() {
 }
 
 # Incus (tools.incus, on by default). Without /dev/kvm Incus still runs
-# containers, so a host without KVM passes as "containers only".
+# containers, so a host without KVM passes as "containers only". The package
+# check only runs the client; tools.incus.daemon asks the daemon itself,
+# because ACFS installs Incus but never initialises it.
 check_incus() {
-    local incus_bin="" version="" kvm="${ACFS_DOCTOR_KVM_DEVICE:-/dev/kvm}" user="" user_groups=""
+    local incus_bin="" version="" kvm="${ACFS_DOCTOR_KVM_DEVICE:-/dev/kvm}"
+    local user="" db_groups="" proc_groups="" storage="" hint=""
+    local -a limit=()
 
     incus_bin="$(doctor_binary_path incus 2>/dev/null || true)"
     if [[ -z "$incus_bin" ]]; then
@@ -3370,16 +3374,45 @@ check_incus() {
         check "tools.incus" "Incus ($version)" "pass" "containers only (no /dev/kvm, so no VMs)"
     fi
 
-    # The group database, not this process's groups: a login that predates
-    # the install still counts as a member. Root needs no group.
+    # Only root and incus-admin reach the daemon's socket. The group database
+    # says whether the user is a member; this process's groups say whether
+    # the membership is live yet (it needs a new login).
     user="${USER:-$(id -un 2>/dev/null || true)}"
-    [[ "$user" == root ]] && return 0
-    user_groups=" $(id -nG "$user" 2>/dev/null || true) "
-    if [[ "$user_groups" != *" incus-admin "* ]]; then
-        check "tools.incus.group" "Incus access" "warn" \
-            "$user is not in incus-admin, so incus needs sudo" \
-            "sudo usermod -aG incus-admin $user, then log in again"
+    if [[ "$user" != root ]]; then
+        db_groups=" $(id -nG "$user" 2>/dev/null || true) "
+        proc_groups=" $(id -nG 2>/dev/null || true) "
+        if [[ "$db_groups" != *" incus-admin "* ]]; then
+            check "tools.incus.group" "Incus access" "warn" \
+                "$user is not in incus-admin, so incus needs sudo" \
+                "sudo usermod -aG incus-admin $user, then log in again"
+            return 0
+        fi
+        if [[ "$proc_groups" != *" incus-admin "* ]]; then
+            check "tools.incus.group" "Incus access" "warn" \
+                "$user is in incus-admin, but this login predates it" \
+                "Log out and in again"
+            return 0
+        fi
     fi
+
+    command -v timeout >/dev/null 2>&1 && limit=(timeout 10)
+    if ! "${limit[@]}" "$incus_bin" info >/dev/null 2>&1; then
+        if systemd-detect-virt --container --quiet 2>/dev/null; then
+            hint=" (inside a container, Incus needs security.nesting=true)"
+        fi
+        check "tools.incus.daemon" "Incus daemon" "warn" \
+            "daemon not reachable$hint" \
+            "sudo systemctl enable --now incus.socket"
+        return 0
+    fi
+    storage="$("${limit[@]}" "$incus_bin" storage list --format csv 2>/dev/null || true)"
+    if [[ -z "$storage" ]]; then
+        check "tools.incus.daemon" "Incus daemon" "warn" \
+            "reachable, but not initialised (no storage pool)" \
+            "incus admin init --minimal"
+        return 0
+    fi
+    check "tools.incus.daemon" "Incus daemon" "pass" "reachable and initialised"
 }
 
 # ============================================================
