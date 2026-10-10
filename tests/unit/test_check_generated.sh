@@ -131,6 +131,10 @@ check "--regenerate prints the commit command" \
     out_has "git commit -- scripts/lib/a.sh scripts/generated/internal_checksums.sh"
 check "--regenerate leaves the index alone with paths" \
     [ -z "$(git_fixture diff --cached --name-only)" ]
+check "a second --regenerate run accepts its own earlier output" \
+    bash -c "cd '$REPO' && bash scripts/hooks/check_generated.sh --regenerate -- scripts/lib/a.sh > '$OUT' 2> '$ERR'"
+check "and still prints the commit command" \
+    out_has "git commit -- scripts/lib/a.sh scripts/generated/internal_checksums.sh"
 check "the commit with the regenerated ledger passes" \
     commit_paths scripts/lib/a.sh scripts/generated/internal_checksums.sh
 check "the committed ledger hashes the committed file" ledger_matches_commit

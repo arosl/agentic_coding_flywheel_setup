@@ -134,10 +134,11 @@ generate_in_snapshot() {
     sed -n 's/^[<>] [0-9a-fx]\{1,64\}  \.\///p' "$WORK/diff" | LC_ALL=C sort -u > "$WORK/changed"
 }
 
-# The hash of the snapshot's own copy of a path, before generating.
-before_hash() {
-    awk -v path="$1" 'substr($0, 65, 4) == "  ./" && substr($0, 69) == path { print substr($0, 1, 64) }' \
-        "$WORK/before"
+# The hash of a path in the snapshot listing "before" or "after"
+# generating.
+listed_hash() {
+    awk -v path="$2" 'substr($0, 65, 4) == "  ./" && substr($0, 69) == path { print substr($0, 1, 64) }' \
+        "$WORK/$1"
 }
 
 run_hook() {
@@ -173,14 +174,15 @@ run_hook() {
             printf '\n'
         else
             echo "  bash scripts/hooks/check_generated.sh --regenerate"
-            echo "  (it regenerates from the index and stages what it writes)"
+            echo "  (it regenerates from the index and stages what it writes; for git commit -a,"
+            echo "  stage your changes first, since -a adds them only at commit time)"
         fi
     } >&2
     exit 1
 }
 
 run_regenerate() {
-    local top="$1" path="" want="" have=""
+    local top="$1" path="" have=""
     shift
     local -a paths=("$@") written=() blocked=()
 
@@ -202,24 +204,25 @@ run_regenerate() {
         return 0
     fi
 
-    # Write back only over a working-tree copy that is the snapshot's own
-    # (or absent): anything else holds work that isn't in this commit.
+    # Write back only over a working-tree copy that is the snapshot's own,
+    # already the regenerated one (a re-run), or absent: anything else
+    # holds work that isn't in this commit.
     while IFS= read -r path; do
         [[ -f "$WORK/tree/$path" ]] || {
             printf 'check_generated: the generator removed %s; git rm it if that is intended.\n' "$path" >&2
             continue
         }
-        want="$(before_hash "$path")"
-        have=""
-        [[ -f "$top/$path" ]] && have="$(sha256_stdin < "$top/$path")"
-        if [[ -n "$have" && "$have" != "$want" ]]; then
+        [[ -f "$top/$path" ]] || continue
+        have="$(sha256_stdin < "$top/$path")"
+        if [[ "$have" != "$(listed_hash before "$path")" && "$have" != "$(listed_hash after "$path")" ]]; then
             blocked+=("$path")
         fi
     done < "$WORK/changed"
     if [[ ${#blocked[@]} -gt 0 ]]; then
         echo "check_generated: these working-tree files hold changes that aren't in this commit, so nothing was written:" >&2
         printf '  %s\n' "${blocked[@]}" >&2
-        die "commit or settle those changes with whoever made them, then run this again."
+        echo "If those changes are yours (an earlier run, or your own edit), add the files to the paths you pass." >&2
+        die "Otherwise commit or settle them with whoever made them, then run this again."
     fi
 
     while IFS= read -r path; do
