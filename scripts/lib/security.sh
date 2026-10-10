@@ -1699,7 +1699,7 @@ verify_checksum() {
             printf "      current ACFS means the PUBLISHED pin is stale (upstream changed its installer); there is\n" >&2
             printf "      nothing to repair locally. Hold the tool until the pin is refreshed upstream:\n" >&2
             printf "        acfs hold %s --reason \"stale installer pin\" --expiry YYYY-MM-DD\n" "$name" >&2
-            printf "      and report it at https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues\n" >&2
+            printf "      and report it at https://github.com/arosl/agentic_coding_flywheel_setup/issues\n" >&2
             printf "    - Maintainers: regenerate checksums.yaml with:\n" >&2
             printf "        ./scripts/lib/security.sh --update-checksums > /tmp/acfs-checksums.candidate.yaml\n" >&2
             printf "        diff -u checksums.yaml /tmp/acfs-checksums.candidate.yaml   # review, then copy over\n" >&2

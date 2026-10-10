@@ -11,8 +11,9 @@
 # textual conflict, so this test checks files, not a diff: the
 # installer and the scripts it runs, every file the installer
 # fetches through $ACFS_RAW (found by reading the installer, so a
-# newly fetched file is checked too), and the install instructions.
-# A listed path that no longer exists fails the test.
+# newly fetched file is checked too), the install instructions, and
+# the website's issue-tracker links. A listed path that no longer
+# exists fails the test.
 #
 # Each allowed line is listed below by file and a fixed string,
 # never by line number, with the reason it may stay. An entry that
@@ -48,6 +49,7 @@ RUNTIME_FILES=(
     scripts/completions/*
     acfs/zsh/*
     packages/onboard/onboard.sh
+    scripts/providers/hetzner-cloud-init.yml
 )
 
 # Every file the installer and the scripts it runs fetch through
@@ -65,6 +67,7 @@ DOCS_PATTERN="(raw\\.githubusercontent\\.com|cdn\\.jsdelivr\\.net/gh|api\\.githu
 DOCS_FILES=(
     README.md
     docs/operations/*.md
+    scripts/providers/*.md
 )
 
 # file|fixed string|reason
@@ -73,8 +76,6 @@ ALLOWED=(
     'install.sh|install_url="https://acfs.sh"|the resume hint'"'"'s branch for the upstream owner and name only; every other owner gets the raw URL'
     'install.sh|local fallback_url="https://acfs.sh"|print_resume_hint'"'"'s fallback; the lines after it replace it with the raw URL for any owner or name other than upstream'"'"'s'
     'scripts/lib/report.sh|install_url="https://acfs.sh"|unreachable: only install.sh sources report.sh, and it always sets ACFS_RAW, whose branch comes first'
-    'scripts/lib/errors.sh|https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues|an issue link; it fetches nothing'
-    'scripts/lib/security.sh|https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues|an issue link; it fetches nothing'
     'scripts/lib/update.sh|# See: https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues/125|a comment citing the upstream issue behind the code'
     'scripts/lib/gum_ui.sh|github.com/Dicklesworthstone/agentic_coding_flywheel_setup║|attribution in the banner'
     'acfs/AGENTS.md|[Agentic Coding Flywheel Setup (ACFS)](https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)|attribution in the workspace AGENTS.md template; it fetches nothing'
@@ -83,6 +84,7 @@ ALLOWED=(
     'scripts/templates/acfs-upgrade-resume.service|Documentation=https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup|attribution in a unit file; systemd fetches nothing from it'
     'scripts/templates/acfs-checksum-monitor.service|Dicklesworthstone/agentic_coding_flywheel_setup|upstream'"'"'s maintainer checksum monitor; nothing in install.sh, scripts/lib or the manifest installs it'
     'scripts/templates/acfs-checksum-monitor.timer|Dicklesworthstone/agentic_coding_flywheel_setup|upstream'"'"'s maintainer checksum monitor; nothing in install.sh, scripts/lib or the manifest installs it'
+    'apps/web/app/complete-guide/page.tsx|href="https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues"|upstream'"'"'s author offers there, by name, to answer questions in person'
     'docs/operations/provider-provisioning-packet.md|raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh|an example of the packet apps/web builds, whose commandBuilder still names upstream'
 )
 
@@ -139,6 +141,16 @@ done
 
 check_matches "$RUNTIME_PATTERN" "${runtime_present[@]}"
 check_matches "$DOCS_PATTERN" "${docs_present[@]}"
+
+# Bug reports go to the fork: the website's links to upstream's repo
+# are attribution, but a link to its issue tracker sends the fork's
+# users to the wrong project.
+WEB_ISSUES_PATTERN='github\.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues'
+mapfile -t web_issue_files < <(grep -rlE --include='*.ts' --include='*.tsx' \
+    "$WEB_ISSUES_PATTERN" apps/web/app apps/web/components apps/web/lib)
+if [[ "${#web_issue_files[@]}" -gt 0 ]]; then
+    check_matches "$WEB_ISSUES_PATTERN" "${web_issue_files[@]}"
+fi
 
 for i in "${!ALLOWED[@]}"; do
     if [[ -z "${entry_used[$i]:-}" ]]; then

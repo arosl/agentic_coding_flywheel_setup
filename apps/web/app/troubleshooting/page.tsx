@@ -923,7 +923,7 @@ export default function TroubleshootingPage() {
                 <span>
                   Visit the{" "}
                   <a
-                    href="https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues"
+                    href="https://github.com/arosl/agentic_coding_flywheel_setup/issues"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex min-h-6 items-center text-primary underline decoration-primary/40 underline-offset-4 hover:decoration-primary"
