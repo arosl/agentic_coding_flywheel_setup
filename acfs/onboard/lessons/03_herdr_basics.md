@@ -132,6 +132,20 @@ In an idle Claude Code pane you may see a dim line such as
 suggestion, made from your recent prompts, not a prompt waiting to be sent.
 Pressing Enter on it does nothing. Only text in normal brightness was typed.
 
+### From Outside herdr (cron, systemd units)
+
+herdr's commands also work from a script that runs outside any pane:
+
+- Plain `herdr agent list` reaches the default session, the one `herdr`
+  opens.
+- `herdr --session <name> agent list` reaches a named session. `--session`
+  wins over a `HERDR_SOCKET_PATH` the script inherited.
+- `herdr agent prompt` refuses an agent that is waiting at a question.
+  Read its screen first (`herdr agent read <agent> --lines 60`), then answer
+  with `herdr agent send-keys <agent> <keys>`.
+- A finished turn is `done`, not `idle`. To wait for one, use
+  `herdr agent prompt <agent> "<prompt>" --wait`.
+
 ---
 
 ## Next
