@@ -204,6 +204,7 @@ fi
 command -v btop &>/dev/null && alias top='btop'
 command -v nvim &>/dev/null && alias vim='nvim'
 command -v lazygit &>/dev/null && alias lg='lazygit'
+command -v lazydocker &>/dev/null && alias lzd='lazydocker'
 
 # --- Git aliases ---
 alias gs='git status'

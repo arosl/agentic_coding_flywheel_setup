@@ -378,6 +378,7 @@ declare -a MANIFEST_CHECKS=(
     "tools.lazygit	Lazygit (apt or binary fallback)	lazygit --version	required	root"
     "tools.docker.1	Docker Engine and the Compose plugin, opt-in (Incus is the default)	docker --version	optional	root"
     "tools.docker.2	Docker Engine and the Compose plugin, opt-in (Incus is the default)	docker compose version	optional	root"
+    "tools.lazydocker	Lazydocker (binary install), opt-in with Docker	lazydocker --version	optional	root"
     "tools.incus	Incus containers and VMs, the default container runtime	incus --version	optional	root"
     "network.tailscale.1	Zero-config mesh VPN for secure remote VPS access	tailscale version	required	root"
     "network.tailscale.2	Zero-config mesh VPN for secure remote VPS access	systemctl is-enabled tailscaled	required	root"

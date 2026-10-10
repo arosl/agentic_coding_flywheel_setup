@@ -41,7 +41,7 @@ export interface ManifestProvenanceMetadata {
 
 export const manifestProvenance = {
   acfsVersion: "0.10.0",
-  manifestSha256: "b2b5c6d1d3ca783fcac214fb238419f5af927b1fe5a214470d5db48f627e8499",
+  manifestSha256: "43a42b1b48f74ca9eac3232c152604147f0d1adfb389da4af79919248cd4d545",
   checksumsYamlSha256: "7251cabced052791d6638d0b3e7662f7998ba28be9d7f45d6ddacbb2630cd73f",
 } as const satisfies ManifestProvenanceMetadata;
 
@@ -158,6 +158,22 @@ export const manifestModules: ManifestModuleMetadata[] = [
     tags: [
       "optional",
       "containers",
+    ],
+    enabledByDefault: false,
+    optional: true,
+  },
+  {
+    id: "tools.lazydocker",
+    description: "Lazydocker (binary install), opt-in with Docker",
+    category: "tools",
+    phase: 5,
+    dependencies: [
+      "tools.docker",
+    ],
+    tags: [
+      "optional",
+      "containers",
+      "cli-modern",
     ],
     enabledByDefault: false,
     optional: true,

@@ -148,3 +148,65 @@ $(sed -n "/^    # Docker (tools.docker) is opt-in/,/^    fi$/p" "$root/install.s
     run grep -c 'usermod -aG docker' "$PROJECT_ROOT/scripts/generated/install_tools.sh"
     [[ "$output" -ge 1 ]]
 }
+
+# tools.lazydocker (acfs-fgd): upstream's module, opt-in here because it
+# needs tools.docker.
+
+# Runs the generated tools.lazydocker install script on a fake <arch> host,
+# where curl records its URL and downloads junk.
+run_generated_lazydocker() {
+    local arch="$1" bin="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$bin"
+    printf '#!/bin/bash\necho %s\n' "$arch" > "$bin/uname"
+    cat > "$bin/curl" <<'EOF'
+#!/bin/bash
+out=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in -o) out="$2"; shift 2 ;; http*) printf '%s\n' "$1" >> "$CALLS"; shift ;; *) shift ;; esac
+done
+printf 'not the release tarball\n' > "$out"
+EOF
+    printf '#!/bin/bash\nprintf "tar %%s\\n" "$*" >> "$CALLS"\n' > "$bin/tar"
+    chmod +x "$bin/uname" "$bin/curl" "$bin/tar"
+    local script
+    script="$(awk "/<<'INSTALL_TOOLS_LAZYDOCKER'\$/ { on = 1; next } on && /^INSTALL_TOOLS_LAZYDOCKER\$/ { exit } on" \
+        "$PROJECT_ROOT/scripts/generated/install_tools.sh")"
+    [[ -n "$script" ]]
+    run env PATH="$bin:$PATH" CALLS="$CALLS" TMPDIR="$BATS_TEST_TMPDIR" bash -c "$script"
+}
+
+@test "a default install does not select tools.lazydocker" {
+    resolve_selection
+    [[ "$status" -eq 0 ]]
+    [[ "$output" != *"run tools.lazydocker"* ]]
+}
+
+@test "selecting tools.lazydocker brings tools.docker along" {
+    resolve_selection tools.lazydocker
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"run tools.docker"* ]]
+    [[ "$output" == *"run tools.lazydocker"* ]]
+}
+
+@test "selecting tools.lazydocker while skipping tools.docker is an explicit error" {
+    resolve_selection tools.lazydocker --skip tools.docker
+    [[ "$status" -eq 3 ]]
+    [[ "$output" == *"depends on skipped tools.docker"* ]]
+}
+
+@test "the generated lazydocker installer refuses a download whose hash doesn't match" {
+    run_generated_lazydocker x86_64
+    [[ "$status" -ne 0 ]]
+    [[ "$output" == *"Checksum failed"* ]]
+    run cat "$CALLS"
+    [[ "$output" == *"/v0.23.3/lazydocker_0.23.3_Linux_x86_64.tar.gz"* ]]
+    [[ "$output" != *"tar "* ]]
+}
+
+@test "the generated lazydocker installer fetches the arm64 asset on an aarch64 host" {
+    run_generated_lazydocker aarch64
+    [[ "$status" -ne 0 ]]
+    run cat "$CALLS"
+    [[ "$output" == *"/lazydocker_0.23.3_Linux_arm64.tar.gz"* ]]
+    [[ "$output" != *"aarch64"* ]]
+}

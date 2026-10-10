@@ -383,6 +383,7 @@ acfs_generated_install_all() {
     log_section "Category: tools"
     acfs_generated_install_tools_lazygit
     acfs_generated_install_tools_docker
+    acfs_generated_install_tools_lazydocker
     acfs_generated_install_tools_incus
     log_section "Category: network"
     acfs_generated_install_network_tailscale

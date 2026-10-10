@@ -545,6 +545,48 @@ modules:
     notes:
       - "The docker group grants root-equivalent access; the target user joins it so `docker` works without sudo after a new login"
 
+  # Upstream's module, on by default there. Here it needs tools.docker, so it
+  # is opt-in like Docker itself.
+  - id: tools.lazydocker
+    description: Lazydocker (binary install), opt-in with Docker
+    category: tools
+    phase: 5
+    run_as: root
+    optional: true
+    enabled_by_default: false
+    tags: [optional, containers, cli-modern]
+    dependencies:
+      - tools.docker
+    installed_check:
+      run_as: current
+      command: "command -v lazydocker"
+    install:
+      - |
+        LD_VER="0.23.3"
+        ARCH=$(uname -m)
+        case "$ARCH" in
+          x86_64) LD_SHA="1f3c7037326973b85cb85447b2574595103185f8ed067b605dd43cc201bc8786" ;;
+          aarch64|arm64)
+            # The release names this asset arm64, not uname's aarch64.
+            ARCH="arm64"
+            LD_SHA="ae7bed0309289396d396b8502b2d78d153a4f8ce8add042f655332241e7eac31"
+            ;;
+          *) echo "Unsupported arch for lazydocker binary: $ARCH"; exit 0 ;;
+        esac
+
+        LD_URL="https://github.com/jesseduffield/lazydocker/releases/download/v${LD_VER}/lazydocker_${LD_VER}_Linux_${ARCH}.tar.gz"
+        TMP_FILE="$(mktemp "${TMPDIR:-/tmp}/acfs_install.XXXXXX")"
+        trap 'rm -f "$TMP_FILE"' EXIT
+
+        curl -q -fsSL "$LD_URL" -o "$TMP_FILE"
+        echo "$LD_SHA $TMP_FILE" | sha256sum -c - || { echo "Checksum failed"; rm "$TMP_FILE"; exit 1; }
+
+        tar -xzf "$TMP_FILE" -C /usr/local/bin lazydocker
+        chmod +x /usr/local/bin/lazydocker
+        rm "$TMP_FILE"
+    verify:
+      - lazydocker --version
+
   - id: tools.incus
     description: Incus containers and VMs, the default container runtime
     category: tools

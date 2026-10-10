@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="b2b5c6d1d3ca783fcac214fb238419f5af927b1fe5a214470d5db48f627e8499"
+ACFS_MANIFEST_SHA256="43a42b1b48f74ca9eac3232c152604147f0d1adfb389da4af79919248cd4d545"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -17,6 +17,7 @@ ACFS_MODULES_IN_ORDER=(
   "cli.modern"
   "tools.lazygit"
   "tools.docker"
+  "tools.lazydocker"
   "tools.incus"
   "network.tailscale"
   "network.ssh_keepalive"
@@ -110,6 +111,7 @@ declare -gA ACFS_MODULE_PHASE=(
   ['cli.modern']="5"
   ['tools.lazygit']="5"
   ['tools.docker']="5"
+  ['tools.lazydocker']="5"
   ['tools.incus']="5"
   ['network.tailscale']="5"
   ['network.ssh_keepalive']="5"
@@ -187,6 +189,7 @@ declare -gA ACFS_MODULE_DEPS=(
   ['cli.modern']="base.system"
   ['tools.lazygit']="base.system"
   ['tools.docker']="base.system"
+  ['tools.lazydocker']="tools.docker"
   ['tools.incus']="base.system"
   ['network.tailscale']="base.system"
   ['network.ssh_keepalive']="base.system"
@@ -263,6 +266,7 @@ declare -gA ACFS_MODULE_FUNC=(
   ['cli.modern']="acfs_generated_install_cli_modern"
   ['tools.lazygit']="acfs_generated_install_tools_lazygit"
   ['tools.docker']="acfs_generated_install_tools_docker"
+  ['tools.lazydocker']="acfs_generated_install_tools_lazydocker"
   ['tools.incus']="acfs_generated_install_tools_incus"
   ['network.tailscale']="acfs_generated_install_network_tailscale"
   ['network.ssh_keepalive']="acfs_generated_install_network_ssh_keepalive"
@@ -340,6 +344,7 @@ declare -gA ACFS_MODULE_GENERATED=(
   ['cli.modern']="1"
   ['tools.lazygit']="1"
   ['tools.docker']="1"
+  ['tools.lazydocker']="1"
   ['tools.incus']="1"
   ['network.tailscale']="1"
   ['network.ssh_keepalive']="1"
@@ -417,6 +422,7 @@ declare -gA ACFS_MODULE_CATEGORY=(
   ['cli.modern']="cli"
   ['tools.lazygit']="tools"
   ['tools.docker']="tools"
+  ['tools.lazydocker']="tools"
   ['tools.incus']="tools"
   ['network.tailscale']="network"
   ['network.ssh_keepalive']="network"
@@ -494,6 +500,7 @@ declare -gA ACFS_MODULE_TAGS=(
   ['cli.modern']="recommended,cli-modern"
   ['tools.lazygit']="recommended,cli-modern"
   ['tools.docker']="optional,containers"
+  ['tools.lazydocker']="optional,containers,cli-modern"
   ['tools.incus']="containers,vms"
   ['network.tailscale']="networking,vpn,security,google-sso"
   ['network.ssh_keepalive']="networking,remote-dev,ssh"
@@ -571,6 +578,7 @@ declare -gA ACFS_MODULE_DEFAULT=(
   ['cli.modern']="1"
   ['tools.lazygit']="1"
   ['tools.docker']="0"
+  ['tools.lazydocker']="0"
   ['tools.incus']="1"
   ['network.tailscale']="1"
   ['network.ssh_keepalive']="1"
@@ -648,6 +656,7 @@ declare -gA ACFS_MODULE_DESC=(
   ['cli.modern']="Modern CLI tools referenced by the zshrc intent"
   ['tools.lazygit']="Lazygit (apt or binary fallback)"
   ['tools.docker']="Docker Engine and the Compose plugin, opt-in (Incus is the default)"
+  ['tools.lazydocker']="Lazydocker (binary install), opt-in with Docker"
   ['tools.incus']="Incus containers and VMs, the default container runtime"
   ['network.tailscale']="Zero-config mesh VPN for secure remote VPS access"
   ['network.ssh_keepalive']="Configure SSH server keepalive to prevent VPN/NAT disconnects"
@@ -724,6 +733,7 @@ declare -gA ACFS_MODULE_INSTALLED_CHECK=(
   ['cli.modern']='command -v rg && command -v fzf'
   ['tools.lazygit']='command -v lazygit'
   ['tools.docker']='command -v docker && docker compose version'
+  ['tools.lazydocker']='command -v lazydocker'
   ['tools.incus']='command -v incus'
   ['network.tailscale']='command -v tailscale'
   ['network.ssh_keepalive']='# Check if ClientAliveInterval is configured (non-zero)
@@ -850,6 +860,7 @@ declare -gA ACFS_MODULE_INSTALLED_CHECK_RUN_AS=(
   ['cli.modern']="current"
   ['tools.lazygit']="current"
   ['tools.docker']="current"
+  ['tools.lazydocker']="current"
   ['tools.incus']="current"
   ['network.tailscale']="current"
   ['network.ssh_keepalive']="current"
@@ -933,6 +944,7 @@ declare -gA ACFS_MODULE_OPTIONAL=(
   ['cli.modern']="0"
   ['tools.lazygit']="0"
   ['tools.docker']="1"
+  ['tools.lazydocker']="1"
   ['tools.incus']="1"
   ['network.tailscale']="0"
   ['network.ssh_keepalive']="1"

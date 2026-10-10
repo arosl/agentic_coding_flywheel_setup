@@ -350,7 +350,7 @@ acfs_security_init() {
 }
 
 # Category: tools
-# Generated modules: 18
+# Generated modules: 19
 
 # Lazygit (apt or binary fallback)
 acfs_generated_install_tools_lazygit() {
@@ -540,6 +540,92 @@ INSTALL_TOOLS_DOCKER
     fi
 
     log_success "tools.docker installed"
+}
+
+# Lazydocker (binary install), opt-in with Docker
+acfs_generated_install_tools_lazydocker() {
+    local module_id="tools.lazydocker"
+    acfs_require_contract "module:${module_id}" || return 1
+    acfs_generated_ensure_selection || return 1
+    if ! should_run_module "${module_id}"; then
+        log_info "Skipping tools.lazydocker (not selected)"
+        return 0
+    fi
+    log_step "Installing tools.lazydocker"
+
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: install: case \"\$ARCH\" in (root)"
+    else
+        if ! run_as_root_shell <<'INSTALL_TOOLS_LAZYDOCKER'
+LD_VER="0.23.3"
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64) LD_SHA="1f3c7037326973b85cb85447b2574595103185f8ed067b605dd43cc201bc8786" ;;
+  aarch64|arm64)
+    # The release names this asset arm64, not uname's aarch64.
+    ARCH="arm64"
+    LD_SHA="ae7bed0309289396d396b8502b2d78d153a4f8ce8add042f655332241e7eac31"
+    ;;
+  *) echo "Unsupported arch for lazydocker binary: $ARCH"; exit 0 ;;
+esac
+
+LD_URL="https://github.com/jesseduffield/lazydocker/releases/download/v${LD_VER}/lazydocker_${LD_VER}_Linux_${ARCH}.tar.gz"
+TMP_FILE="$(mktemp "${TMPDIR:-/tmp}/acfs_install.XXXXXX")"
+trap 'rm -f "$TMP_FILE"' EXIT
+
+curl -q -fsSL "$LD_URL" -o "$TMP_FILE"
+echo "$LD_SHA $TMP_FILE" | sha256sum -c - || { echo "Checksum failed"; rm "$TMP_FILE"; exit 1; }
+
+tar -xzf "$TMP_FILE" -C /usr/local/bin lazydocker
+chmod +x /usr/local/bin/lazydocker
+rm "$TMP_FILE"
+INSTALL_TOOLS_LAZYDOCKER
+        then
+            log_warn "tools.lazydocker: install command failed: case \"\$ARCH\" in"
+            # Optional-module failures are warnings on a default install, but a
+            # module the user explicitly named with --only had exactly one job:
+            # propagate the failure instead of reporting phase success (#373).
+            if declare -f acfs_module_explicitly_selected >/dev/null 2>&1 \
+                && acfs_module_explicitly_selected "tools.lazydocker"; then
+              log_error "tools.lazydocker: explicitly requested via --only; treating optional-module failure as fatal"
+              return 1
+            fi
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "tools.lazydocker" "install command failed: case \"\$ARCH\" in"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "tools.lazydocker"
+            fi
+            return 0
+        fi
+    fi
+
+    # Verify
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: lazydocker --version (root)"
+    else
+        if ! run_as_root_shell <<'INSTALL_TOOLS_LAZYDOCKER'
+lazydocker --version
+INSTALL_TOOLS_LAZYDOCKER
+        then
+            log_warn "tools.lazydocker: verify failed: lazydocker --version"
+            # Optional-module failures are warnings on a default install, but a
+            # module the user explicitly named with --only had exactly one job:
+            # propagate the failure instead of reporting phase success (#373).
+            if declare -f acfs_module_explicitly_selected >/dev/null 2>&1 \
+                && acfs_module_explicitly_selected "tools.lazydocker"; then
+              log_error "tools.lazydocker: explicitly requested via --only; treating optional-module failure as fatal"
+              return 1
+            fi
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "tools.lazydocker" "verify failed: lazydocker --version"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "tools.lazydocker"
+            fi
+            return 0
+        fi
+    fi
+
+    log_success "tools.lazydocker installed"
 }
 
 # Incus containers and VMs, the default container runtime

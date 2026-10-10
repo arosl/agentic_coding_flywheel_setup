@@ -76,6 +76,7 @@ readonly RECOMMENDED_TOOLS=(
     
     # Development tools
     "lazygit"
+    "lazydocker"
     "jq"
     "yq"
     "gh"
