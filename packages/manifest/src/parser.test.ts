@@ -111,6 +111,24 @@ describe("parseManifestFile with real manifest", () => {
       }
     }
   });
+
+  // GNU tar run by root keeps each member's recorded owner (--same-owner),
+  // so a release tarball's uid 1001 would own a binary on root's PATH
+  // (acfs-x2c9). Every root extraction must take ownership itself.
+  test("root install steps extract with tar --no-same-owner", () => {
+    const extracts = /\btar\b(?=[^\n|;&]*(?:\s-[A-Za-z]*x|\s--extract\b|\s[A-Za-wyz]*x[A-Za-z]*f\b))[^\n|;&]*/g;
+    const unsafe: string[] = [];
+    for (const module of manifest.modules) {
+      if (module.run_as !== "root") continue;
+      for (const step of module.install ?? []) {
+        if (typeof step !== "string") continue;
+        for (const match of step.matchAll(extracts)) {
+          if (!match[0].includes("--no-same-owner")) unsafe.push(`${module.id}: ${match[0].trim()}`);
+        }
+      }
+    }
+    expect(unsafe).toEqual([]);
+  });
 });
 
 describe("parseManifestFile error handling", () => {

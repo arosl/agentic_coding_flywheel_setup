@@ -393,7 +393,8 @@ trap 'rm -f "$TMP_FILE"' EXIT
 curl -q -fsSL "$LG_URL" -o "$TMP_FILE"
 echo "$LG_SHA $TMP_FILE" | sha256sum -c - || { echo "Checksum failed"; rm "$TMP_FILE"; exit 1; }
 
-tar -xzf "$TMP_FILE" -C /usr/local/bin lazygit
+# Root's tar keeps the tarball's owner (uid 1001) unless told not to.
+tar -xzf "$TMP_FILE" -C /usr/local/bin --no-same-owner --no-same-permissions lazygit
 chmod +x /usr/local/bin/lazygit
 rm "$TMP_FILE"
 INSTALL_TOOLS_LAZYGIT
@@ -576,7 +577,8 @@ trap 'rm -f "$TMP_FILE"' EXIT
 curl -q -fsSL "$LD_URL" -o "$TMP_FILE"
 echo "$LD_SHA $TMP_FILE" | sha256sum -c - || { echo "Checksum failed"; rm "$TMP_FILE"; exit 1; }
 
-tar -xzf "$TMP_FILE" -C /usr/local/bin lazydocker
+# Root's tar keeps the tarball's owner unless told not to.
+tar -xzf "$TMP_FILE" -C /usr/local/bin --no-same-owner --no-same-permissions lazydocker
 chmod +x /usr/local/bin/lazydocker
 rm "$TMP_FILE"
 INSTALL_TOOLS_LAZYDOCKER
