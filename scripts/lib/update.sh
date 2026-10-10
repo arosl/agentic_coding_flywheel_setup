@@ -3533,7 +3533,6 @@ sync_acfs_deployed() {
         "scripts/lib/agent_mail_hook.sh:scripts/lib/agent_mail_hook.sh"
         "scripts/lib/agent_quota.sh:scripts/lib/agent_quota.sh"
         "scripts/lib/temp_sweep.sh:scripts/lib/temp_sweep.sh"
-        "scripts/lib/service_protection.sh:scripts/lib/service_protection.sh"
         "scripts/lib/coexistence.sh:scripts/lib/coexistence.sh"
         "scripts/lib/state_layer.sh:scripts/lib/state_layer.sh"
         "scripts/lib/support.sh:scripts/lib/support.sh"
@@ -7467,46 +7466,6 @@ update_srps_herdr_rule() {
     return 0
 }
 
-# The services', background and agents' slices, herdr's user unit and the
-# agent shims (service_protection.sh, acfs-ioo3.5), for hosts installed
-# before them. Running services keep their old slice until they restart:
-# update never restarts Agent Mail or herdr behind the operator's back.
-update_service_protection() {
-    local desc="service protection"
-    local script="" target_user="" current_user=""
-    local -a sudo_cmd=()
-
-    script="$(update_runtime_acfs_home 2>/dev/null || true)/scripts/lib/service_protection.sh"
-    if [[ ! -r "$script" ]]; then
-        log_item "skip" "$desc" "service_protection.sh is not installed"
-        return 0
-    fi
-    if update_is_read_only_mode; then
-        log_item "skip" "$desc" "dry-run: would apply $script"
-        return 0
-    fi
-    target_user="$(update_target_user 2>/dev/null || true)"
-    current_user="$(update_current_user 2>/dev/null || true)"
-    [[ -n "$target_user" ]] || { log_item "warn" "$desc" "no target user"; return 0; }
-
-    if ! update_sudo_prefix sudo_cmd; then
-        log_item "warn" "$desc" "sudo unavailable; to add the system drop-ins: sudo bash $script apply-system $target_user"
-    elif ! "${sudo_cmd[@]}" bash "$script" apply-system "$target_user" 2>>"${UPDATE_LOG_FILE:-/dev/null}"; then
-        log_item "warn" "$desc" "apply-system failed; see the update log"
-    fi
-
-    if [[ "$current_user" != "$target_user" ]]; then
-        log_item "warn" "$desc" "run as $target_user to add the user slices: bash $script apply-user"
-        return 0
-    fi
-    if bash "$script" apply-user 2>>"${UPDATE_LOG_FILE:-/dev/null}"; then
-        log_item "ok" "$desc" "agents in acfs-agents.slice; services take their slice at their next restart"
-    else
-        log_item "warn" "$desc" "apply-user failed; see the update log"
-    fi
-    return 0
-}
-
 update_stack() {
     if [[ "$UPDATE_STACK" != "true" ]]; then
         return 0
@@ -9105,7 +9064,6 @@ main() {
     update_go
     update_shell
     update_stack
-    update_service_protection
     update_root_agents_md
 
     # Report managed services still running a replaced binary (#381)

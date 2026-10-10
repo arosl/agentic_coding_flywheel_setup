@@ -5,9 +5,8 @@ name: herdr agents (stub herdr)
 # Stop hook (scripts/lib/agent_mail_hook.sh) and the quota reader
 # (scripts/lib/agent_quota.sh) the same way, the temp sweep
 # (scripts/lib/temp_sweep.sh) against a fixture temp dir, and the gate runner
-# (scripts/tests/run_gate.sh) against a stub checkout, and the agents'
-# service protection (scripts/lib/service_protection.sh) against a stub
-# systemctl and systemd-run, and doctor's container section against stub
+# (scripts/tests/run_gate.sh) against a stub checkout, and doctor's
+# container section against stub
 # systemd, incus and state layer. The check-generated job runs the
 # generated-file pre-commit check (scripts/hooks/check_generated.sh)
 # against fixture repos and the real generator. Upstream's
@@ -33,8 +32,6 @@ on:
       - 'tests/unit/test_temp_sweep.sh'
       - 'scripts/tests/run_gate.sh'
       - 'tests/unit/test_run_gate.sh'
-      - 'scripts/lib/service_protection.sh'
-      - 'tests/unit/test_service_protection.sh'
       - 'tests/unit/test_doctor_container.sh'
       - 'scripts/hooks/check_generated.sh'
       - 'tests/unit/test_check_generated.sh'
@@ -57,8 +54,6 @@ on:
       - 'tests/unit/test_temp_sweep.sh'
       - 'scripts/tests/run_gate.sh'
       - 'tests/unit/test_run_gate.sh'
-      - 'scripts/lib/service_protection.sh'
-      - 'tests/unit/test_service_protection.sh'
       - 'tests/unit/test_doctor_container.sh'
       - 'scripts/hooks/check_generated.sh'
       - 'tests/unit/test_check_generated.sh'
@@ -97,8 +92,6 @@ jobs:
         run: HOME="$(mktemp -d)" bash tests/unit/test_temp_sweep.sh
       - name: Gate runner against a stub checkout
         run: HOME="$(mktemp -d)" bash tests/unit/test_run_gate.sh
-      - name: Service protection against a stub systemctl and systemd-run
-        run: HOME="$(mktemp -d)" bash tests/unit/test_service_protection.sh
       - name: Doctor's container section against stub systemd, incus and state layer
         run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_container.sh
 

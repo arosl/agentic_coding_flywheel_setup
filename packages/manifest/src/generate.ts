@@ -669,7 +669,6 @@ const INTERNAL_SCRIPTS_TO_CHECKSUM = [
   "scripts/lib/swarm_simulation.sh",
   "scripts/lib/swarm_status.sh",
   "scripts/lib/temp_sweep.sh",
-  "scripts/lib/service_protection.sh",
   "scripts/lib/coexistence.sh",
   "scripts/services-setup.sh",
   "scripts/agent-readiness-audit.sh",
