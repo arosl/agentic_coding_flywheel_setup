@@ -308,6 +308,25 @@ class FleetTests(unittest.TestCase):
         self.assertEqual(result["status"], "measured")
         self.assertEqual(result["observation"]["capacity"]["recommended_agents"], 6)
 
+    def test_pre_herdr_host_is_refused_as_outdated_not_as_bad_evidence(self):
+        # acfs-42o: a host on pre-K3 ACFS answers with ntm_available.
+        old = response()
+        old["hosts"][0]["local_observation"] = {"capacity_status": "pass", "ntm_available": True,
+                                                "rch_available": False, "live_admission_checked": False}
+        self.rejects("probe_host_outdated", self.observe, old)
+        transport = self.file("old-ssh", '#!' + sys.executable + '\nimport sys\nprint(' + repr(json.dumps(old)) + ')\n', 0o755)
+        result = m.probe_one(selected()[0], 99, 5, ssh=str(transport))
+        self.assertEqual((result["status"], result["code"]), ("failed", "probe_host_outdated"))
+        self.assertIn("acfs update", result["action"])
+        # Bad evidence from a current host keeps the generic code and no action.
+        broken = response()
+        del broken["hosts"][0]["local_observation"]["herdr_available"]
+        self.rejects("probe_evidence_invalid", self.observe, broken)
+        both = response()
+        both["hosts"][0]["local_observation"]["ntm_available"] = True
+        self.assertTrue(self.observe(both)["local_observation"]["herdr_available"])
+        self.assertNotIn("ntm_available", self.observe(both)["local_observation"])
+
     def test_failed_transport_never_exposes_endpoint_or_output(self):
         transport = self.file("bad-ssh", '#!' + sys.executable + '\nimport sys\nprint("SECRET @ alpha.example"); sys.exit(255)\n', 0o755)
         result = m.probe_one(selected()[0], 99, 5, ssh=str(transport))

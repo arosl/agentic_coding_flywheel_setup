@@ -314,6 +314,11 @@ def observation(data, target, started, finished):
     try:
         if type(host) is not dict or host["id"] != target["id"] or host["probe_source"] != "acfs swarm inventory probe-local":
             refuse("probe_identity_mismatch")
+        # A host still on pre-herdr ACFS (before K3) reports ntm_available.
+        # Name that apart from bad evidence; it is still a refusal.
+        early = host.get("local_observation")
+        if type(early) is dict and "ntm_available" in early and "herdr_available" not in early:
+            refuse("probe_host_outdated")
         observed = timestamp(host["last_probe_at"])
         # Stale, future-dated and replayed observations cannot refresh inventory.
         if not started - 60 <= observed <= finished:
@@ -347,7 +352,10 @@ def probe_one(target, known_fd, timeout, identity=None, ssh="/usr/bin/ssh"):
         return {"id": target["id"], "status": "measured",
                 "observation": observation(data, target, started, time.time())}
     except Refused as exc:
-        return {"id": target["id"], "status": "failed", "code": exc.code}
+        result = {"id": target["id"], "status": "failed", "code": exc.code}
+        if exc.code == "probe_host_outdated":
+            result["action"] = "This host runs ACFS from before herdr: run 'acfs update' on it, then probe again."
+        return result
     except (OSError, subprocess.SubprocessError):
         return {"id": target["id"], "status": "failed", "code": "probe_unavailable"}
 
@@ -513,6 +521,8 @@ if __name__ == "__main__":
         for item in report.get("results", report.get("plan", {}).get("hosts", [])):
             print(item["id"] + ": " + item.get("status", item.get("workload", "unknown")) +
                   (" (" + item["code"] + ")" if "code" in item else ""))
+            if "action" in item:
+                print("  " + item["action"])
         if "next" in report:
             print(report["next"])
         if "code" in report:

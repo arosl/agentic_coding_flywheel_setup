@@ -94,7 +94,9 @@ against local policy. Restoring a withdrawn permission is a separate operator
 review, not an automatic response to the next probe.
 
 A failed selected host gets zero recommended/safe counts and a null probe time.
-It cannot retain a stale positive recommendation. Successful peers still appear
+It cannot retain a stale positive recommendation. A host still running ACFS from
+before herdr (its probe reports `ntm_available`) fails with `probe_host_outdated`,
+and its result says to run `acfs update` there. Successful peers still appear
 in a partial snapshot, which can be reviewed and planned immediately:
 
 ```bash
