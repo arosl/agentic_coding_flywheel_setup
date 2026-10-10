@@ -327,7 +327,7 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
     id: "dcg",
     name: "Destructive Command Guard",
     shortName: "DCG",
-    href: "https://github.com/Dicklesworthstone/destructive_command_guard",
+    href: "https://github.com/arosl/destructive_command_guard",
     icon: "ShieldAlert",
     color: "from-red-500 to-rose-600",
     category: "core",

@@ -787,7 +787,7 @@ const _flywheelTools: FlywheelTool[] = [
     id: "dcg",
     name: "Destructive Command Guard",
     shortName: "DCG",
-    href: "https://github.com/Dicklesworthstone/destructive_command_guard",
+    href: "https://github.com/arosl/destructive_command_guard",
     icon: "ShieldAlert",
     color: "from-red-400 to-rose-500",
     tagline: "Pre-execution safety net",
@@ -822,7 +822,7 @@ const _flywheelTools: FlywheelTool[] = [
       "dcg doctor                # Health check + verification",
     ],
     installCommand:
-      "curl --proto '=https' --proto-redir '=https' -fsSL https://raw.githubusercontent.com/Dicklesworthstone/destructive_command_guard/main/install.sh | bash",
+      "curl --proto '=https' --proto-redir '=https' -fsSL https://raw.githubusercontent.com/arosl/destructive_command_guard/main/install.sh | bash",
     language: "Rust",
   },
   {

@@ -270,7 +270,7 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     icon: <ShieldAlert className="h-8 w-8" aria-hidden="true" />,
     gradient: "from-red-500/20 via-rose-500/20 to-red-500/20",
     glowColor: "rgba(244,63,94,0.4)",
-    docsUrl: "https://github.com/Dicklesworthstone/destructive_command_guard",
+    docsUrl: "https://github.com/arosl/destructive_command_guard",
     docsLabel: "GitHub",
     quickCommand: "dcg test 'rm -rf /' --explain",
     relatedTools: ["slb", "claude-code", "herdr"],
