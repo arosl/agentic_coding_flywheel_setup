@@ -7466,6 +7466,73 @@ update_srps_herdr_rule() {
     return 0
 }
 
+# The Agent Mail Stop hook (acfs-gen.4) for installs made before install.sh
+# registered it (acfs-pf26). Like the DCG hook in update_stack, it is ACFS's
+# own hook, so it is wired on every update, the nightly one included; #400
+# kept only UBS's per-project hooks off that path. register is idempotent,
+# keeps everything else in each file, and touches only installed agents'.
+# Agent Mail is a stack component, so partial modes (--agents-only, ...)
+# leave the agents' settings alone, as they leave the DCG hook.
+update_agent_mail_stop_hook() {
+    local desc="Agent Mail Stop hook"
+    local helper="" target_user="" current_user="" target_home="" agent="" file=""
+    local registered="" failed="" codex_new=false
+
+    [[ "${UPDATE_STACK:-true}" == "true" ]] || return 0
+    if ! update_binary_exists am; then
+        log_item "skip" "$desc" "Agent Mail is not installed"
+        return 0
+    fi
+    helper="$(update_runtime_acfs_home 2>/dev/null || true)/scripts/lib/agent_mail_hook.sh"
+    if [[ ! -r "$helper" ]]; then
+        log_item "skip" "$desc" "agent_mail_hook.sh is not installed"
+        return 0
+    fi
+    if update_is_read_only_mode; then
+        log_item "skip" "$desc" "dry-run: would register it for the installed agents"
+        return 0
+    fi
+    target_user="$(update_target_user 2>/dev/null || true)"
+    current_user="$(update_current_user 2>/dev/null || true)"
+    if [[ -z "$target_user" || "$current_user" != "$target_user" ]]; then
+        log_item "warn" "$desc" "run as ${target_user:-the target user}: bash $helper register claude (and codex)"
+        return 0
+    fi
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    if [[ -z "$target_home" ]]; then
+        log_item "warn" "$desc" "no home for $target_user"
+        return 0
+    fi
+
+    for agent in claude codex; do
+        update_binary_exists "$agent" || continue
+        case "$agent" in
+            claude) file="$target_home/.claude/settings.json" ;;
+            codex) file="$target_home/.codex/hooks.json" ;;
+        esac
+        if [[ "$agent" == codex ]] && ! bash "$helper" registered "$file" </dev/null >/dev/null 2>&1; then
+            codex_new=true
+        fi
+        if bash "$helper" register "$agent" "$file" </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1; then
+            registered+="${registered:+, }$agent"
+        else
+            failed+="${failed:+, }$agent"
+            [[ "$agent" != codex ]] || codex_new=false
+        fi
+    done
+    if [[ -n "$failed" ]]; then
+        log_item "warn" "$desc" "registration failed for $failed; see the update log"
+    elif [[ -n "$registered" ]]; then
+        log_item "ok" "$desc" "registered for $registered"
+    else
+        log_item "skip" "$desc" "neither Claude Code nor Codex is installed"
+    fi
+    if [[ "$codex_new" == true ]]; then
+        log_detail "Codex asks to trust the Agent Mail Stop hook once: open /hooks in Codex"
+    fi
+    return 0
+}
+
 update_stack() {
     if [[ "$UPDATE_STACK" != "true" ]]; then
         return 0
@@ -9064,6 +9131,7 @@ main() {
     update_go
     update_shell
     update_stack
+    update_agent_mail_stop_hook
     update_root_agents_md
 
     # Report managed services still running a replaced binary (#381)
