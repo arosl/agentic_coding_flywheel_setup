@@ -100,6 +100,10 @@ from this checkout's committed HEAD, and prints the ssh_config entry and
   --state-size SIZE  Size of the volume acfs-state-<name> (default 20GiB):
                      the home, the SSH host keys and Tailscale's state.
   --data-size SIZE   Size of the volume <name>-data, mounted at /data (default 60GiB).
+  --lease-from INST  Copy the state-volume lease (user.acfs.lease) from the
+                     stopped instance INST instead of making a new one: for
+                     `acfs machine up --replace`, which rebuilds a machine on
+                     its existing volumes.
 
 The type, the ACL and the sizes apply only when the instance is created; an
 existing one keeps them. Every run needs the file host-setup writes
@@ -128,6 +132,7 @@ name=""
 jump=""
 vm=""
 acl_name=""
+lease_from=""
 ssh_key_files=()
 # Set when the caller gave an option that applies only at creation.
 creation_options=""
@@ -156,6 +161,12 @@ parse_args() {
             --acl)
                 [[ "${2:-}" =~ ^[A-Za-z0-9_.-]+$ ]] || die "--acl needs an ACL name" 2
                 acl_name="$2"
+                creation_options=1
+                shift 2
+                ;;
+            --lease-from)
+                [[ "${2:-}" =~ ^[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]] || die "--lease-from needs an instance name" 2
+                lease_from="$2"
                 creation_options=1
                 shift 2
                 ;;
@@ -370,10 +381,23 @@ attach_volumes() {
 # claims it into the volume on first boot and refuses to start the user
 # manager when the volume holds another instance's. The launcher only sets
 # the key; it never writes into the volume, and it never prints the token.
+# With --lease-from, the token is the one the old instance holds, so a
+# machine rebuilt on its volumes keeps them.
+lease_token=""
+read_lease_source() {
+    [[ -n "$lease_from" ]] || return 0
+    lease_token="$(incus_run config get "$(qualified "$lease_from")" user.acfs.lease 2>/dev/null | tr -d '[:space:]')" || true
+    [[ "$lease_token" =~ ^[0-9a-f]{32}$ ]] \
+        || die "--lease-from $lease_from: that instance has no user.acfs.lease to copy (is it one the launcher made?)" 1
+    log_info "The lease comes from $(qualified "$lease_from"), so $(qualified "$name") takes over its state volume"
+}
+
 set_lease() {
-    local token
-    token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-    [[ "$token" =~ ^[0-9a-f]{32}$ ]] || die "could not make a lease token" 1
+    local token="$lease_token"
+    if [[ -z "$token" ]]; then
+        token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+        [[ "$token" =~ ^[0-9a-f]{32}$ ]] || die "could not make a lease token" 1
+    fi
     incus_run config set "$(qualified "$name")" "user.acfs.lease=$token" \
         || die "could not record user.acfs.lease" 1
 }
@@ -392,6 +416,7 @@ create_instance() {
     else
         check_server
         check_swarm_profile
+        read_lease_source
         ensure_volume "acfs-state-$name" "$STATE_SIZE"
         ensure_volume "$name-data" "$DATA_SIZE"
         launch_args=("${CONTAINER_LAUNCH_ARGS[@]}")
@@ -563,7 +588,7 @@ main() {
         fi
         [[ "$(jq -r '.type' <<<"$json")" != "virtual-machine" ]] || kind="VM"
         [[ -z "$creation_options" ]] \
-            || log_warn "--vm, --acl and the sizes are ignored: $(qualified "$name") exists as a $kind, and an instance keeps the type, ACL and sizes it was created with"
+            || log_warn "--vm, --acl, --lease-from and the sizes are ignored: $(qualified "$name") exists as a $kind, and an instance keeps the type, ACL, lease and sizes it was created with"
         ((${#ssh_key_files[@]} == 0)) \
             || log_warn "--ssh-key is ignored for an existing $kind; add keys with ssh-copy-id from a machine that can already log in, or here with: incus exec $(qualified "$name") -- bash -c 'cat >> /home/$TARGET_USER/.ssh/authorized_keys' < KEY.pub"
         if [[ "$(jq -r '.status' <<<"$json")" != "Running" ]]; then

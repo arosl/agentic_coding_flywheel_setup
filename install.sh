@@ -3858,6 +3858,7 @@ acfs_load_internal_checksums_data() {
         scripts/lib/herdr_agents.sh
         scripts/lib/info.sh
         scripts/lib/landing_plane.sh
+        scripts/lib/machine.sh
         scripts/lib/module_selector.sh
         scripts/lib/newproj.sh
         scripts/lib/newproj_agents.sh
@@ -10851,6 +10852,7 @@ finalize() {
     try_step "Installing agent_quota.sh" install_asset "scripts/lib/agent_quota.sh" "$ACFS_HOME/scripts/lib/agent_quota.sh" || return 1
     try_step "Installing temp_sweep.sh" install_asset "scripts/lib/temp_sweep.sh" "$ACFS_HOME/scripts/lib/temp_sweep.sh" || return 1
     try_step "Installing state_layer.sh" install_asset "scripts/lib/state_layer.sh" "$ACFS_HOME/scripts/lib/state_layer.sh" || return 1
+    try_step "Installing machine.sh" install_asset "scripts/lib/machine.sh" "$ACFS_HOME/scripts/lib/machine.sh" || return 1
     try_step "Installing coexistence.sh" install_asset "scripts/lib/coexistence.sh" "$ACFS_HOME/scripts/lib/coexistence.sh" || return 1
     try_step "Installing support.sh" install_asset "scripts/lib/support.sh" "$ACFS_HOME/scripts/lib/support.sh" || return 1
     try_step "Installing acfs-nightly-update.service template" install_asset "scripts/templates/acfs-nightly-update.service" "$ACFS_HOME/scripts/templates/acfs-nightly-update.service" || return 1

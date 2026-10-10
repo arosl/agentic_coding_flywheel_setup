@@ -3535,6 +3535,7 @@ sync_acfs_deployed() {
         "scripts/lib/temp_sweep.sh:scripts/lib/temp_sweep.sh"
         "scripts/lib/coexistence.sh:scripts/lib/coexistence.sh"
         "scripts/lib/state_layer.sh:scripts/lib/state_layer.sh"
+        "scripts/lib/machine.sh:scripts/lib/machine.sh"
         "scripts/lib/support.sh:scripts/lib/support.sh"
         "scripts/lib/policy_lint.sh:scripts/lib/policy_lint.sh"
         "scripts/lib/credential_preflight.sh:scripts/lib/credential_preflight.sh"

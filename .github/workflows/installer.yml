@@ -132,6 +132,9 @@ jobs:
       - name: Run state layer tests (acfs state, against stubs)
         run: bash tests/unit/test_state_layer.sh
 
+      - name: Run machine entry command tests (acfs machine up|verify, against stubs)
+        run: HOME="$(mktemp -d)" bash tests/unit/test_machine.sh
+
       - name: Run Incus, podman and Docker coexistence tests (against stubs)
         run: HOME="$(mktemp -d)" bash tests/unit/test_coexistence.sh
 

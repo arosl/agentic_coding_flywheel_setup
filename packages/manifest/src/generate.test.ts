@@ -1319,7 +1319,7 @@ describe("Generated script headers", () => {
     expect(countMatch).not.toBeNull();
     expect(rawEntries.length).toBe(checksums.size);
     expect(Number(countMatch?.[1])).toBe(checksums.size);
-    expect(checksums.size).toBe(126);
+    expect(checksums.size).toBe(127);
 
     const mandatoryPaths = [
       "install.sh",
@@ -1413,6 +1413,7 @@ describe("Generated script headers", () => {
       "scripts/lib/status.sh",
       "scripts/lib/support.sh",
       "scripts/lib/state_layer.sh",
+      "scripts/lib/machine.sh",
       "scripts/lib/swarm_assign.sh",
       "scripts/lib/swarm_calibration.sh",
       "scripts/lib/swarm_convergence.sh",

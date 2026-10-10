@@ -117,6 +117,10 @@ case "$1" in
         case "$2" in
             set) printf '%s\n' "$4" >>"$STUB_DIR/config-set" ;;
             device) printf '%s\n' "${*:5}" >>"$STUB_DIR/device-add" ;;
+            # config get <instance> user.acfs.lease: the token in
+            # $STUB_DIR/lease-<instance>, or an empty line like the real
+            # client prints for an unset key.
+            get) [[ -f "$STUB_DIR/lease-${3#*:}" ]] && cat "$STUB_DIR/lease-${3#*:}" || echo ;;
         esac
         ;;
     exec)
@@ -344,6 +348,28 @@ check "creates no volume" not_called 'storage volume create'
 check "says the state volume is reused, unresized" err_has 'Using the existing volume acfs-state-dev on pool acfs as it is'
 check "says the data volume is reused" err_has 'Using the existing volume dev-data on pool acfs as it is'
 check "attaches them all the same" device_added 'state-home disk pool=acfs source=acfs-state-dev/home path=/home/ubuntu initial.uid=1000 initial.gid=1000 initial.mode=0700'
+
+echo "== --lease-from: the lease is the old instance's, read before anything is created"
+new_case lease-from absent
+: >"$CASE/volume-acfs-acfs-state-dev"
+: >"$CASE/volume-acfs-dev-data"
+printf '0123456789abcdef0123456789abcdef\n' >"$CASE/lease-dev-old"
+run_launcher dev --ssh-key "$WORK/laptop.pub" --lease-from dev-old
+check "exits 0" rc_is 0
+check "reads the old instance's lease" called $'\tconfig get dev-old user.acfs.lease$'
+check "sets that lease on the new instance, not a fresh one" grep -qx 'user.acfs.lease=0123456789abcdef0123456789abcdef' "$CASE/config-set"
+check "reads it before the volumes are looked up" called_before $'\tconfig get dev-old ' $'\tstorage volume show '
+check "says whose volume the new instance takes over" err_has 'The lease comes from dev-old, so dev takes over its state volume'
+check "reuses the volumes" err_has 'Using the existing volume acfs-state-dev'
+new_case lease-from-unset absent
+run_launcher dev --ssh-key "$WORK/laptop.pub" --lease-from dev-old
+check "no lease on the source: exits 1" rc_is 1
+check "no lease on the source: says so" err_has '--lease-from dev-old: that instance has no user.acfs.lease to copy'
+check "no lease on the source: creates no volume" no_volume_calls
+check "no lease on the source: inits nothing" no_init
+new_case lease-from-bad-name absent
+run_launcher dev --ssh-key "$WORK/laptop.pub" --lease-from 'bad name'
+check "an invalid source name: exits 2" rc_is 2
 
 echo "== --vm: a VM with the launcher's own limits, no profile, no volumes"
 new_case vm absent

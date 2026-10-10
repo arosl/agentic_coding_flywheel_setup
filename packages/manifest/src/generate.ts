@@ -656,6 +656,7 @@ const INTERNAL_SCRIPTS_TO_CHECKSUM = [
   "scripts/lib/status.sh",
   "scripts/lib/support.sh",
   "scripts/lib/state_layer.sh",
+  "scripts/lib/machine.sh",
   "scripts/lib/swarm_assign.sh",
   "scripts/lib/swarm_calibration.sh",
   "scripts/lib/swarm_convergence.sh",
