@@ -3207,6 +3207,107 @@ check_cloud() {
     blank_line
 }
 
+# herdr's server and its agent integrations (acfs-p1k). The binary alone
+# doesn't make agents show working, done or blocked, or resume after a
+# restart: that needs a running server this binary can talk to, and herdr's
+# hook in each agent CLI. Read-only and warnings only: `herdr status server`
+# and `herdr integration status` start and install nothing, and the fixes
+# are named, never run.
+# The agent CLI to integration pairs are tools.herdr's install step's
+# (acfs.manifest.yaml); tests/unit/test_doctor_herdr.sh keeps them equal.
+HERDR_INTEGRATION_PAIRS=(claude:claude codex:codex agy:antigravity-cli opencode:opencode omp:omp grok:grok)
+check_herdr_runtime() {
+    local doctor_ci="${ACFS_DOCTOR_CI:-false}"
+    local herdr_bin="" timeout_bin="" status_json="" version="" output="" pair="" target="" line="" state=""
+    local -a probe=() missing=() outdated=() installs=()
+
+    herdr_bin="$(doctor_binary_path herdr 2>/dev/null || true)"
+    [[ -n "$herdr_bin" ]] || return 0
+    timeout_bin="$(_acfs_doctor_system_binary_path timeout 2>/dev/null || true)"
+    probe=("$herdr_bin")
+    [[ -z "$timeout_bin" ]] || probe=("$timeout_bin" 5 "$herdr_bin")
+
+    # serde's compact JSON on one line; matched without jq.
+    status_json="$("${probe[@]}" status server --json 2>/dev/null || true)"
+    [[ "$status_json" =~ \"version\":\"([^\"]+)\" ]] && version="${BASH_REMATCH[1]}"
+    case "$status_json" in
+        *'"running":true'*'"compatible":false'*|*'"running":true'*'"endpoint_compatible":false'*|*'"running":true'*'"restart_needed":true'*)
+            check "tools.herdr.server" "herdr server" "warn" \
+                "running v${version:-?}, which this herdr binary can't fully talk to (a herdr update needs a server restart)" \
+                "When no agent is mid-turn: herdr server stop, then herdr"
+            ;;
+        *'"running":true'*'"server_binary_stale":true'*)
+            check "tools.herdr.server" "herdr server" "pass" \
+                "running v${version:-?}; the herdr binary is newer, and a server restart picks it up"
+            ;;
+        *'"running":true'*)
+            check "tools.herdr.server" "herdr server" "pass" "running${version:+ (v$version)}"
+            ;;
+        *'"running":false'*)
+            if [[ "$doctor_ci" == "true" ]]; then
+                check "tools.herdr.server" "herdr server (not running)" "pass" "expected in CI"
+            else
+                check "tools.herdr.server" "herdr server" "warn" \
+                    "not running: no agent shows working, done or blocked, and none resumes" \
+                    "Run: herdr (starts the server and attaches)"
+            fi
+            ;;
+        *)
+            check "tools.herdr.server" "herdr server" "warn" \
+                "status unknown (herdr status server --json gave no usable answer)" \
+                "Run: herdr status server"
+            ;;
+    esac
+
+    local -a clis=()
+    for pair in "${HERDR_INTEGRATION_PAIRS[@]}"; do
+        doctor_binary_exists "${pair%%:*}" && clis+=("$pair")
+    done
+    (( ${#clis[@]} > 0 )) || return 0
+    output="$("${probe[@]}" integration status 2>/dev/null || true)"
+    if [[ -z "$output" ]]; then
+        check "tools.herdr.integrations" "herdr agent integrations" "warn" \
+            "status unknown (herdr integration status gave no answer)" \
+            "Run: herdr integration status"
+        return 0
+    fi
+    for pair in "${clis[@]}"; do
+        target="${pair#*:}"
+        # "<target>[ (experimental)]: <state> (<hook path>)"; a target this
+        # herdr doesn't list counts as not installed.
+        line="$(grep -E "^${target}( \\(experimental\\))?: " <<<"$output" | head -n 1 || true)"
+        state="${line#*: }"
+        case "$state" in
+            current*) ;;
+            ""|"not installed"*) missing+=("$target") ;;
+            *)
+                outdated+=("$target (${state%% (/*})")
+                installs+=("$target")
+                ;;
+        esac
+    done
+    if (( ${#missing[@]} == 0 && ${#outdated[@]} == 0 )); then
+        check "tools.herdr.integrations" "herdr agent integrations" "pass" "current for each installed agent CLI"
+        return 0
+    fi
+    if (( ${#outdated[@]} > 0 )); then
+        local fix="" t=""
+        for t in "${installs[@]}"; do fix+="${fix:+ && }herdr integration install $t"; done
+        check "tools.herdr.integrations" "herdr agent integrations" "warn" \
+            "not current: ${outdated[*]}; those agents' states are wrong or missing in herdr" \
+            "Run: acfs update (or: $fix)"
+    fi
+    if (( ${#missing[@]} > 0 )); then
+        if [[ "$doctor_ci" == "true" ]]; then
+            check "tools.herdr.integrations" "herdr agent integrations (not installed)" "pass" "expected in CI"
+        else
+            check "tools.herdr.integrations" "herdr agent integrations" "warn" \
+                "not installed: ${missing[*]}; herdr shows no state for those agents" \
+                "Start each agent once, then run: acfs update"
+        fi
+    fi
+}
+
 # Check Agent Flywheel stack
 check_stack() {
     local ubs_bin=""
@@ -3218,6 +3319,7 @@ check_stack() {
 
     check_command "tools.herdr" "herdr" "herdr" \
         "Re-run: $(fix_for_module tools.herdr)"
+    check_herdr_runtime
     check_command "stack.slb" "SLB" "slb" \
         "Re-run: $(fix_for_module stack.slb)"
 
@@ -5700,6 +5802,18 @@ main() {
             fi
 
             echo "Error: state_layer.sh not found" >&2
+            return 1
+            ;;
+        machine)
+            shift
+            local machine_script=""
+            machine_script="$(_acfs_doctor_find_lib_script "machine.sh" 2>/dev/null || true)"
+
+            if [[ -n "$machine_script" ]]; then
+                _acfs_doctor_exec_bash_script "$machine_script" "$@"
+            fi
+
+            echo "Error: machine.sh not found" >&2
             return 1
             ;;
         policy-lint|policy_lint)
