@@ -614,6 +614,29 @@ run_helper send --name betaowl ping
 check "a dim line in the input box is a suggestion, not a pending prompt" \
     bash -c '[[ "$1" -ne 0 ]] && grep -q "nothing is typed in its input box" <<<"$2"' _ "$RC" "$ERR"
 
+# acfs-patg: the screen check holds under every awk installed, in a UTF-8
+# locale, where gawk (GitHub's runners) counts characters and mawk bytes.
+for impl in mawk gawk original-awk; do
+    impl_path="$(command -v "$impl" || true)"
+    [[ -n "$impl_path" ]] || continue
+    mkdir -p "$WORK/awk-$impl"
+    ln -sf "$impl_path" "$WORK/awk-$impl/awk"
+    reset_stub "sendghost-$impl"
+    write_list
+    touch "$STUB_DIR/agent_prompt_stalled_betaowl"
+    printf '\e[0m\xe2\x9d\xaf\xc2\xa0\e[0m\e[2mCheck your Agent Mail inbox.\e[0m\r\n' >"$STUB_DIR/screen_betaowl"
+    LC_ALL=C.UTF-8 PATH="$WORK/awk-$impl:$PATH" run_helper send --name betaowl ping
+    check "under $impl in UTF-8, a dim line after the no-break space is a suggestion" \
+        bash -c 'grep -q "nothing is typed in its input box" <<<"$1"' _ "$ERR"
+    reset_stub "sendtyped-$impl"
+    write_list
+    touch "$STUB_DIR/agent_prompt_stalled_betaowl"
+    printf '\e[0m\xe2\x9d\xaf\xc2\xa0\e[0mping\e[0m\r\n' >"$STUB_DIR/screen_betaowl"
+    LC_ALL=C.UTF-8 PATH="$WORK/awk-$impl:$PATH" run_helper send --name betaowl ping
+    check "under $impl in UTF-8, undimmed text after the no-break space is typed" \
+        bash -c 'grep -q "undimmed text is in its input box" <<<"$1"' _ "$ERR"
+done
+
 reset_stub sendtimeout
 write_list
 touch "$STUB_DIR/timeout_betaowl"

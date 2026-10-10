@@ -171,8 +171,10 @@ herdr_agents_default_prompt() {
 # brightness after the input box's ❯ or ›: typed but not submitted),
 # "suggestion" (dim text there: the CLI's ghost suggestion, nothing typed),
 # "empty", or "unknown" when neither a dialog nor an input box is recognised.
-# The bottom-most input box line counts. awk may work on bytes, so the
-# markers are matched as whole strings, never in brackets.
+# The bottom-most input box line counts. awk may work on bytes (mawk) or,
+# in a UTF-8 locale, on characters (gawk, as on GitHub's runners), so the
+# markers are matched as whole strings, never in brackets, and skipped by
+# their length() rather than a byte count.
 herdr_agents_screen_state() {
     awk '
         # Skip the spaces and escape sequences before the first visible
@@ -182,7 +184,7 @@ herdr_agents_screen_state() {
             DIM = 0
             while (length(s) > 0) {
                 if (substr(s, 1, 1) == " ") { s = substr(s, 2); continue }
-                if (substr(s, 1, 2) == "\302\240") { s = substr(s, 3); continue }
+                if (index(s, "\302\240") == 1) { s = substr(s, length("\302\240") + 1); continue }
                 if (match(s, /^\033\[[0-9;]*m/)) {
                     n = split(substr(s, 3, RLENGTH - 3), params, ";")
                     s = substr(s, RLENGTH + 1)
