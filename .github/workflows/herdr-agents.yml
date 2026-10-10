@@ -7,7 +7,8 @@ name: herdr agents (stub herdr)
 # (scripts/lib/temp_sweep.sh) against a fixture temp dir, and the gate runner
 # (scripts/tests/run_gate.sh) against a stub checkout, and the agents'
 # service protection (scripts/lib/service_protection.sh) against a stub
-# systemctl and systemd-run. Upstream's
+# systemctl and systemd-run, and doctor's container section against stub
+# systemd, incus and state layer. Upstream's
 # installer.yml runs each tests/unit script by name, so a new one needs its
 # own job.
 
@@ -32,6 +33,7 @@ on:
       - 'tests/unit/test_run_gate.sh'
       - 'scripts/lib/service_protection.sh'
       - 'tests/unit/test_service_protection.sh'
+      - 'tests/unit/test_doctor_container.sh'
       - '.github/workflows/herdr-agents.yml'
   pull_request:
     branches: [main]
@@ -53,6 +55,7 @@ on:
       - 'tests/unit/test_run_gate.sh'
       - 'scripts/lib/service_protection.sh'
       - 'tests/unit/test_service_protection.sh'
+      - 'tests/unit/test_doctor_container.sh'
       - '.github/workflows/herdr-agents.yml'
 
 permissions:
@@ -90,3 +93,5 @@ jobs:
         run: HOME="$(mktemp -d)" bash tests/unit/test_run_gate.sh
       - name: Service protection against a stub systemctl and systemd-run
         run: HOME="$(mktemp -d)" bash tests/unit/test_service_protection.sh
+      - name: Doctor's container section against stub systemd, incus and state layer
+        run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_container.sh

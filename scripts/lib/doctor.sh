@@ -2383,13 +2383,13 @@ _acfs_doctor_container_tmp() {
     if [[ -z "$tmpdir" || "$tmpdir" == /tmp ]]; then
         check "container.tmpdir" "TMPDIR on the data volume" "warn" \
             "TMPDIR is ${tmpdir:-unset}: agents' temp files land on the root volume" \
-            "acfs update writes TMPDIR=/data/tmp to ~/.config/environment.d/60-acfs-tmpdir.conf; log in again"
+            "Re-run the ACFS installer, or put TMPDIR=/data/tmp in ~/.config/environment.d/60-acfs-tmpdir.conf; log in again"
     else
         fstype="$(_acfs_doctor_fstype "$tmpdir")"
         if [[ "$fstype" == tmpfs ]]; then
             check "container.tmpdir" "TMPDIR on the data volume" "warn" \
                 "TMPDIR=$tmpdir is on a tmpfs: what it holds is charged to the container's memory" \
-                "acfs update writes TMPDIR=/data/tmp to ~/.config/environment.d/60-acfs-tmpdir.conf; log in again"
+                "Re-run the ACFS installer, or put TMPDIR=/data/tmp in ~/.config/environment.d/60-acfs-tmpdir.conf; log in again"
         else
             check "container.tmpdir" "TMPDIR on the data volume" "pass" "$tmpdir"
         fi

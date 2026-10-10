@@ -213,7 +213,7 @@ for unset_tmpdir in "" /tmp /tmp/; do
     out="$(healthy; TMPDIR="$unset_tmpdir" run_doctor _acfs_doctor_container_tmp)"
     expected="${unset_tmpdir%/}"
     check_case "TMPDIR '${unset_tmpdir}' warns, with the installer's file as the fix" \
-        has_line "^container.tmpdir|warn|TMPDIR is ${expected:-unset}: agents' temp files land on the root volume|acfs update writes TMPDIR=/data/tmp" "$out"
+        has_line "^container.tmpdir|warn|TMPDIR is ${expected:-unset}: agents' temp files land on the root volume|Re-run the ACFS installer, or put TMPDIR=/data/tmp in ~/.config/environment.d/60-acfs-tmpdir.conf" "$out"
 done
 out="$(FAKE_VIRT=none run_doctor check_container)"
 check_case "outside a container no TMPDIR advice either" lacks_line "tmpdir" "$out"
