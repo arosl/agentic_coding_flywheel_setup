@@ -57,6 +57,10 @@ test.describe
         testInfo.project.name.startsWith("Mobile"),
         "The lesson sidebar is intentionally hidden on mobile",
       );
+      // The sidebar shows from the xl breakpoint (1280px). WebKit on Linux draws
+      // a classic scrollbar and leaves it out of the media-query width, so the
+      // default 1280px desktop viewport falls just below xl there.
+      await page.setViewportSize({ width: 1440, height: 900 });
 
       await page.addInitScript(() => {
         localStorage.setItem(
@@ -86,6 +90,8 @@ test.describe
         testInfo.project.name.startsWith("Mobile"),
         "The lesson sidebar is intentionally hidden on mobile",
       );
+      // Above xl on every engine; see the sidebar test above.
+      await page.setViewportSize({ width: 1440, height: 900 });
 
       await page.addInitScript(() => {
         localStorage.setItem(
@@ -119,6 +125,8 @@ test.describe
         testInfo.project.name.startsWith("Mobile"),
         "The lesson sidebar is intentionally hidden on mobile",
       );
+      // Above xl on every engine; see the sidebar test above.
+      await page.setViewportSize({ width: 1440, height: 900 });
 
       await page.addInitScript(() => {
         localStorage.setItem(
