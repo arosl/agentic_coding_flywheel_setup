@@ -34,7 +34,7 @@ check_case() {
 mkdir -p "$WORK/lib"
 cat >"$WORK/lib/capacity.sh" <<'STUB'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >>"$GUARD_CALLS"
+printf '%s herdr=%s\n' "$*" "${ACFS_CAPACITY_HERDR_AVAILABLE:-}" >>"$GUARD_CALLS"
 printf '%s\n' "$GUARD_JSON"
 STUB
 chmod +x "$WORK/lib/capacity.sh"
@@ -76,8 +76,8 @@ check_case "a healthy host passes all three" \
     test "$out" = "host.swap|pass|8192 MiB|
 host.rch_workers|pass|4 of 4 healthy (remote_ready)|
 host.tmp_tmpfs|pass|20% full|"
-check_case "the check only asks the guard for its JSON report" \
-    test "$(cat "$WORK/calls")" = "--guard --json"
+check_case "the check only asks the guard for its JSON report, without herdr's agent count" \
+    test "$(cat "$WORK/calls")" = "--guard --json herdr=false"
 
 out="$(run_check "$(guard_json 0 local_only 0 tmpfs 22)")"
 check_case "no swap warns" \

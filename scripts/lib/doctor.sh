@@ -2217,7 +2217,8 @@ check_host_capacity() {
     helper="$(_acfs_doctor_find_lib_script "capacity.sh" 2>/dev/null || true)"
     [[ -n "$helper" ]] || return 0
     command -v jq >/dev/null 2>&1 || return 0
-    guard="$(_acfs_doctor_exec_bash_script "$helper" --guard --json 2>/dev/null)" || guard=""
+    # doctor reads no live-agent count, so the guard doesn't wait on herdr.
+    guard="$(ACFS_CAPACITY_HERDR_AVAILABLE=false _acfs_doctor_exec_bash_script "$helper" --guard --json 2>/dev/null)" || guard=""
 
     section "Host capacity"
 

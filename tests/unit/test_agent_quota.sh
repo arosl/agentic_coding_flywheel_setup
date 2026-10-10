@@ -220,6 +220,10 @@ check "--json carries the capacity guard under host" \
 run_helper
 check "the table is followed by the guard's report" \
     bash -c '[[ "$1" -eq 0 ]] && grep -q "^Host capacity guard: red" <<<"$2" && grep -q "RED: MemAvailable is 2048 MiB" <<<"$2"' _ "$RC" "$OUT"
+printf '#!/usr/bin/env bash\nprintf "Host capacity guard: red\\n  MemAvailable:\\n"\nexit 1\n' >"$WORK/capacity-partial.sh"
+ACFS_AGENTS_CAPACITY_SCRIPT="$WORK/capacity-partial.sh" run_helper
+check "a guard that fails part way shows as unavailable, with none of its partial report" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "^Host capacity guard: unavailable" <<<"$2" && ! grep -q "MemAvailable:" <<<"$2"' _ "$RC" "$OUT"
 ACFS_AGENTS_CAPACITY_SCRIPT="$WORK/missing.sh" run_helper --json
 check "without capacity.sh, host is null and quota still answers" \
     bash -c '[[ "$1" -eq 0 ]] && jq -e ".host == null and (.plans | length) == 3" >/dev/null <<<"$2"' _ "$RC" "$OUT"

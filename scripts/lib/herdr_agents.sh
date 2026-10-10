@@ -30,6 +30,8 @@
 set -euo pipefail
 
 HERDR_AGENTS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# capacity.sh, installed beside this script, answers spawn's capacity guard.
+HERDR_AGENTS_CAPACITY_SCRIPT="${ACFS_AGENTS_CAPACITY_SCRIPT:-$HERDR_AGENTS_SCRIPT_DIR/capacity.sh}"
 HERDR_AGENTS_NAME_PATTERN='^[a-z][a-z0-9_-]{0,31}$'
 HERDR_AGENTS_NAME_ERROR=""
 # How long a prompt may take to show that it was submitted (or, with send
@@ -88,9 +90,11 @@ spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        Spawn refuses a kind whose plan has used $ACFS_AGENTS_QUOTA_LIMIT
        percent (default 90) of its 5-hour window, or reports a limit
        reached ('acfs agents quota check', before anything is created),
-       and refuses when the host's MemAvailable is under
-       $ACFS_AGENTS_MIN_MEM_MIB MiB (default 4096); --force spawns anyway.
-       Unknown usage or memory never refuses.
+       and refuses when the host's capacity guard is red ('acfs capacity
+       --guard --check': MemAvailable under 4 GiB, the --cwd or temp
+       filesystem under 10% free, or PSI memory full avg60 over 10; its
+       ACFS_CAPACITY_GUARD_* variables set the thresholds); --force spawns
+       anyway. Unknown usage or capacity never refuses.
 send   Prompt every matching agent, and wait until each is seen working, which
        proves the prompt was submitted (with --wait: until its turn ends), for
        at most --timeout ms (default 15000). Exits non-zero when any agent
@@ -738,22 +742,30 @@ herdr_agents_spawn() {
                 *) herdr_agents_note "could not check $quota_kind's usage (agent_quota.sh exited $quota_status); spawning anyway" ;;
             esac
         done
-        # Each Claude agent holds about 450 MB with its MCP servers; spawning
-        # into a full host gets agents and Agent Mail OOM-killed (acfs-2xtg).
-        local min_mib="${ACFS_AGENTS_MIN_MEM_MIB:-4096}" avail_kib
-        [[ "$min_mib" =~ ^[0-9]+$ ]] || herdr_agents_die "ACFS_AGENTS_MIN_MEM_MIB must be whole MiB: $min_mib"
-        avail_kib="$(awk '$1 == "MemAvailable:" { print $2; exit }' "${HERDR_AGENTS_PROC_ROOT:-/proc}/meminfo" 2>/dev/null || true)"
-        if [[ ! "$avail_kib" =~ ^[0-9]+$ ]]; then
-            herdr_agents_note "could not read MemAvailable from ${HERDR_AGENTS_PROC_ROOT:-/proc}/meminfo; spawning anyway"
-        elif (( avail_kib / 1024 < min_mib )); then
-            herdr_agents_die "spawn refused: MemAvailable is $((avail_kib / 1024)) MiB, under ${min_mib} MiB (ACFS_AGENTS_MIN_MEM_MIB); retire idle agents ('acfs agents reap'), or --force spawns anyway"
-        fi
     fi
     if [[ -z "$cwd" ]]; then
         cwd="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
     fi
     [[ -d "$cwd" ]] || herdr_agents_die "--cwd is not a directory: $cwd"
     cwd="$(cd "$cwd" && pwd -P)"
+    # Each Claude agent holds about 450 MB with its MCP servers: spawning into
+    # a host short of memory gets agents and Agent Mail OOM-killed, and one
+    # short of disk fails their writes (acfs-2xtg, acfs-gmbo). The guard
+    # prints its reasons to stderr.
+    if [[ "$force" == false ]]; then
+        local guard_status=0
+        if [[ -r "$HERDR_AGENTS_CAPACITY_SCRIPT" ]]; then
+            ACFS_CAPACITY_WORK_DIR="$cwd" bash "$HERDR_AGENTS_CAPACITY_SCRIPT" --guard --check || guard_status=$?
+        else
+            guard_status=127
+        fi
+        case "$guard_status" in
+            0) ;;
+            1) herdr_agents_die "spawn refused: the host's capacity guard is red (see 'acfs capacity --guard'); retire idle agents ('acfs agents reap'), or --force spawns anyway" ;;
+            127) herdr_agents_note "could not check the host's capacity ($HERDR_AGENTS_CAPACITY_SCRIPT not found); spawning anyway" ;;
+            *) herdr_agents_note "could not check the host's capacity (capacity.sh exited $guard_status); spawning anyway" ;;
+        esac
+    fi
 
     local base_prompt=""
     case "$prompt_mode" in

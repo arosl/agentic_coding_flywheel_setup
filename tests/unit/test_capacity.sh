@@ -528,6 +528,13 @@ test_guard_green_suggests_max_agents() {
 
     FAKE_TMP_FSTYPE=ext4 run_guard "$host" --check || status=$?
     [[ "$status" -eq 0 ]] || return 1
+
+    # --check (spawn's question) runs neither rch nor herdr, which never make
+    # the guard red.
+    printf '#!/usr/bin/env bash\ntouch "%s/%s.ran"\n' "$host" rch > "$host/bin/rch"
+    printf '#!/usr/bin/env bash\ntouch "%s/%s.ran"\n' "$host" herdr > "$host/bin/herdr"
+    FAKE_TMP_FSTYPE=ext4 run_guard "$host" --check || return 1
+    [[ ! -e "$host/rch.ran" && ! -e "$host/herdr.ran" ]] || return 1
     pass "guard_green_suggests_max_agents"
 }
 

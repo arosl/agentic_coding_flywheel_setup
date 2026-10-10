@@ -194,8 +194,14 @@ agent_quota_show() {
            (if $p.note then "  \($p.kind): \($p.note)" else empty end))
     ' <<<"$doc"
     if [[ -r "$AGENT_QUOTA_CAPACITY_SCRIPT" ]]; then
+        # A guard that fails part way prints nothing of its report.
+        local report=""
         printf '\n'
-        bash "$AGENT_QUOTA_CAPACITY_SCRIPT" --guard 2>/dev/null || printf 'Host capacity guard: unavailable\n'
+        if report="$(bash "$AGENT_QUOTA_CAPACITY_SCRIPT" --guard 2>/dev/null)"; then
+            printf '%s\n' "$report"
+        else
+            printf 'Host capacity guard: unavailable\n'
+        fi
     fi
 }
 

@@ -275,6 +275,17 @@ STUB
 chmod +x "$WORK/bin/herdr" "$WORK/bin/am" "$WORK/bin/codex" "$WORK/bin/curl" "$WORK/bin/br" "$WORK/bin/bv"
 
 # A fresh stub state per case.
+# A stub capacity.sh, so spawn's guard never reads this host: it logs its
+# arguments and work directory to $STUB_DIR/capacity_calls, and exits $STUB_DIR/guard_rc (default 0),
+# with a reason on stderr when that is 1.
+cat >"$WORK/capacity.sh" <<'STUB'
+#!/usr/bin/env bash
+printf 'capacity %s work=%s\n' "$*" "${ACFS_CAPACITY_WORK_DIR:-}" >>"$STUB_DIR/capacity_calls"
+rc="$(cat "$STUB_DIR/guard_rc" 2>/dev/null || echo 0)"
+[[ "$rc" != 1 ]] || echo "capacity guard: MemAvailable is 1024 MiB, under 4096 MiB" >&2
+exit "$rc"
+STUB
+
 reset_stub() {
     STUB_DIR="$WORK/stub.$1"
     mkdir -p "$STUB_DIR/proc" "$STUB_DIR/codex-home"
@@ -317,6 +328,7 @@ run_helper() {
     RC=0
     PATH="$WORK/bin:$PATH" HOME="$WORK/home" ACFS_HOME="$WORK/acfs-home" \
         CODEX_HOME="$STUB_DIR/codex-home" HERDR_AGENTS_PROC_ROOT="$STUB_DIR/proc" \
+        ACFS_AGENTS_CAPACITY_SCRIPT="${ACFS_AGENTS_CAPACITY_SCRIPT:-$WORK/capacity.sh}" \
         HERDR_AGENTS_DAEMON_WAIT_TRIES=3 HERDR_AGENTS_DAEMON_WAIT_INTERVAL=0 \
         HERDR_ENV=1 HERDR_PANE_ID=w9:p9 HERDR_TAB_ID=w9:t9 HERDR_SOCKET_PATH=/stub.sock HERDR_BIN_PATH=/stub/herdr \
         "${RUN_WRAPPER[@]}" bash "$HELPER" "$@" >"$STUB_DIR/out" 2>"$STUB_DIR/err" || RC=$?
@@ -738,37 +750,38 @@ codex_usage 40.0
 run_helper spawn --codex 1 --cwd "$WORK/repo" --no-prompt
 check "a plan under the limit spawns as usual" test "$RC/$(count_calls '^herdr agent start')" = "0/1"
 
-# acfs-2xtg: spawn refuses when the host's MemAvailable is under the floor.
-meminfo() { printf 'MemTotal:       67108864 kB\nMemFree:          100000 kB\nMemAvailable:   %s kB\n' "$1" >"$STUB_DIR/proc/meminfo"; }
-
-reset_stub memlow
-meminfo 1048576
+# acfs-2xtg, acfs-gmbo: spawn refuses when the host's capacity guard is red.
+reset_stub guardred
+echo 1 >"$STUB_DIR/guard_rc"
 run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt
-check "MemAvailable of 1 GiB stops spawn before any identity or tab" \
+check "a red capacity guard stops spawn before any identity or tab" \
     test "$RC/$(count_calls '^am')/$(count_calls '^herdr')" = "1/0/0"
-check "it names the memory, the floor and how to override" \
-    bash -c 'grep -q "spawn refused: MemAvailable is 1024 MiB, under 4096 MiB (ACFS_AGENTS_MIN_MEM_MIB)" <<<"$1" && grep -q -- "--force spawns anyway" <<<"$1"' _ "$ERR"
+check "the guard is asked with --check, about the filesystem of --cwd" \
+    grep -qx "capacity --guard --check work=$(cd "$WORK/repo" && pwd -P)" "$STUB_DIR/capacity_calls"
+check "it shows the guard's reasons and how to override" \
+    bash -c 'grep -q "capacity guard: MemAvailable is 1024 MiB" <<<"$1" && grep -q "spawn refused: the host.s capacity guard is red" <<<"$1" && grep -q -- "--force spawns anyway" <<<"$1"' _ "$ERR"
 
-reset_stub memforce
-meminfo 1048576
+reset_stub guardforce
+echo 1 >"$STUB_DIR/guard_rc"
 run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt --force
-check "--force spawns with little memory" test "$RC/$(count_calls '^herdr agent start')" = "0/1"
+check "--force spawns without asking the guard" \
+    bash -c '[[ "$1" == 0/1 && ! -e "$2" ]]' _ "$RC/$(count_calls '^herdr agent start')" "$STUB_DIR/capacity_calls"
 
-reset_stub memfloor
-meminfo 1048576
-ACFS_AGENTS_MIN_MEM_MIB=512 run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt
-check "ACFS_AGENTS_MIN_MEM_MIB lowers the floor" test "$RC/$(count_calls '^herdr agent start')" = "0/1"
-
-reset_stub memplenty
-meminfo 33554432
+reset_stub guardgreen
 run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt
-check "32 GiB available spawns, and says nothing about memory" \
-    bash -c '[[ "$1" -eq 0 ]] && ! grep -q MemAvailable <<<"$2"' _ "$RC" "$ERR"
+check "a guard that isn't red spawns, and says nothing about capacity" \
+    bash -c '[[ "$1" -eq 0 ]] && ! grep -q capacity <<<"$2"' _ "$RC" "$ERR"
 
-reset_stub memunknown
+reset_stub guardunknown
+echo 2 >"$STUB_DIR/guard_rc"
 run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt
-check "an unreadable meminfo spawns anyway, and says so" \
-    bash -c '[[ "$1" -eq 0 ]] && grep -q "could not read MemAvailable" <<<"$2"' _ "$RC" "$ERR"
+check "a guard that can't read the host spawns anyway, and says so" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "could not check the host.s capacity (capacity.sh exited 2)" <<<"$2"' _ "$RC" "$ERR"
+
+reset_stub guardmissing
+ACFS_AGENTS_CAPACITY_SCRIPT="$WORK/missing.sh" run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt
+check "without capacity.sh, spawn goes ahead and says so" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "missing.sh not found" <<<"$2"' _ "$RC" "$ERR"
 
 reset_stub quotashow
 codex_usage 40.0

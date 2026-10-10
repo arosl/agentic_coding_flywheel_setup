@@ -37,7 +37,8 @@ Options:
                           filesystems, PSI memory and cpu, rch's posture and
                           workers, and a suggested maximum number of agents
   --check                 With --guard: exit 1 when the guard is red, with the
-                          reasons on stderr; 0 otherwise; 2 when unreadable
+                          reasons on stderr; 0 otherwise; 2 when unreadable.
+                          It reads neither rch nor herdr, which never make it red
   -h, --help              Show this help
 
 The guard is red when MemAvailable is under 4 GiB, a work or temp filesystem
@@ -1346,8 +1347,17 @@ capacity_guard_collect() {
         fi
     done
 
-    capacity_guard_read_rch
+    # rch and herdr only warn and inform, never turn the guard red, so
+    # --check (spawn's question) doesn't wait on them.
+    if [[ "$CAPACITY_GUARD_CHECK" == true ]]; then
+        CAPACITY_GUARD_RCH_POSTURE="skipped"
+        CAPACITY_GUARD_RCH_WORKERS=""
+        CAPACITY_GUARD_RCH_HEALTHY=""
+    else
+        capacity_guard_read_rch
+    fi
     case "$CAPACITY_GUARD_RCH_POSTURE" in
+        skipped) ;;
         not_installed)
             CAPACITY_GUARD_WARNINGS+=("rch is not installed: every build runs locally") ;;
         unknown)
@@ -1359,7 +1369,8 @@ capacity_guard_collect() {
             ;;
     esac
 
-    CAPACITY_GUARD_LIVE_AGENTS="$(capacity_guard_live_agents)"
+    CAPACITY_GUARD_LIVE_AGENTS=""
+    [[ "$CAPACITY_GUARD_CHECK" == true ]] || CAPACITY_GUARD_LIVE_AGENTS="$(capacity_guard_live_agents)"
     [[ "$CAPACITY_GUARD_LIVE_AGENTS" =~ ^[0-9]+$ ]] || CAPACITY_GUARD_LIVE_AGENTS=""
     CAPACITY_GUARD_MORE_AGENTS=""
     CAPACITY_GUARD_MAX_AGENTS=""
