@@ -1059,6 +1059,7 @@ print_acfs_help() {
     echo "  status [options]    Quick one-line health summary"
     echo "  rescue [options]    Read-only first-run recovery advisor"
     echo "  capacity [options]  Estimate safe/recommended agent counts"
+    echo "  state <command>     A swarm machine's state layer: export|import|repair|doctor|lease"
     echo "  policy-lint         Lint AGENTS/templates/docs for policy drift"
     echo "  credential-preflight Read-only credential exposure preflight"
     echo "  agent-readiness     Agent CLI, auth file and CAAM profile readiness (--json;"
@@ -2209,6 +2210,9 @@ check_workspace() {
     blank_line
 }
 
+# The guard's JSON report, kept by check_host_capacity for check_container.
+_ACFS_DOCTOR_GUARD_JSON=""
+
 # Host headroom for an agent swarm (acfs-gmbo), from 'acfs capacity --guard':
 # warns on a host with no swap, an rch with no workers, and a tmpfs /tmp more
 # than half full. Read-only; the guard's red line is for spawn, not doctor.
@@ -2219,6 +2223,7 @@ check_host_capacity() {
     command -v jq >/dev/null 2>&1 || return 0
     # doctor reads no live-agent count, so the guard doesn't wait on herdr.
     guard="$(ACFS_CAPACITY_HERDR_AVAILABLE=false _acfs_doctor_exec_bash_script "$helper" --guard --json 2>/dev/null)" || guard=""
+    _ACFS_DOCTOR_GUARD_JSON="$guard"
 
     section "Host capacity"
 
@@ -2270,6 +2275,254 @@ check_host_capacity() {
     esac
 
     blank_line
+}
+
+# What systemd-detect-virt -c says ("lxc" in an Incus system container), or
+# "none".
+_acfs_doctor_container_virt() {
+    local virt=""
+    if command -v systemd-detect-virt >/dev/null 2>&1; then
+        virt="$(systemd-detect-virt --container 2>/dev/null || true)"
+    fi
+    [[ "$virt" =~ ^[a-z0-9-]+$ ]] || virt="none"
+    printf '%s\n' "$virt"
+}
+
+# The filesystem type holding a path ("tmpfs", "ext2/ext3", ...); nothing
+# when it can't be read.
+_acfs_doctor_fstype() {
+    stat -f -c %T -- "$1" 2>/dev/null || true
+}
+
+# A byte count as whole GiB, for MemoryLow values.
+_acfs_doctor_gib() {
+    if [[ "$1" =~ ^[0-9]+$ ]]; then
+        printf '%s GiB\n' "$(($1 / 1073741824))"
+    else
+        printf '%s\n' "${1:-unset}"
+    fi
+}
+
+# Inside an Incus system container (acfs-ioo3.6; plan 3.1 to 3.3, 4.2 item
+# 7): the container's memory against its limit, /tmp on disk, linger, the
+# acfs slices and what kills an agent under pressure, and the state layer.
+# Read-only, and silent outside a container.
+check_container() {
+    [[ "$(_acfs_doctor_container_virt)" == lxc ]] || return 0
+
+    section "Container"
+    check "container.virt" "Container" "pass" "lxc (an Incus system container)"
+    _acfs_doctor_container_memory
+    _acfs_doctor_container_tmp
+    _acfs_doctor_container_linger
+    _acfs_doctor_container_slices
+    _acfs_doctor_container_state
+    blank_line
+}
+
+# memory.current against memory.high (or memory.max), from the guard's report,
+# so doctor and spawn's 80% admission line agree.
+_acfs_doctor_container_memory() {
+    local guard="$_ACFS_DOCTOR_GUARD_JSON" current="" limit="" file="" used="" max="" over=""
+    if ! command -v jq >/dev/null 2>&1 || ! jq -e '.schema_version == 1 and .container.virt == "lxc"' >/dev/null 2>&1 <<<"$guard"; then
+        check "container.memory" "Container memory" "skip" "acfs capacity --guard gave no container report"
+        return 0
+    fi
+    current="$(jq -r '.container.memory_current_mib // ""' <<<"$guard")"
+    limit="$(jq -r '.container.memory_limit_mib // ""' <<<"$guard")"
+    file="$(jq -r '.container.memory_limit_file // ""' <<<"$guard")"
+    used="$(jq -r '.container.memory_used_percent // ""' <<<"$guard")"
+    max="$(jq -r '.thresholds.max_container_memory_percent // 80' <<<"$guard")"
+    over="$(jq -r '[.reasons[]? | select(test("memory\\.current"))] | length' <<<"$guard")"
+
+    if [[ -z "$current" ]]; then
+        check "container.memory" "Container memory" "skip" "the container's memory.current can't be read"
+    elif [[ -z "$limit" ]]; then
+        check "container.memory" "Container memory" "warn" \
+            "no limit (memory.high and memory.max are max): the swarm can take the host's RAM" \
+            "On the host: incus config set <name> limits.memory=<size> limits.memory.enforce=soft"
+    elif [[ "$over" != 0 ]]; then
+        check "container.memory" "Container memory" "warn" \
+            "memory.current ${current} MiB is ${used}% of ${file} (${limit} MiB): over ${max}%, so acfs agents spawn refuses" \
+            "Retire idle agents (acfs agents reap), or raise limits.memory on the host"
+    else
+        check "container.memory" "Container memory" "pass" \
+            "memory.current ${current} MiB, ${used}% of ${file} (${limit} MiB); spawn refuses over ${max}%"
+    fi
+}
+
+# /tmp on disk: in a container a tmpfs /tmp is charged to the container's
+# memory. TMPDIR, when it points elsewhere, gets the same test.
+_acfs_doctor_container_tmp() {
+    local fstype="" tmpdir="${TMPDIR:-}"
+    fstype="$(_acfs_doctor_fstype /tmp)"
+    case "$fstype" in
+        "") check "container.tmp" "/tmp on disk" "skip" "can't read /tmp's filesystem" ;;
+        tmpfs)
+            check "container.tmp" "/tmp on disk" "warn" \
+                "/tmp is a tmpfs: what it holds is charged to the container's memory" \
+                "sudo systemctl mask tmp.mount, then restart the container (an Incus tmpfs disk at /tmp is removed on the host instead)"
+            ;;
+        *) check "container.tmp" "/tmp on disk" "pass" "$fstype" ;;
+    esac
+
+    # The install points the agents' TMPDIR at /data/tmp, on the data volume
+    # (acfs-ioo3.7), so their temp files neither fill the root volume nor
+    # hold RAM.
+    tmpdir="${tmpdir%/}"
+    if [[ -z "$tmpdir" || "$tmpdir" == /tmp ]]; then
+        check "container.tmpdir" "TMPDIR on the data volume" "warn" \
+            "TMPDIR is ${tmpdir:-unset}: agents' temp files land on the root volume" \
+            "acfs update writes TMPDIR=/data/tmp to ~/.config/environment.d/60-acfs-tmpdir.conf; log in again"
+    else
+        fstype="$(_acfs_doctor_fstype "$tmpdir")"
+        if [[ "$fstype" == tmpfs ]]; then
+            check "container.tmpdir" "TMPDIR on the data volume" "warn" \
+                "TMPDIR=$tmpdir is on a tmpfs: what it holds is charged to the container's memory" \
+                "acfs update writes TMPDIR=/data/tmp to ~/.config/environment.d/60-acfs-tmpdir.conf; log in again"
+        else
+            check "container.tmpdir" "TMPDIR on the data volume" "pass" "$tmpdir"
+        fi
+    fi
+}
+
+# Linger keeps the user's manager, and with it herdr, Agent Mail and the
+# agents' slice, running without a login.
+_acfs_doctor_container_linger() {
+    local user="${TARGET_USER:-}" linger=""
+    [[ -n "$user" ]] || user="$(id -un 2>/dev/null || true)"
+    if [[ -z "$user" ]]; then
+        check "container.linger" "Linger" "skip" "no user to check"
+        return 0
+    fi
+    if command -v loginctl >/dev/null 2>&1; then
+        linger="$(loginctl show-user "$user" --property=Linger --value 2>/dev/null || true)"
+    fi
+    # loginctl knows only users with a session or linger; the flag file
+    # answers for the rest.
+    if [[ -z "$linger" ]]; then
+        if [[ -e "/var/lib/systemd/linger/$user" ]]; then linger="yes"; else linger="no"; fi
+    fi
+    if [[ "$linger" == yes ]]; then
+        check "container.linger" "Linger" "pass" "enabled for $user"
+    else
+        check "container.linger" "Linger" "warn" \
+            "off for $user: herdr, Agent Mail and the agents stop when the last login ends" \
+            "sudo loginctl enable-linger $user"
+    fi
+}
+
+# The three acfs slices (acfs-ioo3.5), MemoryLow along the chain that makes
+# the services' protection count, and the killer on the agents' slice.
+_acfs_doctor_container_slices() {
+    local out="" line key value unit="" uid="" chain="" slice missing=()
+    local -A load=() low=() oom=()
+    if ! command -v systemctl >/dev/null 2>&1; then
+        check "container.slices" "acfs slices" "skip" "systemctl not found"
+        return 0
+    fi
+    out="$(systemctl --user show --property=Id,LoadState,MemoryLow,ManagedOOMMemoryPressure \
+        acfs-services.slice acfs-background.slice acfs-agents.slice 2>/dev/null)" || out=""
+    if [[ -z "$out" ]]; then
+        check "container.slices" "acfs slices" "skip" "the user manager isn't reachable (systemctl --user)"
+        return 0
+    fi
+    while IFS= read -r line; do
+        [[ "$line" == *=* ]] || continue
+        key="${line%%=*}"
+        value="${line#*=}"
+        case "$key" in
+            Id) unit="$value" ;;
+            LoadState) [[ -n "$unit" ]] && load["$unit"]="$value" ;;
+            MemoryLow) [[ -n "$unit" ]] && low["$unit"]="$value" ;;
+            ManagedOOMMemoryPressure) [[ -n "$unit" ]] && oom["$unit"]="$value" ;;
+        esac
+    done <<<"$out"
+
+    for slice in acfs-services.slice acfs-background.slice acfs-agents.slice; do
+        [[ "${load[$slice]:-}" == loaded ]] || missing+=("$slice")
+    done
+    if (( ${#missing[@]} == 3 )); then
+        check "container.slices" "acfs slices" "warn" \
+            "not installed: services, background and agents share one cgroup, so nothing protects Agent Mail and herdr from the agents" \
+            "acfs update installs the service protection"
+        return 0
+    elif (( ${#missing[@]} > 0 )); then
+        check "container.slices" "acfs slices" "warn" "not loaded: ${missing[*]}" \
+            "acfs update installs the service protection"
+    else
+        check "container.slices" "acfs slices" "pass" "acfs-services, acfs-background and acfs-agents loaded"
+    fi
+
+    # MemoryLow on the services' slice protects nothing unless every
+    # ancestor has some too.
+    if [[ "${load[acfs-services.slice]:-}" == loaded ]]; then
+        uid="$(id -u "${TARGET_USER:-}" 2>/dev/null || id -u)"
+        # --value prints one value per unit, with a blank line between units.
+        local protected=0
+        while IFS= read -r value; do
+            [[ "$value" =~ ^([1-9][0-9]*|infinity)$ ]] && protected=$((protected + 1))
+        done < <(systemctl show --property=MemoryLow --value "user-$uid.slice" "user@$uid.service" 2>/dev/null)
+        chain="no"
+        (( protected == 2 )) && chain="yes"
+        if [[ ! "${low[acfs-services.slice]:-0}" =~ ^([1-9][0-9]*|infinity)$ ]]; then
+            check "container.memory_low" "Services' memory protection" "warn" \
+                "acfs-services.slice has no MemoryLow: the agents can take Agent Mail's and herdr's memory" \
+                "acfs update installs the service protection"
+        elif [[ "$chain" != yes ]]; then
+            check "container.memory_low" "Services' memory protection" "warn" \
+                "user-$uid.slice or user@$uid.service has no MemoryLow, so acfs-services.slice's protects nothing" \
+                "acfs update installs the system drop-ins"
+        else
+            check "container.memory_low" "Services' memory protection" "pass" \
+                "MemoryLow $(_acfs_doctor_gib "${low[acfs-services.slice]}") on acfs-services.slice, $(_acfs_doctor_gib "${low[acfs-background.slice]:-0}") on acfs-background.slice"
+        fi
+    fi
+
+    if [[ "${load[acfs-agents.slice]:-}" == loaded ]]; then
+        if [[ "${oom[acfs-agents.slice]:-}" == kill ]] && systemctl is-active --quiet systemd-oomd.service 2>/dev/null; then
+            check "container.oomd" "Agents' OOM killer" "pass" "systemd-oomd kills in acfs-agents.slice under memory pressure"
+        elif systemctl --user is-active --quiet acfs-agents-pressure.service 2>/dev/null; then
+            check "container.oomd" "Agents' OOM killer" "pass" "acfs-agents-pressure.service kills in acfs-agents.slice under memory pressure"
+        else
+            check "container.oomd" "Agents' OOM killer" "warn" \
+                "nothing kills an agent under memory pressure: past memory.high the container stalls, services and all" \
+                "sudo systemctl enable --now systemd-oomd, then acfs update"
+        fi
+    fi
+}
+
+# The state layer's own read-only checks (acfs-ioo3.3): state_layer.sh
+# doctor --json prints an array of {id, label, status, details, fix}.
+_acfs_doctor_container_state() {
+    local helper="" out="" id label status details fix bad=0
+    helper="$(_acfs_doctor_find_lib_script "state_layer.sh" 2>/dev/null || true)"
+    if [[ -z "$helper" ]]; then
+        check "state.layer" "State layer" "skip" "state_layer.sh is not installed"
+        return 0
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        check "state.layer" "State layer" "skip" "jq is required to read state_layer.sh doctor"
+        return 0
+    fi
+    out="$(_acfs_doctor_exec_bash_script "$helper" doctor --json 2>/dev/null)" || true
+    if ! jq -e 'type == "array" and length > 0' >/dev/null 2>&1 <<<"$out"; then
+        check "state.layer" "State layer" "skip" "state_layer.sh doctor --json gave no report"
+        return 0
+    fi
+    # Fields are split on US (0x1f): a tab, being IFS whitespace, would
+    # collapse an empty label or details into the next field.
+    while IFS=$'\x1f' read -r id label status details fix; do
+        if [[ "$id" =~ ^state\.[a-z0-9_.-]+$ && "$status" =~ ^(pass|warn|fail|skip)$ ]]; then
+            check "$id" "${label:-$id}" "$status" "$details" "$fix"
+        else
+            bad=$((bad + 1))
+        fi
+    done < <(jq -r '.[] | if type == "object" then . else {} end
+        | [.id, .label, .status, .details, .fix] | map(. // "" | tostring | gsub("[\u001f\n\r]"; " ")) | join("\u001f")' <<<"$out")
+    if (( bad > 0 )); then
+        check "state.layer.report" "State layer report" "warn" "$bad item(s) from state_layer.sh doctor --json are not checks doctor can read"
+    fi
 }
 
 # Check shell
@@ -3447,6 +3700,16 @@ check_incus() {
     fi
 
     version="$(get_version_line "$incus_bin")"
+
+    # In an unprivileged system container there is no daemon of its own (no
+    # nesting): test instances live on the host's Incus, reached through a
+    # remote with a restricted certificate (plan 3.1).
+    if [[ "$(_acfs_doctor_container_virt)" == lxc ]]; then
+        check "tools.incus" "Incus ($version)" "pass" "client; instances live on a remote"
+        _acfs_doctor_incus_remote "$incus_bin"
+        return 0
+    fi
+
     if [[ -e "$kvm" ]]; then
         check "tools.incus" "Incus ($version)" "pass" "containers and VMs"
     else
@@ -3492,6 +3755,32 @@ check_incus() {
         return 0
     fi
     check "tools.incus.daemon" "Incus daemon" "pass" "reachable and initialised"
+}
+
+# Remotes other than the local socket and the public image servers: from
+# inside a container, one of them is the host's Incus. Reads the client's
+# config only; contacts no server.
+_acfs_doctor_incus_remote() {
+    local incus_bin="$1" remotes="" names=""
+    local -a limit=()
+    command -v timeout >/dev/null 2>&1 && limit=(timeout 10)
+    remotes="$("${limit[@]}" "$incus_bin" remote list --format json 2>/dev/null || true)"
+    if ! command -v jq >/dev/null 2>&1 || ! names="$(jq -er '
+            [to_entries[]
+             | select(((.value.Protocol // .value.protocol // "") as $p | $p == "" or $p == "incus")
+                      and ((.value.Public // .value.public // false) != true)
+                      and (((.value.Addr // .value.addr // "") | startswith("unix:")) | not))
+             | .key] | join(", ")' <<<"$remotes" 2>/dev/null)"; then
+        check "tools.incus.remote" "Incus remote" "skip" "incus remote list gave nothing readable"
+        return 0
+    fi
+    if [[ -n "$names" ]]; then
+        check "tools.incus.remote" "Incus remote" "pass" "$names"
+    else
+        check "tools.incus.remote" "Incus remote" "warn" \
+            "none: test instances can't be made from inside the container" \
+            "Add the host's Incus with the token host setup printed: incus remote add <name> <token>"
+    fi
 }
 
 # ============================================================
@@ -5424,6 +5713,18 @@ main() {
             echo "Error: capacity.sh not found" >&2
             return 1
             ;;
+        state)
+            shift
+            local state_layer_script=""
+            state_layer_script="$(_acfs_doctor_find_lib_script "state_layer.sh" 2>/dev/null || true)"
+
+            if [[ -n "$state_layer_script" ]]; then
+                _acfs_doctor_exec_bash_script "$state_layer_script" "$@"
+            fi
+
+            echo "Error: state_layer.sh not found" >&2
+            return 1
+            ;;
         policy-lint|policy_lint)
             shift
             local policy_lint_script=""
@@ -6183,6 +6484,7 @@ $(gum style --foreground "$ACFS_MUTED" "OS:") $(gum style --foreground "$ACFS_TE
     check_identity
     check_workspace
     check_host_capacity
+    check_container
     check_shell
     check_core_tools
     check_agents

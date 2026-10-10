@@ -44,8 +44,15 @@ Options:
 The guard is red when MemAvailable is under 4 GiB, a work or temp filesystem
 has under 10% free, or PSI memory "full" avg60 is over 10. It warns when the
 host has no swap, rch has no workers, or a tmpfs /tmp is more than 50% full.
+In an Incus system container (systemd-detect-virt -c says lxc) it reads the
+container's own cgroup: it is red when memory.current is over 80% of
+memory.high (memory.max when there is no soft limit), and PSI comes from the
+cgroup's memory.pressure, not /proc/pressure. Anywhere, the memory.pressure
+of acfs-agents.slice (and the other acfs slices, reported) is read when the
+slice exists; the agents' slice over the PSI line is red as well.
 Thresholds: ACFS_CAPACITY_GUARD_MIN_MEM_MIB (4096),
 ACFS_CAPACITY_GUARD_MIN_DISK_PCT (10), ACFS_CAPACITY_GUARD_MAX_PSI_FULL (10),
+ACFS_CAPACITY_GUARD_MAX_CGROUP_PCT (80),
 ACFS_CAPACITY_GUARD_AGENT_MIB (1024, one Claude agent with its MCP children)
 and ACFS_CAPACITY_GUARD_GATE_MIB (4096, headroom kept for one gate run).
 
@@ -61,6 +68,8 @@ Environment overrides for tests:
   ACFS_RESOURCE_PROFILE_HOME
   ACFS_CAPACITY_MEMINFO_FILE, ACFS_CAPACITY_PSI_DIR
   ACFS_CAPACITY_WORK_DIR, ACFS_CAPACITY_TEMP_DIR
+  ACFS_CAPACITY_VIRT (what systemd-detect-virt -c would say),
+  ACFS_CAPACITY_CGROUP_ROOT (/sys/fs/cgroup), ACFS_CAPACITY_UID
 EOF
 }
 
@@ -1186,13 +1195,34 @@ capacity_guard_meminfo_kb() {
     awk -v field="$field:" '$1 == field {print $2; exit}' "${ACFS_CAPACITY_MEMINFO_FILE:-/proc/meminfo}" 2>/dev/null || true
 }
 
-# A PSI avg60 ("some" or "full") for memory or cpu; nothing when the kernel
-# has no PSI.
+# A PSI avg60 ("some" or "full") from a pressure file (/proc/pressure/memory
+# or a cgroup's memory.pressure); nothing when the file can't be read.
 capacity_guard_psi_avg60() {
-    local resource="$1" kind="$2"
+    local file="$1" kind="$2"
     awk -v kind="$kind" '$1 == kind {
             for (i = 2; i <= NF; i++) if ($i ~ /^avg60=/) { sub(/^avg60=/, "", $i); print $i; exit }
-        }' "${ACFS_CAPACITY_PSI_DIR:-/proc/pressure}/$resource" 2>/dev/null || true
+        }' "$file" 2>/dev/null || true
+}
+
+# What systemd-detect-virt -c says ("lxc" in an Incus system container), or
+# "none".
+capacity_guard_container_virt() {
+    local virt="${ACFS_CAPACITY_VIRT:-}" detect_bin=""
+    if [[ -z "$virt" ]]; then
+        detect_bin="$(capacity_system_binary_path systemd-detect-virt 2>/dev/null || true)"
+        [[ -n "$detect_bin" ]] && virt="$("$detect_bin" --container 2>/dev/null || true)"
+    fi
+    [[ "$virt" =~ ^[a-z0-9-]+$ ]] || virt="none"
+    printf '%s\n' "$virt"
+}
+
+# The first line of a cgroup v2 file when it is a byte count or "max";
+# nothing otherwise.
+capacity_guard_cgroup_value() {
+    local value=""
+    { IFS= read -r value <"$1"; } 2>/dev/null || true
+    [[ "$value" =~ ^(0|[1-9][0-9]{0,18}|max)$ ]] && printf '%s\n' "$value"
+    return 0
 }
 
 # "<fstype> <size_kb> <avail_kb> <mountpoint>" for the filesystem holding a path.
@@ -1261,17 +1291,20 @@ capacity_guard_gt() {
 }
 
 capacity_guard_collect() {
-    local min_mem_mib min_disk_pct max_psi_full agent_mib gate_mib
+    local min_mem_mib min_disk_pct max_psi_full agent_mib gate_mib max_cg_pct
     min_mem_mib="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_MIN_MEM_MIB:-}" 4096)"
     min_disk_pct="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_MIN_DISK_PCT:-}" 10)"
     max_psi_full="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_MAX_PSI_FULL:-}" 10)"
     agent_mib="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_AGENT_MIB:-}" 1024)"
     gate_mib="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_GATE_MIB:-}" 4096)"
+    max_cg_pct="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_MAX_CGROUP_PCT:-}" 80)"
     (( agent_mib > 0 )) || agent_mib=1024
+    (( max_cg_pct > 0 && max_cg_pct <= 100 )) || max_cg_pct=80
 
     CAPACITY_GUARD_MIN_MEM_MIB="$min_mem_mib"
     CAPACITY_GUARD_MIN_DISK_PCT="$min_disk_pct"
     CAPACITY_GUARD_MAX_PSI_FULL="$max_psi_full"
+    CAPACITY_GUARD_MAX_CGROUP_PCT="$max_cg_pct"
     CAPACITY_GUARD_AGENT_MIB="$agent_mib"
     CAPACITY_GUARD_GATE_MIB="$gate_mib"
     CAPACITY_GUARD_REASONS=()
@@ -1302,15 +1335,84 @@ capacity_guard_collect() {
         CAPACITY_GUARD_WARNINGS+=("the host has no swap: a memory spike goes straight to the OOM killer")
     fi
 
-    CAPACITY_GUARD_PSI_MEMORY_SOME="$(capacity_guard_psi_avg60 memory some)"
-    CAPACITY_GUARD_PSI_MEMORY_FULL="$(capacity_guard_psi_avg60 memory full)"
-    CAPACITY_GUARD_PSI_CPU_SOME="$(capacity_guard_psi_avg60 cpu some)"
+    # In an Incus system container, /sys/fs/cgroup is the container's own
+    # cgroup: its memory.high (the soft limit) is what the swarm may use, and
+    # its memory.pressure is the container's PSI, where /proc/pressure would
+    # be the host's.
+    local cgroot="${ACFS_CAPACITY_CGROUP_ROOT:-/sys/fs/cgroup}"
+    local psi_memory_file="${ACFS_CAPACITY_PSI_DIR:-/proc/pressure}/memory"
+    local psi_cpu_file="${ACFS_CAPACITY_PSI_DIR:-/proc/pressure}/cpu"
+    local cg_current="" cg_high="" cg_max="" cg_limit="" cg_room_mib=""
+    CAPACITY_GUARD_VIRT="$(capacity_guard_container_virt)"
+    CAPACITY_GUARD_PSI_SOURCE="proc"
+    CAPACITY_GUARD_CG_CURRENT_MIB=""
+    CAPACITY_GUARD_CG_LIMIT_MIB=""
+    CAPACITY_GUARD_CG_LIMIT_FILE=""
+    CAPACITY_GUARD_CG_USED_PCT=""
+    if [[ "$CAPACITY_GUARD_VIRT" == lxc ]]; then
+        psi_memory_file="$cgroot/memory.pressure"
+        psi_cpu_file="$cgroot/cpu.pressure"
+        CAPACITY_GUARD_PSI_SOURCE="cgroup"
+        cg_current="$(capacity_guard_cgroup_value "$cgroot/memory.current")"
+        cg_high="$(capacity_guard_cgroup_value "$cgroot/memory.high")"
+        cg_max="$(capacity_guard_cgroup_value "$cgroot/memory.max")"
+        # A limit past 2^50 bytes (1 PiB) is no limit, and keeps the
+        # percentage arithmetic below inside 64 bits.
+        if [[ "$cg_high" =~ ^[0-9]+$ ]] && (( ${#cg_high} < 16 && cg_high > 0 && cg_high < 1125899906842624 )); then
+            cg_limit="$cg_high"
+            CAPACITY_GUARD_CG_LIMIT_FILE="memory.high"
+        elif [[ "$cg_max" =~ ^[0-9]+$ ]] && (( ${#cg_max} < 16 && cg_max > 0 && cg_max < 1125899906842624 )); then
+            cg_limit="$cg_max"
+            CAPACITY_GUARD_CG_LIMIT_FILE="memory.max"
+        fi
+        if [[ ! "$cg_current" =~ ^[0-9]+$ ]] || (( ${#cg_current} >= 16 )); then
+            CAPACITY_GUARD_READABLE=false
+        else
+            CAPACITY_GUARD_CG_CURRENT_MIB=$((cg_current / 1048576))
+            if [[ -n "$cg_limit" ]]; then
+                CAPACITY_GUARD_CG_LIMIT_MIB=$((cg_limit / 1048576))
+                CAPACITY_GUARD_CG_USED_PCT=$((cg_current * 100 / cg_limit))
+                cg_room_mib=$(((cg_limit * max_cg_pct / 100 - cg_current) / 1048576))
+                (( cg_room_mib >= 0 )) || cg_room_mib=0
+                if (( cg_current * 100 > cg_limit * max_cg_pct )); then
+                    CAPACITY_GUARD_REASONS+=("the container's memory.current is ${CAPACITY_GUARD_CG_CURRENT_MIB} MiB, ${CAPACITY_GUARD_CG_USED_PCT}% of ${CAPACITY_GUARD_CG_LIMIT_FILE} (${CAPACITY_GUARD_CG_LIMIT_MIB} MiB), over ${max_cg_pct}%")
+                fi
+            else
+                CAPACITY_GUARD_WARNINGS+=("the container has no memory limit (memory.high and memory.max are max): the swarm can take the host's RAM")
+            fi
+        fi
+    fi
+
+    CAPACITY_GUARD_PSI_MEMORY_SOME="$(capacity_guard_psi_avg60 "$psi_memory_file" some)"
+    CAPACITY_GUARD_PSI_MEMORY_FULL="$(capacity_guard_psi_avg60 "$psi_memory_file" full)"
+    CAPACITY_GUARD_PSI_CPU_SOME="$(capacity_guard_psi_avg60 "$psi_cpu_file" some)"
     local psi_var
     for psi_var in CAPACITY_GUARD_PSI_MEMORY_SOME CAPACITY_GUARD_PSI_MEMORY_FULL CAPACITY_GUARD_PSI_CPU_SOME; do
         [[ "${!psi_var}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || printf -v "$psi_var" '%s' ""
     done
     if [[ -n "$CAPACITY_GUARD_PSI_MEMORY_FULL" ]] && capacity_guard_gt "$CAPACITY_GUARD_PSI_MEMORY_FULL" "$max_psi_full"; then
         CAPACITY_GUARD_REASONS+=("PSI memory full avg60 is ${CAPACITY_GUARD_PSI_MEMORY_FULL}, over ${max_psi_full}")
+    fi
+
+    # The acfs slices (acfs-ioo3.5) under the user's manager, each one that
+    # exists. The agents' slice can stall while the services' slice runs, so
+    # its own "full" line turns the guard red too.
+    local uid="${ACFS_CAPACITY_UID:-}" slice slice_file slice_some slice_full
+    [[ "$uid" =~ ^[0-9]+$ ]] || uid="$(id -u 2>/dev/null || true)"
+    CAPACITY_GUARD_SLICE_LINES=()
+    if [[ "$uid" =~ ^[0-9]+$ ]]; then
+        for slice in acfs-services acfs-background acfs-agents; do
+            slice_file="$cgroot/user.slice/user-$uid.slice/user@$uid.service/$slice.slice/memory.pressure"
+            [[ -r "$slice_file" ]] || continue
+            slice_some="$(capacity_guard_psi_avg60 "$slice_file" some)"
+            slice_full="$(capacity_guard_psi_avg60 "$slice_file" full)"
+            [[ "$slice_some" =~ ^[0-9]+(\.[0-9]+)?$ ]] || slice_some="-"
+            [[ "$slice_full" =~ ^[0-9]+(\.[0-9]+)?$ ]] || slice_full="-"
+            CAPACITY_GUARD_SLICE_LINES+=("$slice.slice $slice_some $slice_full")
+            if [[ "$slice" == acfs-agents && "$slice_full" != "-" ]] && capacity_guard_gt "$slice_full" "$max_psi_full"; then
+                CAPACITY_GUARD_REASONS+=("PSI memory full avg60 of acfs-agents.slice is ${slice_full}, over ${max_psi_full}")
+            fi
+        done
     fi
 
     # Filesystems: the work directory and the temp directories, each mount once.
@@ -1376,6 +1478,11 @@ capacity_guard_collect() {
     CAPACITY_GUARD_MAX_AGENTS=""
     if [[ -n "$CAPACITY_GUARD_MEM_AVAILABLE_MIB" ]]; then
         CAPACITY_GUARD_MORE_AGENTS=$(((CAPACITY_GUARD_MEM_AVAILABLE_MIB - gate_mib) / agent_mib))
+        # In a container, the room left under the admission line can be less
+        # than MemAvailable, which lxcfs may show as the host's.
+        if [[ -n "$cg_room_mib" ]] && (( cg_room_mib / agent_mib < CAPACITY_GUARD_MORE_AGENTS )); then
+            CAPACITY_GUARD_MORE_AGENTS=$((cg_room_mib / agent_mib))
+        fi
         # A red guard has room for none, whatever memory says.
         if (( CAPACITY_GUARD_MORE_AGENTS < 0 || ${#CAPACITY_GUARD_REASONS[@]} > 0 )); then
             CAPACITY_GUARD_MORE_AGENTS=0
@@ -1402,12 +1509,16 @@ capacity_guard_emit_json() {
         return 1
     }
 
-    local reasons_json warnings_json fs_json
+    local reasons_json warnings_json fs_json slices_json
     reasons_json="$(printf '%s\n' "${CAPACITY_GUARD_REASONS[@]}" | jq -R . | jq -s -c 'map(select(. != ""))')"
     warnings_json="$(printf '%s\n' "${CAPACITY_GUARD_WARNINGS[@]}" | jq -R . | jq -s -c 'map(select(. != ""))')"
     fs_json="$(printf '%s\n' "${CAPACITY_GUARD_FS_LINES[@]}" | jq -R -c 'select(. != "") | split(" ")
         | {role: .[0], mount: .[1], fstype: .[2], size_mib: (.[3] | tonumber),
            available_mib: (.[4] | tonumber), free_percent: (.[5] | tonumber)}' | jq -s -c .)"
+    slices_json="$(printf '%s\n' "${CAPACITY_GUARD_SLICE_LINES[@]}" | jq -R -c 'select(. != "") | split(" ")
+        | {slice: .[0],
+           memory_some_avg60: (if .[1] == "-" then null else (.[1] | tonumber) end),
+           memory_full_avg60: (if .[2] == "-" then null else (.[2] | tonumber) end)}' | jq -s -c .)"
 
     jq -n \
         --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -1415,6 +1526,14 @@ capacity_guard_emit_json() {
         --argjson reasons "$reasons_json" \
         --argjson warnings "$warnings_json" \
         --argjson filesystems "$fs_json" \
+        --argjson slices "$slices_json" \
+        --arg virt "$CAPACITY_GUARD_VIRT" \
+        --arg psi_source "$CAPACITY_GUARD_PSI_SOURCE" \
+        --arg cg_current "$CAPACITY_GUARD_CG_CURRENT_MIB" \
+        --arg cg_limit "$CAPACITY_GUARD_CG_LIMIT_MIB" \
+        --arg cg_limit_file "$CAPACITY_GUARD_CG_LIMIT_FILE" \
+        --arg cg_used "$CAPACITY_GUARD_CG_USED_PCT" \
+        --argjson max_cg "$CAPACITY_GUARD_MAX_CGROUP_PCT" \
         --arg mem_total "$CAPACITY_GUARD_MEM_TOTAL_MIB" \
         --arg mem_available "$CAPACITY_GUARD_MEM_AVAILABLE_MIB" \
         --arg swap_total "$CAPACITY_GUARD_SWAP_TOTAL_MIB" \
@@ -1446,10 +1565,19 @@ capacity_guard_emit_json() {
                 swap_total_mib: ($swap_total | num),
                 swap_free_mib: ($swap_free | num)
             },
+            container: {
+                virt: $virt,
+                memory_current_mib: ($cg_current | num),
+                memory_limit_mib: ($cg_limit | num),
+                memory_limit_file: (if $cg_limit_file == "" then null else $cg_limit_file end),
+                memory_used_percent: ($cg_used | num)
+            },
             pressure: {
+                source: $psi_source,
                 memory_some_avg60: ($psi_mem_some | num),
                 memory_full_avg60: ($psi_mem_full | num),
-                cpu_some_avg60: ($psi_cpu_some | num)
+                cpu_some_avg60: ($psi_cpu_some | num),
+                slices: $slices
             },
             filesystems: $filesystems,
             rch: {
@@ -1466,6 +1594,7 @@ capacity_guard_emit_json() {
                 min_mem_available_mib: $min_mem,
                 min_disk_free_percent: $min_disk,
                 max_psi_memory_full_avg60: $max_psi,
+                max_container_memory_percent: $max_cg,
                 per_agent_mib: $agent_mib,
                 gate_headroom_mib: $gate_mib
             }
@@ -1481,7 +1610,21 @@ capacity_guard_emit_human() {
     else
         echo "  Swap:                ${CAPACITY_GUARD_SWAP_FREE_MIB:-unknown} MiB free of ${CAPACITY_GUARD_SWAP_TOTAL_MIB:-unknown} MiB"
     fi
-    echo "  PSI avg60:           memory some ${CAPACITY_GUARD_PSI_MEMORY_SOME:-n/a}, full ${CAPACITY_GUARD_PSI_MEMORY_FULL:-n/a} (red over ${CAPACITY_GUARD_MAX_PSI_FULL}); cpu some ${CAPACITY_GUARD_PSI_CPU_SOME:-n/a}"
+    if [[ "$CAPACITY_GUARD_VIRT" == lxc ]]; then
+        if [[ -n "$CAPACITY_GUARD_CG_LIMIT_MIB" ]]; then
+            echo "  Container (lxc):     memory.current ${CAPACITY_GUARD_CG_CURRENT_MIB} MiB, ${CAPACITY_GUARD_CG_USED_PCT}% of ${CAPACITY_GUARD_CG_LIMIT_FILE} ${CAPACITY_GUARD_CG_LIMIT_MIB} MiB (red over ${CAPACITY_GUARD_MAX_CGROUP_PCT}%)"
+        else
+            echo "  Container (lxc):     memory.current ${CAPACITY_GUARD_CG_CURRENT_MIB:-unknown} MiB, no memory limit"
+        fi
+    fi
+    printf '  %-20s memory some %s, full %s (red over %s); cpu some %s\n' \
+        "PSI avg60 ($CAPACITY_GUARD_PSI_SOURCE):" "${CAPACITY_GUARD_PSI_MEMORY_SOME:-n/a}" \
+        "${CAPACITY_GUARD_PSI_MEMORY_FULL:-n/a}" "$CAPACITY_GUARD_MAX_PSI_FULL" "${CAPACITY_GUARD_PSI_CPU_SOME:-n/a}"
+    local slice slice_some slice_full
+    for line in "${CAPACITY_GUARD_SLICE_LINES[@]}"; do
+        read -r slice slice_some slice_full <<<"$line"
+        echo "    $slice: memory some ${slice_some/#-/n/a}, full ${slice_full/#-/n/a}"
+    done
     for line in "${CAPACITY_GUARD_FS_LINES[@]}"; do
         read -r role mount fstype size_mib avail_mib free_pct <<<"$line"
         printf '  Disk (%s):%*s%s %s: %s MiB free of %s MiB, %s%% (red under %s%%)\n' \
@@ -1511,7 +1654,10 @@ capacity_guard_main() {
                 return 1
                 ;;
             unknown)
-                printf 'capacity guard: cannot read MemAvailable\n' >&2
+                [[ -n "$CAPACITY_GUARD_MEM_AVAILABLE_MIB" ]] ||
+                    printf 'capacity guard: cannot read MemAvailable\n' >&2
+                [[ "$CAPACITY_GUARD_VIRT" == lxc && -z "$CAPACITY_GUARD_CG_CURRENT_MIB" ]] &&
+                    printf "capacity guard: cannot read the container's memory.current\\n" >&2
                 return 2
                 ;;
         esac
