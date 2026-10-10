@@ -82,6 +82,7 @@ usage() {
 Usage: scripts/providers/incus.sh [<remote>:]<name> --ssh-key FILE [--ssh-key FILE]... [--jump SSH_HOST]
                                   [--vm] [--acl NAME] [--root-size SIZE] [--state-size SIZE] [--data-size SIZE]
        scripts/providers/incus.sh host-setup --storage <path|pool> [...]
+       scripts/providers/incus.sh tailscale [<remote>:]<name> [--auth-key-file FILE] [--port N]...
 
 Creates the unprivileged Incus system container <name>, installs ACFS in it
 from this checkout's committed HEAD, and prints the ssh_config entry and
@@ -102,7 +103,9 @@ from this checkout's committed HEAD, and prints the ssh_config entry and
 
 The type, the ACL and the sizes apply only when the instance is created; an
 existing one keeps them. Every run needs the file host-setup writes
-(~/.config/acfs/incus.env), which names the storage pool.
+(~/.config/acfs/incus.env), which names the storage pool. `host-setup`
+prepares the Incus host once; `tailscale` adds a sidecar container that
+puts <name> on a tailnet (each has its own --help).
 
 Re-running is safe: an unfinished install resumes, and an installed instance
 is left as it is. See scripts/providers/incus.md.
@@ -520,10 +523,18 @@ report_authorized_keys() {
 }
 
 main() {
-    if [[ "${1:-}" == host-setup ]]; then
-        [[ -x "$SCRIPT_DIR/incus_host.sh" ]] || die "host-setup isn't in this checkout yet" 2
-        exec "$SCRIPT_DIR/incus_host.sh" "${@:2}"
-    fi
+    # The subcommands live in their own files: host setup, and the Tailscale
+    # sidecar container that gives a machine a tailnet address.
+    case "${1:-}" in
+        host-setup)
+            [[ -x "$SCRIPT_DIR/incus_host.sh" ]] || die "host-setup isn't in this checkout yet" 2
+            exec "$SCRIPT_DIR/incus_host.sh" "${@:2}"
+            ;;
+        tailscale)
+            [[ -x "$SCRIPT_DIR/incus_tailscale.sh" ]] || die "tailscale isn't in this checkout yet" 2
+            exec "$SCRIPT_DIR/incus_tailscale.sh" "${@:2}"
+            ;;
+    esac
     parse_args "$@"
     require_commands
     read_incus_env

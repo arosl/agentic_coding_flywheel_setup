@@ -664,6 +664,21 @@ check "with incus_host.sh: exits 0" rc_is 0
 check "with incus_host.sh: passes the rest of the arguments through" bash -c '[[ "$(cat "$1")" == $'"'"'--storage\n/scratch/incus'"'"' ]]' _ "$CASE/out"
 check "with incus_host.sh: needs no incus.env itself" no_calls
 
+echo "== tailscale is dispatched to incus_tailscale.sh"
+new_case tailscale-missing absent
+run_launcher tailscale dev --port 8080
+check "without incus_tailscale.sh: exits 2" rc_is 2
+check "without incus_tailscale.sh: says so" err_has "tailscale isn't in this checkout yet"
+check "without incus_tailscale.sh: makes no incus call" no_calls
+new_case tailscale absent
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@"\n' >"$REPO/scripts/providers/incus_tailscale.sh"
+chmod +x "$REPO/scripts/providers/incus_tailscale.sh"
+run_launcher tailscale far:dev --port 8080
+rm -f "$REPO/scripts/providers/incus_tailscale.sh"
+check "with incus_tailscale.sh: exits 0" rc_is 0
+check "with incus_tailscale.sh: passes the rest of the arguments through" bash -c '[[ "$(cat "$1")" == $'"'"'far:dev\n--port\n8080'"'"' ]]' _ "$CASE/out"
+check "with incus_tailscale.sh: needs no incus.env itself" no_calls
+
 echo "== usage errors"
 new_case usage absent
 run_launcher
