@@ -45,7 +45,8 @@ class UpgradeEntrypointTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if os.geteuid() != 0:
-            raise RuntimeError('Run this root-orchestration suite in a disposable Linux container as root; it substitutes all package/upgrade execution')
+            # CI runs it with sudo (ubuntu-entrypoint.yml); elsewhere, skip.
+            raise unittest.SkipTest('Run this root-orchestration suite in a disposable Linux container as root; it substitutes all package/upgrade execution')
         if Path('/var/run/reboot-required').exists():
             raise RuntimeError('Run in a disposable environment without a pending host reboot')
         source, policy = SOURCE.read_text(), POLICY.read_text()

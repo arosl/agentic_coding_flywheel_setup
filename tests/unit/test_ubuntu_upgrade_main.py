@@ -37,6 +37,13 @@ def definitions(text, required, optional=()):
         definition(text, name) for name in optional if re.search(r'^' + name + r'\(\)', text, re.M))
 
 
+# The actual checkpoint reader accepts only root-owned state read as root, so
+# tests that need a successful read run as root: CI's container, sudo, or
+# `unshare -r` on a development host.
+needs_root_reader = unittest.skipUnless(
+    os.geteuid() == 0, 'the checkpoint reader needs root (run with sudo or unshare -r)')
+
+
 class MainUpgradeOrderTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -276,6 +283,7 @@ confirm_resume() { trace normal_install_ready; exit 0; }
         self.assert_no_mutation(result, events)
         self.assertIn('checkpoint:/var/lib/acfs/state.json:26.04', events)
 
+    @needs_root_reader
     def test_nonubuntu_does_not_interpret_ubuntu_checkpoints(self):
         result, events, _ = self.run_main(overrides={'TEST_OS': 'arch', 'ACFS_DISTRO_FAMILY': 'arch', 'TEST_CHECKPOINT_STATUS': '1'})
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -407,6 +415,7 @@ ubuntu_start_upgrade_sequence() {
         return self.run_main(overrides={'TEST_VERSION': version, 'TEST_MISSING_TOOLS': 'false', **(options or {})},
             extra='\n'.join([self.reader, self.phase, self.loader, setup, extra]), arguments=arguments, uid=uid)
 
+    @needs_root_reader
     def test_default_preserves_supported_lts_and_continues_install(self):
         for version in ('24.04', '26.04'):
             with self.subTest(version=version):
@@ -417,6 +426,7 @@ ubuntu_start_upgrade_sequence() {
                 self.assertNotIn('upgrade_preflight', events)
                 self.assertFalse(any(e.startswith('release_target:') for e in events), events)
 
+    @needs_root_reader
     def test_ubuntu_2204_refuses_unless_an_upgrade_is_requested(self):
         for name, options in (
                 ('no target', {}),
@@ -429,6 +439,7 @@ ubuntu_start_upgrade_sequence() {
                 if name != 'target 22.04':
                     self.assertIn('--target-ubuntu=26.04', result.stderr)
 
+    @needs_root_reader
     def test_explicit_old_lts_upgrade_precedes_normal_installs(self):
         for version, hops in (('22.04', '24.04,26.04,'), ('24.04', '26.04,'), ('25.10', '26.04,')):
             with self.subTest(version=version):
@@ -440,6 +451,7 @@ ubuntu_start_upgrade_sequence() {
                 self.assertFalse(any(e.startswith('mut:') for e in events), events)
                 self.assertNotIn('normal_install_ready', events)
 
+    @needs_root_reader
     def test_supported_destination_continues_normal_install_without_distribution_changes(self):
         for version, target in (('26.04','26.04'), ('24.04','24.04'), ('26.04','24.04')):
             result, events, _ = self.integrated(version=version, options={
@@ -449,6 +461,7 @@ ubuntu_start_upgrade_sequence() {
             self.assertNotIn('upgrade_lock', events)
             self.assertFalse(any(e.startswith('release_target:') for e in events))
 
+    @needs_root_reader
     def test_explicit_narrow_upgrade_keeps_exact_resume_arguments(self):
         args = ('--only', 'lang.bun', '--skip', 'cloud.vercel', '--mode', 'safe', '--ref',
                 'a' * 40, '--target-ubuntu=26.04', '--verified-installer-cache', '/cache path')
@@ -480,6 +493,7 @@ ubuntu_start_upgrade_sequence() {
         self.assert_no_mutation(result, events)
         self.assertNotIn('upgrade_lock', events)
 
+    @needs_root_reader
     def test_recovery_state_changed_after_main_guard_is_not_bypassed(self):
         extra = r'''upgrade_acquire_lock() {
     trace upgrade_lock
@@ -497,6 +511,7 @@ ubuntu_start_upgrade_sequence() {
         self.assert_no_mutation(result, events)
         self.assertNotIn('upgrade_lock', events)
 
+    @needs_root_reader
     def test_release_executor_failure_stops_main_and_preserves_checkpoint(self):
         state = '{"schema_version":3,"ubuntu_upgrade":{"enabled":false,"current_stage":"not_started"}}'
         result, events, root = self.integrated(state=state,
@@ -605,7 +620,8 @@ class PrivilegedCheckpointReadTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if os.geteuid() != 0 or not Path('/.dockerenv').exists():
-            raise RuntimeError('This real-sudo suite requires a disposable Linux container as root')
+            # CI runs it as root in a container (ubuntu-entrypoint.yml); elsewhere, skip.
+            raise unittest.SkipTest('This real-sudo suite requires a disposable Linux container as root')
         cls.source = definitions(MAIN.read_text(), ['acfs_early_system_binary_path',
             'acfs_early_sudo_binary_path', 'acfs_read_upgrade_checkpoint',
             'acfs_read_upgrade_checkpoint_root', 'acfs_ubuntu_upgrade_requested',

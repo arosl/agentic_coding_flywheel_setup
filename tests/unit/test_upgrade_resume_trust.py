@@ -96,6 +96,7 @@ printf '%s|%s|%s|%s\n' "$CONTINUE_HOME" "$CONTINUE_TARGET_USER" "$CONTINUE_ACFS_
         self.assertIn("Usage:", result.stdout)
         self.assertFalse(marker.exists())
 
+    @unittest.skipUnless(os.geteuid() == 0, "startup refuses to run except as root")
     def test_startup_discards_exported_functions_and_shell_hooks(self):
         marker = self.root / "poison"
         startup_hook = self.root / "bashenv"
