@@ -3290,22 +3290,25 @@ check_herdr_runtime() {
         check "tools.herdr.integrations" "herdr agent integrations" "pass" "current for each installed agent CLI"
         return 0
     fi
-    if (( ${#outdated[@]} > 0 )); then
-        local fix="" t=""
-        for t in "${installs[@]}"; do fix+="${fix:+ && }herdr integration install $t"; done
-        check "tools.herdr.integrations" "herdr agent integrations" "warn" \
-            "not current: ${outdated[*]}; those agents' states are wrong or missing in herdr" \
-            "Run: acfs update (or: $fix)"
+    if (( ${#outdated[@]} == 0 )) && [[ "$doctor_ci" == "true" ]]; then
+        check "tools.herdr.integrations" "herdr agent integrations (not installed)" "pass" "expected in CI"
+        return 0
     fi
+    # One result for both kinds. acfs update refreshes outdated targets, but
+    # installs a missing one only when tools.herdr recorded it as pending
+    # (acfs-74rq), so a missing one gets herdr's own command, which needs the
+    # agent's config directory, made by its first start.
+    local details="" fix="" t=""
+    (( ${#outdated[@]} == 0 )) || details="not current: ${outdated[*]}"
+    (( ${#missing[@]} == 0 )) || details+="${details:+; }not installed: ${missing[*]}"
+    for t in "${installs[@]}" "${missing[@]}"; do fix+="${fix:+ && }herdr integration install $t"; done
     if (( ${#missing[@]} > 0 )); then
-        if [[ "$doctor_ci" == "true" ]]; then
-            check "tools.herdr.integrations" "herdr agent integrations (not installed)" "pass" "expected in CI"
-        else
-            check "tools.herdr.integrations" "herdr agent integrations" "warn" \
-                "not installed: ${missing[*]}; herdr shows no state for those agents" \
-                "Start each agent once, then run: acfs update"
-        fi
+        fix="Start each agent named once (herdr needs its config directory), then run: $fix"
+    else
+        fix="Run: acfs update (or: $fix)"
     fi
+    check "tools.herdr.integrations" "herdr agent integrations" "warn" \
+        "$details; herdr shows those agents' states wrongly or not at all" "$fix"
 }
 
 # Check Agent Flywheel stack

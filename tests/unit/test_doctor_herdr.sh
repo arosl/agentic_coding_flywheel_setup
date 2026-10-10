@@ -132,8 +132,16 @@ out="$(run_check "$RUNNING" "${CURRENT/claude: current (v10)/claude: outdated (v
 check_case "an outdated one still warns in CI" is tools.herdr.integrations 'tools.herdr.integrations|warn|*'
 
 out="$(run_check "$RUNNING" "${CURRENT/codex: current (v8)/codex: not installed}")"
-check_case "a missing one warns, saying to start the agent once and run acfs update" \
-    is tools.herdr.integrations 'tools.herdr.integrations|warn|not installed: codex;*|Start each agent once, then run: acfs update'
+# acfs update installs only pending and outdated targets, so the fix is
+# herdr's own command (VioletFortress's review; acfs-74rq).
+check_case "a missing one warns, naming herdr integration install for it" \
+    is tools.herdr.integrations 'tools.herdr.integrations|warn|not installed: codex;*|Start each agent named once (herdr needs its config directory), then run: herdr integration install codex'
+
+out="$(run_check "$RUNNING" "$(sed -e 's/^claude: current (v10)/claude: outdated (v8 < v10)/' -e 's/^codex: current (v8)/codex: not installed/' <<<"$CURRENT")")"
+check_case "one outdated and one missing give a single result" \
+    test "$(grep -c '^tools.herdr.integrations|' <<<"$out")" = 1
+check_case "naming both, and installing both" \
+    is tools.herdr.integrations 'tools.herdr.integrations|warn|not current: claude (outdated (v8 < v10)); not installed: codex;*|Start each agent named once (herdr needs its config directory), then run: herdr integration install claude && herdr integration install codex'
 
 out="$(run_check "$RUNNING" "${CURRENT/codex: current (v8)/codex: not installed}" "claude codex agy" true)"
 check_case "a missing one in CI passes" is tools.herdr.integrations 'tools.herdr.integrations|pass|expected in CI|'
