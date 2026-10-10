@@ -9466,6 +9466,7 @@ EOF
 
     mkdir -p \
         "$repo_root/acfs/onboard/lessons" \
+        "$repo_root/acfs/onboard/docs/ntm" \
         "$repo_root/packages/onboard" \
         "$repo_root/scripts/completions" \
         "$repo_root/scripts/generated" \
@@ -9473,6 +9474,7 @@ EOF
         "$deployed_home"
 
     printf "lesson-runtime\n" > "$repo_root/acfs/onboard/lessons/00_welcome.md"
+    printf "palette-runtime\n" > "$repo_root/acfs/onboard/docs/ntm/command_palette.md"
     printf "#!/usr/bin/env bash\nprintf 'onboard-runtime\\n'\n" > "$repo_root/packages/onboard/onboard.sh"
     printf "manifest-runtime\n" > "$repo_root/acfs.manifest.yaml"
     printf "zsh-completion-runtime\n" > "$repo_root/scripts/completions/_acfs"
@@ -9502,6 +9504,10 @@ EOF
     run cat "$deployed_home/onboard/lessons/00_welcome.md"
     assert_success
     assert_output "lesson-runtime"
+    # The palette reaches an install that predates it (no onboard/docs/ntm yet).
+    run cat "$deployed_home/onboard/docs/ntm/command_palette.md"
+    assert_success
+    assert_output "palette-runtime"
     run cat "$deployed_home/acfs.manifest.yaml"
     assert_success
     assert_output "manifest-runtime"
