@@ -7372,6 +7372,47 @@ update_herdr_integrations() {
     return 0
 }
 
+# herdr's server holds every agent pane, so its keystroke path has to win the
+# CPU race against the swarm, the way SRPS gives the wezterm and frankenterm
+# mux servers nice -10. SRPS has no herdr rule, and a 10-local rule outranks
+# its zz-srps file. The stack.srps module installs the same rule; acfs update
+# only re-runs SRPS's installer, so existing hosts get it here (acfs-7mu.6).
+UPDATE_SRPS_HERDR_RULE='{"name": "herdr", "nice": -10}'
+UPDATE_ANANICY_DIR="/etc/ananicy.d"
+
+update_srps_herdr_rule() {
+    local desc="herdr ananicy rule"
+    local rule_dir="$UPDATE_ANANICY_DIR/10-local"
+    local rule_file="$rule_dir/acfs-herdr.rules"
+    local -a sudo_cmd=()
+
+    if [[ ! -d "$UPDATE_ANANICY_DIR" ]]; then
+        log_item "skip" "$desc" "ananicy-cpp is not installed"
+        return 0
+    fi
+    if ! update_sudo_prefix sudo_cmd; then
+        log_item "warn" "$desc" "sudo unavailable; to add it: echo '$UPDATE_SRPS_HERDR_RULE' | sudo tee $rule_file"
+        return 0
+    fi
+    if [[ "$("${sudo_cmd[@]}" cat "$rule_file" 2>/dev/null)" == "$UPDATE_SRPS_HERDR_RULE" ]]; then
+        log_item "ok" "$desc" "already present"
+        return 0
+    fi
+    if update_is_read_only_mode; then
+        log_item "skip" "$desc" "dry-run: would write $rule_file"
+        return 0
+    fi
+    if "${sudo_cmd[@]}" mkdir -p "$rule_dir" &&
+        printf '%s\n' "$UPDATE_SRPS_HERDR_RULE" | "${sudo_cmd[@]}" tee "$rule_file" >/dev/null; then
+        "${sudo_cmd[@]}" systemctl try-restart ananicy-cpp >/dev/null 2>&1 ||
+            log_to_file "systemctl try-restart ananicy-cpp failed; the rule applies at its next start"
+        log_item "ok" "$desc" "herdr runs at nice -10"
+    else
+        log_item "warn" "$desc" "could not write $rule_file"
+    fi
+    return 0
+}
+
 update_stack() {
     if [[ "$UPDATE_STACK" != "true" ]]; then
         return 0
@@ -7593,6 +7634,7 @@ update_stack() {
 
     # SRPS (System Resource Protection Script) - always install/update
     run_cmd "SRPS" update_run_verified_installer srps
+    update_srps_herdr_rule
 
     # TRU (Toon Rust) - always install/update
     run_cmd "TRU" update_run_verified_installer tru

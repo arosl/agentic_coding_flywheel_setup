@@ -2998,6 +2998,47 @@ acfs_generated_install_stack_srps() {
             return 0
         fi
     fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: install: if [[ ! -d /etc/ananicy.d ]]; then (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_STACK_SRPS'
+# herdr's server holds every agent pane, so it gets the nice -10 that
+# SRPS gives the wezterm and frankenterm mux servers. A 10-local rule
+# outranks SRPS's zz-srps file. acfs update writes the same rule
+# (update_srps_herdr_rule in update.sh). acfs-7mu.6.
+rule='{"name": "herdr", "nice": -10}'
+rule_file=/etc/ananicy.d/10-local/acfs-herdr.rules
+if [[ ! -d /etc/ananicy.d ]]; then
+  echo "ananicy-cpp is not installed; skipping the herdr rule" >&2
+elif ! sudo -n true 2>/dev/null; then
+  echo "WARN: no passwordless sudo; to promote herdr: echo '$rule' | sudo tee $rule_file" >&2
+elif [[ "$(sudo -n cat "$rule_file" 2>/dev/null)" != "$rule" ]]; then
+  if sudo -n mkdir -p /etc/ananicy.d/10-local &&
+    printf '%s\n' "$rule" | sudo -n tee "$rule_file" >/dev/null; then
+    sudo -n systemctl try-restart ananicy-cpp || true
+  else
+    echo "WARN: could not write $rule_file" >&2
+  fi
+fi
+INSTALL_STACK_SRPS
+        then
+            log_warn "stack.srps: install command failed: if [[ ! -d /etc/ananicy.d ]]; then"
+            # Optional-module failures are warnings on a default install, but a
+            # module the user explicitly named with --only had exactly one job:
+            # propagate the failure instead of reporting phase success (#373).
+            if declare -f acfs_module_explicitly_selected >/dev/null 2>&1 \
+                && acfs_module_explicitly_selected "stack.srps"; then
+              log_error "stack.srps: explicitly requested via --only; treating optional-module failure as fatal"
+              return 1
+            fi
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "stack.srps" "install command failed: if [[ ! -d /etc/ananicy.d ]]; then"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "stack.srps"
+            fi
+            return 0
+        fi
+    fi
 
     # Verify
     if [[ "${DRY_RUN:-false}" = "true" ]]; then

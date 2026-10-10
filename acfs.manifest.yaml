@@ -2953,7 +2953,26 @@ modules:
       tool: srps
       runner: bash
       args: ["--install"]
-    install: []
+    install:
+      - |
+        # herdr's server holds every agent pane, so it gets the nice -10 that
+        # SRPS gives the wezterm and frankenterm mux servers. A 10-local rule
+        # outranks SRPS's zz-srps file. acfs update writes the same rule
+        # (update_srps_herdr_rule in update.sh). acfs-7mu.6.
+        rule='{"name": "herdr", "nice": -10}'
+        rule_file=/etc/ananicy.d/10-local/acfs-herdr.rules
+        if [[ ! -d /etc/ananicy.d ]]; then
+          echo "ananicy-cpp is not installed; skipping the herdr rule" >&2
+        elif ! sudo -n true 2>/dev/null; then
+          echo "WARN: no passwordless sudo; to promote herdr: echo '$rule' | sudo tee $rule_file" >&2
+        elif [[ "$(sudo -n cat "$rule_file" 2>/dev/null)" != "$rule" ]]; then
+          if sudo -n mkdir -p /etc/ananicy.d/10-local &&
+            printf '%s\n' "$rule" | sudo -n tee "$rule_file" >/dev/null; then
+            sudo -n systemctl try-restart ananicy-cpp || true
+          else
+            echo "WARN: could not write $rule_file" >&2
+          fi
+        fi
     verify:
       - command -v sysmoni
       - systemctl is-active ananicy-cpp
