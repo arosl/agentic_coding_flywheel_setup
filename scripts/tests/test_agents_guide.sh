@@ -26,6 +26,20 @@ TESTS_PASSED=0
 TESTS_FAILED=0
 TESTS_SKIPPED=0
 
+# Every sandbox lives under one root, removed once every test passed.
+# A failed run keeps it, so the failing sandbox can be inspected.
+SANDBOX_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/acfs-agents-guide.XXXXXX")" || exit 1
+cleanup_sandbox_root() {
+    local rc=$?
+    if [[ $rc -eq 0 && $TESTS_FAILED -eq 0 ]]; then
+        rm -rf -- "$SANDBOX_ROOT"
+    else
+        echo "Sandboxes kept in $SANDBOX_ROOT" >&2
+    fi
+    return "$rc"
+}
+trap cleanup_sandbox_root EXIT
+
 log_step() { echo -e "[STEP] $*"; }
 log_pass() { echo -e "${GREEN}[PASS]${NC} $*"; ((TESTS_PASSED++)) || true; }
 log_fail() { echo -e "${RED}[FAIL]${NC} $*"; ((TESTS_FAILED++)) || true; }
@@ -45,7 +59,7 @@ run_test() {
 # Fresh sandbox home per test group
 make_sandbox() {
     local tmpdir
-    tmpdir="$(mktemp -d)" || return 1
+    tmpdir="$(mktemp -d "$SANDBOX_ROOT/sandbox.XXXXXX")" || return 1
     mkdir -p "$tmpdir/home/.local/bin" "$tmpdir/proj"
     # Fake user-local tool the restricted PATH cannot see
     cat > "$tmpdir/home/.local/bin/br" <<'EOF'

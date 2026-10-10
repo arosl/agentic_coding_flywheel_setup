@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Exercise real retained descriptors on macOS fdescfs and Linux procfs.
-# Preserve fixtures and snapshots; no cleanup bypass or fake identity checks.
+# Fixtures and snapshots stay in place for every check (no cleanup bypass or
+# fake identity checks); a passing run removes them when it exits.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -10,7 +11,20 @@ source "${1:-$REPO_ROOT/scripts/lib/security.sh}"
 
 ACFS_SECURITY_RETAIN_TEMP_FILES=true
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/acfs-fd-identity.XXXXXX")"
-printf 'Retaining descriptor test fixtures: %s\n' "$fixture" >&2
+# The temp files security.sh retains go inside the fixture too. A run that
+# passed removes it; a failed run keeps everything for inspection.
+mkdir "$fixture/tmp"
+export TMPDIR="$fixture/tmp"
+cleanup_fixture() {
+    local rc=$?
+    if [[ $rc -eq 0 ]]; then
+        rm -rf -- "$fixture"
+    else
+        printf 'Retained descriptor test fixtures: %s\n' "$fixture" >&2
+    fi
+    return "$rc"
+}
+trap cleanup_fixture EXIT
 passed=0
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 accept() {

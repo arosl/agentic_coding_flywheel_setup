@@ -15,13 +15,24 @@ set -uo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../.." && pwd)"
 
-# Log file
-LOG_FILE="/tmp/acfs_resume_hint_test_$(date +%Y%m%d_%H%M%S).log"
+# The log and the tests' scratch dirs live under one root, removed once
+# every test passed; a failed run keeps it, with the log it points at.
+RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/acfs-resume-hint.XXXXXX")" || exit 1
+LOG_FILE="$RUN_ROOT/acfs_resume_hint_test_$(date +%Y%m%d_%H%M%S).log"
 
 # Test counters
 TESTS_RUN=0
 TESTS_PASSED=0
 TESTS_FAILED=0
+
+cleanup_run_root() {
+    local rc=$?
+    if [[ $rc -eq 0 && $TESTS_FAILED -eq 0 ]]; then
+        rm -rf -- "$RUN_ROOT"
+    fi
+    return "$rc"
+}
+trap cleanup_run_root EXIT
 
 # ============================================================
 # Test Helpers
@@ -436,7 +447,7 @@ test_verified_installer_cache_parent_is_normalized_for_resume_hint() {
     local expected_cache=""
     local expected_cache_q=""
 
-    temp_root="$(mktemp -d "${TMPDIR:-/tmp}/acfs-resume-cache.XXXXXX")" || return 1
+    temp_root="$(mktemp -d "$RUN_ROOT/resume-cache.XXXXXX")" || return 1
     mkdir -p "$temp_root/work/cache with spaces/acfs-installer-cache" || return 1
     printf '{}\n' > "$temp_root/work/cache with spaces/acfs-installer-cache/manifest.json" || return 1
 

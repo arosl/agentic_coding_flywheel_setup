@@ -11,6 +11,18 @@ STATE_LIBRARY="${ACFS_TEST_STATE_LIBRARY:-$ROOT/scripts/lib/state.sh}"
 SUITE=$(mktemp -d "${TMPDIR:-/tmp}/acfs-resume-safety.XXXXXX")
 PASS=0 FAIL=0
 
+# The fixtures are removed once every case passed; a failed run keeps them.
+cleanup_suite() {
+    local rc=$?
+    if [[ $rc -eq 0 && $FAIL -eq 0 ]]; then
+        rm -rf -- "$SUITE"
+    else
+        printf 'Fixtures retained at %s\n' "$SUITE"
+    fi
+    return "$rc"
+}
+trap cleanup_suite EXIT
+
 # Print one function, skipping over quoted heredoc bodies: the checkpoint
 # reader embeds Python whose own column-0 "}" is not the end of the function.
 extract_function() {
@@ -639,5 +651,5 @@ if [[ "$EUID" == 0 ]]; then
 else
     printf 'SKIP 34 checkpoint recovery filesystem cases: run as root to exercise ownership checks\n'
 fi
-printf '\n%s passed; %s failed. Fixtures retained at %s\n' "$PASS" "$FAIL" "$SUITE"
+printf '\n%s passed; %s failed.\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]

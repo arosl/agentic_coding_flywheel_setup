@@ -79,7 +79,7 @@ setup_test_env() {
     source "$REPO_ROOT/scripts/lib/doctor_fix.sh"
 
     # Autofix state
-    export ACFS_STATE_DIR="/tmp/test_doctor_fix_${test_id}"
+    export ACFS_STATE_DIR="${TMPDIR:-/tmp}/test_doctor_fix_${test_id}"
     export ACFS_CHANGES_FILE="$ACFS_STATE_DIR/changes.jsonl"
     export ACFS_UNDOS_FILE="$ACFS_STATE_DIR/undos.jsonl"
     export ACFS_BACKUPS_DIR="$ACFS_STATE_DIR/backups"
@@ -165,7 +165,7 @@ cleanup_test_env() {
     unset ACFS_HOME
     unset ACFS_BIN_DIR
     unset DOCTOR_FIX_SSHD_CONFIG
-    rm -rf "/tmp/test_doctor_fix_"* 2>/dev/null || true
+    rm -rf "${TMPDIR:-/tmp}/test_doctor_fix_"* 2>/dev/null || true
 }
 
 stub_doctor_fix_agent_mail_health_ready() {
@@ -4771,9 +4771,11 @@ if [[ "\${1:-}" == "daemon" ]]; then
     sock="\$(awk -F'=' '/^\\[daemon\\]/{d=1;next} /^\\[/{d=0} d && \$1 ~ /socket_path/ {v=\$2; gsub(/[[:space:]"]/, "", v); print v}' "\$HOME/.config/atuin/config.toml" | tail -n1)"
     mkdir -p "\$(dirname "\$sock")"
     if command -v python3 >/dev/null 2>&1; then
-        # Bind at a short path (AF_UNIX paths are capped at ~104 bytes and the
-        # test HOME is longer), then rename the bound socket into place.
-        exec python3 -c 'import os,socket,sys,time; short="/tmp/acfs-atuin-test-%d.sock" % os.getpid(); s=socket.socket(socket.AF_UNIX); s.bind(short); s.listen(1); os.rename(short, sys.argv[1]); time.sleep(5)' "\$sock"
+        # Bind by a relative name from the socket's directory: AF_UNIX paths
+        # are capped at ~104 bytes and the test HOME is longer. (Binding in
+        # /tmp and renaming into place fails when HOME is on another
+        # filesystem.)
+        exec python3 -c 'import os,socket,sys,time; os.chdir(os.path.dirname(sys.argv[1])); s=socket.socket(socket.AF_UNIX); s.bind(os.path.basename(sys.argv[1])); s.listen(1); time.sleep(5)' "\$sock"
     fi
     exit 0
 fi
@@ -4979,6 +4981,21 @@ test_fix_atuin_daemon_socket_reports_failed_restart() {
 
 
 main() {
+    # Everything the tests and the fixers write to TMPDIR goes under one
+    # root, removed once every test passed; a failed run keeps it.
+    RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/acfs-doctor-fix-test.XXXXXX")" || exit 1
+    export TMPDIR="$RUN_ROOT"
+    cleanup_run_root() {
+        local rc=$?
+        if [[ $rc -eq 0 && $TESTS_FAILED -eq 0 ]]; then
+            rm -rf -- "$RUN_ROOT"
+        else
+            echo "Test files kept in $RUN_ROOT" >&2
+        fi
+        return "$rc"
+    }
+    trap cleanup_run_root EXIT
+
     echo "============================================================"
     echo "Doctor Fix Unit Tests"
     echo "============================================================"
@@ -5115,7 +5132,7 @@ main() {
     echo "============================================================"
 
     # Log results
-    local log_file="/tmp/acfs_doctor_fix_test_$(date +%Y%m%d_%H%M%S).log"
+    local log_file="${TMPDIR:-/tmp}/acfs_doctor_fix_test_$(date +%Y%m%d_%H%M%S).log"
     {
         echo "Doctor Fix Test Results"
         echo "Date: $(date)"

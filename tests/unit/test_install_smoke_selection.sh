@@ -72,7 +72,20 @@ binary_installed() { [[ -x "$ACFS_BIN_DIR/$1" ]]; }
 command_exists() { return 1; }
 run_as_target() { return 1; }
 
-SMOKE_ROOT="$(mktemp -d)"
+SMOKE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/acfs-smoke-selection.XXXXXX")" || exit 1
+
+# The target homes are removed once every test passed; a failed run
+# keeps them for inspection.
+cleanup_smoke_root() {
+    local rc=$?
+    if [[ $rc -eq 0 && $TESTS_FAILED -eq 0 ]]; then
+        rm -rf -- "$SMOKE_ROOT"
+    else
+        echo "Target homes kept in $SMOKE_ROOT" >&2
+    fi
+    return "$rc"
+}
+trap cleanup_smoke_root EXIT
 
 # A fresh target home with every binary the critical checks look for,
 # except the ones named as arguments.

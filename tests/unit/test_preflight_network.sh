@@ -37,7 +37,7 @@ create_mock_command() {
     local exit_code="$2"
     local output="${3:-}"
 
-    local mock_dir="/tmp/preflight_test_mocks_$$"
+    local mock_dir="${TMPDIR:-/tmp}/preflight_test_mocks_$$"
     mkdir -p "$mock_dir"
 
     cat > "$mock_dir/$cmd_name" <<EOF
@@ -55,7 +55,8 @@ cleanup_mocks() {
     if [[ "${ACFS_TEST_KEEP_TEMP:-false}" == "true" ]]; then
         return 0
     fi
-    rm -rf "/tmp/preflight_test_mocks_"* 2>/dev/null || true
+    # Only this run's mocks: another run's may still be in use.
+    rm -rf "${TMPDIR:-/tmp}/preflight_test_mocks_$$" 2>/dev/null || true
 }
 
 cleanup_temp_dir() {
@@ -520,6 +521,8 @@ EOF
     else
         harness_fail "Non-root slash-home preflight completed with a valid exit code" "exit: $exit_code"
     fi
+
+    cleanup_temp_dir "$temp_root"
 }
 
 test_deb822_format_support() {

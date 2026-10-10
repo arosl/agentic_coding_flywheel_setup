@@ -27,7 +27,22 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PASS=0
 FAIL=0
 SKIP=0
-LOG_FILE="/tmp/test_update_channel_$(date +%Y%m%d_%H%M%S).log"
+
+# The log and every scratch dir the cases make in TMPDIR live under one
+# root, removed once every case passed; a failed run keeps it.
+RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/acfs-update-channel-test.XXXXXX")"
+export TMPDIR="$RUN_ROOT"
+LOG_FILE="$RUN_ROOT/test_update_channel_$(date +%Y%m%d_%H%M%S).log"
+cleanup_run_root() {
+    local rc=$?
+    if [[ $rc -eq 0 && $FAIL -eq 0 ]]; then
+        rm -rf -- "$RUN_ROOT"
+    else
+        echo "Test files kept in $RUN_ROOT" >&2
+    fi
+    return "$rc"
+}
+trap cleanup_run_root EXIT
 
 # --- Helpers ---
 log()     { printf "[%s] %s\n" "$(date +%H:%M:%S)" "$*" | tee -a "$LOG_FILE"; }

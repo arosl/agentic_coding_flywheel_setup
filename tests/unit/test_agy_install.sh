@@ -15,6 +15,20 @@ ok()   { printf '  ✓ PASS: %s\n' "$1"; PASS=$((PASS+1)); }
 no()   { printf '  ✗ FAIL: %s\n' "$1"; FAIL=$((FAIL+1)); }
 check(){ if eval "$2"; then ok "$1"; else no "$1"; fi; }
 
+# The launcher sandboxes live under one root, removed once every check
+# passed; a failed run keeps it for inspection.
+SANDBOX_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/acfs-agy-install.XXXXXX")" || exit 1
+cleanup_sandbox_root() {
+  local rc=$?
+  if [[ $rc -eq 0 && $FAIL -eq 0 ]]; then
+    rm -rf -- "$SANDBOX_ROOT"
+  else
+    echo "Sandboxes kept in $SANDBOX_ROOT" >&2
+  fi
+  return "$rc"
+}
+trap cleanup_sandbox_root EXIT
+
 resolver_refuses_launcher_copy() {
   python3 - <<'PY'
 import os
@@ -355,7 +369,7 @@ PY
 # onboarding command, and pass a subcommand through untouched.
 positional_prompt_launcher_end_to_end() {
   local sandbox
-  sandbox="$(mktemp -d "${TMPDIR:-/tmp}/acfs-agy-parity.XXXXXX")" || return 1
+  sandbox="$(mktemp -d "$SANDBOX_ROOT/agy-parity.XXXXXX")" || return 1
   mkdir -p "$sandbox/.local/bin" || return 1
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@"\n' > "$sandbox/.local/bin/agy-real" || return 1
   chmod +x "$sandbox/.local/bin/agy-real" || return 1
@@ -370,7 +384,7 @@ positional_prompt_launcher_end_to_end() {
 # is agy, so the launcher runs agy-real under that name (acfs-zg0).
 launcher_runs_agy_real_as_agy() {
   local sandbox
-  sandbox="$(mktemp -d "${TMPDIR:-/tmp}/acfs-agy-argv0.XXXXXX")" || return 1
+  sandbox="$(mktemp -d "$SANDBOX_ROOT/agy-argv0.XXXXXX")" || return 1
   mkdir -p "$sandbox/.local/bin" || return 1
   printf '#!/usr/bin/env bash\nexit 0\n' > "$sandbox/.local/bin/agy-real" || return 1
   chmod +x "$sandbox/.local/bin/agy-real" || return 1

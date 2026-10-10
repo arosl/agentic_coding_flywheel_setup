@@ -88,8 +88,22 @@ UNIT_FILE=""
 RT_USER_MASK=""
 RT_CONTROL_MASK=""
 
+# Each case's sandbox lives under one root, removed once every case
+# passed; a failed run keeps it for inspection.
+SANDBOX_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/acfs-am-mask.XXXXXX")" || exit 1
+cleanup_sandbox_root() {
+    local rc=$?
+    if [[ $rc -eq 0 && $failed -eq 0 ]]; then
+        rm -rf -- "$SANDBOX_ROOT"
+    else
+        echo "Sandboxes kept in $SANDBOX_ROOT" >&2
+    fi
+    return "$rc"
+}
+trap cleanup_sandbox_root EXIT
+
 make_sandbox() {
-    SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/acfs-am-mask.XXXXXX")"
+    SANDBOX="$(mktemp -d "$SANDBOX_ROOT/case.XXXXXX")"
     FAKE_HOME="$SANDBOX/home"
     FAKE_RTD="$SANDBOX/run"
     FAKE_STATE_DIR="$SANDBOX/state"

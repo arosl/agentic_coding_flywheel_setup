@@ -5,11 +5,23 @@
 set -uo pipefail
 # Note: Not using -e to allow tests to continue after failures
 
-LOG_FILE="/tmp/br_integration_tests_$(date +%Y%m%d_%H%M%S).log"
+LOG_FILE="${TMPDIR:-/tmp}/br_integration_tests_$(date +%Y%m%d_%H%M%S).log"
 PASS_COUNT=0
 FAIL_COUNT=0
 TEST_TIMEOUT_SECONDS="${TEST_TIMEOUT_SECONDS:-10}"
 PROBE_DIR=""
+
+# The log and the probe workspace are removed once every test passed;
+# a failed run keeps both, since its fail messages point at them.
+cleanup_run_files() {
+    local rc=$?
+    if [[ $rc -eq 0 && $FAIL_COUNT -eq 0 ]]; then
+        rm -f -- "$LOG_FILE"
+        [[ -n "$PROBE_DIR" ]] && rm -rf -- "$PROBE_DIR"
+    fi
+    return "$rc"
+}
+trap cleanup_run_files EXIT
 
 log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG_FILE"; }
 pass() {

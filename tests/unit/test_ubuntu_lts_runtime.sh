@@ -7,6 +7,20 @@ LIB="$ROOT/scripts/lib/ubuntu_upgrade.sh"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/acfs-lts-tests.XXXXXX")
 PASS=0 FAIL=0
 
+# The fixtures are removed once every case passed; a failed run keeps
+# them. The cases rebind WORK, so the trap keeps its own copy.
+LTS_FIXTURES="$WORK"
+cleanup_fixtures() {
+    local rc=$?
+    if [[ $rc -eq 0 && $FAIL -eq 0 ]]; then
+        rm -rf -- "$LTS_FIXTURES"
+    else
+        printf 'Fixture artifacts: %s\n' "$LTS_FIXTURES"
+    fi
+    return "$rc"
+}
+trap cleanup_fixtures EXIT
+
 log_error() { printf '%s\n' "$*" >&2; }
 log_warn() { printf '%s\n' "$*" >&2; }
 log_detail() { :; }
@@ -332,5 +346,5 @@ for scenario in success unsupported-source lock init infrastructure start execut
     run "orchestration: $scenario" check_sequence "$scenario"
 done
 
-printf '\n%s passed; %s failed. Fixture artifacts: %s\n' "$PASS" "$FAIL" "$WORK"
+printf '\n%s passed; %s failed.\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]
