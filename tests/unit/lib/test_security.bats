@@ -747,6 +747,8 @@ EOF
     assert_output --partial "resets at 2026-10-12T00:00:00Z"
     run cat "$BATS_TEST_TMPDIR/curl-args"
     assert_output --partial "https://api.github.com/rate_limit"
+    # Hardened like the file's other curl calls: no ~/.curlrc, HTTPS only.
+    [[ "$output" == "-q --proto =https --proto-redir =https "* ]]
 }
 
 @test "rate limit: says nothing while requests remain" {

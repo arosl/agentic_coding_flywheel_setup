@@ -1732,8 +1732,10 @@ acfs_explain_github_rate_limit() {
 
     curl_bin="$(acfs_security_system_binary_path curl 2>/dev/null)" || return 1
     jq_bin="$(acfs_security_system_binary_path jq 2>/dev/null)" || return 1
-    body="$("$curl_bin" -fsS --max-time 5 -H 'Accept: application/vnd.github+json' \
-        https://api.github.com/rate_limit 2>/dev/null)" || return 1
+    # -q first: never read the invoking user's ~/.curlrc (root's, during an
+    # install), as the file's other curl calls do.
+    body="$("$curl_bin" -q --proto '=https' --proto-redir '=https' -fsS --max-time 5 \
+        -H 'Accept: application/vnd.github+json' https://api.github.com/rate_limit 2>/dev/null)" || return 1
     remaining="$("$jq_bin" -r '.resources.core.remaining // empty' <<<"$body" 2>/dev/null)" || return 1
     reset="$("$jq_bin" -r '.resources.core.reset // empty' <<<"$body" 2>/dev/null)" || return 1
     [[ "$remaining" == 0 && "$reset" =~ ^[0-9]+$ ]] || return 1
