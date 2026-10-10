@@ -3717,6 +3717,28 @@ check_service_binary_drift() {
     return 0
 }
 
+# Incus next to podman and Docker (acfs-ioo3.16): firewall backend, subnet
+# overlap, subordinate id ranges and Docker's FORWARD policy, all read-only,
+# from coexistence.sh. Its traffic tests start probes inside instances, so
+# they run only on request: bash coexistence.sh traffic --instance <name>.
+check_coexistence() {
+    local helper="" status="" id="" label="" details="" fix=""
+    local -a limit=()
+
+    doctor_binary_exists incus || return 0
+    helper="$(doctor_runtime_home)/.acfs/scripts/lib/coexistence.sh"
+    if [[ ! -r "$helper" ]]; then
+        check "coexist" "Container coexistence" "skip" "coexistence.sh is not installed" "acfs update"
+        return 0
+    fi
+    command -v timeout >/dev/null 2>&1 && limit=(timeout 60)
+    while IFS=$'\t' read -r status id label details fix; do
+        case "$status" in
+            pass|warn|fail|skip) check "$id" "$label" "$status" "$details" "$fix" ;;
+        esac
+    done < <("${limit[@]}" bash "$helper" check </dev/null 2>/dev/null || true)
+}
+
 # Incus (tools.incus, on by default). Without /dev/kvm Incus still runs
 # containers, so a host without KVM passes as "containers only". The package
 # check only runs the client; tools.incus.daemon asks the daemon itself,
@@ -6562,6 +6584,7 @@ $(gum style --foreground "$ACFS_MUTED" "OS:") $(gum style --foreground "$ACFS_TE
     check_service_binary_drift
     check_utilities
     check_incus
+    check_coexistence
     check_updates_health
     check_manifest_supplemental
     show_skipped_tools

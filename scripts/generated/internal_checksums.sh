@@ -10,7 +10,7 @@
 ACFS_INTERNAL_CHECKSUMS_SCHEMA=1
 
 declare -gA ACFS_INTERNAL_CHECKSUMS=(
-  [install.sh]="d5f6779bffcef64e929f736077a2c8e45bbaa2b010523885f3093dd61d7514ad"
+  [install.sh]="d3c9a0580e672cc660ef604c3e4b0ddd0da34bb0c27e9f8e856f96d7c9a0071e"
   [checksums.yaml]="7251cabced052791d6638d0b3e7662f7998ba28be9d7f45d6ddacbb2630cd73f"
   [scripts/preflight.sh]="f8b5829f2be4cbe08b6d33316fa07fe1b5a951b570819e38a1cb6ffe283d5902"
   [scripts/lib/security.sh]="e270c328437ce1a7ac75e8de41b550842e36658a7e82870f2c45fb79d021f4b5"
@@ -18,7 +18,7 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/lib/github_api.sh]="80699922df2e924694f5682457e614dedf9181d7c071472cc8a6db4f17373d3d"
   [scripts/lib/contract.sh]="22c148f44ddbaccd559196196ef903f26f65fc77e3b1b6b4efc62b77d3b97aa3"
   [scripts/lib/update.sh]="85a9b47120e63e84fddadd7562308efcd97c1d1ab18931d6a524b417d6756855"
-  [scripts/lib/doctor.sh]="dc549b5a7a8d13af0e1b37ec1dc97053465ba4bb6bbe0021cde914c75d695ffa"
+  [scripts/lib/doctor.sh]="e56d9c10b8b7553f3e8756e0a54ce30642cf70a9cdfc46ee606271ad76fa7b11"
   [scripts/lib/acfs-services.sh]="75a8bff497a9982859f0b67726e644fba0ac01863bbcb77561853eb250dcae57"
   [scripts/lib/doctor_fix.sh]="ea1f13be46bf9f3df0630362b6027f12aca271e8df4eeddcd8d36f1019615b2c"
   [scripts/lib/offline_artifact_pack.sh]="123d0bffad48fdc501f456e2cf06907d4ad66821492b8d112327c66269efd38d"
@@ -115,6 +115,7 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/lib/swarm_status.sh]="c6f17a50ed3a2606734578e37732030e01db0aa2086f7e5fab8e80aef085d58e"
   [scripts/lib/temp_sweep.sh]="6f823b70e167e1e46ecb2038bdaf8fcf2bbbaf3aea0602499bd2e17fdbd53f29"
   [scripts/lib/service_protection.sh]="e15935c19a713e8265ea94352b783e38edefa02f651d45c0c80ebf5d840a1fc3"
+  [scripts/lib/coexistence.sh]="0027321b32c3d04f956e8f223bfaa6ff890f1d31cff0a37e594d0992c55a6881"
   [scripts/services-setup.sh]="35af97a5e59cde9db114a1386a9d6ae8b929755113775705336dbf46e1714b50"
   [scripts/agent-readiness-audit.sh]="55b454e5f19b13165196b7881acc90df0fdc3225f4faabc9752ddb27eaeb9afe"
   [packages/manifest/src/agent-readiness-audit.ts]="e2e13523571f19abcc12bcd13f4e497f54bdb3fc5da93c85835e1ddb91d71518"
@@ -138,4 +139,4 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/generated/install_acfs.sh]="099b8aca0a6c3bee480beae7af21b1c464b4cbf9c407724ad8ff4faa6256bdd7"
 )
 
-ACFS_INTERNAL_CHECKSUMS_COUNT=126
+ACFS_INTERNAL_CHECKSUMS_COUNT=127

@@ -3896,6 +3896,7 @@ acfs_load_internal_checksums_data() {
         scripts/lib/swarm_status.sh
         scripts/lib/temp_sweep.sh
         scripts/lib/service_protection.sh
+        scripts/lib/coexistence.sh
         scripts/services-setup.sh
         scripts/agent-readiness-audit.sh
         packages/manifest/src/agent-readiness-audit.ts
@@ -10852,6 +10853,7 @@ finalize() {
     try_step "Installing temp_sweep.sh" install_asset "scripts/lib/temp_sweep.sh" "$ACFS_HOME/scripts/lib/temp_sweep.sh" || return 1
     try_step "Installing state_layer.sh" install_asset "scripts/lib/state_layer.sh" "$ACFS_HOME/scripts/lib/state_layer.sh" || return 1
     try_step "Installing service_protection.sh" install_asset "scripts/lib/service_protection.sh" "$ACFS_HOME/scripts/lib/service_protection.sh" || return 1
+    try_step "Installing coexistence.sh" install_asset "scripts/lib/coexistence.sh" "$ACFS_HOME/scripts/lib/coexistence.sh" || return 1
     try_step "Installing support.sh" install_asset "scripts/lib/support.sh" "$ACFS_HOME/scripts/lib/support.sh" || return 1
     try_step "Installing acfs-nightly-update.service template" install_asset "scripts/templates/acfs-nightly-update.service" "$ACFS_HOME/scripts/templates/acfs-nightly-update.service" || return 1
     try_step "Installing acfs-nightly-update.timer template" install_asset "scripts/templates/acfs-nightly-update.timer" "$ACFS_HOME/scripts/templates/acfs-nightly-update.timer" || return 1
