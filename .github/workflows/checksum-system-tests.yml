@@ -36,9 +36,12 @@ jobs:
           cat > .yamllint.yml << 'EOF'
           extends: default
           rules:
-            # Allow long lines in workflows (common for shell scripts)
+            # Allow long lines in workflows (common for shell scripts).
+            # Upstream's workflows carry messages over 200 characters, so
+            # length only warns, as in installer.yml (acfs-9ij4).
             line-length:
               max: 200
+              level: warning
             # Allow both key styles
             key-ordering: disable
             # Be lenient with comments
