@@ -10,7 +10,7 @@
 ![Shell](https://img.shields.io/badge/Shell-Bash-ff79c6?style=for-the-badge)
 
 <p align="center">
-  <strong>🌐 <a href="https://agent-flywheel.com">agent-flywheel.com</a></strong> — Interactive setup wizard for beginners
+  <strong>🌐 <a href="https://agent-flywheel.com">agent-flywheel.com</a></strong> is <em>upstream's</em> setup wizard. It installs upstream ACFS, not this fork, which runs its agents in herdr (see "About this fork")
 </p>
 
 > **From zero to fully-configured agentic coding VPS in 30 minutes.**
@@ -18,7 +18,7 @@
 
 ## About this fork
 
-This is [arosl/agentic_coding_flywheel_setup](https://github.com/arosl/agentic_coding_flywheel_setup), a fork of [Dicklesworthstone's ACFS](https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup). Upstream is the original work. The fork changes what gets installed:
+This is [arosl/agentic_coding_flywheel_setup](https://github.com/arosl/agentic_coding_flywheel_setup), a fork of [Dicklesworthstone's ACFS](https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup). Upstream is the original work. The fork deploys no website. [agent-flywheel.com](https://agent-flywheel.com) and every link to it below are upstream's: its wizard describes upstream's tools (ntm, tmux, Docker) and generates upstream's install command. To install this fork, use the one-liner in "Quick Install" just below. The fork changes what gets installed:
 
 - **herdr replaces tmux, ntm and wa.** Why: one tool gives the agents persistent panes and workspaces and shows each agent's state, which took three tools before. Agents run in [herdr](https://herdr.dev) panes. The `tools.herdr` module installs herdr through the checksum-verified installer path, then installs herdr's integration for each agent CLI ACFS installs that herdr supports. ACFS no longer installs ntm (Named Tmux Manager), wa (WezTerm Automata), its tmux configuration or the tmux `agents` session.
 - **Docker is opt-in.** Why: the fork runs containers in Incus (below), so a default install has no Docker. Select the `tools.docker` module to get Docker Engine, the Compose plugin and the docker group. dsr, which builds through Docker, is off by default, and selecting it selects `tools.docker` too. ACFS installs no lazydocker.
@@ -140,7 +140,7 @@ graph LR
 ```
 
 ### For Beginners
-ACFS includes a **step-by-step wizard website** at [agent-flywheel.com](https://agent-flywheel.com) that guides complete beginners through:
+ACFS includes a **step-by-step wizard website**, `apps/web/`, that guides complete beginners through the steps below. Upstream deploys it at [agent-flywheel.com](https://agent-flywheel.com), where it describes upstream ACFS; the fork deploys none (see "About this fork"):
 1. Installing a terminal on their local machine
 2. Generating SSH keys (for secure access later)
 3. Renting a VPS from providers like OVH or Contabo
