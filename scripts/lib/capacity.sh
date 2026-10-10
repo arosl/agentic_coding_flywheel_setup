@@ -48,9 +48,7 @@ In an Incus system container (systemd-detect-virt -c says lxc) it reads the
 container's own cgroup: it is red when the working set (memory.current less
 inactive_file, so reclaimable page cache doesn't count) is over 80% of
 memory.high (memory.max when there is no soft limit), and PSI comes from the
-cgroup's memory.pressure, not /proc/pressure. Anywhere, the memory.pressure
-of acfs-agents.slice (and the other acfs slices, reported) is read when the
-slice exists; the agents' slice over the PSI line is red as well.
+cgroup's memory.pressure, not /proc/pressure.
 Thresholds: ACFS_CAPACITY_GUARD_MIN_MEM_MIB (4096),
 ACFS_CAPACITY_GUARD_MIN_DISK_PCT (10), ACFS_CAPACITY_GUARD_MAX_PSI_FULL (10),
 ACFS_CAPACITY_GUARD_MAX_CGROUP_PCT (80),
@@ -70,7 +68,7 @@ Environment overrides for tests:
   ACFS_CAPACITY_MEMINFO_FILE, ACFS_CAPACITY_PSI_DIR
   ACFS_CAPACITY_WORK_DIR, ACFS_CAPACITY_TEMP_DIR
   ACFS_CAPACITY_VIRT (what systemd-detect-virt -c would say),
-  ACFS_CAPACITY_CGROUP_ROOT (/sys/fs/cgroup), ACFS_CAPACITY_UID
+  ACFS_CAPACITY_CGROUP_ROOT (/sys/fs/cgroup)
 EOF
 }
 
@@ -1217,19 +1215,6 @@ capacity_guard_container_virt() {
     printf '%s\n' "$virt"
 }
 
-# A slice's cgroup path below its manager: a dash in a slice name nests it,
-# so acfs-agents.slice is acfs.slice/acfs-agents.slice.
-capacity_guard_slice_path() {
-    local -a parts=()
-    local part prefix="" path=""
-    IFS=- read -r -a parts <<<"${1%.slice}"
-    for part in "${parts[@]}"; do
-        prefix="${prefix:+$prefix-}$part"
-        path="${path:+$path/}$prefix.slice"
-    done
-    printf '%s\n' "$path"
-}
-
 # A cgroup's memory.stat field in bytes; nothing when unreadable.
 capacity_guard_memory_stat() {
     awk -v field="$2" '$1 == field && $2 ~ /^[0-9]+$/ && length($2) < 16 {print $2; exit}' "$1/memory.stat" 2>/dev/null || true
@@ -1426,27 +1411,6 @@ capacity_guard_collect() {
         CAPACITY_GUARD_REASONS+=("PSI memory full avg60 is ${CAPACITY_GUARD_PSI_MEMORY_FULL}, over ${max_psi_full}")
     fi
 
-    # The acfs slices (acfs-ioo3.5) under the user's manager, each one that
-    # exists. The agents' slice can stall while the services' slice runs, so
-    # its own "full" line turns the guard red too.
-    local uid="${ACFS_CAPACITY_UID:-}" slice slice_file slice_some slice_full
-    [[ "$uid" =~ ^[0-9]+$ ]] || uid="$(id -u 2>/dev/null || true)"
-    CAPACITY_GUARD_SLICE_LINES=()
-    if [[ "$uid" =~ ^[0-9]+$ ]]; then
-        for slice in acfs-services acfs-background acfs-agents; do
-            slice_file="$cgroot/user.slice/user-$uid.slice/user@$uid.service/$(capacity_guard_slice_path "$slice.slice")/memory.pressure"
-            [[ -r "$slice_file" ]] || continue
-            slice_some="$(capacity_guard_psi_avg60 "$slice_file" some)"
-            slice_full="$(capacity_guard_psi_avg60 "$slice_file" full)"
-            [[ "$slice_some" =~ ^[0-9]+(\.[0-9]+)?$ ]] || slice_some="-"
-            [[ "$slice_full" =~ ^[0-9]+(\.[0-9]+)?$ ]] || slice_full="-"
-            CAPACITY_GUARD_SLICE_LINES+=("$slice.slice $slice_some $slice_full")
-            if [[ "$slice" == acfs-agents && "$slice_full" != "-" ]] && capacity_guard_gt "$slice_full" "$max_psi_full"; then
-                CAPACITY_GUARD_REASONS+=("PSI memory full avg60 of acfs-agents.slice is ${slice_full}, over ${max_psi_full}")
-            fi
-        done
-    fi
-
     # Filesystems: the work directory and the temp directories, each mount once.
     local -a fs_roles=() fs_paths=()
     fs_roles+=(work)
@@ -1541,16 +1505,12 @@ capacity_guard_emit_json() {
         return 1
     }
 
-    local reasons_json warnings_json fs_json slices_json
+    local reasons_json warnings_json fs_json
     reasons_json="$(printf '%s\n' "${CAPACITY_GUARD_REASONS[@]}" | jq -R . | jq -s -c 'map(select(. != ""))')"
     warnings_json="$(printf '%s\n' "${CAPACITY_GUARD_WARNINGS[@]}" | jq -R . | jq -s -c 'map(select(. != ""))')"
     fs_json="$(printf '%s\n' "${CAPACITY_GUARD_FS_LINES[@]}" | jq -R -c 'select(. != "") | split(" ")
         | {role: .[0], mount: .[1], fstype: .[2], size_mib: (.[3] | tonumber),
            available_mib: (.[4] | tonumber), free_percent: (.[5] | tonumber)}' | jq -s -c .)"
-    slices_json="$(printf '%s\n' "${CAPACITY_GUARD_SLICE_LINES[@]}" | jq -R -c 'select(. != "") | split(" ")
-        | {slice: .[0],
-           memory_some_avg60: (if .[1] == "-" then null else (.[1] | tonumber) end),
-           memory_full_avg60: (if .[2] == "-" then null else (.[2] | tonumber) end)}' | jq -s -c .)"
 
     jq -n \
         --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -1558,7 +1518,6 @@ capacity_guard_emit_json() {
         --argjson reasons "$reasons_json" \
         --argjson warnings "$warnings_json" \
         --argjson filesystems "$fs_json" \
-        --argjson slices "$slices_json" \
         --arg virt "$CAPACITY_GUARD_VIRT" \
         --arg psi_source "$CAPACITY_GUARD_PSI_SOURCE" \
         --arg cg_current "$CAPACITY_GUARD_CG_CURRENT_MIB" \
@@ -1610,8 +1569,7 @@ capacity_guard_emit_json() {
                 source: $psi_source,
                 memory_some_avg60: ($psi_mem_some | num),
                 memory_full_avg60: ($psi_mem_full | num),
-                cpu_some_avg60: ($psi_cpu_some | num),
-                slices: $slices
+                cpu_some_avg60: ($psi_cpu_some | num)
             },
             filesystems: $filesystems,
             rch: {
@@ -1656,11 +1614,6 @@ capacity_guard_emit_human() {
     printf '  %-20s memory some %s, full %s (red over %s); cpu some %s\n' \
         "PSI avg60 ($CAPACITY_GUARD_PSI_SOURCE):" "${CAPACITY_GUARD_PSI_MEMORY_SOME:-n/a}" \
         "${CAPACITY_GUARD_PSI_MEMORY_FULL:-n/a}" "$CAPACITY_GUARD_MAX_PSI_FULL" "${CAPACITY_GUARD_PSI_CPU_SOME:-n/a}"
-    local slice slice_some slice_full
-    for line in "${CAPACITY_GUARD_SLICE_LINES[@]}"; do
-        read -r slice slice_some slice_full <<<"$line"
-        echo "    $slice: memory some ${slice_some/#-/n/a}, full ${slice_full/#-/n/a}"
-    done
     for line in "${CAPACITY_GUARD_FS_LINES[@]}"; do
         read -r role mount fstype size_mib avail_mib free_pct <<<"$line"
         printf '  Disk (%s):%*s%s %s: %s MiB free of %s MiB, %s%% (red under %s%%)\n' \

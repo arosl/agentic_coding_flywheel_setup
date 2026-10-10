@@ -2294,19 +2294,9 @@ _acfs_doctor_fstype() {
     stat -f -c %T -- "$1" 2>/dev/null || true
 }
 
-# A byte count as whole GiB, for MemoryLow values.
-_acfs_doctor_gib() {
-    if [[ "$1" =~ ^[0-9]+$ ]]; then
-        printf '%s GiB\n' "$(($1 / 1073741824))"
-    else
-        printf '%s\n' "${1:-unset}"
-    fi
-}
-
 # Inside an Incus system container (acfs-ioo3.6; plan 3.1 to 3.3, 4.2 item
-# 7): the container's memory against its limit, /tmp on disk, linger, the
-# acfs slices and what kills an agent under pressure, and the state layer.
-# Read-only, and silent outside a container.
+# 7): the container's memory against its limit, /tmp on disk, linger and the
+# state layer. Read-only, and silent outside a container.
 check_container() {
     [[ "$(_acfs_doctor_container_virt)" == lxc ]] || return 0
 
@@ -2315,7 +2305,6 @@ check_container() {
     _acfs_doctor_container_memory
     _acfs_doctor_container_tmp
     _acfs_doctor_container_linger
-    _acfs_doctor_container_slices
     _acfs_doctor_container_state
     blank_line
 }
@@ -2397,7 +2386,7 @@ _acfs_doctor_container_tmp() {
 }
 
 # Linger keeps the user's manager, and with it herdr, Agent Mail and the
-# agents' slice, running without a login.
+# agents, running without a login.
 _acfs_doctor_container_linger() {
     local user="${TARGET_USER:-}" linger=""
     [[ -n "$user" ]] || user="$(id -un 2>/dev/null || true)"
@@ -2419,109 +2408,6 @@ _acfs_doctor_container_linger() {
         check "container.linger" "Linger" "warn" \
             "off for $user: herdr, Agent Mail and the agents stop when the last login ends" \
             "sudo loginctl enable-linger $user"
-    fi
-}
-
-# Prints each of the units ($2...) in the system or user ($1) manager whose
-# MemoryLow is 0 or unreadable. --value prints one value per unit, with a
-# blank line between units.
-_acfs_doctor_units_without_memory_low() {
-    local -a scope=() units=("${@:2}") values=()
-    local value i
-    [[ "$1" == user ]] && scope=(--user)
-    while IFS= read -r value; do
-        [[ -n "$value" ]] && values+=("$value")
-    done < <(systemctl "${scope[@]}" show --property=MemoryLow --value "${units[@]}" 2>/dev/null)
-    for i in "${!units[@]}"; do
-        [[ "${values[$i]:-}" =~ ^([1-9][0-9]*|infinity)$ ]] || printf '%s\n' "${units[$i]}"
-    done
-}
-
-# The three acfs slices (acfs-ioo3.5), MemoryLow along the chain that makes
-# the services' protection count, and the killer on the agents' slice.
-_acfs_doctor_container_slices() {
-    local out="" line key value unit="" uid="" slice missing=() unprotected=() parents=()
-    local -A installed=() low=() oom=()
-    if ! command -v systemctl >/dev/null 2>&1; then
-        check "container.slices" "acfs slices" "skip" "systemctl not found"
-        return 0
-    fi
-    # systemd reports LoadState=loaded for any slice name, file or not, so a
-    # slice counts as installed when it has a unit file or a drop-in.
-    out="$(systemctl --user show --property=Id,FragmentPath,DropInPaths,MemoryLow,ManagedOOMMemoryPressure \
-        acfs-services.slice acfs-background.slice acfs-agents.slice 2>/dev/null)" || out=""
-    if [[ -z "$out" ]]; then
-        check "container.slices" "acfs slices" "skip" "the user manager isn't reachable (systemctl --user)"
-        return 0
-    fi
-    while IFS= read -r line; do
-        [[ "$line" == *=* ]] || continue
-        key="${line%%=*}"
-        value="${line#*=}"
-        case "$key" in
-            Id) unit="$value" ;;
-            FragmentPath|DropInPaths) [[ -n "$unit" && -n "$value" ]] && installed["$unit"]=yes ;;
-            MemoryLow) [[ -n "$unit" ]] && low["$unit"]="$value" ;;
-            ManagedOOMMemoryPressure) [[ -n "$unit" ]] && oom["$unit"]="$value" ;;
-        esac
-    done <<<"$out"
-
-    for slice in acfs-services.slice acfs-background.slice acfs-agents.slice; do
-        [[ "${installed[$slice]:-}" == yes ]] || missing+=("$slice")
-    done
-    if (( ${#missing[@]} == 3 )); then
-        check "container.slices" "acfs slices" "warn" \
-            "not installed: services, background and agents share one cgroup, so nothing protects Agent Mail and herdr from the agents" \
-            "acfs update installs the service protection"
-        return 0
-    elif (( ${#missing[@]} > 0 )); then
-        check "container.slices" "acfs slices" "warn" "not installed: ${missing[*]}" \
-            "acfs update installs the service protection"
-    else
-        check "container.slices" "acfs slices" "pass" "acfs-services, acfs-background and acfs-agents installed"
-    fi
-
-    # MemoryLow on the services' slice protects nothing unless every
-    # ancestor has some too: user.slice, user-<uid>.slice and user@<uid>.service
-    # in the system manager, and in the user manager each slice a dash in its
-    # name nests it under (acfs.slice for acfs-services.slice).
-    if [[ "${installed[acfs-services.slice]:-}" == yes ]]; then
-        uid="$(id -u "${TARGET_USER:-}" 2>/dev/null || id -u)"
-        local -a parts=()
-        local prefix=""
-        IFS=- read -r -a parts <<<"acfs-services"
-        for value in "${parts[@]:0:${#parts[@]}-1}"; do
-            prefix="${prefix:+$prefix-}$value"
-            parents+=("$prefix.slice")
-        done
-        while IFS= read -r value; do
-            [[ -n "$value" ]] && unprotected+=("$value")
-        done < <(_acfs_doctor_units_without_memory_low system user.slice "user-$uid.slice" "user@$uid.service"
-                 (( ${#parents[@]} == 0 )) || _acfs_doctor_units_without_memory_low user "${parents[@]}")
-        if [[ ! "${low[acfs-services.slice]:-0}" =~ ^([1-9][0-9]*|infinity)$ ]]; then
-            check "container.memory_low" "Services' memory protection" "warn" \
-                "acfs-services.slice has no MemoryLow: the agents can take Agent Mail's and herdr's memory" \
-                "acfs update installs the service protection"
-        elif (( ${#unprotected[@]} > 0 )); then
-            check "container.memory_low" "Services' memory protection" "warn" \
-                "no MemoryLow on ${unprotected[*]}, so acfs-services.slice's protects nothing" \
-                "acfs update installs the drop-ins"
-        else
-            check "container.memory_low" "Services' memory protection" "pass" \
-                "MemoryLow $(_acfs_doctor_gib "${low[acfs-services.slice]}") on acfs-services.slice, $(_acfs_doctor_gib "${low[acfs-background.slice]:-0}") on acfs-background.slice"
-        fi
-    fi
-
-    if [[ "${installed[acfs-agents.slice]:-}" == yes ]]; then
-        if [[ "${oom[acfs-agents.slice]:-}" == kill ]] && systemctl is-active --quiet systemd-oomd.service 2>/dev/null; then
-            check "container.oomd" "Agents' OOM killer" "pass" "systemd-oomd kills in acfs-agents.slice under memory pressure"
-        elif systemctl --user is-active --quiet acfs-agents-pressure.service 2>/dev/null; then
-            check "container.oomd" "Agents' OOM killer" "pass" "acfs-agents-pressure.service kills in acfs-agents.slice under memory pressure"
-        else
-            check "container.oomd" "Agents' OOM killer" "warn" \
-                "nothing kills an agent under memory pressure: past memory.high the container stalls, services and all" \
-                "sudo systemctl enable --now systemd-oomd, then acfs update"
-        fi
     fi
 }
 

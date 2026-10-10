@@ -509,18 +509,16 @@ run_guard() {
     ACFS_CAPACITY_TEMP_DIR=/tmp \
     ACFS_CAPACITY_VIRT="${FAKE_VIRT:-none}" \
     ACFS_CAPACITY_CGROUP_ROOT="$host/cgroup" \
-    ACFS_CAPACITY_UID=1000 \
     bash "$CAPACITY_SH" --guard "$@"
 }
 
 # A fake container cgroup root under the guard host: memory.current and
-# memory.high in MiB ("max" for none), the cgroup's memory.pressure "full"
-# avg60, and, when given, acfs-agents.slice's "full" avg60. A dash nests a
-# slice, so the acfs slices sit under acfs.slice. FAKE_INACTIVE_FILE_MIB
-# sets memory.stat's inactive_file (default 0).
+# memory.high in MiB ("max" for none) and the cgroup's memory.pressure
+# "full" avg60. FAKE_INACTIVE_FILE_MIB sets memory.stat's inactive_file
+# (default 0).
 make_guard_cgroup() {
-    local host="$1" current_mib="$2" high_mib="$3" psi_full="$4" agents_full="${5:-}"
-    local cg="$host/cgroup" slices="$host/cgroup/user.slice/user-1000.slice/user@1000.service/acfs.slice"
+    local host="$1" current_mib="$2" high_mib="$3" psi_full="$4"
+    local cg="$host/cgroup"
     mkdir -p "$cg"
     printf '%s\n' "$((current_mib * 1048576))" > "$cg/memory.current"
     printf 'anon 1\nfile 2\nactive_file 3\ninactive_file %s\nslab 4\n' "$((${FAKE_INACTIVE_FILE_MIB:-0} * 1048576))" > "$cg/memory.stat"
@@ -532,13 +530,6 @@ make_guard_cgroup() {
     echo max > "$cg/memory.max"
     printf 'some avg10=0.00 avg60=2.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=%s avg300=0.00 total=1\n' "$psi_full" > "$cg/memory.pressure"
     printf 'some avg10=0.00 avg60=3.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n' > "$cg/cpu.pressure"
-    if [[ -n "$agents_full" ]]; then
-        mkdir -p "$slices/acfs-agents.slice" "$slices/acfs-services.slice"
-        printf 'some avg10=0.00 avg60=4.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=%s avg300=0.00 total=1\n' "$agents_full" \
-            > "$slices/acfs-agents.slice/memory.pressure"
-        printf 'some avg10=0.00 avg60=0.50 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1\n' \
-            > "$slices/acfs-services.slice/memory.pressure"
-    fi
 }
 
 test_guard_container_reads_its_cgroup() {
@@ -546,12 +537,13 @@ test_guard_container_reads_its_cgroup() {
     # The host's /proc/pressure says memory full 50: in a container that is
     # the host's PSI, and the guard must not read it.
     host="$(make_guard_host guard_container 33554432 8388608 50.00)"
-    # A flat acfs-agents.slice (no acfs.slice parent) is not where systemd
-    # puts it, and is never read.
-    mkdir -p "$host/cgroup/user.slice/user-1000.slice/user@1000.service/acfs-agents.slice"
+    # A stalling acfs-agents.slice, which an earlier install's service
+    # protection left, is not read: the guard reads the container's own
+    # cgroup only.
+    mkdir -p "$host/cgroup/user.slice/user-1000.slice/user@1000.service/acfs.slice/acfs-agents.slice"
     printf 'full avg10=0.00 avg60=99.00 avg300=0.00 total=1\n' \
-        > "$host/cgroup/user.slice/user-1000.slice/user@1000.service/acfs-agents.slice/memory.pressure"
-    make_guard_cgroup "$host" 40960 98304 0.10 1.00
+        > "$host/cgroup/user.slice/user-1000.slice/user@1000.service/acfs.slice/acfs-agents.slice/memory.pressure"
+    make_guard_cgroup "$host" 40960 98304 0.10
     output="$(FAKE_TMP_FSTYPE=ext4 FAKE_VIRT=lxc run_guard "$host" --json)"
     write_output_artifact guard_container json "$output"
 
@@ -564,8 +556,7 @@ test_guard_container_reads_its_cgroup() {
       .container.memory_limit_mib == 98304 and .container.memory_limit_file == "memory.high" and
       .container.memory_used_percent == 41 and
       .pressure.source == "cgroup" and .pressure.memory_full_avg60 == 0.1 and .pressure.cpu_some_avg60 == 3 and
-      .pressure.slices == [{slice: "acfs-services.slice", memory_some_avg60: 0.5, memory_full_avg60: 0},
-                           {slice: "acfs-agents.slice", memory_some_avg60: 4, memory_full_avg60: 1}] and
+      (.pressure | has("slices") | not) and
       .agents.more == 28 and .thresholds.max_container_memory_percent == 80
     ' <<<"$output" >/dev/null || return 1
     FAKE_TMP_FSTYPE=ext4 FAKE_VIRT=lxc run_guard "$host" --check || status=$?
@@ -582,7 +573,7 @@ test_guard_container_reads_its_cgroup() {
     write_output_artifact guard_container txt "$human"
     [[ "$human" == *"Container (lxc):     working set 9216 MiB (memory.current 9216 MiB), 56% of memory.high 16384 MiB (red over 80%)"* \
         && "$human" == *"PSI avg60 (cgroup):  memory some 2.00, full 0.10"* \
-        && "$human" == *"acfs-agents.slice: memory some 4.00, full 1.00"* ]] || return 1
+        && "$human" != *"acfs-agents.slice"* ]] || return 1
     pass "guard_container_reads_its_cgroup"
 }
 
@@ -627,12 +618,6 @@ test_guard_container_refuses_over_80_percent() {
     printf '%s\n' "$((16384 * 1048576))" > "$host/cgroup/memory.max"
     output="$(FAKE_TMP_FSTYPE=ext4 FAKE_VIRT=lxc run_guard "$host" --json)"
     jq -e '.status == "red" and .container.memory_limit_file == "memory.max"' <<<"$output" >/dev/null || return 1
-
-    # The agents' slice stalling turns the guard red on its own.
-    make_guard_cgroup "$host" 1024 16384 0.00 25.00
-    output="$(FAKE_TMP_FSTYPE=ext4 FAKE_VIRT=lxc run_guard "$host" --json)"
-    jq -e '.status == "red" and (.reasons | length) == 1
-           and (.reasons[0] | test("acfs-agents.slice is 25.00, over 10"))' <<<"$output" >/dev/null || return 1
     pass "guard_container_refuses_over_80_percent"
 }
 
