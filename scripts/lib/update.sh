@@ -8557,10 +8557,13 @@ WHAT EACH CATEGORY UPDATES:
   runtime:  Bun (bun upgrade), Rust (rustup update), uv (uv self update), Go (apt-managed)
   stack:    Agent Flywheel stack tools (verified upstream installers)
             Installs missing tools and updates existing ones automatically:
-            herdr, Agent Mail, Meta Skill, APR, pt, xf, UBS, BV, BR, CASS, CM,
-            CAAM, SLB, RU, DCG, RCH, GIIL, CSCTF, SRPS, TRU, RANO, MDWB, S2P, Brenner Bot,
-            FSFS, SBH, CASR, DSR, ASB, PCR, EE, FMD, PI, PFR
-            Exception: JFP requires subscription, only updated if already installed
+            herdr, Agent Mail, Meta Skill, APR, pt, UBS, BV, BR, CASS, CM,
+            CAAM, SLB, RU, DCG, RCH, GIIL, CSCTF, SRPS, TRU, MDWB, S2P, Brenner Bot,
+            FSFS, SBH, CASR, EE, FMD, PI, PFR
+            Opt-in, updated only when installed (installed with --force):
+            xf, RANO, AADC, Rust Proxy, ASB, DSR
+            PCR: updated when Claude Code and its hook are installed (or with --force)
+            JFP: requires a subscription, only updated if already installed
 
 LOGS:
   Update logs are saved to: ~/.acfs/logs/updates/

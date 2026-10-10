@@ -126,6 +126,9 @@ jobs:
       - name: Run doctor ast-grep launcher check tests
         run: bash tests/unit/test_doctor_ast_grep_launcher.sh
 
+      - name: Run acfs update --help stack list tests
+        run: bash tests/unit/test_update_help_stack.sh
+
       - name: Run container /tmp and TMPDIR policy tests
         run: bash tests/unit/test_container_tmp_policy.sh
 
