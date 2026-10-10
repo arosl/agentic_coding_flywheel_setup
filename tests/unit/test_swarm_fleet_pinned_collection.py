@@ -48,14 +48,19 @@ class Fixture:
     def native(host, mode):
         request = host["request"]
         value = {"schema": fleet.NATIVE_SCHEMA, "request": request, "work_dispatched": False,
-                 "authentication_verified": False, "agent_mail_registered": False,
+                 "authentication_verified": False, "agent_mail_registered": mode != "preview",
                  "review_sha256": fleet.native_hash(request), "starts_agents": mode == "launch"}
         if mode == "preview":
             value.update(status="preview", admission={"status": "pass", "recommendation": "launch",
                          "safe_agents": 2, "recommended_agents": 2})
         else:
-            value.update(status="ready", targets=[{"slot": 1, **request["agents"][0], "pane": "%3", "pane_pid": "301",
-                         "server_pid": "300", "session_id": "$2", "session_created": "1780000000"}])
+            # One herdr tab in the launch's workspace, as the native launcher records it.
+            agent = request["agents"][0]
+            value.update(status="ready", targets=[{"slot": 1, **agent, "agent_mail_name": "Mail" + agent["agent_name"],
+                         "herdr_name": "mail" + agent["agent_name"].lower(), "workspace_id": "w3",
+                         "workspace_label": "swarm-" + request["session"] + "-" + fleet.native_hash(request)[:12],
+                         "tab_id": "w3:t3", "pane_id": "w3:p3", "terminal_id": "term_3", "shell_pid": 301,
+                         "launched_state": "ready"}])
         return 0, collect.encoded(value)
 
     def invoke(self, host, base, mode, snapshot=None):

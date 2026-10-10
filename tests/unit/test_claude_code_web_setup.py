@@ -23,7 +23,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/claude-code-web-setup.sh"
-MANIFEST_URL = "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/cloud-mirror.json"
+MANIFEST_URL = "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/cloud-mirror.json"
 publisher_spec = importlib.util.spec_from_file_location("cloud_publisher", ROOT / "scripts/cloud-mirror-publish.py")
 publisher = importlib.util.module_from_spec(publisher_spec)
 publisher_spec.loader.exec_module(publisher)
