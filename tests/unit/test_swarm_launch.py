@@ -136,8 +136,20 @@ class LaunchTests(unittest.TestCase):
             path.write_text(FIXTURE)
             path.chmod(0o755)
         (self.lib / "swarm_plan.sh").write_text('#!/usr/bin/env bash\nexec "' + str(self.bin / "swarm_plan.sh") + '" "$@"\n')
+        # Spawning Codex needs its app-server daemon running without HERDR_*
+        # variables (acfs-gen.3). Fake a clean one, so the host's real codex
+        # and daemon are never touched, and a codex that fails if called.
+        codex_home, proc = self.root / "codex-home", self.root / "proc"
+        (codex_home / "app-server-daemon").mkdir(parents=True)
+        (codex_home / "app-server-daemon" / "daemon.pid").write_text('{"pid":777}\n')
+        (proc / "777").mkdir(parents=True)
+        (proc / "777" / "cmdline").write_bytes(b"codex\0app-server\0daemon\0")
+        (proc / "777" / "environ").write_bytes(b"PATH=/usr/bin\0")
+        (self.bin / "codex").write_text("#!/bin/sh\nexit 97\n")
+        (self.bin / "codex").chmod(0o755)
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"], LAUNCH_TEST_ROOT=str(self.root),
-                        ACFS_HOME=str(self.root / "no-acfs-home"))
+                        ACFS_HOME=str(self.root / "no-acfs-home"), CODEX_HOME=str(codex_home),
+                        HERDR_AGENTS_PROC_ROOT=str(proc))
         self.env.pop("HERDR_WORKSPACE_ID", None)
         self.receipt = self.root / "intent.json"
         self.agents = [("BlueLake", "codex"), ("RedFox", "claude")]
