@@ -22,10 +22,13 @@ order, which the launcher's one-at-a-time start made the slot order. Each
 agent's Agent Mail name is read from its tab label, where `acfs agents spawn` put
 it. A herdr name that was dropped (for example after a Codex context compaction)
 is restored from the tab label; a renamed tab, or a herdr name that differs from
-its tab's label, is refused rather than guessed. The preview writes no files and
-runs only read-only herdr queries (`workspace list`, `tab list`, `agent list`,
-`pane process-info`), never model commands, pane capture, renames or prompt
-delivery.
+its tab's label, is refused rather than guessed. Since a tab label can be edited,
+each name must also be registered in Agent Mail under the repository's project
+key (`am agents list`). Tab ids past `t9` are base-36 capitals (`tA`, `tB`, …);
+a lowercase tab id, whose creation order isn't known, is refused. The preview
+writes no files and runs only read-only queries: herdr's `workspace list`,
+`tab list`, `agent list` and `pane process-info`, and `am agents list`. It never
+runs model commands, pane capture, renames or prompt delivery.
 
 To adopt exactly those observed identities, repeat with the **recovery** digest:
 

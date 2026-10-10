@@ -70,9 +70,11 @@ elif name == "ntm":
         print(json.dumps(result)); sys.exit(0)
     raise AssertionError("ntm only delivers work; agents start through herdr")
 elif name == "am":
-    assert args[:2] == ["agents","create"] and flag("--project") == str(root / "repo")
+    assert args[:2] in (["agents","create"], ["agents","list"]) and flag("--project") == str(root / "repo")
     count = root / "am-count"
     n = int(count.read_text()) if count.exists() else 0
+    if args[:2] == ["agents","list"]:
+        print(json.dumps([{"name":x} for x in ["GreenCastle","AmberFox","CopperHill"][:n]])); sys.exit(0)
     count.write_text(str(n + 1))
     print(json.dumps({"name":["GreenCastle","AmberFox","CopperHill"][n]}))
 elif name == "herdr":

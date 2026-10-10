@@ -52,6 +52,11 @@ if mode == "result-race" and rounds == 2 and args[:2] == ["workspace", "list"]:
 def ok(result):
     print(json.dumps({"result": result}))
     sys.exit(0)
+if args[:2] == ["agents", "list"]:
+    # The same fixture serves as am; it registers every tab's name unless told otherwise.
+    names = state.get("registered", [a["label"] for a in state["agents"]])
+    print(json.dumps([{"name": n, "program": "fixture"} for n in names]))
+    sys.exit(0)
 if args[:2] == ["workspace", "list"]:
     ok({"workspaces": state["workspaces"]})
 if args[:2] == ["tab", "list"]:
@@ -68,7 +73,8 @@ if args[:2] == ["pane", "process-info"]:
         "foreground_processes": [{"name": a["foreground"], "pid": a["shell_pid"] + 1, "argv": [a["foreground"]]}]}})
 sys.exit(95)
 '''
-READ_ONLY = (["workspace", "list"], ["tab", "list"], ["agent", "list"], ["pane", "process-info"])
+READ_ONLY = (["workspace", "list"], ["tab", "list"], ["agent", "list"], ["pane", "process-info"],
+             ["agents", "list"])
 
 
 def encode(value):
@@ -88,9 +94,9 @@ class RecoveryTests(unittest.TestCase):
         self.result = Path(str(self.intent) + ".result.json")
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        herdr = self.bin / "herdr"
-        herdr.write_text(FIXTURE)
-        herdr.chmod(0o755)
+        for name in ("herdr", "am"):
+            (self.bin / name).write_text(FIXTURE)
+            (self.bin / name).chmod(0o755)
         self.request = {"repo": str(self.repo), "session": "swarm-demo", "receipt": str(self.intent),
             "agents": [{"agent_name": "Reviewer", "agent_type": "codex"},
                        {"agent_name": "Builder", "agent_type": "claude"},
@@ -121,7 +127,10 @@ class RecoveryTests(unittest.TestCase):
         self.intent.chmod(0o600)
 
     def save_state(self):
-        (self.root / "herdr.json").write_text(json.dumps({"workspaces": self.workspaces, "agents": self.agents}))
+        state = {"workspaces": self.workspaces, "agents": self.agents}
+        if getattr(self, "registered", None) is not None:
+            state["registered"] = self.registered
+        (self.root / "herdr.json").write_text(json.dumps(state))
 
     def invoke(self, *args, code=0, mode=""):
         (self.root / "commands.jsonl").write_text("")
@@ -193,6 +202,24 @@ class RecoveryTests(unittest.TestCase):
         saved = json.loads(self.result.read_text())
         self.assertEqual([(t["slot"], t["tab_id"]) for t in saved["targets"]],
                          [(1, "w9:t8"), (2, "w9:t9"), (3, "w9:tA")])
+
+    def test_lowercase_tab_ids_are_refused(self):
+        # Base 36 ignores case, so "ta" would sort as "tA"; herdr's order past tZ is unknown.
+        self.agents[0]["tab_id"] = "w9:ta"
+        self.save_state()
+        self.invoke(code=2)
+        self.assertFalse(self.result.exists())
+
+    def test_tab_label_must_be_a_registered_agent_mail_name(self):
+        # A lost herdr name leaves only the editable tab label; Agent Mail must know it.
+        self.registered = [a["label"] for a in self.agents]
+        self.agents[0]["name"] = None
+        self.agents[0]["label"] = "RenamedTab"
+        self.save_state()
+        report = self.invoke(code=2)
+        self.assertIn("Agent Mail identity", report["error"])
+        self.assertIn(["agents", "list", "--project", str(self.repo), "--json"], self.calls())
+        self.assertFalse(self.result.exists())
 
     def test_launch_state_is_not_part_of_approval(self):
         # A dialog answered between preview and adoption doesn't void the review.

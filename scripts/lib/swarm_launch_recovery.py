@@ -161,7 +161,7 @@ def validate_request(intent, receipt):
     return request
 
 
-def run(argv, repo, timeout):
+def run(argv, repo, timeout, failure="Unable to observe the launch's herdr workspace."):
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         process = subprocess.Popen(argv, cwd=repo, stdin=subprocess.DEVNULL,
             stdout=out, stderr=err, start_new_session=True)
@@ -175,7 +175,7 @@ def run(argv, repo, timeout):
             require(os.fstat(out.fileno()).st_size + os.fstat(err.fileno()).st_size <= LIMIT,
                     "Pane observation exceeds 1 MiB.")
             out.seek(0)
-            require(process.returncode == 0, "Unable to observe the launch's herdr workspace.")
+            require(process.returncode == 0, failure)
             return out.read(LIMIT + 1)
         finally:
             try:
@@ -194,6 +194,17 @@ def herdr_result(herdr, args, request, timeout):
     value = parse(run([herdr, *args], request["repo"], timeout))
     require(isinstance(value, dict) and isinstance(value.get("result"), dict), "Unrecognized herdr observation.")
     return value["result"]
+
+
+def registered_names(request, timeout):
+    """The Agent Mail names registered under the repository's project key."""
+    found = shutil.which("am")
+    require(found is not None, "Agent Mail (am) is unavailable.")
+    value = parse(run([os.path.abspath(found), "agents", "list", "--project", request["repo"], "--json"],
+                      request["repo"], timeout, "Unable to list the repository's Agent Mail identities."))
+    require(isinstance(value, list) and all(isinstance(a, dict) and isinstance(a.get("name"), str) for a in value),
+            "Unrecognized Agent Mail observation.")
+    return {a["name"] for a in value}
 
 
 def observe(request, timeout):
@@ -221,7 +232,7 @@ def observe(request, timeout):
     for row in rows:
         require(row.get("agent") in ("claude", "codex")
                 and all(isinstance(row.get(k), str) and re.fullmatch(HERDR_ID, row[k]) for k in ("pane_id", "tab_id"))
-                and re.fullmatch(r".*:t[0-9A-Za-z]{1,12}", row["tab_id"])
+                and re.fullmatch(r".*:t[0-9A-Z]{1,12}", row["tab_id"])
                 and isinstance(row.get("terminal_id"), str) and re.fullmatch(TERMINAL_ID, row["terminal_id"]),
                 "Every observed agent must be a live native agent in the launch workspace.")
         mail_name = labels.get(row["tab_id"])
@@ -242,11 +253,15 @@ def observe(request, timeout):
             "workspace_id": workspace_id, "workspace_label": label, "tab_id": row["tab_id"],
             "pane_id": row["pane_id"], "terminal_id": row["terminal_id"], "shell_pid": info["shell_pid"],
             "launched_state": "blocked" if row.get("agent_status") == "blocked" else "ready",
-            # herdr counts tabs past 9 with letters (w1:t9, w1:tA, ...); base 36
-            # orders those the way herdr created them.
+            # herdr counts tabs past 9 with capitals (w1:t9, w1:tA, ...); base 36
+            # orders those the way herdr created them. int(..., 36) ignores case,
+            # so lowercase ids, whose order isn't known, are refused above.
             "order": int(row["tab_id"].rsplit(":t", 1)[1], 36)})
     for key in ("pane_id", "tab_id", "terminal_id", "shell_pid", "herdr_name", "order"):
         require(len({o[key] for o in observed}) == len(observed), "Observed agents are not distinct.")
+    # A tab label is editable; only a name Agent Mail has for this repository counts.
+    require({o["agent_mail_name"] for o in observed} <= registered_names(request, timeout),
+            "An agent's tab label is not an Agent Mail identity of this repository; recovery will not guess.")
     require(Counter(o["agent_type"] for o in observed)
             == Counter(a["agent_type"] for a in request["agents"]), "Observed native-agent mix changed.")
     # Sequential start made tab creation order the slot order.
@@ -305,7 +320,8 @@ def main(arguments=None):
             "work_dispatched": False, "agent_mail_registered": True,
             "original_launch_verified": False, "result_created": False,
             "note": "Approval adopts these current native agents, not proof of the original spawn. "
-                    "Agent Mail names are read from each agent's tab label, where spawn put them."}
+                    "Agent Mail names are read from each agent's tab label, where spawn put them, "
+                    "and confirmed registered under the repository's project key."}
         if not args.adopt:
             report["adopt_command"] = shlex.join(["acfs", "swarm", "launch", "--recover",
                 "--receipt", str(receipt), "--timeout", str(args.timeout),
