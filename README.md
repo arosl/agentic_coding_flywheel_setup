@@ -1122,10 +1122,13 @@ acfs agents spawn --claude 1 --dry-run   # print the plan; create nothing
 acfs agents send --kind codex "Check your Agent Mail inbox."
 acfs agents send --all --wait --timeout 600000 "Report your status."
 acfs agents send --name AlphaFox --template fresh_review   # a command palette prompt, by its key
+acfs agents send --name AlphaFox --with-memory --with-cass "Fix the flaky send test."
 acfs agents list [--workspace w1] [--kind claude] [--json]
 ```
 
 `spawn` registers each agent in Agent Mail first and takes the name Agent Mail returns. The herdr name is that name lowercased, and the tab is labelled with it. Then it runs `herdr tab create` and `herdr agent start` in the new tab's pane. By default it sends each agent its identity followed by the command palette's `default_new_agent` prompt; `--prompt` replaces the palette text and `--no-prompt` sends nothing. In a folder they haven't seen before, both Claude Code and Codex first ask whether you trust it. `spawn` shows any such dialog and stops instead of answering it, unless you pass `--trust-folder`: then it answers exactly that folder-trust question with "trust", and still stops at any other dialog. `send` prompts every matching agent except the one it runs in. An agent that is blocked at an approval or question is skipped and reported, never answered, and the exit code is nonzero. `send --template KEY|FILE` sends a command palette prompt (by its heading key) or a file instead of typed text. It fills in `{{session}}` (the workspace label), `{{agent}}` (the Agent Mail name), `{{herdr}}` and `{{thread}}` (from `--thread`) for each agent, and refuses before sending anything if the template has any other placeholder.
+
+`send` and `spawn` take `--with-memory` and `--with-cass`, which put context before the prompt, as ntm's flags of the same names did. `--with-memory` adds up to five of cm's rules for the prompt (`cm context`), under `## Project rules`. `--with-cass` adds excerpts of up to three past sessions from the last 30 days (`cass search`), with secrets redacted and a note that they are historical data, not instructions. The context is looked up once per command, from the prompt as typed (or the template before it is filled in). Neither ever stops a send: when cm or cass is missing, fails, finds nothing or takes over five seconds, the prompt goes as it is, and a one-line note says why. With `spawn`, the context goes after the identity line, and `--no-prompt` refuses both flags.
 
 Tool detection always runs in the target user's context (including under `sudo`, resolved via `SUDO_USER` with `~/.local/bin`, `~/go/bin`, etc. on PATH), so user-local tools are reported accurately.
 
