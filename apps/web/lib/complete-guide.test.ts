@@ -67,6 +67,22 @@ describe("complete guide derived claims", () => {
     expect(pageSource).toContain("PINNED_INSTALL_COMMAND");
   });
 
+  test("section 7 launches the swarm with ACFS's own commands on herdr, never ntm", () => {
+    for (const command of [
+      "acfs machine up dev",
+      "acfs machine verify dev",
+      "acfs capacity --recommend-herdr",
+      "acfs swarm plan --agents",
+      "acfs agents spawn --claude",
+      "acfs agents send --all --template default_new_agent",
+      "herdr agent prompt",
+    ]) {
+      expect(pageSource).toContain(command);
+    }
+    expect(pageSource).not.toMatch(/\bntm\b/);
+    expect(pageSource).not.toMatch(/\btmux\b/);
+  });
+
   test("social cards consume shared counts instead of stale literals", () => {
     for (const source of [openGraphSource, twitterSource]) {
       expect(source).toContain("COMPLETE_GUIDE_PROMPT_COUNT");

@@ -1870,6 +1870,35 @@ herdr agent prompt <agent> "Your marching orders prompt here"`}
             />
 
             <P>
+              ACFS adds its own layer on top of herdr: a <strong>swarm machine</strong> to run in, a
+              capacity check before anything starts, and one command that spawns the agents, names
+              them in Agent Mail and opens each in its own herdr tab:
+            </P>
+
+            <CodeBlock
+              language="bash"
+              code={`# Where the swarm runs: an unprivileged Incus container whose logins
+# survive a rebuild (run from a checkout, on the Incus host), or any
+# VPS with ACFS installed
+acfs machine up dev --ssh-key laptop.pub --jump myhost
+acfs machine verify dev            # every configured login still answers
+
+# Inside the machine: how many agents it can carry right now, then a
+# queue-aware plan (advisory; it launches nothing)
+acfs capacity --recommend-herdr
+acfs swarm plan --agents 8 --profile balanced --workload standard
+
+# Start them: each agent gets an Agent Mail name, a herdr tab labelled
+# with it, and its marching orders from the command palette
+acfs agents spawn --claude 6 --codex 2
+acfs agents send --all --template default_new_agent
+
+# Later: who is working, and a nudge to read their mail
+acfs agents list
+acfs agents wake`}
+            />
+
+            <P>
               herdr is useful but not mandatory. A <strong>mux</strong> is a terminal multiplexer: a
               layer that lets you manage multiple shell sessions inside one higher-level session
               manager. In practice, that usually means some combination of tabs, panes, detached
