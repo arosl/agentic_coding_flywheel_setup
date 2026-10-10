@@ -85,6 +85,7 @@ The fork tracks upstream ACFS and changes its toolset: herdr instead of ntm, wez
   - acfs-a04: `ACFS_REPO_OWNER` defaults to the fork's owner, so the one-liner installs the fork, not upstream.
   - acfs-m3l: the support inventory fixture in `test_support_resource_profile.sh` probes at the current time, not upstream's 2099, which `swarm_inventory.sh` excludes as a future probe.
   - acfs-xe3: `test_install_fetch_composition.sh`'s A6 resolves against the default owner, not upstream's.
+  - acfs-b0u: `security.sh` adds `--compressed` to upstream's identity request, because some hosts gzip anyway (antigravity, 2026-10-10).
 
 ## Commands and gates
 

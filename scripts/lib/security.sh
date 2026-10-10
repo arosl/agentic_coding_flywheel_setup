@@ -188,6 +188,7 @@ ACFS_CURL_BASE_ARGS=()
 
 acfs_security_configure_curl() {
     local curl_help=""
+    local curl_version=""
 
     ACFS_CURL_BIN="$(acfs_security_curl_binary_path 2>/dev/null || true)"
     # Pin executable bytes, not an HTTP compression envelope. Asking for the
@@ -196,6 +197,15 @@ acfs_security_configure_curl() {
 
     if [[ -n "$ACFS_CURL_BIN" ]] && curl_help="$("$ACFS_CURL_BIN" --help all 2>/dev/null)" && [[ "$curl_help" == *"--proto"* ]]; then
         ACFS_CURL_BASE_ARGS=(-q -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -H 'Accept-Encoding: identity' --proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 300 -fsSL)
+    fi
+
+    # Some hosts gzip anyway: Google Frontend serves antigravity.google's
+    # installer with "Content-Encoding: gzip" on about half the requests that
+    # ask for identity. --compressed decodes such a body, so the pinned bytes
+    # hash the same whichever cache entry answered; it needs a curl built
+    # with zlib ("libz" in its Features line).
+    if [[ -n "$ACFS_CURL_BIN" ]] && curl_version="$("$ACFS_CURL_BIN" -V 2>/dev/null)" && [[ "$curl_version" == *" libz"* ]]; then
+        ACFS_CURL_BASE_ARGS+=(--compressed)
     fi
 }
 

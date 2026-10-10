@@ -735,6 +735,108 @@ test_non_retryable_exit_code_success() {
 }
 
 # ============================================================
+# Test Cases: Content-Encoding a host sends anyway (acfs-b0u)
+# ============================================================
+
+test_configure_curl_compressed_when_curl_has_zlib() {
+    local name="acfs_security_configure_curl: --compressed exactly when curl has zlib"
+    local curl_version="" want="false" got="false" arg=""
+
+    acfs_security_configure_curl
+    curl_version="$("$ACFS_CURL_BIN" -V 2>/dev/null || true)"
+    [[ "$curl_version" == *" libz"* ]] && want="true"
+    for arg in "${ACFS_CURL_BASE_ARGS[@]}"; do
+        [[ "$arg" == "--compressed" ]] && got="true"
+    done
+
+    if [[ "$got" == "$want" ]]; then
+        test_pass "$name"
+    else
+        test_fail "$name" "zlib=$want but --compressed present=$got: ${ACFS_CURL_BASE_ARGS[*]}"
+    fi
+}
+
+# A server that, like the Google Frontend cache behind antigravity.google,
+# answers with a gzip body and "Content-Encoding: gzip" whatever the request
+# asked for. The download must hash to the uncompressed script.
+test_download_to_file_decodes_unrequested_gzip() {
+    local name="acfs_download_to_file: unrequested gzip encoding hashes as the plain script"
+    local python_bin="" server_py="$TEST_TMP_DIR/gzip_server.py" port_file="$TEST_TMP_DIR/gzip_server.port"
+    local body_file="$TEST_TMP_DIR/gzip_server_body.sh" out_file="$TEST_TMP_DIR/gzip_download.sh"
+    local server_pid="" port="" i=0 status=0 arg=""
+    local -a loopback_args=()
+
+    python_bin="$(command -v python3 || true)"
+    if [[ -z "$python_bin" ]]; then
+        echo "  [SKIP] $name (python3 not found)"
+        return 0
+    fi
+    acfs_security_configure_curl
+    if [[ "$("$ACFS_CURL_BIN" -V 2>/dev/null || true)" != *" libz"* ]]; then
+        echo "  [SKIP] $name (curl lacks zlib)"
+        return 0
+    fi
+    # The fixture is plain http on loopback, so drop only the https-only
+    # protocol restriction; every other configured argument is kept.
+    for ((i = 0; i < ${#ACFS_CURL_BASE_ARGS[@]}; i++)); do
+        arg="${ACFS_CURL_BASE_ARGS[$i]}"
+        if [[ "$arg" == "--proto" || "$arg" == "--proto-redir" ]]; then
+            i=$((i + 1))
+            continue
+        fi
+        loopback_args+=("$arg")
+    done
+
+    printf '#!/bin/sh\necho "installer body"\n' > "$body_file"
+    cat > "$server_py" << 'EOF'
+import gzip, http.server, sys
+body = gzip.compress(open(sys.argv[1], "rb").read())
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/x-sh")
+        self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *args):
+        pass
+server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+with open(sys.argv[2], "w") as f:
+    f.write(str(server.server_address[1]))
+server.serve_forever()
+EOF
+    "$python_bin" -I "$server_py" "$body_file" "$port_file" &
+    server_pid=$!
+    for ((i = 0; i < 50; i++)); do
+        [[ -s "$port_file" ]] && break
+        sleep 0.1
+    done
+    port="$(cat "$port_file" 2>/dev/null || true)"
+
+    if [[ -z "$port" ]]; then
+        test_fail "$name" "local gzip server did not start"
+    else
+        (
+            ACFS_CURL_BASE_ARGS=("${loopback_args[@]}")
+            ACFS_CURL_RETRY_DELAYS=(0)
+            acfs_download_to_file "http://127.0.0.1:${port}/install.sh" "$out_file" "gzip-fixture"
+        ) || status=$?
+
+        if (( status != 0 )); then
+            test_fail "$name" "download failed with status $status"
+        elif [[ "$(calculate_sha256 < "$out_file")" == "$(calculate_sha256 < "$body_file")" ]]; then
+            test_pass "$name"
+        else
+            test_fail "$name" "downloaded bytes differ from the plain script (still gzip-encoded?)"
+        fi
+    fi
+
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+}
+
+# ============================================================
 # Test Cases: KNOWN_INSTALLERS Array
 # ============================================================
 
@@ -914,6 +1016,10 @@ test_checksum_candidate_validation_is_exact_and_network_free
 test_checksum_candidate_validation_rejects_cross_wired_hashes
 test_checksum_candidate_validation_rejects_url_drift_and_incomplete_evidence
 test_checksum_report_rejects_duplicate_keys_and_policy_digest_drift
+
+# Content-Encoding a host sends anyway (use the fixture directory above)
+test_configure_curl_compressed_when_curl_has_zlib
+test_download_to_file_decodes_unrequested_gzip
 
 if bash "$PROJECT_ROOT/tests/unit/test_security_fd_identity.sh"; then
     test_pass "retained descriptor identity and diagnostic stream regression"
