@@ -154,6 +154,17 @@ case "$1 ${2:-}" in
             | map({id, subject, from, importance, kind, created_ts, thread_id: .thread})' "$STUB_DIR/mailbox.json"
         exit 0 ;;
     "inbox "*)
+        # Without a mailbox (reap tests), unread_<Agent> holds how many
+        # unread messages the agent has (default none).
+        if [[ ! -e "$STUB_DIR/mailbox.json" ]]; then
+            agent=""
+            for ((i = 0; i < ${#args[@]}; i++)); do
+                [[ "${args[i]}" != --agent ]] || agent="${args[i + 1]}"
+            done
+            jq -nc --argjson n "$(cat "$STUB_DIR/unread_$agent" 2>/dev/null || echo 0)" \
+                '{count: $n, inbox: [range($n) | {id: ., priority: "unread"}]}'
+            exit 0
+        fi
         jq --argjson limit "$limit" --slurpfile read <(cat "$STUB_DIR/read_ids") '
             [.[] | select(.id as $i | $read | index($i) | not)]
             | sort_by([(if .importance == "high" then 0 else 1 end), -.id]) | .[:$limit]
@@ -208,6 +219,15 @@ case "$1 ${2:-}" in
         [[ ! -e "$STUB_DIR/mail_send_fail" ]] || { echo "stub: send refused" >&2; exit 1; }
         printf '{"id":1}\n'
         exit 0 ;;
+    # reap's read: pending_<Agent> holds the rows of `am acks pending`.
+    "acks pending")
+        if [[ -s "$STUB_DIR/pending_$4" ]]; then
+            printf 'ID    FROM          SUBJECT       IMPORTANCE\n'
+            cat "$STUB_DIR/pending_$4"
+        else
+            printf 'No pending acks.\n'
+        fi
+        exit 0 ;;
     "acks overdue")
         if [[ -s "$STUB_DIR/overdue_$4" ]]; then
             printf 'OVERDUE acks (>60min TTL):\nID   FROM            SUBJECT       OVERDUE\n'
@@ -255,7 +275,8 @@ else
 fi
 STUB
 # The stub br answers `br list --status in_progress ... --json` with
-# br_in_progress.json (default: no issues); br_fail makes it fail. The stub
+# br_in_progress.json (default: no issues) and `br blocked ... --json` with
+# br_blocked.json (default: none); br_fail makes it fail. The stub
 # bv answers `bv --robot-next` with bv_next.json (default: nothing
 # actionable); bv_fail makes it fail. Both log the directory they ran in.
 cat >"$WORK/bin/br" <<'STUB'
@@ -263,6 +284,10 @@ cat >"$WORK/bin/br" <<'STUB'
 set -euo pipefail
 printf 'br %s (in %s)\n' "$*" "$PWD" >>"$STUB_DIR/calls"
 [[ ! -e "$STUB_DIR/br_fail" ]] || { echo "stub: database locked" >&2; exit 1; }
+if [[ "$1" == blocked ]]; then
+    cat "$STUB_DIR/br_blocked.json" 2>/dev/null || printf '{"issues":[]}\n'
+    exit 0
+fi
 cat "$STUB_DIR/br_in_progress.json" 2>/dev/null || printf '{"issues":[]}\n'
 STUB
 cat >"$WORK/bin/bv" <<'STUB'
@@ -1355,73 +1380,10 @@ run_recycle AlphaFox --dry-run
 check "--dry-run says what it would send and sends nothing" \
     bash -c '[[ "$1" -eq 0 && -z "$2" ]] && grep -q "would recycle alphafox (AlphaFox): send /clear, then: You are AlphaFox" <<<"$3"' _ "$RC" "$(sends)" "$ERR"
 
-echo "recycle --watch"
-recycle_state() { printf '%s/acfs-home/state/recycle/%s/Boss.json' "$WORK" "$(printf '%s' "$RECYCLE_PROJECT" | sha256sum | cut -c1-16)"; }
-run_watch() { run_recycle --watch --coordinator Boss "$@"; }
-# Deliver to Boss message cursor $1 from $2 with subject $3.
-mail_boss() {
-    local file="$STUB_DIR/events_Boss.json"
-    [[ -s "$file" ]] || printf '[]\n' >"$file"
-    jq -c --argjson c "$1" --arg f "$2" --arg s "$3" '. + [{cursor: $c, message_id: $c, kind: "to", from: $f, subject: $s}]' "$file" >"$file.new"
-    mv "$file.new" "$file"
-}
-
-recycle_case wfirst
-mail_boss 1 AlphaFox "[loop] AlphaFox: done acfs-old"
-run_watch
-check "mail from before the first watch recycles nobody" \
-    bash -c '[[ "$1" -eq 0 && -z "$2" ]] && jq -e ".cursor == 1 and .pending == []" "$3" >/dev/null' _ "$RC" "$(sends)" "$(recycle_state)"
-mail_boss 2 AlphaFox "[loop] AlphaFox: done acfs-1"
-mail_boss 3 BetaOwl "[loop] AlphaFox: done acfs-2"
-mail_boss 4 BetaOwl "[loop] BetaOwl: done acfs-3, continue on the same code"
-mail_boss 5 BetaOwl "[acfs-3] Completed"
-run_watch
-check "a done mail from the agent it names recycles that agent" \
-    bash -c '[[ "$1" -eq 0 ]] && grep -q "^herdr agent prompt alphafox /clear$" <<<"$2"' _ "$RC" "$(sends)"
-check "a done mail naming another agent, one that continues, and other mail recycle nobody" \
-    bash -c '! grep -q "betaowl" <<<"$1" && [[ "$(grep -c "alphafox /clear" <<<"$1")" -eq 1 ]]' _ "$(sends)"
-run_watch
-check "the next cycle does not recycle it again" test "$(count_calls '^herdr agent prompt alphafox /clear')" = 1
-
-recycle_case wpending
-run_watch
-mail_boss 1 GammaYak "[loop] GammaYak: done acfs-4"
-run_watch
-check "an agent still in its turn stays pending, and nothing is sent" \
-    bash -c '[[ "$1" -eq 0 && -z "$2" ]] && jq -e ".pending | map(.name) == [\"GammaYak\"]" "$3" >/dev/null' _ "$RC" "$(sends)" "$(recycle_state)"
-set_status gammayak idle
-printf '\342\235\257 \n' >"$STUB_DIR/screen_gammayak"
-run_watch
-check "once its turn ends, the pending agent is recycled and leaves the list" \
-    bash -c '[[ "$1" -eq 0 ]] && grep -q "^herdr agent prompt gammayak /clear$" <<<"$2" && jq -e ".pending == []" "$3" >/dev/null' _ "$RC" "$(sends)" "$(recycle_state)"
-
-recycle_case wexpire
-run_watch
-mail_boss 1 GammaYak "[loop] GammaYak: done acfs-5"
-HERDR_AGENTS_RECYCLE_PENDING_MAX=0 run_watch
-check "a pending agent past the limit is dropped, and the cycle says to recycle it by hand" \
-    bash -c '[[ "$1" -ne 0 ]] && grep -q "not recycled: GammaYak (\[loop\] GammaYak: done acfs-5); recycle it by hand" <<<"$2" && jq -e ".pending == []" "$3" >/dev/null' _ "$RC" "$ERR" "$(recycle_state)"
-
-recycle_case wdry
-run_watch
-mail_boss 1 AlphaFox "[loop] AlphaFox: done acfs-6"
-run_watch --dry-run
-check "--watch --dry-run sends nothing and keeps the cursor" \
-    bash -c '[[ "$1" -eq 0 && -z "$2" ]] && grep -q "would recycle alphafox" <<<"$3" && jq -e ".cursor == 0" "$4" >/dev/null' _ "$RC" "$(sends)" "$ERR" "$(recycle_state)"
-
-recycle_case wlock
-run_watch
-exec {recycle_lock_fd}>"$(dirname "$(recycle_state)")/Boss.lock"
-flock -n "$recycle_lock_fd"
-run_watch
-exec {recycle_lock_fd}>&-
-check "a second watcher for the same coordinator refuses to run" \
-    bash -c '[[ "$1" -ne 0 ]] && grep -q "another acfs agents recycle --watch or reap --coordinator is running for Boss" <<<"$2"' _ "$RC" "$ERR"
-
-recycle_case wnocoord
-AGENT_MAIL_AGENT='' AGENT_NAME='' run_recycle --watch
-check "--watch without a coordinator is refused" \
-    bash -c '[[ "$1" -ne 0 ]] && grep -q "recycle --watch needs --coordinator" <<<"$2"' _ "$RC" "$ERR"
+recycle_case rnowatch
+run_recycle --watch --coordinator Boss
+check "recycle has no coordinator mode: --watch is an unknown option" \
+    bash -c '[[ "$1" -ne 0 && -z "$2" ]] && grep -q "unknown recycle option: --watch" <<<"$3"' _ "$RC" "$(sends)" "$ERR"
 
 echo "limits"
 # Four agents, each in a tab labelled with its Agent Mail name: AlphaFox
@@ -1537,12 +1499,10 @@ check "--lines takes only whole numbers above zero" \
 
 echo "reap"
 # Two projects, $REPO (workspace w9) and $REPO2 (w2), each in a git repo.
-# w9: BossYak idle in the pane whose shell started first (p11: pane ids are
-# not in start order, as on a real server, where p0 and p11 follow pZ),
-# AlphaFox idle (p0), BetaOwl done, GammaYak working, DeltaElk idle in the
-# focused pane, and kappa idle in a tab whose label is not its Agent Mail
-# name. w2: OtherElk idle in its oldest pane (pZ), OtherFox idle, in a tab
-# labelled with its name and a model. Every tab holds one pane.
+# w9: BossYak idle, AlphaFox idle, BetaOwl done, GammaYak working, DeltaElk
+# idle in the focused pane, and kappa idle in a tab whose label is not its
+# Agent Mail name. w2: OtherElk idle, OtherFox idle, in a tab labelled with
+# its name and a model. Every tab holds one pane.
 REAP_STATE="$WORK/acfs-home/state/reap/idle.json"
 reap_case() {
     reset_stub "$1"
@@ -1568,207 +1528,238 @@ EOF
     printf '{"result":{"tabs":[%s]}}\n' "$(printf '{"label":"%s","pane_count":1,"tab_id":"%s"},' \
         BossYak w9:t1 AlphaFox w9:t2 BetaOwl w9:t3 GammaYak w9:t4 DeltaElk w9:tA Something w9:tB OtherElk w2:t3 'OtherFox Opus 5.5' w2:t7 | sed 's/,$//')" \
         >"$STUB_DIR/tabs.json"
-    # Each pane's shell (pid) and when it started (clock ticks since boot).
-    local pane pid ticks
-    while read -r pane pid ticks; do
-        printf '%s\n' "$pid" >"$STUB_DIR/shell_pid_$pane"
-        mkdir -p "$STUB_DIR/proc/$pid"
-        printf '%s (zsh -l) S 1 %s 0 0 -1 4194560 1 0 0 0 0 0 0 0 20 0 1 0 %s 1000 100\n' "$pid" "$pid" "$ticks" \
-            >"$STUB_DIR/proc/$pid/stat"
-    done <<'PANES'
-w9:p11 1001 100
-w9:p0 1002 500
-w9:p3 1003 600
-w9:p4 1004 700
-w9:pA 1005 800
-w9:pB 1006 900
-w2:pZ 1007 50
-w2:p7 1008 60
-PANES
 }
 # The tabs reap closed, in order, joined by spaces.
 closed() { sed -n 's/^herdr tab close //p' "$STUB_DIR/calls" | tr '\n' ' ' | sed 's/ $//'; }
 # Pretend reap first saw every tracked agent between turns long ago.
 age_state() { jq -c 'map_values(.since = 0)' "$REAP_STATE" >"$REAP_STATE.new" && mv "$REAP_STATE.new" "$REAP_STATE"; }
 
+# Reap every workspace and project, as most cases do.
+run_reap() { run_helper reap --all-workspaces "$@"; }
+
 reap_case rpall
-run_helper reap --idle 0
-check "reap retires every idle agent of every workspace that nothing keeps" \
-    test "$RC/$(closed)" = "0/w9:t2 w9:t3 w2:t7"
-check "each agent is retired in its own project (its cwd), and a project without .beads asks br nothing" \
+run_reap --idle 0
+check "--all-workspaces retires every idle agent of every workspace that nothing keeps" \
+    test "$RC/$(closed)" = "0/w9:t1 w9:t2 w9:t3 w2:t3 w2:t7"
+check "each agent is retired in its own project (its cwd), and a project without .beads asks br and bv nothing" \
     bash -c 'grep -qx -- "am agents show OtherFox --project $2 --json" "$1" \
-        && grep -qx -- "am agents show AlphaFox --project $3 --json" "$1" && ! grep -q "^br " "$1"' \
+        && grep -qx -- "am agents show AlphaFox --project $3 --json" "$1" && ! grep -Eq "^(br|bv) " "$1"' \
     _ "$STUB_DIR/calls" "$REPO2" "$REPO"
-check "the oldest agent of each workspace, the focused pane, a working agent and a mislabelled tab are kept" \
-    bash -c '! grep -Eq "^herdr tab close (w9:t1|w9:t4|w9:tA|w9:tB|w2:t3)$" "$1"' _ "$STUB_DIR/calls"
+check "the focused pane, a working agent and a mislabelled tab are kept" \
+    bash -c '! grep -Eq "^herdr tab close (w9:t4|w9:tA|w9:tB)$" "$1"' _ "$STUB_DIR/calls"
+check "no agent is kept for being a workspace's oldest: reap reads no pane's start" \
+    test "$(count_calls '^herdr pane process-info')" = 0
 check "each retirement is one line on stderr, with the time in UTC and why" \
-    bash -c 'grep -Eq "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z reap: retiring AlphaFox \(alphafox, workspace w9, .*\): between turns for 0 min, with no bead in progress$" <<<"$1"' _ "$ERR"
+    bash -c 'grep -Eq "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z reap: retiring AlphaFox \(alphafox, workspace w9, .*\): between turns for 0 min, with no bead in progress and no work left in its project$" <<<"$1"' _ "$ERR"
+check "with no keep list, nobody is mailed" test "$(count_calls '^am mail send')" = 0
+
+reap_case rpscopeproject
+cd "$REPO" || exit 1
+run_helper reap --idle 0
+cd "$ROOT" || exit 1
+check "by default reap retires only in the project it runs in, and in \$HERDR_WORKSPACE_ID (w9)" test "$RC/$(closed)" = "0/w9:t1 w9:t2 w9:t3"
+: >"$STUB_DIR/calls"
+rm -f "$REAP_STATE"
+HERDR_WORKSPACE_ID='' run_helper reap --idle 0 --project "$REPO2"
+check "--project names another project (in any workspace, without \$HERDR_WORKSPACE_ID)" test "$RC/$(closed)" = "0/w2:t3 w2:t7"
+: >"$STUB_DIR/calls"
+rm -f "$REAP_STATE"
+HERDR_WORKSPACE_ID=w9 run_helper reap --idle 0 --project "$REPO2"
+check "and only in the caller's workspace, \$HERDR_WORKSPACE_ID" test "$RC/$(closed)" = "0/"
+cd / || exit 1
+run_helper reap --idle 0
+cd "$ROOT" || exit 1
+check "outside a git checkout, without --project or --all-workspaces, reap refuses" \
+    bash -c '[[ "$1" -ne 0 && -z "$2" ]] && grep -q "pass --project KEY or --all-workspaces" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
 
 reap_case rpidle
-run_helper reap
-check "with the default --idle 15, an agent first seen idle now is not reaped" \
+run_reap
+check "with the default --idle 60, an agent first seen idle now is not reaped" \
     bash -c '[[ "$1" -eq 0 && -z "$2" ]] && jq -e "has(\"w9:p0 alphafox\") and (has(\"w9:p4 gammayak\") | not)" "$3" >/dev/null' \
     _ "$RC" "$(closed)" "$REAP_STATE"
 age_state
 sed -i 's/"state_change_seq":11/"state_change_seq":21/' "$STUB_DIR/list.json"
-run_helper reap
-check "once 15 min have passed it is, but an agent whose state changed since starts over" \
-    test "$RC/$(closed)" = "0/w9:t3 w2:t7"
+run_reap
+check "once 60 min have passed it is, but an agent whose state changed since starts over" \
+    test "$RC/$(closed)" = "0/w9:t1 w9:t3 w2:t3 w2:t7"
 
 reap_case rpbead
 mkdir -p "$REPO/.beads"
 printf '{"issues":[{"id":"acfs-1","status":"in_progress","assignee":"alphafox"},{"id":"acfs-2","status":"in_progress","assignee":null}]}\n' \
     >"$STUB_DIR/br_in_progress.json"
-run_helper reap --idle 0 --dry-run
+run_reap --idle 0 --dry-run
 check "an agent with a bead in progress assigned to it, in any case, is kept, and --dry-run says why" \
     bash -c '[[ "$1" -eq 0 ]] && grep -q "reap: keeps AlphaFox: 1 bead(s) in progress are assigned to it in $3" <<<"$2"' _ "$RC" "$ERR" "$REPO"
 check "an unassigned bead in progress keeps nobody" grep -q "would close tab w9:t3" <<<"$ERR"
 check "the beads are read in the agent's project, all of them" \
     grep -q "^br list --status in_progress --limit 0 --json (in $REPO)$" "$STUB_DIR/calls"
 touch "$STUB_DIR/br_fail"
-run_helper reap --idle 0
+run_reap --idle 0
 check "beads that cannot be read keep the agents of that project, and fail the cycle" \
-    bash -c '[[ "$1" -ne 0 && "$2" == w2:t7 ]] && grep -q "reap: keeps AlphaFox: the beads in .* could not be read" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
+    bash -c '[[ "$1" -ne 0 && "$2" == "w2:t3 w2:t7" ]] && grep -q "reap: keeps the agents in $4: its beads could not be read" <<<"$3"' _ "$RC" "$(closed)" "$ERR" "$REPO"
+
+reap_case rpwork
+mkdir -p "$REPO/.beads"
+printf '{"actionable":true,"id":"acfs-8","title":"next"}\n' >"$STUB_DIR/bv_next.json"
+run_reap --idle 0 --dry-run
+check "while bv has a pick in its project, an idle agent is kept, and --dry-run says why" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "reap: keeps AlphaFox: bv has acfs-8 ready in $3" <<<"$2"' _ "$RC" "$ERR" "$REPO"
+check "bv is asked once per project, past beads labelled hold or needs-operator" \
+    test "$(count_calls "^bv --robot-next --robot-not-ready-labels hold,needs-operator (in $REPO)$")" = 1
+run_reap --idle 0
+check "agents with work in their project are not retired; the others are" test "$RC/$(closed)" = "0/w2:t3 w2:t7"
+
+reap_case rpdepwait
+mkdir -p "$REPO/.beads"
+printf '{"issues":[{"id":"acfs-1","status":"in_progress","assignee":"gammayak"}]}\n' >"$STUB_DIR/br_in_progress.json"
+printf '{"issues":[{"id":"acfs-2","blocked_by":["acfs-1"]}]}\n' >"$STUB_DIR/br_blocked.json"
+run_reap --idle 0 --dry-run
+check "an open bead waiting on a bead in progress is a dependency wait, which keeps the project's idle agents" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "reap: keeps AlphaFox: acfs-2 in $3 waits on a bead in progress" <<<"$2"' _ "$RC" "$ERR" "$REPO"
+printf '{"issues":[{"id":"acfs-2","blocked_by":["acfs-9"]}]}\n' >"$STUB_DIR/br_blocked.json"
+run_reap --idle 0
+check "a bead blocked by one not in progress is no wait: the agents are retired" \
+    test "$RC/$(closed)" = "0/w9:t1 w9:t2 w9:t3 w2:t3 w2:t7"
+
+reap_case rpepicwait
+mkdir -p "$REPO/.beads"
+printf '{"issues":[{"id":"acfs-1.1","status":"in_progress","issue_type":"task","assignee":"gammayak"},{"id":"acfs-5","status":"in_progress","issue_type":"epic","assignee":null}]}\n' \
+    >"$STUB_DIR/br_in_progress.json"
+printf '{"issues":[{"id":"acfs-1","issue_type":"epic","blocked_by":["acfs-1.1"]},{"id":"acfs-6","issue_type":"task","blocked_by":["acfs-5"]}]}\n' \
+    >"$STUB_DIR/br_blocked.json"
+run_reap --idle 0
+check "an epic blocked by its child in progress, or a bead blocked by an epic in progress, is no wait: the agents are retired" \
+    test "$RC/$(closed)" = "0/w9:t1 w9:t2 w9:t3 w2:t3 w2:t7"
+
+reap_case rpbvfail
+mkdir -p "$REPO/.beads"
+touch "$STUB_DIR/bv_fail"
+run_reap --idle 0
+check "when bv fails, the project's agents are kept, and the cycle fails" \
+    bash -c '[[ "$1" -ne 0 && "$2" == "w2:t3 w2:t7" ]] && grep -q "reap: keeps the agents in $4: its beads could not be read" <<<"$3"' _ "$RC" "$(closed)" "$ERR" "$REPO"
+
+reap_case rpbusy
+printf '{"all_active":[{"agent":"AlphaFox","path":"a.txt"}]}\n' >"$STUB_DIR/reservations.json"
+printf '2\n' >"$STUB_DIR/unread_BetaOwl"
+printf '1053  VioletSalmon  [acfs-1] Review this  normal\n' >"$STUB_DIR/pending_BossYak"
+run_reap --idle 0 --dry-run
+check "an agent holding a reservation, with unread mail or with acks pending is busy, and kept" \
+    bash -c 'grep -q "reap: keeps AlphaFox: it holds reservations: a.txt" <<<"$1" && grep -q "reap: keeps BetaOwl: it has 2 unread message(s)" <<<"$1" \
+        && grep -q "reap: keeps BossYak: it has 1 ack(s) pending" <<<"$1"' _ "$ERR"
+run_reap --idle 0
+check "busy agents are not retired, and that fails nothing" test "$RC/$(closed)" = "0/w2:t3 w2:t7"
 
 reap_case rpdry
-run_helper reap --idle 0 --dry-run
+run_reap --idle 0 --dry-run
 check "--dry-run closes nothing and says what retire would do" \
     bash -c '[[ "$1" -eq 0 && -z "$2" ]] && grep -q "would close tab w9:t2" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
-check "--dry-run says why it keeps the oldest, the focused and the mislabelled agent" \
-    bash -c 'grep -q "keeps BossYak: it is the oldest agent of workspace w9, and agents.toml names no protected agent for" <<<"$1" \
-        && grep -q "keeps DeltaElk: it is the focused pane" <<<"$1" && grep -q "keeps kappa: its tab label .Something. does not start with its Agent Mail name" <<<"$1"' _ "$ERR"
+check "--dry-run says why it keeps the focused and the mislabelled agent" \
+    bash -c 'grep -q "keeps DeltaElk: it is the focused pane" <<<"$1" && grep -q "keeps kappa: its tab label .Something. does not start with its Agent Mail name" <<<"$1"' _ "$ERR"
 
-reap_case rpprotect
+reap_case rpkeep
+printf '[reap]\nkeep = ["alphafox", "OTHERELK"]\n' >"$ACFS_AGENTS_CONFIG"
+run_reap --idle 0 --dry-run
+check "--dry-run says agents.toml keeps a name on its keep list" grep -q "keeps AlphaFox: agents.toml keeps it" <<<"$ERR"
+run_reap --idle 0
+check "a name on agents.toml's keep list is kept in any project, whatever its case" \
+    test "$RC/$(closed)" = "0/w9:t1 w9:t3 w2:t7"
 printf '[reap]\nprotected = ["alphafox"]\n' >"$ACFS_AGENTS_CONFIG"
-run_helper reap --idle 0
-check "a name agents.toml protects is kept in any project, whatever its case" \
-    test "$RC/$(closed)" = "0/w9:t3 w2:t7"
-printf '[reap]\nprotected = []\n[reap.projects."%s"]\nprotected = ["BetaOwl"]\n' "$REPO" >"$ACFS_AGENTS_CONFIG"
 rm -f "$REAP_STATE"
 : >"$STUB_DIR/calls"
-run_helper reap --idle 0
-check "a project with its own list exempts only those names, not its oldest agent" \
-    test "$RC/$(closed)" = "0/w9:t1 w9:t2 w2:t7"
+run_reap --idle 0
+check "the old key, protected, is read as keep, with a warning" \
+    bash -c '[[ "$1" -eq 0 && "$2" == "w9:t1 w9:t3 w2:t3 w2:t7" ]] && grep -q "\[reap\] protected is read as keep; rename it to keep" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
 
 reap_case rpbadconfig
-printf '[reap]\nprotected = "BossYak"\n' >"$ACFS_AGENTS_CONFIG"
-run_helper reap --idle 0
+printf '[reap]\nkeep = "BossYak"\n' >"$ACFS_AGENTS_CONFIG"
+run_reap --idle 0
 check "an invalid agents.toml reaps nobody and fails" \
     bash -c '[[ "$1" -ne 0 && -z "$2" ]] && grep -q "is not a valid reap config; nobody is reaped" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
+printf '[reap]\nkeep = []\n[reap.projects."%s"]\nkeep = ["BossYak"]\n' "$REPO" >"$ACFS_AGENTS_CONFIG"
+run_reap --idle 0
+check "a key other than keep and protected (per-project tables) reaps nobody and fails, naming it" \
+    bash -c '[[ "$1" -ne 0 && -z "$2" ]] && grep -q "takes only keep, not: projects" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
 
-reap_case rpheld
-printf '{"all_active":[{"agent":"AlphaFox","path":"a.txt"}]}\n' >"$STUB_DIR/reservations.json"
-run_helper reap --idle 1
+reap_case rpnotify
+printf '[reap]\nkeep = ["BossYak", "NoSuchOne"]\n' >"$ACFS_AGENTS_CONFIG"
+touch "$STUB_DIR/am_unknown_NoSuchOne"
+run_reap --idle 0
+check "a retirement is mailed, from the retired agent, to the keep-listed agents its project has" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "^am mail send --project $3 --from AlphaFox --to BossYak --subject \[reap\] AlphaFox retired: idle, with no work left" "$2" \
+        && ! grep -q -- "--to NoSuchOne" "$2"' _ "$RC" "$STUB_DIR/calls" "$REPO"
+reap_case rpnotifyfail
+printf '[reap]\nkeep = ["BossYak"]\n' >"$ACFS_AGENTS_CONFIG"
+touch "$STUB_DIR/mail_send_fail"
+run_reap --idle 0
+check "a retirement whose mail fails fails the cycle, and says so" \
+    bash -c '[[ "$1" -ne 0 && "$2" == "w9:t2 w9:t3 w2:t3 w2:t7" ]] && grep -q "reap: am mail send to BossYak failed" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
+
+reap_case rprefused
+printf '7    *.txt                AlphaFox    2026-10-10T08:00:00.  acfs-x\n' >"$STUB_DIR/reserved_ever"
+printf 'changed\n' >>"$REPO/a.txt"
+run_reap --idle 1
 age_state
-run_helper reap --idle 1
-check "retire's refusals hold: an agent with reservations is not reaped, and the cycle fails" \
-    bash -c '[[ "$1" -ne 0 && "$2" == "w9:t3 w2:t7" ]] && grep -q "refused: AlphaFox still holds reservations: a.txt" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
-run_helper reap --idle 1
+run_reap --idle 1
+check "retire's refusals hold: one refused agent is not retired, the others are, and reap exits 0" \
+    bash -c '[[ "$1" -eq 0 && "$2" == "w9:t1 w9:t3 w2:t3 w2:t7" ]] && grep -q "refused: uncommitted changes in files AlphaFox reserved: a.txt" <<<"$3" \
+        && grep -q "reap: AlphaFox was not retired: retire refused it" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
+run_reap --idle 1
 check "a refused agent is not tried again within 5 minutes" test "$(count_calls '^am agents show AlphaFox')" = 1
 
 reap_case rptoken
-AGENT_MAIL_REGISTRATION_TOKEN=callers-own run_helper reap --idle 0
+AGENT_MAIL_REGISTRATION_TOKEN=callers-own run_reap --idle 0
 check "the caller's registration token is never used for a reaped agent's identity" \
     test "$RC/$(count_calls '^curl')" = "0/0"
 
 reap_case rpself
 RC=0
 PATH="$WORK/bin:$PATH" HOME="$WORK/home" ACFS_HOME="$WORK/acfs-home" HERDR_AGENTS_PROC_ROOT="$STUB_DIR/proc" \
-    HERDR_PANE_ID=w9:p0 bash "$HELPER" reap --idle 0 --dry-run >/dev/null 2>"$STUB_DIR/err" || RC=$?
+    HERDR_PANE_ID=w9:p0 bash "$HELPER" reap --all-workspaces --idle 0 --dry-run >/dev/null 2>"$STUB_DIR/err" || RC=$?
 check "the pane running reap is kept" grep -q "keeps AlphaFox: it runs in this pane" "$STUB_DIR/err"
-
-reap_case rpunknownage
-touch "$STUB_DIR/process_info_fail_w9:p3"
-run_helper reap --idle 0
-check "when one pane's start can't be read, its workspace keeps every agent agents.toml doesn't cover" \
-    bash -c '[[ "$1" -eq 0 && "$2" == w2:t7 ]]' _ "$RC" "$(closed)"
-printf '[reap.projects."%s"]\nprotected = ["BossYak"]\n' "$REPO" >"$ACFS_AGENTS_CONFIG"
-: >"$STUB_DIR/calls"
-run_helper reap --idle 0
-check "a project agents.toml covers does not need the oldest agent" \
-    test "$RC/$(closed)" = "0/w9:t2 w9:t3 w2:t7"
 
 reap_case rpraced
 printf '{"state_change_seq":99,"agent_status":"idle"}\n' >"$STUB_DIR/get_alphafox.json"
-run_helper reap --idle 0
-check "an agent whose state changed since the sweep looked is kept, and the cycle fails" \
-    bash -c '[[ "$1" -ne 0 && "$2" == "w9:t3 w2:t7" ]] && grep -q "keeps AlphaFox: its state changed" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
+run_reap --idle 0
+check "an agent whose state changed since the sweep looked is kept, and that fails nothing" \
+    bash -c '[[ "$1" -eq 0 && "$2" == "w9:t1 w9:t3 w2:t3 w2:t7" ]] && grep -q "keeps AlphaFox: its state changed since the sweep looked" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
+rm "$STUB_DIR/get_alphafox.json"
+touch "$STUB_DIR/tab_close_fail"
+rm -f "$REAP_STATE"
+: >"$STUB_DIR/calls"
+run_reap --idle 0
+check "a retirement that fails for a reason other than retire's refusals fails the cycle" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "reap: AlphaFox was not retired: retire failed" <<<"$2"' _ "$RC" "$ERR"
 
 reap_case rpdrymark
-printf '{"all_active":[{"agent":"AlphaFox","path":"a.txt"}]}\n' >"$STUB_DIR/reservations.json"
-run_helper reap --idle 0 --dry-run
-run_helper reap --idle 1
+printf '7    *.txt                AlphaFox    2026-10-10T08:00:00.  acfs-x\n' >"$STUB_DIR/reserved_ever"
+printf 'changed\n' >>"$REPO/a.txt"
+run_reap --idle 0 --dry-run
+run_reap --idle 1
 age_state
-run_helper reap --idle 1
+run_reap --idle 1
 check "a refusal in a dry run does not delay the real retirement's try" \
     bash -c '[[ "$(grep -c "^am agents show AlphaFox" "$1")" -eq 2 ]] && jq -e "has(\"w9:p0 alphafox\") and .[\"w9:p0 alphafox\"].failed != null" "$2" >/dev/null' \
     _ "$STUB_DIR/calls" "$REAP_STATE"
 
 reap_case rpscope
-run_helper reap --idle 60
-run_helper reap --idle 60 --workspace w9
-check "a --workspace sweep keeps the other workspaces' idle timers" \
+run_reap --idle 60
+run_helper reap --idle 60 --project "$REPO" --workspace w9
+check "a sweep of one workspace and project keeps the others' idle timers" \
     jq -e 'has("w2:p7 otherfox") and has("w9:p0 alphafox")' "$REAP_STATE"
 
 reap_case rplock
 exec {reap_lock_fd}>"$WORK/acfs-home/state/reap/reap.lock"
 flock -n "$reap_lock_fd"
-run_helper reap --idle 0
+run_reap --idle 0
 exec {reap_lock_fd}>&-
 check "a second reaper refuses to run" \
     bash -c '[[ "$1" -ne 0 && -z "$2" ]] && grep -q "another acfs agents reap is running" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
 
-echo "reap --coordinator"
-# Done mail to Boss in project $REPO; --idle 60 keeps the sweep out of it.
-reap_watch_case() {
-    reap_case "$1"
-    RECYCLE_PROJECT="$REPO"
-    printf '\342\235\257 \n' >"$STUB_DIR/screen_alphafox"
-    printf '\342\200\272 \n' >"$STUB_DIR/screen_betaowl"
-    run_reap_watch
-}
-run_reap_watch() { run_helper reap --idle 60 --coordinator Boss --project "$REPO" "$@"; }
+reap_case rpnocoord
+run_reap --idle 0 --coordinator Boss
+check "reap has no coordinator mode: --coordinator is an unknown option" \
+    bash -c '[[ "$1" -ne 0 && -z "$2" ]] && grep -q "unknown reap option: --coordinator" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
 
-reap_watch_case rwretire
-mail_boss 1 AlphaFox "[loop] AlphaFox: done acfs-7"
-run_reap_watch
-check "a done mail with no ready work in bv retires the agent" \
-    bash -c '[[ "$1" -eq 0 && "$2" == w9:t2 ]] && grep -q "reap: retiring AlphaFox .*: it mailed done, and bv has no ready work in" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
-check "bv is asked in the coordinator's project" grep -q "^bv --robot-next (in $REPO)$" "$STUB_DIR/calls"
-
-reap_watch_case rwrecycle
-printf '{"actionable":true,"id":"acfs-8","title":"next"}\n' >"$STUB_DIR/bv_next.json"
-mail_boss 1 BetaOwl "[loop] BetaOwl: done acfs-7"
-run_reap_watch
-check "a done mail with ready work in bv recycles the agent, and retires nothing" \
-    bash -c '[[ "$1" -eq 0 && -z "$2" ]] && grep -q "^herdr agent prompt betaowl /new$" "$3"' _ "$RC" "$(closed)" "$STUB_DIR/calls"
-
-reap_watch_case rwpending
-mail_boss 1 GammaYak "[loop] GammaYak: done acfs-9"
-run_reap_watch
-check "a done agent still in its turn stays pending, and nothing is closed or sent" \
-    bash -c '[[ "$1" -eq 0 && -z "$2" ]] && ! grep -q "^herdr agent prompt" "$3" && jq -e ".pending | map(.name) == [\"GammaYak\"]" "$4" >/dev/null' \
-    _ "$RC" "$(closed)" "$STUB_DIR/calls" "$(recycle_state)"
-
-reap_watch_case rwcoordinator
-mail_boss 1 BossYak "[loop] BossYak: done acfs-10"
-run_reap_watch
-check "a done mail never retires the workspace's oldest agent" test "$RC/$(closed)" = "0/"
-
-reap_watch_case rwbvfail
-touch "$STUB_DIR/bv_fail"
-mail_boss 1 AlphaFox "[loop] AlphaFox: done acfs-11"
-run_reap_watch
-check "when bv fails, the done agent is left to the idle sweep" \
-    bash -c '[[ "$1" -ne 0 && -z "$2" ]] && grep -q "not recycled or retired: AlphaFox .*reap retires it once it has been idle for --idle minutes" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
-
-reap_watch_case rwlock
-exec {recycle_lock_fd}>"$(dirname "$(recycle_state)")/Boss.lock"
-flock -n "$recycle_lock_fd"
-run_reap_watch
-exec {recycle_lock_fd}>&-
-check "reap --coordinator refuses while recycle --watch reads the same mailbox" \
-    bash -c '[[ "$1" -ne 0 ]] && grep -q "another acfs agents recycle --watch or reap --coordinator is running for Boss" <<<"$2"' _ "$RC" "$ERR"
 unset ACFS_AGENTS_CONFIG
 
 echo

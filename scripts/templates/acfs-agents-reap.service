@@ -1,15 +1,16 @@
 [Unit]
-Description=ACFS: retire herdr agents that are idle with no bead in progress
+Description=ACFS: retire herdr agents that are idle with no work left
 
 # Nothing installs this unit: running reap unattended is a host unit change,
 # the operator's call ('acfs agents reap --help'). Copy it and its timer to
 # ~/.config/systemd/user/, then 'systemctl --user enable --now
-# acfs-agents-reap.timer'. A drop-in sets what this host needs, such as
+# acfs-agents-reap.timer'. reap retires only in the project it runs in, so
+# a drop-in names that project:
 #   [Service]
-#   WorkingDirectory=<the project the coordinator mails from>
-#   ExecStart=
-#   ExecStart=%h/.acfs/bin/acfs agents reap --coordinator <MailName>
-# The installed acfs must be one that has reap (acfs-update).
+#   WorkingDirectory=<the project's checkout>
+# It runs the installed acfs, never a working tree, where other agents'
+# uncommitted edits would run unattended. The installed acfs must be one
+# that has this reap (acfs-update).
 
 [Service]
 Type=oneshot
