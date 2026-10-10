@@ -22,6 +22,9 @@ set -euo pipefail
 HERDR_AGENTS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HERDR_AGENTS_NAME_PATTERN='^[a-z][a-z0-9_-]{0,31}$'
 HERDR_AGENTS_NAME_ERROR=""
+# How long a prompt may take to show that it was submitted (or, with send
+# --wait, to finish), unless --timeout says otherwise.
+HERDR_AGENTS_PROMPT_TIMEOUT_MS=15000
 
 herdr_agents_usage() {
     cat <<'EOF'
@@ -30,7 +33,7 @@ Usage:
                     [--workspace ID] [--cwd DIR] [--model MODEL]
                     [--prompt TEXT | --no-prompt] [--trust-folder] [--dry-run] [--json]
   acfs agents send  (--all | --kind KIND | --name NAME)... [--workspace ID]
-                    [--wait [--timeout MS]] <prompt>
+                    [--wait] [--timeout MS] <prompt>
   acfs agents list  [--workspace ID] [--kind KIND] [--json]
   acfs agents codex-daemon (status [--json] | start | restart)
 
@@ -51,8 +54,15 @@ spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        daemon runs without any HERDR_* variable (see codex-daemon); it
        refuses to start Codex agents while a daemon that inherited a pane's
        variables is running.
-send   Prompt every matching agent. A blocked agent (waiting at an approval or
-       question) is skipped and reported, never answered.
+       Each kickoff prompt must be seen submitted, as for send.
+send   Prompt every matching agent, and wait until each is seen working, which
+       proves the prompt was submitted (with --wait: until its turn ends), for
+       at most --timeout ms (default 15000). Exits non-zero when any agent
+       did not take the prompt: a --name no agent has, an agent blocked at an
+       approval or question (skipped, never answered), or a prompt that
+       stalled because nothing started working. For a stall, send reads the
+       agent's screen and says whether a dialog or undimmed typed text is on
+       it; it never presses a key there.
 list   Show the agents herdr knows about.
 codex-daemon
        Codex runs its hooks through one shared app-server daemon. Started from
@@ -150,6 +160,90 @@ herdr_agents_default_prompt() {
         return 0
     done
     return 1
+}
+
+# ------------------------------------------------------------
+# prompt outcomes
+# ------------------------------------------------------------
+
+# What an agent's screen shows, read on stdin as `herdr agent read --format
+# ansi` prints it: "dialog" (a question or a menu), "typed" (text in normal
+# brightness after the input box's ❯ or ›: typed but not submitted),
+# "suggestion" (dim text there: the CLI's ghost suggestion, nothing typed),
+# "empty", or "unknown" when neither a dialog nor an input box is recognised.
+# The bottom-most input box line counts. awk may work on bytes, so the
+# markers are matched as whole strings, never in brackets.
+herdr_agents_screen_state() {
+    awk '
+        # Skip the spaces and escape sequences before the first visible
+        # character of s; set TEXT to the rest and DIM to whether SGR left
+        # it dim. 38, 48 and 58 take a colour argument that is no mode.
+        function scan(s,    n, i, p, params) {
+            DIM = 0
+            while (length(s) > 0) {
+                if (substr(s, 1, 1) == " ") { s = substr(s, 2); continue }
+                if (substr(s, 1, 2) == "\302\240") { s = substr(s, 3); continue }
+                if (match(s, /^\033\[[0-9;]*m/)) {
+                    n = split(substr(s, 3, RLENGTH - 3), params, ";")
+                    s = substr(s, RLENGTH + 1)
+                    if (n == 0) DIM = 0
+                    for (i = 1; i <= n; i++) {
+                        p = params[i] + 0
+                        if (p == 0 || p == 22) DIM = 0
+                        else if (p == 2) DIM = 1
+                        else if (p == 38 || p == 48 || p == 58) i += (params[i + 1] == "5") ? 2 : 4
+                    }
+                    continue
+                }
+                if (match(s, /^\033\[[0-9;?]*[A-Za-z]/)) { s = substr(s, RLENGTH + 1); continue }
+                break
+            }
+            TEXT = s
+        }
+        {
+            sub(/\r$/, "")
+            text = $0
+            gsub(/\033\[[0-9;?]*[A-Za-z]/, "", text)
+            # Key hints and a highlighted numbered choice; never wording an
+            # agent could also write in its answer.
+            if (text ~ /Enter to confirm|Enter to select|Esc to cancel/) dialog = 1
+            if (text ~ /^[ \t]*(❯|›|>)[ \t]*[0-9]+\. /) dialog = 1
+            if (text !~ /^[ \t]*(❯|›)/) next
+            marker = "❯"
+            at = index($0, marker)
+            if (at == 0) { marker = "›"; at = index($0, marker) }
+            scan(substr($0, at + length(marker)))
+            if (TEXT ~ /^[ \t]*$/) state = "empty"
+            else if (DIM) state = "suggestion"
+            else state = "typed"
+        }
+        END {
+            if (dialog) print "dialog"
+            else if (state != "") print state
+            else print "unknown"
+        }
+    '
+}
+
+# After agent $1 left a prompt stalled (herdr saw nothing start working):
+# say what its screen shows, and show it. Never presses a key there: a blind
+# Enter could answer a dialog or submit something nobody meant to send.
+herdr_agents_explain_stall() {
+    local target="$1" state
+    if ! herdr_agents_herdr agent read "$target" --source visible --lines 30 --format ansi; then
+        herdr_agents_note "  its screen could not be read ($HERDR_AGENTS_ERR_CODE): look at its pane"
+        return 0
+    fi
+    state="$(herdr_agents_screen_state <<<"$HERDR_AGENTS_OUT")"
+    case "$state" in
+        dialog) herdr_agents_note "  a dialog is on its screen, though herdr does not report it blocked: answer it in the pane, then send again" ;;
+        typed) herdr_agents_note "  undimmed text is in its input box: typed but not submitted. Look at the pane before sending again" ;;
+        suggestion|empty) herdr_agents_note "  nothing is typed in its input box (a dim line there is the CLI's suggestion, not a pending prompt)" ;;
+        *) herdr_agents_note "  neither a dialog nor an input box is recognised on its screen" ;;
+    esac
+    herdr_agents_note "  its screen:"
+    sed -e $'s/\e\\[[0-9;?]*[A-Za-z]//g' -e 's/\r$//' <<<"$HERDR_AGENTS_OUT" \
+        | awk 'NF' | tail -n 12 | sed 's/^/    | /' >&2
 }
 
 # ------------------------------------------------------------
@@ -609,13 +703,18 @@ herdr_agents_spawn() {
         if [[ "$prompt_mode" != none ]]; then
             kickoff="Your Agent Mail identity is already registered: name $mail_name, project key $cwd (use it; don't register a new one). Your herdr name is $herdr_name, in herdr workspace $workspace."
             kickoff+=$'\n\n'"$base_prompt"
-            # No --wait: a kickoff turn runs for a long time.
-            if herdr_agents_herdr agent prompt "$herdr_name" "$kickoff"; then
+            # Wait only until the agent is seen working, which proves the
+            # kickoff was submitted: the turn itself runs for a long time.
+            if herdr_agents_herdr agent prompt "$herdr_name" "$kickoff" \
+                --wait --until working --until blocked --timeout "$HERDR_AGENTS_PROMPT_TIMEOUT_MS"; then
                 status="prompted"
+                [[ "$(jq -r '.result.agent.agent_status // empty' <<<"$HERDR_AGENTS_OUT")" != blocked ]] \
+                    || herdr_agents_note "$herdr_name took its kickoff prompt and is now blocked at an approval or question"
             else
                 herdr_agents_note "$herdr_name started, but its kickoff prompt failed ($HERDR_AGENTS_ERR_CODE): $HERDR_AGENTS_ERR_MESSAGE"
                 status="started; prompt failed: $HERDR_AGENTS_ERR_CODE"
                 failed=true
+                [[ "$HERDR_AGENTS_ERR_CODE" != agent_prompt_stalled ]] || herdr_agents_explain_stall "$herdr_name"
             fi
         fi
         herdr_agents_note "$status: $mail_name ($herdr_name, $kind) in tab $tab_id, pane $pane_id"
@@ -706,19 +805,29 @@ herdr_agents_send() {
     if [[ "$all" == false && "$kinds" == "[]" && "$names" == "[]" ]]; then
         herdr_agents_die "send needs --all, --kind KIND or --name NAME"
     fi
-    [[ -z "$timeout" || "$wait" == true ]] || herdr_agents_die "--timeout goes with --wait"
     herdr_agents_require herdr jq
+    timeout="${timeout:-$HERDR_AGENTS_PROMPT_TIMEOUT_MS}"
 
-    local agents count i target name pane
+    local agents count i target name pane state missing
     local sent=0 skipped=0
-    local -a prompt_args=()
-    if [[ "$wait" == true ]]; then
-        prompt_args+=(--wait)
-        [[ -z "$timeout" ]] || prompt_args+=(--timeout "$timeout")
-    fi
+    # Always wait, so a prompt that was not submitted is a failure. Without
+    # --wait, only until the agent is seen working (or blocked at a dialog
+    # the prompt raised); a prompt to an agent already working is queued.
+    local -a prompt_args=(--wait)
+    [[ "$wait" == true ]] || prompt_args+=(--until working --until blocked)
+    prompt_args+=(--timeout "$timeout")
     agents="$(herdr_agents_select "$workspace" "$kinds" "$names")"
     count="$(jq 'length' <<<"$agents")"
-    if (( count == 0 )); then
+    # A --name herdr does not list is a failure, not a quiet no-op: an
+    # agent's herdr name can drop while it runs.
+    missing="$(jq -r --argjson names "$names" \
+        '[.[].name // empty] as $have | $names[] | select(. as $n | $have | any(. == $n) | not)' <<<"$agents")"
+    while IFS= read -r name; do
+        [[ -n "$name" ]] || continue
+        skipped=$((skipped + 1))
+        herdr_agents_note "skipped $name (agent_not_found): herdr lists no such agent${workspace:+ in workspace $workspace}; its herdr name may have dropped (see 'acfs agents list')"
+    done <<<"$missing"
+    if (( count == 0 && skipped == 0 )); then
         herdr_agents_note "no matching agents"
         return 1
     fi
@@ -733,14 +842,27 @@ herdr_agents_send() {
         fi
         if herdr_agents_herdr agent prompt "$target" "$prompt" "${prompt_args[@]}"; then
             sent=$((sent + 1))
-            herdr_agents_note "sent: $target"
+            state="$(jq -r '.result.agent.agent_status // empty' <<<"$HERDR_AGENTS_OUT")"
+            if [[ "$state" == blocked ]]; then
+                herdr_agents_note "sent: $target, which is now blocked at an approval or question"
+            else
+                herdr_agents_note "sent: $target${state:+ ($state)}"
+            fi
         else
             skipped=$((skipped + 1))
-            if [[ "$HERDR_AGENTS_ERR_CODE" == agent_blocked ]]; then
-                herdr_agents_note "skipped $target: blocked at an approval or question; answer it in its pane first"
-            else
-                herdr_agents_note "skipped $target ($HERDR_AGENTS_ERR_CODE): $HERDR_AGENTS_ERR_MESSAGE"
-            fi
+            case "$HERDR_AGENTS_ERR_CODE" in
+                agent_blocked)
+                    herdr_agents_note "skipped $target: blocked at an approval or question; answer it in its pane first" ;;
+                agent_not_found)
+                    herdr_agents_note "skipped $target (agent_not_found): herdr no longer knows that name (see 'acfs agents list')" ;;
+                agent_prompt_stalled)
+                    herdr_agents_note "not submitted to $target (agent_prompt_stalled): it did not start working after the prompt"
+                    herdr_agents_explain_stall "$target" ;;
+                timeout)
+                    herdr_agents_note "unconfirmed for $target (timeout): it did not reach the awaited state within $timeout ms" ;;
+                *)
+                    herdr_agents_note "skipped $target ($HERDR_AGENTS_ERR_CODE): $HERDR_AGENTS_ERR_MESSAGE" ;;
+            esac
         fi
     done
     herdr_agents_note "sent $sent, skipped $skipped"

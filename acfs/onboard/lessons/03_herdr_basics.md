@@ -118,6 +118,22 @@ still there!
 
 ---
 
+## Prompting Agents From the Shell
+
+`acfs agents send --name <agent> "<prompt>"` types a prompt into an agent and
+checks that the agent took it. It exits non-zero and says why when it didn't:
+no agent has that name, the agent is waiting at a question, or the prompt
+stalled (nothing started working). On a stall it reads the agent's screen and
+tells you whether a dialog is open or your text is still in the input box. It
+never presses Enter for you.
+
+In an idle Claude Code pane you may see a dim line such as
+`❯ Check your Agent Mail inbox.` in the input box. That is Claude Code's
+suggestion, made from your recent prompts, not a prompt waiting to be sent.
+Pressing Enter on it does nothing. Only text in normal brightness was typed.
+
+---
+
 ## Next
 
 Now let's meet your coding agents:

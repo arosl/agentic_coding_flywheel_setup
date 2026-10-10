@@ -80,9 +80,19 @@ case "$1 $2" in
         printf '{"id":"cli:agent:start","result":{"agent":{"name":"%s"}}}\n' "$3"
         ;;
     "agent prompt")
-        [[ ! -e "$STUB_DIR/blocked_$3" ]] || fail_with agent_blocked "agent $3 is blocked"
+        # <code>_<name> makes herdr answer with that error; after_<name> holds
+        # the state a --wait matches (default: working with --until, else done).
+        for code in agent_blocked agent_not_found; do
+            [[ ! -e "$STUB_DIR/${code}_$3" ]] || fail_with "$code" "agent $3: $code"
+        done
         printf '%s' "$4" >"$STUB_DIR/prompt_$3"
-        printf '{"id":"cli:agent:prompt","result":{"submitted":true}}\n'
+        for code in agent_prompt_stalled timeout; do
+            [[ ! -e "$STUB_DIR/${code}_$3" ]] || fail_with "$code" "agent $3: $code"
+        done
+        state=done
+        [[ "$*" != *--until* ]] || state=working
+        [[ ! -s "$STUB_DIR/after_$3" ]] || state="$(cat "$STUB_DIR/after_$3")"
+        printf '{"id":"cli:agent:prompt","result":{"agent":{"name":"%s","agent_status":"%s"},"type":"agent_prompted"}}\n' "$3" "$state"
         ;;
     "agent read")
         if [[ -e "$STUB_DIR/screen_$3" ]]; then
@@ -234,7 +244,18 @@ check "the kickoff carries the agent's identity" \
     grep -q "name AlphaFox, project key $WORK/repo .*herdr name is alphafox, in herdr workspace w9" "$STUB_DIR/prompt_alphafox"
 check "the kickoff carries the palette's default_new_agent and stops at the next heading" \
     bash -c 'grep -q "register with Agent Mail" "$1" && ! grep -q "Not part" "$1"' _ "$STUB_DIR/prompt_alphafox"
-check "the kickoff is submitted without --wait" bash -c '! grep -q -- "--wait" "$1"' _ "$STUB_DIR/calls"
+check "the kickoff waits only until the agent works, for at most 15 s" \
+    bash -c 'grep -q -- "--wait --until working --until blocked --timeout 15000$" "$1"' _ "$STUB_DIR/calls"
+
+# acfs-gen.2: a kickoff that stalls fails the spawn and shows why.
+reset_stub kickoffstall
+touch "$STUB_DIR/agent_prompt_stalled_alphafox"
+printf 'Teach auto mode about your environment?\n\xe2\x9d\xaf 1. Yes\n  2. Not now\nEnter to confirm\n' >"$STUB_DIR/screen_alphafox"
+run_helper spawn --claude 1 --cwd "$WORK/repo" --json
+check "a stalled kickoff fails the spawn and is reported" \
+    bash -c '[[ "$1" -ne 0 ]] && [[ "$(jq -r ".agents[0].status" <<<"$2")" == "started; prompt failed: agent_prompt_stalled" ]]' _ "$RC" "$OUT"
+check "the stall names the dialog on its screen, read in ANSI, and sends no key" \
+    bash -c 'grep -q "a dialog is on its screen" <<<"$1" && grep -q -- "agent read alphafox --source visible --lines 30 --format ansi" "$2" && ! grep -q "send-keys" "$2"' _ "$ERR" "$STUB_DIR/calls"
 
 check "without --model the agent CLI gets no arguments" \
     grep -qx -- "herdr agent start alphafox --kind claude --pane w9:p1" "$STUB_DIR/calls"
@@ -285,7 +306,7 @@ check "the stuck agent is reported with its pane, and the first as started" \
     test "$(jq -r '[.agents[] | "\(.herdr_name)=\(.status)@\(.pane_id)"] | join(" ")' <<<"$OUT")" = "alphafox=started@w9:p1 betaowl=agent_not_ready@w9:p2"
 
 reset_stub promptfail
-touch "$STUB_DIR/blocked_alphafox"
+touch "$STUB_DIR/agent_blocked_alphafox"
 run_helper spawn --claude 2 --cwd "$WORK/repo" --json
 check "a failed kickoff makes spawn exit nonzero" test "$RC" -ne 0
 check "an agent whose kickoff failed keeps its one identity and is not restarted" \
@@ -545,13 +566,69 @@ EOF
 
 reset_stub sendkind
 write_list
-touch "$STUB_DIR/blocked_gammayak"
+touch "$STUB_DIR/agent_blocked_gammayak"
 run_helper send --kind codex "Check your Agent Mail inbox."
 check "send --kind prompts only that kind" \
     test "$(grep -o '^herdr agent prompt [a-z]*' "$STUB_DIR/calls" | tr '\n' '|')" = "herdr agent prompt betaowl|herdr agent prompt gammayak|"
 check "a blocked agent is skipped and reported, and send exits nonzero" \
     bash -c '[[ "$1" -ne 0 ]] && grep -q "skipped gammayak: blocked" <<<"$2" && grep -q "sent 1, skipped 1" <<<"$2"' _ "$RC" "$ERR"
-check "send never waits with --until" bash -c '! grep -q -- "--until" "$1"' _ "$STUB_DIR/calls"
+check "send waits until the agent is seen working, for at most 15 s" \
+    grep -qx -- "herdr agent prompt betaowl Check your Agent Mail inbox. --wait --until working --until blocked --timeout 15000" "$STUB_DIR/calls"
+
+# acfs-gen.2: every way a prompt can fail to arrive is reported, and fails send.
+reset_stub sendmissing
+write_list
+run_helper send --name AlphaFox --name SwiftBasin ping
+check "a --name herdr does not list is agent_not_found, and the rest are still sent" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "skipped swiftbasin (agent_not_found)" <<<"$2" && grep -q "sent 1, skipped 1" <<<"$2"' _ "$RC" "$ERR"
+check "nothing is prompted under the missing name" bash -c '! grep -q "agent prompt swiftbasin" "$1"' _ "$STUB_DIR/calls"
+
+reset_stub sendonlymissing
+write_list
+run_helper send --name ghost ping
+check "send to only a missing name exits nonzero and prompts nobody" \
+    bash -c '[[ "$1" -ne 0 && "$2" -eq 0 ]] && grep -q "skipped ghost (agent_not_found)" <<<"$3"' _ "$RC" "$(count_calls '^herdr agent prompt')" "$ERR"
+
+reset_stub sendnotfound
+write_list
+touch "$STUB_DIR/agent_not_found_betaowl"
+run_helper send --name betaowl ping
+check "agent_not_found from herdr itself fails send" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "skipped betaowl (agent_not_found): herdr no longer knows" <<<"$2" && grep -q "sent 0, skipped 1" <<<"$2"' _ "$RC" "$ERR"
+
+reset_stub sendtyped
+write_list
+touch "$STUB_DIR/agent_prompt_stalled_betaowl"
+printf 'answer\r\n\e[0m\xe2\x9d\xaf\xc2\xa0\e[0mping\e[0m\r\n' >"$STUB_DIR/screen_betaowl"
+run_helper send --name betaowl ping
+check "a stall with undimmed text in the input box says it is typed but not submitted" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "not submitted to betaowl (agent_prompt_stalled)" <<<"$2" && grep -q "undimmed text is in its input box" <<<"$2"' _ "$RC" "$ERR"
+check "the stall shows the screen without escape sequences, and sends no key" \
+    bash -c 'grep -q "^    | .*ping$" <<<"$1" && ! grep -q $'"'"'\e'"'"' <<<"$1" && ! grep -q "send-keys" "$2"' _ "$ERR" "$STUB_DIR/calls"
+
+reset_stub sendghost
+write_list
+touch "$STUB_DIR/agent_prompt_stalled_betaowl"
+printf '\e[0m\xe2\x9d\xaf\xc2\xa0\e[0m\e[2mCheck your Agent Mail inbox.\e[0m\r\n\e[38;2;1;2;3m  auto mode on\e[0m\r\n' >"$STUB_DIR/screen_betaowl"
+run_helper send --name betaowl ping
+check "a dim line in the input box is a suggestion, not a pending prompt" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "nothing is typed in its input box" <<<"$2"' _ "$RC" "$ERR"
+
+reset_stub sendtimeout
+write_list
+touch "$STUB_DIR/timeout_betaowl"
+run_helper send --name betaowl --wait --timeout 100 ping
+check "a timeout is reported with the limit, and fails send" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "unconfirmed for betaowl (timeout): .* within 100 ms" <<<"$2"' _ "$RC" "$ERR"
+
+reset_stub sendraised
+write_list
+echo blocked >"$STUB_DIR/after_betaowl"
+run_helper send --name betaowl --timeout 3000 ping
+check "a prompt that raised a question counts as sent, and says so" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "sent: betaowl, which is now blocked" <<<"$2"' _ "$RC" "$ERR"
+check "--timeout works without --wait" \
+    grep -qx -- "herdr agent prompt betaowl ping --wait --until working --until blocked --timeout 3000" "$STUB_DIR/calls"
 
 reset_stub sendall
 write_list
@@ -567,7 +644,8 @@ check "send exits 0 when nothing was skipped" test "$RC" -eq 0
 reset_stub unnamed
 write_list
 run_helper send --all --workspace w2 ping
-check "an agent without a name is prompted by its pane id" grep -qx -- "herdr agent prompt w2:p1 ping" "$STUB_DIR/calls"
+check "an agent without a name is prompted by its pane id" \
+    grep -qx -- "herdr agent prompt w2:p1 ping --wait --until working --until blocked --timeout 15000" "$STUB_DIR/calls"
 
 reset_stub sendnone
 write_list
