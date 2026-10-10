@@ -467,6 +467,11 @@ def extract(dest, manifest_path):
             target = m.linkname
             if target.startswith("/"):
                 target = rebase(manifest, target, next(p for p in PREFIXES if under(m.name, p)))
+            else:
+                # Written normalized, so a chain of links can't resolve
+                # anywhere but where the lexical check put it.
+                here = posixpath.dirname(m.name)
+                target = posixpath.relpath(posixpath.normpath(posixpath.join(here, target)), here)
             os.symlink(target, path)
         elif m.islnk():
             os.link(os.path.join(dest, m.linkname), path, follow_symlinks=False)
@@ -1185,9 +1190,12 @@ state_import_swap() {
 # brings the source's ~/.ssh: the result holds both sets, this
 # machine's first. Running it again changes nothing.
 state_merge_authorized_keys() {
-    local old="$1" new="$2" tmp
-    [[ -f "$old" ]] || return 0
-    tmp="$(mktemp "$(dirname "$new")/.authorized_keys.XXXXXX")"
+    local old="$1" new="$2" tmp dir
+    dir="$(dirname "$new")"
+    [[ -f "$old" && ! -L "$old" ]] || return 0
+    # Only into a real ~/.ssh directory, never through a link.
+    [[ -d "$dir" && ! -L "$dir" && ! -L "$new" ]] || return 0
+    tmp="$(mktemp "$dir/.authorized_keys.XXXXXX")"
     if [[ -f "$new" ]]; then
         awk 'NF && !seen[$0]++' "$old" "$new" >"$tmp"
     else
@@ -1438,6 +1446,8 @@ state_setup_ssh_host_keys() {
     for key in "$STATE_SSH_DIR"/ssh_host_*_key; do
         conf+=$'\n'"HostKey $key"
     done
+    local previous=""
+    [[ -f "$STATE_SSHD_DROPIN" ]] && previous="$(cat "$STATE_SSHD_DROPIN")"
     if state_write_if_changed "$STATE_SSHD_DROPIN" "$conf" 0644; then
         # sshd -t needs its privilege separation directory, which a
         # socket-activated ssh creates only on the first connection.
@@ -1445,7 +1455,10 @@ state_setup_ssh_host_keys() {
         local why=""
         if ! why="$(sshd -t 2>&1)"; then
             mv -f "$STATE_SSHD_DROPIN" "$STATE_SSHD_DROPIN.rejected"
-            state_err "warning: sshd -t rejected the HostKey drop-in, set aside at $STATE_SSHD_DROPIN.rejected; sshd keeps its own keys. sshd said: ${why:-nothing}"
+            # Put back the drop-in sshd ran with, so its host keys, and
+            # what clients know of them, don't change.
+            [[ -n "$previous" ]] && state_write_if_changed "$STATE_SSHD_DROPIN" "$previous" 0644
+            state_err "warning: sshd -t rejected the HostKey drop-in, set aside at $STATE_SSHD_DROPIN.rejected; sshd keeps the keys it had. sshd said: ${why:-nothing}"
             return 0
         fi
         systemctl reload ssh.service 2>/dev/null || systemctl reload sshd.service 2>/dev/null || true

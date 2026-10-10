@@ -398,6 +398,16 @@ check "a file whose sha256 differs from manifest.json is refused" bash -c '[[ "$
 tamper norow "add('home/.bashrc-evil', b'x'); manifest([{'path': 'home/.bashrc-evil', 'sha256': hashlib.sha256(b'x').hexdigest()}])"
 run "$C" import devbox "$WORK/norow.tar.age"
 check "a member under no manifest row is refused" bash -c '[[ "$1" -ne 0 ]] && grep -q "not under a manifest row" "$2"' _ "$RC" "$ERR"
+X="$WORK/x"
+make_machine "$X"
+rm -rf "$X/home/.claude" "$X/home/.claude.json" "$X/home/.codex" "$X/home/.config/gh"
+tamper chain "add('home/.claude/d/l', b'', kind='sym', link='../..'); add('home/.ssh', b'', kind='sym', link='.claude/d/l/../../../root/.ssh'); manifest([], rows=[
+    {'id': 'claude', 'class': 'login', 'base': 'home', 'path': '.claude', 'policy': 'private', 'markers': [], 'present': True},
+    {'id': 'ssh-user', 'class': 'login', 'base': 'home', 'path': '.ssh', 'policy': 'private', 'markers': [], 'present': True}])"
+run "$X" import devbox "$WORK/chain.tar.age"
+check "a chain of relative links is written normalized and stays in the home" \
+    bash -c '[[ "$1" -eq 0 && "$(readlink "$2/home/.ssh")" == root/.ssh && "$(readlink "$2/home/.claude/d/l")" == ../.. && ! -e "$2/root" ]]' _ "$RC" "$X"
+
 tamper rowpath "manifest([], rows=[{'id': 'codex', 'class': 'login', 'base': 'home', 'path': '../../etc', 'policy': 'asis', 'markers': [], 'present': True}])"
 run "$C" import devbox "$WORK/rowpath.tar.age"
 check "a row whose path differs from this machine's is refused" bash -c '[[ "$1" -ne 0 ]] && grep -q "names a different path" "$2"' _ "$RC" "$ERR"
@@ -547,6 +557,12 @@ rm -f "$G/etcssh/sshd_config.d/10-acfs-host-keys.conf"
 SSHD_FAIL=1 run "$G" setup-guest
 check "a drop-in sshd rejects is set aside with a warning, and the install goes on" \
     bash -c '[[ "$1" -eq 0 && ! -e "$2/etcssh/sshd_config.d/10-acfs-host-keys.conf" && -e "$2/etcssh/sshd_config.d/10-acfs-host-keys.conf.rejected" ]] && grep -q "sshd -t rejected" "$3"' _ "$RC" "$G" "$ERR"
+rm -f "$G/etcssh/sshd_config.d/10-acfs-host-keys.conf.rejected"
+run "$G" setup-guest
+echo rsa-private >"$G/ssh/ssh_host_rsa_key"
+SSHD_FAIL=1 run "$G" setup-guest
+check "a rejected change puts back the drop-in sshd ran with" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qx "HostKey $2/ssh/ssh_host_ed25519_key" "$2/etcssh/sshd_config.d/10-acfs-host-keys.conf" && ! grep -q rsa "$2/etcssh/sshd_config.d/10-acfs-host-keys.conf"' _ "$RC" "$G"
 H="$WORK/h"
 make_machine "$H"
 : >"$LOG"
