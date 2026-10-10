@@ -19,6 +19,7 @@
 #   acfs agents wake [--workspace ID] [--project KEY] [--loop [--interval SEC]] [--dry-run]
 #   acfs agents codex-daemon (status [--json] | start | restart)
 #   acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token T] [--dry-run]
+#   acfs agents quota [--json] | quota check <kind> | quota record-claude   (agent_quota.sh)
 # ============================================================
 
 set -euo pipefail
@@ -41,7 +42,7 @@ herdr_agents_usage() {
 Usage:
   acfs agents spawn [--claude N] [--codex N] [--agy N] [--pi N] [--kind KIND [--count N]]...
                     [--workspace ID] [--cwd DIR] [--model MODEL]
-                    [--prompt TEXT | --no-prompt] [--trust-folder] [--dry-run] [--json]
+                    [--prompt TEXT | --no-prompt] [--trust-folder] [--force] [--dry-run] [--json]
   acfs agents send  (--all | --kind KIND | --name NAME)... [--workspace ID]
                     [--wait] [--timeout MS] <prompt>
   acfs agents list  [--workspace ID] [--kind KIND] [--json]
@@ -49,6 +50,7 @@ Usage:
   acfs agents wake  [--workspace ID] [--project KEY] [--loop [--interval SEC]] [--dry-run]
   acfs agents codex-daemon (status [--json] | start | restart)
   acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token TOKEN] [--dry-run]
+  acfs agents quota [--json] | quota check KIND [--limit PERCENT] | quota record-claude
 
 spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        an Agent Mail identity first; its herdr name is that name lowercased and
@@ -68,6 +70,10 @@ spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        refuses to start Codex agents while a daemon that inherited a pane's
        variables is running.
        Each kickoff prompt must be seen submitted, as for send.
+       Spawn refuses a kind whose plan has used $ACFS_AGENTS_QUOTA_LIMIT
+       percent (default 90) of its 5-hour window, or reports a limit
+       reached ('acfs agents quota check', before anything is created);
+       --force spawns anyway. Unknown usage never refuses.
 send   Prompt every matching agent, and wait until each is seen working, which
        proves the prompt was submitted (with --wait: until its turn ends), for
        at most --timeout ms (default 15000). Exits non-zero when any agent
@@ -116,6 +122,9 @@ retire Retire an agent whose work is done: leave a handoff comment on its bead
        given the agent's registration token (--token or
        AGENT_MAIL_REGISTRATION_TOKEN), soft-retires its Agent Mail identity;
        unretire_agent restores it. --dry-run lists what it would do.
+quota  Show how full each plan's 5-hour and weekly usage windows are, and how
+       many live agents of each kind there are (agent_quota.sh; see
+       'acfs agents quota --help'). Read-only.
 
 The workspace is --workspace, else $HERDR_WORKSPACE_ID. --cwd defaults to the
 git top level of the current directory, which is also the Agent Mail project key.
@@ -558,7 +567,7 @@ herdr_agents_kinds_include_codex() {
 
 herdr_agents_spawn() {
     local workspace="" cwd="" model="unknown" model_given=false prompt="" prompt_mode="palette"
-    local dry_run=false json=false trust_folder=false
+    local dry_run=false json=false trust_folder=false force=false
     local -a kinds=()
     local pending_kind=""
 
@@ -590,6 +599,7 @@ herdr_agents_spawn() {
             --prompt) [[ $# -ge 2 ]] || herdr_agents_die "--prompt needs a value"; prompt="$2"; prompt_mode="custom"; shift 2 ;;
             --no-prompt) prompt_mode="none"; shift ;;
             --trust-folder) trust_folder=true; shift ;;
+            --force) force=true; shift ;;
             --dry-run) dry_run=true; shift ;;
             --json) json=true; shift ;;
             -h|--help) herdr_agents_usage; return 0 ;;
@@ -616,6 +626,20 @@ herdr_agents_spawn() {
     herdr_agents_require herdr jq
     [[ "$dry_run" == true ]] || herdr_agents_require am
     workspace="$(herdr_agents_resolve_workspace "$workspace")"
+    # An agent spawned on a plan whose window is nearly used up stalls at its
+    # first turns (acfs-ybg). Checked once per kind, before anything exists.
+    if [[ "$force" == false ]]; then
+        local quota_kind quota_status
+        for quota_kind in $(printf '%s\n' "${kinds[@]}" | sort -u); do
+            quota_status=0
+            bash "$HERDR_AGENTS_SCRIPT_DIR/agent_quota.sh" check "$quota_kind" || quota_status=$?
+            case "$quota_status" in
+                0) ;;
+                1) herdr_agents_die "spawn refused: $quota_kind is near its usage limit (see 'acfs agents quota'); --force spawns anyway" ;;
+                *) herdr_agents_note "could not check $quota_kind's usage (agent_quota.sh exited $quota_status); spawning anyway" ;;
+            esac
+        done
+    fi
     if [[ -z "$cwd" ]]; then
         cwd="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
     fi
@@ -1348,6 +1372,7 @@ herdr_agents_main() {
         wake) herdr_agents_wake "$@" ;;
         codex-daemon) herdr_agents_codex_daemon "$@" ;;
         retire) herdr_agents_retire "$@" ;;
+        quota) exec bash "$HERDR_AGENTS_SCRIPT_DIR/agent_quota.sh" "$@" ;;
         help|-h|--help) herdr_agents_usage ;;
         *) herdr_agents_usage >&2; return 1 ;;
     esac

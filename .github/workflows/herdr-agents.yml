@@ -2,7 +2,8 @@ name: herdr agents (stub herdr)
 
 # The fork's own workflow. It runs scripts/lib/herdr_agents.sh (acfs agents
 # spawn/send/list) against a stub herdr and a stub am, and the Agent Mail
-# Stop hook (scripts/lib/agent_mail_hook.sh) the same way. Upstream's
+# Stop hook (scripts/lib/agent_mail_hook.sh) and the quota reader
+# (scripts/lib/agent_quota.sh) the same way. Upstream's
 # installer.yml runs each tests/unit script by name, so a new one needs its
 # own job.
 
@@ -17,6 +18,9 @@ on:
       - 'scripts/lib/agent_mail_hook.sh'
       - 'tests/unit/test_agent_mail_hook.sh'
       - 'tests/unit/test_doctor_agent_mail_hook.sh'
+      - 'scripts/lib/agent_quota.sh'
+      - 'tests/unit/test_agent_quota.sh'
+      - 'tests/unit/test_doctor_agents_route.sh'
       - '.github/workflows/herdr-agents.yml'
   pull_request:
     branches: [main]
@@ -28,6 +32,9 @@ on:
       - 'scripts/lib/agent_mail_hook.sh'
       - 'tests/unit/test_agent_mail_hook.sh'
       - 'tests/unit/test_doctor_agent_mail_hook.sh'
+      - 'scripts/lib/agent_quota.sh'
+      - 'tests/unit/test_agent_quota.sh'
+      - 'tests/unit/test_doctor_agents_route.sh'
       - '.github/workflows/herdr-agents.yml'
 
 permissions:
@@ -53,3 +60,7 @@ jobs:
         run: HOME="$(mktemp -d)" bash tests/unit/test_agent_mail_hook.sh
       - name: Doctor's Agent Mail Stop hook check against fixture settings
         run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_agent_mail_hook.sh
+      - name: Quota reader against fixture session logs
+        run: HOME="$(mktemp -d)" bash tests/unit/test_agent_quota.sh
+      - name: acfs agents routing in doctor.sh against a stub helper
+        run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_agents_route.sh

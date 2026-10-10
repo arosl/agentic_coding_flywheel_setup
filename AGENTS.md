@@ -113,6 +113,7 @@ What the fork adds to upstream's sections below. `scripts/lib/policy_lint.sh` re
 
   `agent start` returns once the agent is ready for input. A finished turn reports `done`, not `idle`, so wait on a prompt with `--wait`.
 - **Waking an agent:** after you mail it, `herdr agent prompt <herdr name> "Check your Agent Mail inbox."`.
+- **Quota:** before you dispatch a round or spawn, run `acfs agents quota`. It shows each plan's 5-hour and weekly windows, their resets (UTC) and the live agents per kind. `acfs agents spawn` refuses a kind at 90% of its 5-hour window, or one with a limit reached (`--force` overrides). Claude's windows reach it only through its statusLine (`agent_quota.sh record-claude`).
 - **Agent Mail project key:** the repo's absolute path, `git rev-parse --show-toplevel`.
 - **Reservations:** reserve files in Agent Mail before you edit them (`file_reservation_paths`, with the bead id as the reason), and release them when you're done.
 - **Committing and pushing** (the operator's ruling, 2026-10-09). Everyone shares one checkout, one index and one local `main`:

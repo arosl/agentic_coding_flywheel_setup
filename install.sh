@@ -3845,6 +3845,7 @@ acfs_load_internal_checksums_data() {
         scripts/completions/acfs.bash
         scripts/generate-root-agents-md.sh
         scripts/lib/agent_mail_hook.sh
+        scripts/lib/agent_quota.sh
         scripts/lib/agy_e2e_harness.sh
         scripts/lib/agy_locked.py
         scripts/lib/agy_model_guard.sh
@@ -10857,6 +10858,7 @@ finalize() {
     try_step "Installing dashboard.sh" install_asset "scripts/lib/dashboard.sh" "$ACFS_HOME/scripts/lib/dashboard.sh" || return 1
     try_step "Installing herdr_agents.sh" install_asset "scripts/lib/herdr_agents.sh" "$ACFS_HOME/scripts/lib/herdr_agents.sh" || return 1
     try_step "Installing agent_mail_hook.sh" install_asset "scripts/lib/agent_mail_hook.sh" "$ACFS_HOME/scripts/lib/agent_mail_hook.sh" || return 1
+    try_step "Installing agent_quota.sh" install_asset "scripts/lib/agent_quota.sh" "$ACFS_HOME/scripts/lib/agent_quota.sh" || return 1
     try_step "Installing support.sh" install_asset "scripts/lib/support.sh" "$ACFS_HOME/scripts/lib/support.sh" || return 1
     try_step "Installing acfs-nightly-update.service template" install_asset "scripts/templates/acfs-nightly-update.service" "$ACFS_HOME/scripts/templates/acfs-nightly-update.service" || return 1
     try_step "Installing acfs-nightly-update.timer template" install_asset "scripts/templates/acfs-nightly-update.timer" "$ACFS_HOME/scripts/templates/acfs-nightly-update.timer" || return 1

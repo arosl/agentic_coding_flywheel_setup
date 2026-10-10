@@ -651,6 +651,53 @@ run_helper codex-daemon start
 check "codex-daemon start refuses to leave a leaked daemon in place" \
     test "$RC/$(count_calls '^codex')" = "1/0"
 
+# acfs-ybg: spawn asks agent_quota.sh before it creates anything.
+echo "quota"
+
+# A Codex session log whose newest record has the 5-hour window $1 percent used.
+codex_usage() {
+    local now
+    now="$(date -u +%s)"
+    mkdir -p "$STUB_DIR/codex-home/sessions/2026/10/10"
+    printf '{"timestamp":"%s","type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":%s,"window_minutes":300,"resets_at":%s},"secondary":null,"plan_type":"pro","rate_limit_reached_type":null}}}\n' \
+        "$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ)" "$1" $((now + 3600)) \
+        >"$STUB_DIR/codex-home/sessions/2026/10/10/rollout-stub.jsonl"
+}
+
+reset_stub quotafull
+fake_daemon clean
+codex_usage 95.0
+run_helper spawn --claude 1 --codex 1 --cwd "$WORK/repo" --no-prompt
+check "a Codex plan at 95% of its 5-hour window stops spawn before any identity, tab or codex call" \
+    test "$RC/$(count_calls '^am')/$(count_calls '^herdr')/$(count_calls '^codex')" = "1/0/0/0"
+check "it says why and how to override" \
+    bash -c 'grep -q "codex: 5-hour window 95% used (limit 90%)" <<<"$1" && grep -q "spawn refused: codex is near its usage limit" <<<"$1" && grep -q -- "--force spawns anyway" <<<"$1"' _ "$ERR"
+
+reset_stub quotaforce
+fake_daemon clean
+codex_usage 95.0
+run_helper spawn --codex 1 --cwd "$WORK/repo" --no-prompt --force
+check "--force spawns on a full plan" \
+    test "$RC/$(count_calls '^herdr agent start alphafox --kind codex')" = "0/1"
+
+reset_stub quotaother
+codex_usage 95.0
+run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt
+check "a full Codex plan doesn't stop a Claude-only spawn" \
+    test "$RC/$(count_calls '^herdr agent start alphafox --kind claude')" = "0/1"
+
+reset_stub quotalow
+fake_daemon clean
+codex_usage 40.0
+run_helper spawn --codex 1 --cwd "$WORK/repo" --no-prompt
+check "a plan under the limit spawns as usual" test "$RC/$(count_calls '^herdr agent start')" = "0/1"
+
+reset_stub quotashow
+codex_usage 40.0
+run_helper quota --json
+check "acfs agents quota runs agent_quota.sh" \
+    bash -c 'jq -e ".plans[] | select(.kind == \"codex\") | .windows.five_hour.used_percent == 40" "$1" >/dev/null' _ "$STUB_DIR/out"
+
 echo "send and list"
 
 write_list() {

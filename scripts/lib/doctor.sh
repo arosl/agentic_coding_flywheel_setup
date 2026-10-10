@@ -5753,9 +5753,10 @@ main() {
             ;;
         agents|agent-guide)
             shift
-            # spawn/send/list drive coding agents in herdr (herdr_agents.sh).
+            # Coding agents in herdr (herdr_agents.sh), and quota, which it
+            # hands to agent_quota.sh.
             case "${1:-}" in
-                spawn|send|list|ls)
+                spawn|send|list|ls|inbox|wake|codex-daemon|retire|quota)
                     local herdr_agents_script=""
                     herdr_agents_script="$(_acfs_doctor_find_lib_script "herdr_agents.sh" 2>/dev/null || true)"
                     if [[ -n "$herdr_agents_script" ]]; then
@@ -5800,7 +5801,7 @@ main() {
                 *)
                     echo "Error: unknown agents subcommand: $agents_subcmd" >&2
                     echo "Usage: acfs agents [update|install <target>|path|help]" >&2
-                    echo "       acfs agents [spawn|send|list] ...   (agents in herdr; see 'acfs agents spawn --help')" >&2
+                    echo "       acfs agents [spawn|send|list|inbox|wake|codex-daemon|retire|quota] ...   (agents in herdr; see 'acfs agents spawn --help')" >&2
                     return 1
                     ;;
             esac
