@@ -63,10 +63,14 @@ case "$1 $2" in
         esac ;;
     "exec "*)
         # exec <instance> -- sh -c <script> probe <flow> <args...>
+        # exec-exit: incus itself fails (a stopped instance); rc-<flow>: the
+        # probe exits with that code; fail: listed flows exit 1 (refused).
+        [[ ! -s "$STUB_STATE/exec-exit" ]] || exit "$(cat "$STUB_STATE/exec-exit")"
         shift 2; [[ "$1" == -- ]] && shift
         printf '%s' "$3" > "$STUB_STATE/probe-script"
         shift 4
         printf 'flow %s\n' "$*" >> "$STUB_STATE/flows"
+        [[ ! -s "$STUB_STATE/rc-$1" ]] || exit "$(cat "$STUB_STATE/rc-$1")"
         ! grep -qxF -- "$*" "$STUB_STATE/fail" 2>/dev/null ;;
 esac
 EOF
@@ -157,10 +161,24 @@ check "firewall: reports iptables, nft, podman's backend and Docker" \
     has $'pass\tcoexist.firewall\tFirewall backend\tiptables: nf_tables; nft: present; podman: netavark; docker: present'
 OUT="$OUT_ALL"
 check "check: exits 0" test "$RC" -eq 0
+if [[ "$(id -u)" != 0 ]]; then
+    check "firewall: podman's backend is read as root, never rootless" \
+        grep -q '^sudo .*/podman info' "$STATE/calls"
+    check "check: sudo -n is probed once per run" test "$(grep -c '^sudo true$' "$STATE/calls")" -eq 1
+
+    reset_state
+    touch "$STATE/no-sudo"
+    run check
+    OUT="$(line_for coexist.firewall)"
+    check "firewall: without root, podman's backend is unknown" has "podman: unknown (needs root)"
+    OUT="$(cat "$STATE/calls" 2>/dev/null)"
+    check "firewall: ... and podman never runs as the user" lacks "podman info"
+fi
 
 # ------------------------------------------------------------
 # check: subnets
 # ------------------------------------------------------------
+OUT="$OUT_ALL"
 OUT="$(line_for coexist.subnets)"
 check "subnets: disjoint ranges pass; the bridges' own routes and link-local ones don't count" \
     has $'pass\tcoexist.subnets'
@@ -246,6 +264,13 @@ OUT="$(line_for coexist.docker_forward)"
 check "docker: DOCKER-USER accepting the bridge passes" has $'pass\tcoexist.docker_forward'
 
 reset_state
+printf 'incus.br,bridge,YES\n' > "$STATE/incus-ntm"
+printf '%s\n' '-N DOCKER-USER' '-A DOCKER-USER -i incusXbr -j ACCEPT' > "$STATE/docker-user"
+run check
+OUT="$(line_for coexist.docker_forward)"
+check "docker: a bridge name is matched exactly, not as a regex" has "doesn't accept incus.br"
+
+reset_state
 printf '{ "ip-forward-no-drop": true }\n' > "$ROOT/etc/docker/daemon.json"
 run check
 OUT="$(line_for coexist.docker_forward)"
@@ -311,6 +336,30 @@ check "traffic: ... never pulling" has "podman run --rm --pull=never localhost/p
 OUT="$(cat "$STATE/flows")"
 check "traffic: podman runs DNS and HTTPS flows" has "podman-flow https4 https://cloudflare.com"
 check "traffic: podman runs no ACL flows" lacks "podman-flow tcp"
+
+# The deny flow fails closed (SunnyRabbit's review, finding 1)
+reset_state
+printf '1\n' > "$STATE/exec-exit"
+run traffic --instance devbox --deny 192.168.1.1:22
+check "traffic: a stopped instance fails the run" test "$RC" -eq 1
+check "traffic: ... at the ready preflight" has "FAIL incus.ready: the probe can't run"
+check "traffic: ... and never reports the destination as refused" lacks "PASS incus.deny"
+
+reset_state
+printf '3\n' > "$STATE/rc-ready"
+run traffic --instance devbox --deny 192.168.1.1:22
+check "traffic: an instance missing a tool fails the stack" has "FAIL incus.ready"
+check "traffic: ... and runs none of its flows" lacks "incus.dns4"
+
+reset_state
+printf '3\n' > "$STATE/rc-tcp"
+run traffic --instance devbox --deny 192.168.1.1:22
+check "traffic: a tcp probe error is not a refusal" has "FAIL incus.deny: private destination 192.168.1.1:22 (probe error, exit 3: not tested)"
+check "traffic: ... and fails the run" test "$RC" -eq 1
+OUT="$(cat "$STATE/flows")"
+check "traffic: the incus preflight asks for getent, curl, timeout and bash" has "flow ready getent curl timeout bash"
+OUT="$(cat "$STATE/probe-script")"
+check "traffic: the probe maps only refused or timed out to 1" has '1|124) exit 1'
 
 reset_state
 run traffic --instance devbox --api 'evil;rm:22'

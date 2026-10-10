@@ -88,18 +88,31 @@ _coex_run() {
     fi
 }
 
+# Whether sudo -n works, probed once per run (each probe is an auth-log
+# entry); call it in the main shell before the checks' subshells need it.
+COEX_SUDO=""
+_coex_probe_sudo() {
+    [[ -z "$COEX_SUDO" ]] || return 0
+    if [[ "$(id -u)" == 0 ]]; then
+        COEX_SUDO=root
+    elif _coex_run sudo -n true >/dev/null 2>&1; then
+        COEX_SUDO=yes
+    else
+        COEX_SUDO=no
+    fi
+}
+
 # The same as root: directly when root, else sudo -n (never prompts).
 _coex_run_root() {
     local bin=""
     bin="$(_coex_bin "$1")" || return 127
     shift
-    if [[ "$(id -u)" == 0 ]]; then
-        _coex_run "$(basename "$bin")" "$@"
-    elif _coex_run sudo -n true >/dev/null 2>&1; then
-        _coex_run sudo -n "$bin" "$@"
-    else
-        return 126
-    fi
+    _coex_probe_sudo
+    case "$COEX_SUDO" in
+        root) _coex_run "$(basename "$bin")" "$@" ;;
+        yes) _coex_run sudo -n "$bin" "$@" ;;
+        *) return 126 ;;
+    esac
 }
 
 _coex_emit() {
@@ -216,9 +229,11 @@ coex_check_firewall() {
         esac
     fi
     _coex_bin nft >/dev/null && nft="present"
+    # Rootful podman's backend: running podman as the user would set up
+    # rootless storage and its pause process on a host that never used it.
     if _coex_bin podman >/dev/null; then
-        podman="$(_coex_run podman info --format '{{.Host.NetworkBackend}}' 2>/dev/null || true)"
-        [[ "$podman" =~ ^[a-z]+$ ]] || podman="unknown"
+        podman="$(_coex_run_root podman info --format '{{.Host.NetworkBackend}}' 2>/dev/null || true)"
+        [[ "$podman" =~ ^[a-z]+$ ]] || podman="unknown (needs root)"
     fi
     _coex_bin docker >/dev/null && docker="present"
     _coex_emit pass coexist.firewall "Firewall backend" \
@@ -274,7 +289,9 @@ coex_check_subids() {
     fi
 }
 
-# Docker's FORWARD DROP against Incus's bridges (acfs-31uo).
+# Docker's FORWARD DROP against Incus's bridges (acfs-31uo). Docker 29 with
+# firewall-backend nftables keeps its drop in its own nft table, which
+# iptables -S FORWARD doesn't show; this reads only the iptables side.
 coex_check_docker_forward() {
     local bridges="" forward="" docker_user="" bridge="" missing="" fix="" rc=0
     _coex_bin docker >/dev/null || return 0
@@ -300,7 +317,7 @@ coex_check_docker_forward() {
     bridges="$(_coex_incus_bridges)"
     while read -r bridge; do
         [[ -n "$bridge" ]] || continue
-        if ! grep -qE -- "^-A DOCKER-USER -i $bridge( |.* )-j ACCEPT$" <<<"$docker_user"; then
+        if ! awk -v b="$bridge" '$1 == "-A" && $2 == "DOCKER-USER" && $3 == "-i" && $4 == b && $NF == "ACCEPT" { f = 1 } END { exit !f }' <<<"$docker_user"; then
             missing+="${missing:+, }$bridge"
             fix+="${fix:+; }sudo iptables -I DOCKER-USER -i $bridge -j ACCEPT; sudo iptables -I DOCKER-USER -o $bridge -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
         fi
@@ -315,6 +332,7 @@ coex_check_docker_forward() {
 }
 
 coex_check() {
+    _coex_probe_sudo
     coex_check_firewall
     coex_check_subnets
     coex_check_subids
@@ -327,14 +345,23 @@ coex_check() {
 
 # Runs inside an instance or a podman container: $1 is the flow, the rest
 # its arguments. Values arrive as argv, never pasted into the script.
+# ready checks the tools the other flows need. tcp exits 1 only when the
+# connection was refused or timed out, and 3 when the probe itself broke,
+# so a probe that never ran can't pass as a refused destination.
 read -r -d '' COEX_PROBE <<'EOF' || true
 flow=$1; shift
 case $flow in
+    ready)
+        for tool in "$@"; do
+            command -v "$tool" >/dev/null 2>&1 || { echo "no $tool"; exit 3; }
+        done ;;
     dns4) getent ahostsv4 "$1" >/dev/null ;;
     dns6) getent ahostsv6 "$1" | awk '$1 ~ /:/ && $1 !~ /^::ffff:/ { f = 1 } END { exit !f }' ;;
     https4) curl -4 -sS -o /dev/null --max-time 10 "$1" ;;
     https6) curl -6 -sS -o /dev/null --max-time 10 "$1" ;;
-    tcp) timeout 5 bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$1" "$2" ;;
+    tcp)
+        timeout 5 bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$1" "$2" 2>/dev/null
+        case $? in 0) exit 0 ;; 1|124) exit 1 ;; *) exit 3 ;; esac ;;
     *) exit 64 ;;
 esac
 EOF
@@ -356,10 +383,19 @@ _coex_split_hostport() {
 _coex_flow() {
     local stack="$1" flow="$2" expect="$3" label="$4"
     shift 4
-    local status="" ok=false
-    "$@" </dev/null >/dev/null 2>&1 && ok=true
+    local status="" ok=false rc=0
+    "$@" </dev/null >/dev/null 2>&1 || rc=$?
+    (( rc != 0 )) || ok=true
     if [[ "$expect" == refused ]]; then
-        if [[ "$ok" == true ]]; then status=FAIL; label+=" (reached; it must be refused)"; else status=PASS; label+=" (refused)"; fi
+        # Only the probe's own "refused or timed out" (1) counts; any other
+        # failure means the flow never ran, and the ACL test must fail closed.
+        if [[ "$ok" == true ]]; then
+            status=FAIL; label+=" (reached; it must be refused)"
+        elif (( rc == 1 )); then
+            status=PASS; label+=" (refused)"
+        else
+            status=FAIL; label+=" (probe error, exit $rc: not tested)"
+        fi
     elif [[ "$ok" == true ]]; then
         status=PASS
     elif [[ "$flow" == *6 ]]; then
@@ -372,8 +408,8 @@ _coex_flow() {
 
 coex_traffic() {
     local instance="" api="" ssh="" deny="" image="" dns="$COEX_DNS_DEFAULT" https="$COEX_HTTPS_DEFAULT"
-    local save="" compare="" results="" host="" port="" stack="" incus_bin="" podman_bin=""
-    local -a run=()
+    local save="" compare="" results="" host="" port="" stack="" incus_bin="" podman_bin="" why=""
+    local -a run=() tools=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --instance|--api|--ssh|--deny|--podman-image|--dns|--https|--save|--compare)
@@ -407,6 +443,14 @@ coex_traffic() {
             [[ -n "$image" ]] || { results+="SKIP podman: no --podman-image"$'\n'; continue; }
             podman_bin="$(_coex_bin podman)" || { results+="SKIP podman: podman not installed"$'\n'; continue; }
             run=("$podman_bin" run --rm --pull=never "$image" sh -c "$COEX_PROBE" probe)
+        fi
+        # A stopped instance, an unreachable remote or a missing tool fails
+        # the stack here instead of reading as refused flows further down.
+        if [[ "$stack" == incus ]]; then tools=(getent curl timeout bash); else tools=(getent curl); fi
+        if ! why="$("${run[@]}" ready "${tools[@]}" </dev/null 2>&1)"; then
+            why="$(tail -n 1 <<<"$why")"
+            results+="FAIL $stack.ready: the probe can't run (${why:-exit status nonzero}); no $stack flow tested"$'\n'
+            continue
         fi
         results+="$(_coex_flow "$stack" dns4 ok "DNS $dns (IPv4)" "${run[@]}" dns4 "$dns")"$'\n'
         results+="$(_coex_flow "$stack" dns6 ok "DNS $dns (IPv6)" "${run[@]}" dns6 "$dns")"$'\n'
