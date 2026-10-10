@@ -2,7 +2,7 @@
 
 Related: [log](log.md)
 
-The catalog of every documentation page, one line each, saying which questions the page answers. The pages describe the current state only; history is in git. Every page under `docs/` is upstream ACFS's: where one names ntm, tmux or Docker, `README.md`, "About this fork", says what the fork installs instead.
+The catalog of every documentation page, one line each, saying which questions the page answers. The pages describe the current state only; history is in git. Every page under `docs/` is upstream ACFS's, except this catalog, its log and `operations/fork-divergences.md`: where one names ntm, tmux or Docker, `README.md`, "About this fork", says what the fork installs instead.
 
 ## How to navigate
 
@@ -13,6 +13,7 @@ Start here, pick the one page whose line matches your question, and open only th
 - `README.md`: what ACFS is, how to install it, what it installs, and how the fork differs ("About this fork"). Search it; never read it whole.
 - `AGENTS.md` (with `CLAUDE.md`): the binding rules for anyone, human or agent, changing this repo.
 - `acfs.manifest.yaml`: what ACFS installs, the single source of truth.
+- [`operations/fork-divergences.md`](operations/fork-divergences.md) (the fork's own page): which upstream files the fork changes beyond the herdr port, Incus first and the supported platforms, and the bead behind each change.
 - `.beads/`: the task queue, kept local and out of git, read and changed with `br`.
 
 ## Antigravity CLI (agy)

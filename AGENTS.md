@@ -18,7 +18,7 @@ If I tell you to do something, even if it goes against what follows below, YOU M
 
 1. **The repo is public.** No host-specific content goes into a committed file or a commit message: no path that names this host or its user, such as an absolute `/home/<user>/…` path (a `~/`-relative path to a standard per-user location names neither, and is allowed), hostnames, email addresses, Agent Mail content or credentials. Commits use the GitHub noreply author that the clone already has set. The bead queue stays local for the same reason ("Coordination", "Bead export").
 2. **Dates and times.** ISO 8601 everywhere. Instants are stored in UTC and shown in `UTC`. A date-only value stays date-only.
-3. **Upstream sync.** Merge or cherry-pick upstream only in a worktree, never in the main checkout, where git writes upstream's `.beads/` files over the local bead export. If the merge brings in `.beads/` files, run `git rm --cached -r .beads ':!.beads/.gitignore'` before committing. Upstream's own instruction file is read with `git show upstream/main:AGENTS.md`, and never kept in the tree. When an upstream merge conflicts in `AGENTS.md`, keep ours (`git checkout --ours AGENTS.md`). Then read `git diff <merge-base> upstream/main -- AGENTS.md`, and port each new project fact into the section of the same name below, by hand. Never use a `merge=ours` driver: it drops upstream's facts without anyone seeing them. Rules taken from upstream keep upstream's section names, so that a hunk maps to one section. The procedure (the operator's, 2026-10-10): in a worktree under `/data/tmp` at the current local `main`, `git merge --no-commit --no-ff upstream/main`; resolve each hunk by hand, taking upstream's side unless it undoes why we are a fork (Scope, "Upstream compatibility"); remove `.beads/` from the index; run the canonical checksum refresh; regenerate last; update "Known non-herdr divergences". Commit the merge **in the worktree** (the one exception to "never commit in one"), check its parents are `main` and `upstream/main`, run the full gate there, and have another agent run `check_other_agents_work` on it. Then, in the shared checkout, `git merge --ff-only <merge>` if `main` hasn't moved (otherwise `git merge <merge>` and gate again), and push as usual.
+3. **Upstream sync.** Merge or cherry-pick upstream only in a worktree, never in the main checkout, where git writes upstream's `.beads/` files over the local bead export. If the merge brings in `.beads/` files, run `git rm --cached -r .beads ':!.beads/.gitignore'` before committing. Upstream's own instruction file is read with `git show upstream/main:AGENTS.md`, and never kept in the tree. When an upstream merge conflicts in `AGENTS.md`, keep ours (`git checkout --ours AGENTS.md`). Then read `git diff <merge-base> upstream/main -- AGENTS.md`, and port each new project fact into the section of the same name below, by hand. Never use a `merge=ours` driver: it drops upstream's facts without anyone seeing them. Rules taken from upstream keep upstream's section names, so that a hunk maps to one section. The procedure (the operator's, 2026-10-10): in a worktree under `/data/tmp` at the current local `main`, `git merge --no-commit --no-ff upstream/main`; resolve each hunk by hand, taking upstream's side unless it undoes why we are a fork (Scope, "Upstream compatibility"); remove `.beads/` from the index; run the canonical checksum refresh; regenerate last; update `docs/operations/fork-divergences.md`. Commit the merge **in the worktree** (the one exception to "never commit in one"), check its parents are `main` and `upstream/main`, run the full gate there, and have another agent run `check_other_agents_work` on it. Then, in the shared checkout, `git merge --ff-only <merge>` if `main` hasn't moved (otherwise `git merge <merge>` and gate again), and push as usual.
 4. **`main` only.** Work, branches and merges target `main`. `master` mirrors `main` for legacy install URLs: push both together, with `git push origin main main:master`, never forced. Never reference `master` in code or docs.
 5. **What ACFS installs is `acfs.manifest.yaml`,** the single source of truth. Never keep a second list of tools in a doc or in this file.
 6. **Bun for everything JS/TS** in the project's scripts and docs, never npm, yarn or pnpm. `bun.lock` is the only lockfile. `bun install -g <pkg>` is valid syntax (an alias for `bun add -g`), so don't "fix" it.
@@ -75,19 +75,8 @@ The fork tracks upstream ACFS and changes its toolset: herdr instead of ntm, wez
 - **Planned, implementation last** (the operator, 2026-10-10): NixOS integration (acfs-e6f). Its planning (acfs-nuj) comes first and goes deep; don't build or scaffold it before the plan is reviewed and turned into beads.
 - **Rejected** (2026-10-08; not to be built or reopened): ntm, wezterm_automata, and ACFS's tmux config and `agents` session, which herdr replaces. The reasons: `README.md`, "About this fork".
 - **Upstream compatibility** (the operator's standing rule, 2026-10-09, widened 2026-10-10): use upstream whenever we can, and diverge only where upstream would undo why we are a fork: herdr in the widest sense (the whole herdr-based way of running and coordinating agents, not just the tool), Incus first with Docker optional, and the supported platforms. Porting upstream content to herdr beats deleting it.
-- **Known non-herdr divergences:** fork-only changes to upstream files. Resolve each one knowingly at a sync, and drop it once upstream fixes it.
-  - acfs-gxd: test fixes that make the gate pass: tests assert the upgrade paths upstream retired, and `test_release_doctor.sh` fakes the version check unless a test clears it (release-doctor's missing-`install.sh` fix and its test are upstream's since the 2026-10-10 sync).
-  - acfs-bnz: CI pins shellcheck 0.9.0 and bun, which upstream's CI leaves unpinned.
-  - acfs-0pj: the plugin-pack tests set their fixtures' file modes, because upstream's tests fail under umask 0002.
-  - acfs-rst: `test_swarm_fleet_probe.py` also sets its library fixtures' modes in the test that upstream's leaves to the umask, for the same reason, and its unsafe-runtime case uses world write (0666), because acfs-pkh accepts the owner's private-group write.
-  - acfs-fep: `test_fleet_runtime.py`, `test_fleet_runtime_git_snapshot.py` and `test_ubuntu_eol_repositories.py` set their fixtures' modes, for the same reason.
-  - acfs-pkh: the fleet tools (`acfs-fleet.py`, `swarm-fleet-*.py`, `swarm_fleet_probe.sh`) accept group write when the group is the user's own private group, so repositories made under Ubuntu's umask 0002 aren't refused; upstream refuses any group write (operator ruling, 2026-10-09). Upstream's `swarm-fleet-provision.py`, new in the 2026-10-10 sync, still refuses it: acfs-r39.
-  - acfs-a04: `ACFS_REPO_OWNER` defaults to the fork's owner, so the one-liner installs the fork, not upstream.
-  - acfs-m3l: the support inventory fixture in `test_support_resource_profile.sh` probes at the current time, not upstream's 2099, which `swarm_inventory.sh` excludes as a future probe.
-  - acfs-xe3: `test_install_fetch_composition.sh`'s A6 resolves against the default owner, not upstream's.
-  - acfs-b0u: `security.sh` adds `--compressed` to upstream's identity request, because some hosts gzip anyway (antigravity, 2026-10-10).
-  - acfs-d91: the installer refuses Ubuntu 22.04 unless `--target-ubuntu=24.04|26.04` upgrades it first, and 22.04 is no longer an upgrade target (`install.sh`, `ubuntu_upgrade.sh`, `upgrade_resume.sh`, `preflight.sh`, their tests and CI's 22.04 job); upstream still installs on 22.04. Existing 22.04 installs keep running `acfs update`. The manifest's 22.04 branches (PostgreSQL's jammy PGDG) and the wizard's 22.04 image option, whose command upgrades it, stay as upstream's.
-  - acfs-yca: Docker is the opt-in module `tools.docker`, not part of `cli.modern`, which upstream installs by default. It takes Ubuntu's `docker-compose-v2` where apt offers it, because `docker-compose-plugin` exists only in Docker's own repository. dsr depends on the module.
+- **Stack tools** (the operator's ruling, 2026-10-10): upstream takes no PRs. A stack tool that assumes tmux, ntm or wezterm_automata is forked (`arosl/<tool>`) or replaced under a new name: the methodology tools (apr, jfp, ms) first, pt last (epic acfs-7mu).
+- **Known non-herdr divergences:** fork-only changes to upstream files, listed with their beads in `docs/operations/fork-divergences.md`. Resolve each one knowingly at a sync, and drop it once upstream fixes it. A change that adds one adds its line there in the same commit.
 
 ## Commands and gates
 
@@ -135,6 +124,12 @@ What the fork adds to upstream's sections below. `scripts/lib/policy_lint.sh` re
 - **Priorities:** P0 a broken install or update on users' machines, or a hole in the checksum boundary; P1 what blocks other agents' work or the next upstream sync; P2 the fork's other planned work; P3 is the default, and P4 for work that waits on a condition.
 - **The palette:** `acfs/onboard/docs/ntm/command_palette.md` holds upstream's prompts, sent with `herdr agent prompt`. Run `fresh_review` on your own change before you commit it. Before you push a change to what the installer, `acfs update` or the doctor runs unattended on a user's machine, or to `checksums.yaml`, a verified installer or `scripts/lib/security.sh`, have another agent run `check_other_agents_work` on it.
 - **Skills:** the prompts the swarm runs again and again are skills in `.agents/skills/`, which Codex reads and `.claude/skills` links to for Claude Code: the palette's review prompts, and the jfp prompts adopted for plan rounds and prose. An agent loads one by name (`fresh-review` for the step above) or when its description matches the task. A skill names its prompt, the palette heading or `jfp show <id>`, and never copies it. To find a prompt no skill covers: `jfp suggest "<task>"`; `ms search <term>` searches these skills after `ms index .agents/skills`. Add a skill only for a prompt in repeated use; `tests/unit/test_agent_skills.sh` checks that each one's prompt still resolves.
+- **Codex does plan reviews only** (the operator, 2026-10-10): no coding and no code review.
+- **Agent lifecycle** (the operator's rules, 2026-10-10). Agents are per task: their state lives in beads, Agent Mail and git, never only in a context, and only the coordinator is long-lived.
+  - Retire an agent when its beads are closed and nothing new is assigned; when it has been idle for about an hour with nothing assigned; when its quota ran out and its work is handed over; when it is a reviewer whose review is delivered; or when it acts oddly after a compaction even after rereading this file.
+  - Reuse an agent only for a follow-up on the code it just read; otherwise start a fresh one. Review rounds use fresh reviewers, and earlier reviews are saved files.
+  - Before retiring, the agent leaves a handoff comment on its bead, releases its reservations and commits its work. Then `acfs agents retire <MailName>` checks that, removes its merged worktrees, closes its pane (its tab, when alone in it) and, given the agent's registration token, soft-retires its Agent Mail identity, which `unretire_agent` reverses. `--dry-run` shows what it would do.
+  - Keep this file lean: every fresh agent pays for reading it.
 
 ## Hard limits
 
@@ -145,7 +140,7 @@ What the fork adds to upstream's sections below. `scripts/lib/policy_lint.sh` re
   3. **Safer alternatives first:** When cleanup or rollbacks are needed, request permission to use non-destructive options (`git status`, `git diff`, `git stash`, copying to backups) before ever considering a destructive command.
   4. **Mandatory explicit plan:** Even after explicit user authorization, restate the command verbatim, list exactly what will be affected, and wait for a confirmation that your understanding is correct. Only then may you execute it—if anything remains ambiguous, refuse and escalate.
   5. **Document the confirmation:** When running any approved destructive command, record (in the session notes / final response) the exact user text that authorized it, the command actually run, and the execution time. If that record is absent, the operation did not happen.
-- **Never run `install.sh`, `acfs update` or any install step against the machine you develop on.** It replaces the live tools that the other agents there use. Test the installer only on a disposable machine.
+- **Never run `install.sh`, `acfs update` or any install step against the machine you develop on.** It replaces the live tools that the other agents there use. Test the installer only on a disposable machine. ACFS's own `acfs-nightly-update.timer` stays disabled there for the same reason (the operator, 2026-10-10, after it ran `acfs update` on the development machine at 04:04Z).
 - Never commit with `--no-verify`. If a check is wrong or slow, fix the check. `AGENT_MAIL_BYPASS=1` skips only the reservation guard, and only with the operator's OK.
 - **Read-only toward:** upstream ACFS on GitHub (fetched, never pushed to), and the third-party installers that `checksums.yaml` pins (fetched to verify, never written).
 - Host installs and unit changes happen only on the operator's word. Pushes happen under a standing authorization from the operator (2026-10-09): every agent pushes its own work, `main` and `master` together, once the full gate passes and the commits carry no private content (rule 1).
@@ -444,41 +439,6 @@ rg -l -t ts 'useState' | xargs ast-grep run -l TypeScript -p 'useState($INIT)' -
 ```
 
 ---
-
-## Morph Warp Grep — AI-Powered Code Search
-
-**Use `mcp__morph-mcp__warp_grep` for exploratory "how does X work?" questions.** An AI agent expands your query, greps the codebase, reads relevant files, and returns precise line ranges with full context.
-
-**Use `ripgrep` for targeted searches.** When you know exactly what you're looking for.
-
-**Use `ast-grep` for structural patterns.** When you need AST precision for matching/rewriting.
-
-### When to Use What
-
-| Scenario | Tool | Why |
-|----------|------|-----|
-| "How does the installer handle Ubuntu upgrades?" | `warp_grep` | Exploratory; don't know where to start |
-| "Where is the checksum verification implemented?" | `warp_grep` | Need to understand architecture |
-| "Find all uses of `logging.sh`" | `ripgrep` | Targeted literal search |
-| "Find files with `echo -e`" | `ripgrep` | Simple pattern |
-| "Replace `var` with `let` in TypeScript" | `ast-grep` | Structural refactor |
-
-### warp_grep Usage
-
-```
-mcp__morph-mcp__warp_grep(
-  repoPath: "/dp/agentic_coding_flywheel_setup",
-  query: "How does the installer handle Ubuntu version upgrades?"
-)
-```
-
-Returns structured results with file paths, line ranges, and extracted code snippets.
-
-### Anti-Patterns
-
-- **Don't** use `warp_grep` to find a specific function name -> use `ripgrep`
-- **Don't** use `ripgrep` to understand "how does X work" -> wastes time with manual reads
-- **Don't** use `ripgrep` for codemods -> risks collateral edits
 
 <!-- bv-agent-instructions-v1 -->
 
