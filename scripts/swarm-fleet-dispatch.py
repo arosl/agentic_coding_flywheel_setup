@@ -211,7 +211,7 @@ def validate_deliveries(entry, details):
         require(type(request) is dict and set(request) == keys
                 and request["repo"] == entry["host"]["request"]["repo"]
                 and request["session"] == entry["host"]["request"]["session"]
-                and request["pane"] == target["pane"] and request["agent_type"] == target["agent_type"]
+                and request["pane"] == target["pane_id"] and request["agent_type"] == target["agent_type"]
                 and all(fleet.matches(r"[0-9a-f]{64}", request[k]) for k in ("packet_sha256", "payload_sha256"))
                 and all(fleet.matches(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", request[k]) for k in ("operation_id", "bead_id"))
                 and type(request["payload_bytes"]) is int and 1 <= request["payload_bytes"] <= 65536,

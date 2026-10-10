@@ -29,7 +29,7 @@ fleet = types.ModuleType("acfs_fleet_launch")
 exec(compile(FLEET_SOURCE, str(_helper), "exec"), fleet.__dict__)
 require, encoded, decode, digest = fleet.require, fleet.encoded, fleet.decode, fleet.digest
 SCHEMA = "acfs.swarm-fleet-preparation.v1"
-WORK_SCHEMA = "acfs.swarm-fleet-work.v1"
+WORK_SCHEMA = "acfs.swarm-fleet-work.v2"
 PEER_SCHEMA = "acfs.swarm-fleet-preparation-peer.v1"
 PREPARATION_ATTEMPTED = False
 
@@ -95,7 +95,7 @@ def bundle_snapshot(entry):
             "packet", "repo", "session", "pane", "agent_type", "operation_id", "receipt"}
             and delivery["packet"] == name + ".json" and delivery["receipt"] == name + ".receipt.json"
             and delivery["repo"] == request["repo"] and delivery["session"] == request["session"]
-            and delivery["pane"] == target["pane"] and delivery["agent_type"] == target["agent_type"]
+            and delivery["pane"] == target["pane_id"] and delivery["agent_type"] == target["agent_type"]
             and fleet.matches(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", delivery["operation_id"])
             and delivery["operation_id"] not in operations, "prepared_target_invalid")
         operations.add(delivery["operation_id"])
@@ -150,7 +150,7 @@ def peer_main(message):
     fleet.require(type(message) is dict and set(message) == {"mode", "entry", "timeout_seconds"}, "invalid_peer_request")
     mode, entry, timeout = message["mode"], message["entry"], message["timeout_seconds"]
     fleet.require(mode in ("check", "prepare", "inspect") and type(timeout) is int and 1 <= timeout <= 600, "invalid_peer_operation")
-    fleet.require(type(entry) is dict and set(entry) == {"host", "targets", "output", "identities", "assignments", "beads"},
+    fleet.require(type(entry) is dict and set(entry) == {"host", "targets", "output", "assignments", "beads"},
         "invalid_peer_entry")
     fleet.validate_spec({"schema": fleet.SPEC_SCHEMA, "hosts": [entry["host"]]})
     fleet.require(fleet.valid_targets(entry["targets"], entry["host"]["request"]) == entry["targets"], "invalid_peer_targets")
@@ -180,23 +180,23 @@ def peer_main(message):
         fleet.state_unchanged(fd, {"state_directory": str(path)}, records)
         args = ["--prepare-batch", str(path / "bundle"), "--receipt", entry["host"]["request"]["receipt"],
             "--assignments", str(path / "assignments.json"), "--beads-file", str(path / "beads.json"), "--no-live-context"]
-        for identity in entry["identities"]:
-            args += ["--identity", str(identity["slot"]) + ":" + identity["name"]]
+        # Spawn fixed each agent's Agent Mail name; the target records it.
+        for t in entry["targets"]:
+            args += ["--identity", str(t["slot"]) + ":" + t["agent_mail_name"]]
         code, raw = fleet.capture(argv + args, remaining(), env)
         result = fleet.decode(raw)
         fleet.require(code == 0 and type(result) is dict and result.get("schema") == "acfs.packet-preparation.v1"
             and result.get("status") == "prepared" and result.get("directory") == str(path / "bundle")
             and result.get("sends_prompt") is False, "native_preparation_unconfirmed")
         handoff = result.get("launch")
-        names = {v["slot"]: v["name"] for v in entry["identities"]}
         mapping = [{"slot": t["slot"], "launch_name": t["agent_name"],
-            "agent_mail_name": names[t["slot"]], "agent_type": t["agent_type"], "pane": t["pane"]}
+            "agent_mail_name": t["agent_mail_name"], "agent_type": t["agent_type"], "pane": t["pane_id"]}
             for t in entry["targets"]]
         fleet.require(type(handoff) is dict and handoff.get("receipt") == entry["host"]["request"]["receipt"]
             and handoff.get("session") == entry["host"]["request"]["session"]
             and handoff.get("request_sha256") == fleet.digest(fleet.encoded(entry["host"]["request"]))
             and handoff.get("identities_rechecked") is True and handoff.get("starts_agents") is False
-            and handoff.get("work_dispatched") is False and handoff.get("agent_mail_registration_verified") is False
+            and handoff.get("work_dispatched") is False and handoff.get("agent_mail_registration_verified") is True
             and handoff.get("identity_mapping") == mapping, "native_handoff_invalid")
         peer_live(entry, remaining())
         with fleet.directory_fd(path, private=True) as current:
@@ -274,7 +274,7 @@ def select_work(spec, launch, history):
     selected, names = {}, set()
     originals = {h["id"]: (h, state) for h, state in zip(launch["spec"]["hosts"], history)}
     for host in spec["hosts"]:
-        require(type(host) is dict and set(host) == {"id", "output", "identities"}
+        require(type(host) is dict and set(host) == {"id", "output"}
                 and type(host["id"]) is str and host["id"] in originals and host["id"] not in selected,
                 "unknown_or_duplicate_work_host")
         original, (attempted, targets) = originals[host["id"]]
@@ -282,19 +282,11 @@ def select_work(spec, launch, history):
         output = fleet.absolute_path(host["output"])
         require(output not in (original["request"]["receipt"], original["request"]["repo"])
                 and not original["request"]["receipt"].startswith(output + "/"), "output_overlaps_launch")
-        identities = host["identities"]
-        require(type(identities) is list and len(identities) == len(targets), "identity_map_incomplete")
-        slots = set()
-        for identity in identities:
-            require(type(identity) is dict and set(identity) == {"slot", "name"}
-                    and type(identity["slot"]) is int and 1 <= identity["slot"] <= len(targets)
-                    and identity["slot"] not in slots
-                    and fleet.matches(r"[A-Za-z][A-Za-z0-9_-]{0,63}", identity["name"])
-                    and identity["name"].lower() not in names, "invalid_or_duplicate_work_identity")
-            names.add(identity["name"].lower())
-            slots.add(identity["slot"])
-        selected[host["id"]] = {"host": original, "targets": targets, "output": output,
-            "identities": sorted(identities, key=lambda v: v["slot"]), "beads": [],
+        # Agent Mail names come from the launch targets, where spawn recorded them.
+        for target in targets:
+            require(target["agent_mail_name"].lower() not in names, "duplicate_fleet_agent_mail_name")
+            names.add(target["agent_mail_name"].lower())
+        selected[host["id"]] = {"host": original, "targets": targets, "output": output, "beads": [],
             "assignments": {"schema_version": 1, "status": "pass", "advisory_only": True,
                 "scope_admission": {"mode": "explicit-scopes"}, "assignments": []}}
     beads = {}
@@ -490,7 +482,8 @@ def report_for(plan):
         "task_status_source": "supplied_beads_snapshot",
         "live_reservations_checked": False, "agent_mail_registration_verified": False,
         "hosts": [{"id": e["host"]["id"], "status": "not_attempted", "output": e["output"],
-            "identities": e["identities"], "assignments": e["assignments"]["assignments"]} for e in plan["hosts"]]}
+            "identities": [{"slot": t["slot"], "name": t["agent_mail_name"]} for t in e["targets"]],
+            "assignments": e["assignments"]["assignments"]} for e in plan["hosts"]]}
 
 
 def attempt(plan, entry):
@@ -553,7 +546,8 @@ def prepare(plan, approval, invoke, guard):
         fleet.publish(fd, "batches.json", mapping)
         records["batches.json"] = encoded(mapping)
         fleet.state_unchanged(fd, plan, records)
-    report.update(status="prepared", batches_file=str(path / "batches.json"))
+    # Every host's native handoff confirmed its targets' Agent Mail names.
+    report.update(status="prepared", batches_file=str(path / "batches.json"), agent_mail_registration_verified=True)
     return report, 0
 
 

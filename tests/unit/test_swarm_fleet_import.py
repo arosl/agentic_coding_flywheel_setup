@@ -87,14 +87,17 @@ class ImportFixture:
         def launch(host, mode):
             req = host["request"]
             value = {"schema": fleet.NATIVE_SCHEMA, "request": req, "review_sha256": fleet.native_hash(req),
-                     "work_dispatched": False, "authentication_verified": False, "agent_mail_registered": False}
+                     "work_dispatched": False, "authentication_verified": False,
+                     "agent_mail_registered": mode != "preview"}
             if mode == "preview":
                 value.update(status="preview", starts_agents=False,
                              admission={"status": "pass", "recommendation": "launch", "safe_agents": 2, "recommended_agents": 2})
             else:
+                label = "swarm-" + req["session"] + "-" + fleet.native_hash(req)[:12]
                 value.update(status="ready", starts_agents=True, targets=[{
-                    "slot": 1, **req["agents"][0], "pane": "%1", "pane_pid": "100", "server_pid": "99",
-                    "session_id": "$1", "session_created": "1700000000"}])
+                    "slot": 1, **req["agents"][0], "agent_mail_name": "MailOne", "herdr_name": "mailone",
+                    "workspace_id": "w1", "workspace_label": label, "tab_id": "w1:t2", "pane_id": "w1:p1",
+                    "terminal_id": "term_1", "shell_pid": 100, "launched_state": "ready"}])
             return 0, fleet.encoded(value)
         report, code = fleet.execute(plan, "launch", fleet.digest(fleet.encoded(plan)), launch)
         if code: raise AssertionError(report)

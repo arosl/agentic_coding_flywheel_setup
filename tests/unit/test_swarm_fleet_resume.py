@@ -83,10 +83,10 @@ class RecoveryTests(unittest.TestCase):
             before = self.snapshot()
             def mutate(h, m, r):
                 if changed == "pane":
-                    r["targets"][0]["pane"] = "%99"
+                    r["targets"][0]["pane_id"] = "w3:p99"
                 else:
                     r["original_launch_verified"] = False
-                    r["recovery_provenance"] = {"schema": "acfs.swarm-launch-recovery.v1"}
+                    r["recovery_provenance"] = {"schema": "acfs.swarm-launch-recovery.v2"}
                 return r
             peer = FixtureTransport(mutate)
             report, code = self.run_fleet("resume", peer)

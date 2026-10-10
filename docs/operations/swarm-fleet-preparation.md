@@ -10,7 +10,8 @@ acquires file reservations, switches accounts, or installs remote software.
 Run it from a complete trusted ACFS checkout on a Linux controller. Remote hosts
 must already have their project and native ACFS launcher/packet preparer. The
 original private fleet launch journal supplies endpoints, repositories, sessions,
-receipts, providers and original process identities. The work specification
+receipts, providers, original process identities and each agent's Agent Mail
+name. The work specification
 cannot override those bindings. Claude and Codex are supported by the native
 launcher. This is a checkout command, not a newly installed `acfs` subcommand.
 
@@ -21,17 +22,15 @@ a two-host fleet with one original launch slot on each host can use:
 
 ```json
 {
-  "schema": "acfs.swarm-fleet-work.v1",
+  "schema": "acfs.swarm-fleet-work.v2",
   "hosts": [
     {
       "id": "worker-a",
-      "output": "/home/ubuntu/work-wave-1",
-      "identities": [{"slot": 1, "name": "RedFox"}]
+      "output": "/home/ubuntu/work-wave-1"
     },
     {
       "id": "worker-b",
-      "output": "/home/ubuntu/work-wave-1",
-      "identities": [{"slot": 1, "name": "BlueLake"}]
+      "output": "/home/ubuntu/work-wave-1"
     }
   ],
   "assignments": [
@@ -76,9 +75,12 @@ supplied snapshot; preparation is not a fresh `br ready` check. The existing
 sender still checks readiness at submission time.
 
 Each selected host needs a confirmed launch result and at least one task.
-Supply an explicit Agent Mail name for **every original slot**, including idle
-slots. Names must be unique across the selected fleet, ignoring case; they are
-operator input, not proof that registration occurred. A task can occupy slot 2
+The work file names no agents. Each slot's Agent Mail name is the one the native
+launcher's spawn registered and recorded in the launch result, so it can't
+disagree with the name the agent runs under. Names must be unique across the
+selected fleet, ignoring case (`duplicate_fleet_agent_mail_name`), and each
+host's native handoff must confirm them (`agent_mail_registration_verified`), or
+that host is refused. A task can occupy slot 2
 while slot 1 is idle. No assignment is fabricated to fill idle slots. Preparation
 runs in original fleet order and native slot order, not mapping-file order.
 
@@ -115,7 +117,7 @@ Unlike the launch/dispatch controllers' remote previews, this default preview
 is entirely local: no SSH connection, remote file, native process or controller
 state is created. It shows the host/slot/name mapping and write scopes, with a
 `plan_sha256`. Read the complete private work file too: task text is not echoed
-into the summary. The digest binds the selected task briefs, scopes, identities,
+into the summary. The digest binds the selected task briefs, scopes, recorded names,
 original launch journal, transport trust, output paths, timeout and exact
 first-party remote-helper policy. It is not a signature or a trust attestation.
 
@@ -141,8 +143,8 @@ and restrictions on forwarding, proxy commands, SSH config and multiplexing.
 It needs Python 3 and a non-root remote user. It uses an allowlisted environment
 and fixed Bash/native arguments; no input field supplies an executable.
 
-The native preparer receives `--assignments`, `--beads-file`, all explicit
-`--identity` values and `--no-live-context`. It still owns packet construction,
+The native preparer receives `--assignments`, `--beads-file`, one
+`--identity SLOT:NAME` per slot from the recorded names, and `--no-live-context`. It still owns packet construction,
 repository instruction discovery, native target validation and random delivery
 operation IDs. CM/CASS probes are not requested, and no new task-selection engine
 or template copy is introduced. The remote repository's current instructions

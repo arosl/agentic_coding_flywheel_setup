@@ -42,13 +42,14 @@ def sample(directory, count=2):
         request = {"repo": "/home/ubuntu/project", "session": "wave", "receipt": "/home/ubuntu/receipts/wave.json",
                    "agents": agents, "profile": "balanced", "workload": "standard", "accept_warnings": False}
         host = {"id": ident, "host": ident + ".example.com", "user": "ubuntu", "port": 22, "request": request}
-        target = [{"slot": j, **agent, "pane": "%" + str(40 + j), "pane_pid": str(200 + j),
-                   "server_pid": "100", "session_id": "$1", "session_created": "1750000000"}
-                  for j, agent in enumerate(agents, 1)]
+        label = "swarm-wave-" + fleet.native_hash(request)[:12]
+        target = [{"slot": j, **agent, "agent_mail_name": name + str(i), "herdr_name": name.lower() + str(i),
+                   "workspace_id": "w2", "workspace_label": label, "tab_id": "w2:t" + str(j + 1),
+                   "pane_id": "w2:p" + str(40 + j), "terminal_id": "term_" + str(40 + j), "shell_pid": 200 + j,
+                   "launched_state": "ready"} for j, (agent, name) in enumerate(zip(agents, ("Mail", "Rest")), 1)]
         hosts.append(host)
         targets.append(target)
-        work_hosts.append({"id": ident, "output": "/home/ubuntu/work-" + ident,
-                           "identities": [{"slot": 1, "name": "Mail" + str(i)}, {"slot": 2, "name": "Rest" + str(i)}]})
+        work_hosts.append({"id": ident, "output": "/home/ubuntu/work-" + ident})
         assignments.append({"host_id": ident, "slot": 1, "bead_id": "bd-task-" + str(i),
                             "role": "implementation", "write_scopes": ["src/feature" + str(i) + "/**"]})
         beads.append({"id": "bd-task-" + str(i), "title": "Implement a feature", "status": "open", "issue_type": "task",
@@ -105,10 +106,8 @@ class PreparationTests(unittest.TestCase):
     def test_original_slot_and_host_order_survive_explicit_reordering(self):
         self.work["hosts"].reverse()
         self.work["assignments"].reverse()
-        self.work["hosts"][0]["identities"].reverse()
         plan = self.plan()
         self.assertEqual([e["host"]["id"] for e in plan["hosts"]], ["worker-a", "worker-b"])
-        self.assertEqual(plan["hosts"][1]["identities"][0]["slot"], 1)
         self.assertEqual(plan["hosts"][0]["targets"], self.history[0][1])
         self.assertEqual(plan["hosts"][0]["beads"], [self.work["beads"][0]])
         self.assertFalse((self.directory / "prepared").exists())
@@ -117,7 +116,7 @@ class PreparationTests(unittest.TestCase):
         self.work["assignments"][0]["slot"] = 2
         plan = self.plan()
         self.assertEqual(plan["hosts"][0]["assignments"]["assignments"][0]["slot"], 2)
-        self.assertEqual(len(plan["hosts"][0]["identities"]), 2)
+        self.assertEqual(len(plan["hosts"][0]["targets"]), 2)
         self.assertEqual(len(plan["hosts"][0]["beads"]), 1)
 
     def test_duplicate_bead_across_hosts_is_refused(self):
@@ -154,6 +153,16 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaises(fleet.Refused):
             self.plan()
 
+    def test_work_spec_names_no_identities(self):
+        # Spawn fixed each Agent Mail name; an operator-supplied one could only disagree.
+        self.work["hosts"][0]["identities"] = [{"slot": 1, "name": "Mail0"}, {"slot": 2, "name": "Rest0"}]
+        with self.assertRaisesRegex(fleet.Refused, "unknown_or_duplicate_work_host"):
+            self.plan()
+        self.work["hosts"][0].pop("identities")
+        self.work["schema"] = "acfs.swarm-fleet-work.v1"
+        with self.assertRaisesRegex(fleet.Refused, "invalid_work_spec"):
+            self.plan()
+
     def test_unknown_hosts_incomplete_launch_and_duplicate_identities_fail(self):
         work = copy.deepcopy(self.work)
         work["hosts"][0]["id"] = "other"
@@ -162,11 +171,10 @@ class PreparationTests(unittest.TestCase):
         self.history[0] = (True, None)
         with self.assertRaisesRegex(fleet.Refused, "launch_not_confirmed"):
             self.plan()
-        self.history[0] = (True, self.history[1][1])
-        work = copy.deepcopy(self.work)
-        work["hosts"][1]["identities"][0]["name"] = "mail0"
-        with self.assertRaisesRegex(fleet.Refused, "duplicate_work_identity"):
-            self.plan(work)
+        # Two hosts whose agents carry the same Agent Mail name are refused.
+        self.history[0] = (True, [dict(t) for t in self.history[1][1]])
+        with self.assertRaisesRegex(fleet.Refused, "duplicate_fleet_agent_mail_name"):
+            self.plan()
 
     def test_host_without_work_and_duplicate_slot_refused(self):
         self.work["assignments"].pop()
@@ -180,8 +188,7 @@ class PreparationTests(unittest.TestCase):
         original = fleet.digest(fleet.encoded(self.plan()))
         for change in (lambda w: w["beads"][0].update(description="different"),
                        lambda w: w["assignments"][0].update(write_scopes=["elsewhere/**"]),
-                       lambda w: w["hosts"][0].update(output="/home/ubuntu/other"),
-                       lambda w: w["hosts"][0]["identities"][0].update(name="Different")):
+                       lambda w: w["hosts"][0].update(output="/home/ubuntu/other")):
             work = copy.deepcopy(self.work)
             change(work)
             self.assertNotEqual(original, fleet.digest(fleet.encoded(self.plan(work))))
@@ -328,16 +335,17 @@ def enc(x): return (json.dumps(x,sort_keys=True,ensure_ascii=True,indent=2)+'\n'
 def sha(x): return hashlib.sha256(x).hexdigest()
 request = entry['host']['request']
 if args == ['--reconcile','--receipt',request['receipt']]:
-    print(json.dumps(dict(schema='acfs.swarm-launch.v1',status='ready',request=request,
-        targets=entry['targets'],starts_agents=False,work_dispatched=False,
-        authentication_verified=False,agent_mail_registered=False,reconciled_only=True)))
+    live=[dict(t,live={'state':'ready','name_lost':False}) for t in entry['targets']]
+    print(json.dumps(dict(schema='acfs.swarm-launch.v2',status='ready',request=request,
+        targets=live,starts_agents=False,work_dispatched=False,
+        authentication_verified=False,agent_mail_registered=True,reconciled_only=True)))
     sys.exit(0)
 assert args[:2] == ['--prepare-batch',entry['output']+'/bundle']
 assert args[2:4] == ['--receipt',request['receipt']]
 assert args[4:8] == ['--assignments',entry['output']+'/assignments.json','--beads-file',entry['output']+'/beads.json']
 assert args[8] == '--no-live-context'
 expected = []
-for identity in entry['identities']: expected += ['--identity',str(identity['slot'])+':'+identity['name']]
+for t in entry['targets']: expected += ['--identity',str(t['slot'])+':'+t['agent_mail_name']]
 assert args[9:] == expected
 assert not any(k in os.environ for k in ('BASH_ENV','ENV','OPENAI_API_KEY','PYTHONPATH','HTTP_PROXY'))
 assignment_bytes = pathlib.Path(args[5]).read_bytes()
@@ -357,14 +365,14 @@ for item in entry['assignments']['assignments']:
             'declared_write_scopes':item['reservation_surfaces'],'reservations_acquired':False,'bead_source':'file'}}
     write(name+'.json',enc(packet)); write(name+'.md',text.encode())
     deliveries.append({'packet':name+'.json','receipt':name+'.receipt.json','repo':request['repo'],
-        'session':request['session'],'pane':t['pane'],'agent_type':t['agent_type'],'operation_id':'test-operation-'+str(slot)})
+        'session':request['session'],'pane':t['pane_id'],'agent_type':t['agent_type'],'operation_id':'test-operation-'+str(slot)})
 write('batch.json',enc({'schema':'acfs.packet-delivery-batch.v1','deliveries':deliveries}))
-names={v['slot']:v['name'] for v in entry['identities']}
 print(json.dumps({'schema':'acfs.packet-preparation.v1','status':'prepared','directory':str(out),'sends_prompt':False,
     'launch':{'receipt':request['receipt'],'session':request['session'],'request_sha256':sha(enc(request)),
-        'identities_rechecked':True,'starts_agents':False,'work_dispatched':False,'agent_mail_registration_verified':False,
-        'identity_mapping':[{'slot':t['slot'],'launch_name':t['agent_name'],'agent_mail_name':names[t['slot']],
-            'agent_type':t['agent_type'],'pane':t['pane']} for t in entry['targets']]}}))
+        'identities_rechecked':True,'starts_agents':False,'work_dispatched':False,
+        'agent_mail_registration_verified':not (home/'unverified').exists(),
+        'identity_mapping':[{'slot':t['slot'],'launch_name':t['agent_name'],'agent_mail_name':t['agent_mail_name'],
+            'agent_type':t['agent_type'],'pane':t['pane_id']} for t in entry['targets']]}}))
 '''
 
 
@@ -422,8 +430,18 @@ class RemotePeerTests(unittest.TestCase):
         self.assertNotEqual(self.peer("prepare").returncode, 0)
         self.assertFalse((self.home / "calls.jsonl").exists())
 
+    def test_handoff_without_verified_agent_mail_names_is_refused(self):
+        write(self.home / "unverified", b"")
+        if os.geteuid() == 0:
+            os.chown(self.home / "unverified", self.uid, self.gid)
+        result = self.peer("prepare")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((Path(self.entry["output"]) / "complete.json").exists())
+        calls = [json.loads(line) for line in (self.home / "calls.jsonl").read_text().splitlines()]
+        self.assertEqual([c[0] for c in calls], ["--reconcile", "--prepare-batch"])
+
     def test_wrong_original_targets_never_reach_generation(self):
-        self.entry["targets"][0]["pane_pid"] = "999"
+        self.entry["targets"][0]["shell_pid"] = 999
         result = self.peer("prepare")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(Path(self.entry["output"]).exists())

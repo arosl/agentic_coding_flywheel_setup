@@ -36,19 +36,26 @@ def specification(count=2):
     return {"schema": fleet.SPEC_SCHEMA, "hosts": [host(i) for i in range(1, count + 1)]}
 
 
-def native_response(selected, mode, pane="%42"):
+def native_targets(req, first=42):
+    """What the native launcher records: one herdr tab per slot in the launch's workspace."""
+    label = "swarm-" + req["session"] + "-" + fleet.native_hash(req)[:12]
+    return [{"slot": i, **agent, "agent_mail_name": "Mail" + agent["agent_name"],
+             "herdr_name": "mail" + agent["agent_name"].lower(), "workspace_id": "w3",
+             "workspace_label": label, "tab_id": f"w3:t{first + i - 1}", "pane_id": f"w3:p{first + i - 1}",
+             "terminal_id": f"term_{first + i - 1}", "shell_pid": 200 + i, "launched_state": "ready"}
+            for i, agent in enumerate(req["agents"], 1)]
+
+
+def native_response(selected, mode):
     req = selected["request"]
     result = {"schema": fleet.NATIVE_SCHEMA, "request": req, "starts_agents": mode == "launch",
-              "work_dispatched": False, "authentication_verified": False, "agent_mail_registered": False,
-              "review_sha256": fleet.native_hash(req)}
+              "work_dispatched": False, "authentication_verified": False,
+              "agent_mail_registered": mode != "preview", "review_sha256": fleet.native_hash(req)}
     if mode == "preview":
         result.update(status="preview", admission={"status": "pass", "recommendation": "launch",
                                                    "recommended_agents": 32, "safe_agents": 32})
     else:
-        result.update(status="ready", reconciled_only=mode == "reconcile", targets=[{
-            "slot": i, **agent, "pane": "%" + str(int(pane[1:]) + i - 1), "pane_pid": str(200 + i),
-            "server_pid": "100", "session_id": "$3", "session_created": "1789000000",
-        } for i, agent in enumerate(req["agents"], 1)])
+        result.update(status="ready", reconciled_only=mode == "reconcile", targets=native_targets(req))
     return result
 
 
@@ -310,20 +317,50 @@ class ValidationTests(unittest.TestCase):
             peer = FixtureTransport(lambda h, m, r: {**r, key: value})
             self.assertEqual(fleet.remote_result(host(), "launch", peer)["status"], "unconfirmed")
         for key, value in (("slot", True), ("agent_name", "Other"), ("agent_type", "codex"),
-                           ("pane", "%x"), ("pane_pid", "-1"), ("session_id", "$bad")):
+                           ("pane_id", "%42"), ("tab_id", ""), ("terminal_id", 7), ("shell_pid", "201"),
+                           ("shell_pid", 0), ("herdr_name", "MailAgent1"), ("agent_mail_name", "1bad"),
+                           ("workspace_label", "swarm-wave-one-000000000000"), ("launched_state", "done")):
             def mutate(h, m, r):
                 r["targets"][0][key] = value
                 return r
-            self.assertEqual(fleet.remote_result(host(), "launch", FixtureTransport(mutate))["status"], "unconfirmed")
+            with self.subTest(key=key, value=value):
+                self.assertEqual(fleet.remote_result(host(), "launch", FixtureTransport(mutate))["status"], "unconfirmed")
 
-    def test_duplicate_panes_and_changed_sessions_are_refused(self):
+    def test_ready_requires_registered_agent_mail_names(self):
+        # Spawn registers every name, so a ready launch without them is not ours.
+        for mode in ("launch", "reconcile"):
+            peer = FixtureTransport(lambda h, m, r: {**r, "agent_mail_registered": False})
+            self.assertEqual(fleet.remote_result(host(), mode, peer)["code"], "native_launch_unconfirmed")
+        peer = FixtureTransport(lambda h, m, r: {**r, "agent_mail_registered": True})
+        self.assertEqual(fleet.remote_result(host(), "preview", peer)["code"], "native_preview_refused_or_existing")
+
+    def test_reconcile_live_report_is_not_part_of_the_target(self):
+        def live(h, m, r):
+            for t in r["targets"]:
+                t["live"] = {"state": "blocked", "name_lost": True, "rename_command": "herdr agent rename x y"}
+            return r
+        row = fleet.remote_result(host(), "reconcile", FixtureTransport(live))
+        self.assertEqual(row["status"], "ready")
+        self.assertEqual(row["targets"], native_targets(host()["request"]))
+        bad = FixtureTransport(lambda h, m, r: {**r, "targets": [{**r["targets"][0], "live": "ready"}]})
+        self.assertEqual(fleet.remote_result(host(), "reconcile", bad)["status"], "unconfirmed")
+
+    def test_pre_herdr_tmux_targets_need_a_new_launch(self):
+        tmux = [{"slot": 1, "agent_name": "Agent1", "agent_type": "claude", "pane": "%42", "pane_pid": "201",
+                 "server_pid": "100", "session_id": "$3", "session_created": "1789000000"}]
+        with self.assertRaisesRegex(fleet.Refused, "pre_herdr_launch_state_relaunch_required"):
+            fleet.valid_targets(tmux, host()["request"])
+
+    def test_duplicate_agents_and_split_workspaces_are_refused(self):
         selected = host()
         selected["request"]["agents"].append({"agent_name": "Other", "agent_type": "codex"})
-        for key in ("pane", "session_id"):
+        for key in ("pane_id", "tab_id", "terminal_id", "shell_pid", "workspace_id"):
             def change(h, m, r):
-                r["targets"][1][key] = r["targets"][0][key] if key == "pane" else "$9"
+                r["targets"][1][key] = r["targets"][0][key] if key != "workspace_id" else "w4"
                 return r
-            self.assertEqual(fleet.remote_result(selected, "launch", FixtureTransport(change))["status"], "unconfirmed")
+            with self.subTest(key=key):
+                self.assertEqual(fleet.remote_result(selected, "launch", FixtureTransport(change))["status"], "unconfirmed")
+        self.assertEqual(fleet.remote_result(selected, "launch", FixtureTransport())["status"], "ready")
 
 
 class FilesAndProcessTests(unittest.TestCase):

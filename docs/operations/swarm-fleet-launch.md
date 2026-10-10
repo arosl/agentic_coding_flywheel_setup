@@ -4,12 +4,13 @@ The fleet inventory planner is advisory and describes **target totals**, not
 additional processes to start. This controller supplies the missing execution
 step for an explicit roster of **new, dedicated native-agent sessions**. It
 never converts inventory allocations into launch authority or adds agents to an
-existing session. Every host runs its own installed ACFS and NTM admission checks.
+existing session. Every host runs its own installed ACFS admission checks.
 
 Run `python3 -I scripts/swarm-fleet-launch.py --help` from a trusted complete
 checkout on a Linux controller. This is a checkout command, not a newly installed
 `acfs` subcommand. Remotes need the existing native launcher at
-`$HOME/.acfs/scripts/lib/swarm_launch.sh`, NTM, tmux and the selected providers.
+`$HOME/.acfs/scripts/lib/swarm_launch.sh`, a running herdr server, Agent Mail
+(`am`) and the selected providers.
 The project and private receipt parent must already exist on each remote host.
 This command does not provision machines, install tools, copy repositories,
 authenticate providers, or supply remote credentials.
@@ -70,10 +71,10 @@ unknown providers, malformed paths, implicit selections and extra executable
 fields are refused. Native support currently covers Claude and Codex.
 
 The workload and profile choose admission policy, **not a provider model or CAAM
-account**. The remote NTM configuration still chooses its normal commands,
-models, permissions and credentials. Use the profile rehearsal separately to
-check authentication/model access; this controller does not wire a CAAM profile
-into an NTM session or treat a previous rehearsal as authorization.
+account**. Each remote agent CLI's own configuration still chooses its normal
+commands, models, permissions and credentials. Use the profile rehearsal
+separately to check authentication/model access; this controller does not wire a
+CAAM profile into a herdr agent or treat a previous rehearsal as authorization.
 
 ## Preview and launch
 
@@ -113,8 +114,14 @@ agent counts. Admission and spawning are not a fleet-wide atomic reservation.
 
 The controller fsyncs its private fleet intent, then an immutable per-host attempt
 record **before** invoking remote launch. The remote native launcher separately
-persists its own intent before NTM. Only a matching ready response with distinct,
-ordered native pane/process/session identities creates a local result record.
+persists its own intent before starting agents. Only a matching ready response
+creates a local result record. Its targets (schema `acfs.swarm-launch.v2`) must
+be one per slot, in slot order, all in the one herdr workspace labelled for this
+launch, with distinct tab, pane, terminal and shell PID, and each with an Agent
+Mail name whose lowercase form is its herdr name. Spawn registers those names,
+so a ready response must report `agent_mail_registered: true`. Fleet state saved
+before the herdr port holds tmux targets and is refused as
+`pre_herdr_launch_state_relaunch_required`: launch again under a new receipt.
 The controller never executes the command strings returned by remote previews.
 
 ## Partial launches are not rolled back or blindly retried
@@ -147,8 +154,8 @@ inspection remains available on the original host:
 acfs swarm launch --reconcile --receipt /home/ubuntu/receipts/implementation-wave-1.json
 ```
 
-A ready fleet means native processes were verified at each host's check time,
-not that they are authenticated, registered with Agent Mail, executing work, or
+A ready fleet means native processes were verified, and their Agent Mail names
+registered, at each host's check time, not that they are authenticated, executing work, or
 still alive when the last host finishes. Use the ordinary launch-aware scoped
 packet preparation and reviewed dispatch on each remote; this controller sends
 no work prompts, claims no Beads, and acquires no file reservations.
@@ -177,7 +184,7 @@ host does not hide the status of its already-started peers.
 Reconciliation writes no controller files. It returns `ready`/exit 0 only when
 all hosts have original verified sessions; an otherwise healthy partial fleet
 returns `partial`/exit 1 while leaving untouched hosts marked `not_attempted`.
-A changed original pane/process/session, wrong request, malformed response or
+A changed original pane, terminal, shell or workspace, wrong request, malformed response or
 failed query returns `unconfirmed`/exit 1. Manually adopted remote results retain
 weaker provenance and are not automatically promoted to original-launch proof;
 inspect/manage those sessions separately. No remote recovery/adoption is invoked.
@@ -226,7 +233,7 @@ not supported. Only directly reachable authorized endpoints are accepted.
 Reviewed key/known-host bytes are held in private anonymous snapshots while SSH
 runs, not reopened from caller-controlled paths. Children do not inherit shell
 or loader hooks or provider credentials. The installed remote account, launcher,
-NTM and provider configuration remain trusted: neither SSH authentication nor
+herdr, Agent Mail and provider configuration remain trusted: neither SSH authentication nor
 JSON validation attests the remote executable bytes or truth of its claims.
 The controller is not an operating-system sandbox.
 
@@ -252,6 +259,6 @@ python3 -B -m unittest discover -s tests/unit -p 'test_swarm_fleet_*.py' -v
 Tests exercise orchestration against the existing native JSON contract, real
 private-file publication, no-clobber races, SSH argument/snapshot construction,
 actual bounded child processes, abrupt controller SIGKILL/recovery, directory
-locking and unprivileged remote-shell argument transport. They do not replace live OpenSSH/VPS/NTM or
+locking and unprivileged remote-shell argument transport. They do not replace live OpenSSH/VPS/herdr or
 authenticated-provider acceptance. The controller never downloads a replacement
 launcher or relaxes its policies when a remote installation is missing/stale.

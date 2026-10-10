@@ -38,15 +38,16 @@ class Fixture:
             fleet.publish(fd, "intent.json", {"schema": fleet.STATE_SCHEMA, "plan": self.launch})
             for host in hosts:
                 intent = fleet.host_intent(self.launch, host)
-                targets = [{"slot": s, **a, "pane": "%" + str(s), "pane_pid": str(100 + s),
-                    "server_pid": "500", "session_id": "$1", "session_created": "1700000000"}
+                label = "swarm-wave-" + fleet.native_hash(host["request"])[:12]
+                targets = [{"slot": s, **a, "agent_mail_name": "Mail" + a["agent_name"],
+                    "herdr_name": "mail" + a["agent_name"].lower(), "workspace_id": "w1", "workspace_label": label,
+                    "tab_id": "w1:t" + str(s + 1), "pane_id": "w1:p" + str(s), "terminal_id": "term_" + str(s),
+                    "shell_pid": 100 + s, "launched_state": "ready"}
                     for s, a in enumerate(host["request"]["agents"], 1)]
                 fleet.publish(fd, host["id"] + ".attempt.json", intent)
                 fleet.publish(fd, host["id"] + ".result.json", {**intent, "targets": targets})
         self.work = {"schema": prepare.WORK_SCHEMA, "hosts": [{"id": h["id"],
-            "output": str(self.root / (h["id"] + "-bundle")),
-            "identities": [{"slot": s, "name": a["agent_name"]}
-                           for s, a in enumerate(h["request"]["agents"], 1)]} for h in hosts],
+            "output": str(self.root / (h["id"] + "-bundle"))} for h in hosts],
             "assignments": [{"host_id": h["id"], "slot": 2, "bead_id": f"bd-{i}",
                 "role": "implementation", "write_scopes": [f"src/part-{i}/**"]} for i, h in enumerate(hosts)],
             "beads": [{"id": f"bd-{i}", "status": "open", "title": f"Task {i}",
@@ -85,7 +86,7 @@ class Fixture:
             (bundle / (name + ".md")).write_text(text)
             (bundle / (name + ".md")).chmod(0o600)
             deliveries.append({"packet": name + ".json", "receipt": name + ".receipt.json", "repo": req["repo"],
-                "session": req["session"], "pane": target["pane"], "agent_type": target["agent_type"],
+                "session": req["session"], "pane": target["pane_id"], "agent_type": target["agent_type"],
                 "operation_id": "operation-" + item["bead_id"]})
         self.private(bundle / "batch.json", {"schema": "acfs.packet-delivery-batch.v1", "deliveries": deliveries})
         result = self.peer["bundle_snapshot"](entry)

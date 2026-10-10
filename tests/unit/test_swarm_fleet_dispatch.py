@@ -31,12 +31,12 @@ class Peer:
         if mode == "launch-status":
             value = {"schema": fleet.NATIVE_SCHEMA, "request": request, "status": "ready", "targets": targets,
                      "starts_agents": False, "work_dispatched": False, "authentication_verified": False,
-                     "agent_mail_registered": False, "reconciled_only": True}
+                     "agent_mail_registered": True, "reconciled_only": True}
         else:
             deliveries = []
             for target in targets:
                 slot = target["slot"]
-                delivery = {"repo": request["repo"], "session": request["session"], "pane": target["pane"],
+                delivery = {"repo": request["repo"], "session": request["session"], "pane": target["pane_id"],
                             "agent_type": target["agent_type"], "operation_id": f"op-{ident}-{slot}",
                             "bead_id": f"bd-{ident}-{slot}", "packet_sha256": "a" * 64,
                             "payload_sha256": "b" * 64, "payload_bytes": 120}
@@ -82,8 +82,12 @@ class DispatchTests(unittest.TestCase):
         self.targets = {}
         with fleet.new_state(self.launch) as fd:
             for index, host in enumerate(hosts):
-                targets = [{"slot": i, **agent, "pane": f"%{20+i}", "pane_pid": str(100+i), "server_pid": "99",
-                            "session_id": "$2", "session_created": "123456"} for i, agent in enumerate(host["request"]["agents"], 1)]
+                label = "swarm-" + host["request"]["session"] + "-" + fleet.native_hash(host["request"])[:12]
+                targets = [{"slot": i, **agent, "agent_mail_name": "Mail" + agent["agent_name"],
+                            "herdr_name": "mail" + agent["agent_name"].lower(), "workspace_id": "w2",
+                            "workspace_label": label, "tab_id": f"w2:t{1+i}", "pane_id": f"w2:p{20+i}",
+                            "terminal_id": f"term_{20+i}", "shell_pid": 100 + i, "launched_state": "ready"}
+                           for i, agent in enumerate(host["request"]["agents"], 1)]
                 self.targets[host["id"]] = targets
                 attempt = fleet.host_intent(self.launch, host)
                 fleet.publish(fd, host["id"] + ".attempt.json", attempt)
@@ -216,7 +220,7 @@ class DispatchTests(unittest.TestCase):
     def test_replaced_native_process_blocks_dispatch(self):
         def changed(_entry, mode, value):
             if mode == "launch-status":
-                value["targets"][0]["pane_pid"] = "999"
+                value["targets"][0]["shell_pid"] = 999
         self.peer.mutate = changed
         result, code = self.run_dispatch()
         self.assertEqual(code, 1)

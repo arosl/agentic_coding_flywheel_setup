@@ -66,13 +66,16 @@ class FleetFixture:
         self.calls.clear()
 
     def targets(self, host):
-        return [{"slot": slot, **agent, "pane": "%" + str(slot), "pane_pid": str(100 + slot),
-                 "server_pid": "80", "session_id": "$1", "session_created": "1700000000"}
+        label = "swarm-" + host["request"]["session"] + "-" + fleet.native_hash(host["request"])[:12]
+        return [{"slot": slot, **agent, "agent_mail_name": "Mail" + agent["agent_name"],
+                 "herdr_name": "mail" + agent["agent_name"].lower(), "workspace_id": "w1", "workspace_label": label,
+                 "tab_id": "w1:t" + str(slot + 1), "pane_id": "w1:p" + str(slot), "terminal_id": "term_" + str(slot),
+                 "shell_pid": 100 + slot, "launched_state": "ready"}
                 for slot, agent in enumerate(host["request"]["agents"], 1)]
 
     def native(self, host, mode):
         value = {"schema": fleet.NATIVE_SCHEMA, "request": host["request"],
-                 "work_dispatched": False, "authentication_verified": False, "agent_mail_registered": False,
+                 "work_dispatched": False, "authentication_verified": False, "agent_mail_registered": mode != "preview",
                  "starts_agents": mode == "launch", "review_sha256": fleet.native_hash(host["request"])}
         if mode == "preview":
             value.update(status="preview", admission={"status": "pass", "recommendation": "launch",
@@ -100,7 +103,7 @@ class FleetFixture:
             for target in entry["targets"]:
                 bead = f"bd-{entry['host']['id']}-{target['slot']}"
                 request = {k: entry["host"]["request"][k] for k in ("repo", "session")}
-                request.update(pane=target["pane"], agent_type=target["agent_type"], operation_id="op-" + bead,
+                request.update(pane=target["pane_id"], agent_type=target["agent_type"], operation_id="op-" + bead,
                                bead_id=bead, packet_sha256="b" * 64, payload_sha256="c" * 64, payload_bytes=123)
                 value["deliveries"].append({"slot": target["slot"], "request": request,
                     "receipt": "/home/ubuntu/" + bead + ".delivery.json", "action": "submit"})
@@ -196,7 +199,7 @@ class StatusTests(unittest.TestCase):
 
     def test_replaced_panes_cannot_become_original_agents(self):
         def change(value):
-            value["targets"][0]["pane_pid"] = "999"
+            value["targets"][0]["shell_pid"] = 999
         report, code = self.fx.collect(self.mutate("launch-status", change))
         self.assertEqual(code, 1)
         self.assertEqual(report["hosts"][0]["agents"]["code"], "original_targets_changed")
@@ -325,7 +328,7 @@ class StatusTests(unittest.TestCase):
         original = path.read_bytes()
         for change in (lambda p: p.update(launch_plan_sha256="0" * 64),
                        lambda p: p["hosts"][0]["host"].update(host="192.0.2.88"),
-                       lambda p: p["hosts"][0]["targets"][0].update(pane_pid="999"),
+                       lambda p: p["hosts"][0]["targets"][0].update(shell_pid=999),
                        lambda p: p.update(timeout_seconds=True), lambda p: p.update(hosts=[None])):
             with self.subTest(change=change):
                 value = fleet.decode(original)

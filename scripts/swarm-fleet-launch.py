@@ -31,7 +31,7 @@ import time
 SCHEMA = "acfs.swarm-fleet-launch.v1"
 SPEC_SCHEMA = "acfs.swarm-fleet-launch-spec.v1"
 STATE_SCHEMA = "acfs.swarm-fleet-launch-state.v1"
-NATIVE_SCHEMA = "acfs.swarm-launch.v1"
+NATIVE_SCHEMA = "acfs.swarm-launch.v2"
 LIMIT = 1024 * 1024
 POLICY = "explicit-new-sessions-strict-ssh-native-admission-v1"
 PROFILES = ("balanced", "codex-heavy", "review-heavy", "docs-heavy")
@@ -365,22 +365,36 @@ def transport(known_hosts, identity, timeout, *, runner=capture, ssh="/usr/bin/s
 
 
 def valid_targets(value, request):
+    """The native launcher's herdr targets: one labelled workspace, distinct agents."""
     require(type(value) is list and len(value) == len(request["agents"]), "native_targets_invalid")
-    targets, panes, session = [], set(), None
-    fields = {"slot", "agent_name", "agent_type", "pane", "pane_pid", "server_pid", "session_id", "session_created"}
+    fields = {"slot", "agent_name", "agent_type", "agent_mail_name", "herdr_name", "workspace_id",
+              "workspace_label", "tab_id", "pane_id", "terminal_id", "shell_pid", "launched_state"}
+    label = "swarm-" + request["session"] + "-" + native_hash(request)[:12]
+    targets = []
     for slot, (target, agent) in enumerate(zip(value, request["agents"]), 1):
-        require(type(target) is dict and fields <= set(target) and type(target["slot"]) is int
+        # Fleet state saved before the herdr port holds tmux targets; only a new launch helps.
+        require(type(target) is not dict or "session_id" not in target, "pre_herdr_launch_state_relaunch_required")
+        # Reconciliation adds a "live" report per target; it is not part of the identity.
+        if type(target) is dict and "live" in target:
+            live = target["live"]
+            require(type(live) is dict and type(live.get("state")) is str
+                    and type(live.get("name_lost")) is bool, "native_targets_invalid")
+            target = {k: v for k, v in target.items() if k != "live"}
+        require(type(target) is dict and set(target) == fields and type(target["slot"]) is int
                 and target["slot"] == slot and target["agent_name"] == agent["agent_name"]
-                and target["agent_type"] == agent["agent_type"] and matches(r"%[0-9]+", target["pane"])
-                and matches(r"\$[0-9]+", target["session_id"])
-                and all(matches(r"[0-9]+", target[k]) for k in ("pane_pid", "server_pid", "session_created")),
-                "native_targets_invalid")
-        require(target["pane"] not in panes, "native_targets_invalid")
-        identity = (target["session_id"], target["session_created"], target["server_pid"])
-        require(session is None or session == identity, "native_targets_invalid")
-        session = identity
-        panes.add(target["pane"])
+                and target["agent_type"] == agent["agent_type"]
+                and all(matches(r"[A-Za-z0-9][A-Za-z0-9_:.-]{0,63}", target[k])
+                        for k in ("workspace_id", "tab_id", "pane_id"))
+                and matches(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", target["terminal_id"])
+                and type(target["shell_pid"]) is int and target["shell_pid"] > 0
+                and matches(r"[A-Za-z][A-Za-z0-9_-]{0,63}", target["agent_mail_name"])
+                and target["herdr_name"] == target["agent_mail_name"].lower()
+                and matches(r"[a-z][a-z0-9_-]{0,31}", target["herdr_name"])
+                and target["workspace_id"] == value[0]["workspace_id"] and target["workspace_label"] == label
+                and target["launched_state"] in ("ready", "blocked"), "native_targets_invalid")
         targets.append({k: target[k] for k in sorted(fields)})
+    for key in ("tab_id", "pane_id", "terminal_id", "shell_pid", "herdr_name"):
+        require(len({t[key] for t in targets}) == len(targets), "native_targets_invalid")
     return targets
 
 
@@ -397,9 +411,10 @@ def remote_result(host, mode, invoke):
         req = host["request"]
         require(type(value) is dict and value.get("schema") == NATIVE_SCHEMA and encoded(value.get("request")) == encoded(req)
                 and value.get("work_dispatched") is False and value.get("authentication_verified") is False
-                and value.get("agent_mail_registered") is False, "native_response_invalid")
+                and type(value.get("agent_mail_registered")) is bool, "native_response_invalid")
         if mode == "preview":
             require(code == 0 and value.get("status") == "preview" and value.get("starts_agents") is False
+                    and value.get("agent_mail_registered") is False
                     and value.get("review_sha256") == native_hash(req)
                     and value.get("reconciled_only", False) is False, "native_preview_refused_or_existing")
             admission = value.get("admission")
@@ -411,8 +426,9 @@ def remote_result(host, mode, invoke):
             row.update(status="admitted", code="live_admission_passed", admission={
                 k: admission[k] for k in ("status", "recommendation", "safe_agents", "recommended_agents")})
         else:
-            require(code == 0 and value.get("status") == "ready" and type(value.get("starts_agents")) is bool,
-                    "native_launch_unconfirmed")
+            # Spawn registers each agent's Agent Mail name, so a ready launch has them.
+            require(code == 0 and value.get("status") == "ready" and type(value.get("starts_agents")) is bool
+                    and value.get("agent_mail_registered") is True, "native_launch_unconfirmed")
             require(value.get("original_launch_verified", True) is True and "recovery_provenance" not in value,
                     "adopted_session_requires_manual_review")
             if mode == "reconcile":
