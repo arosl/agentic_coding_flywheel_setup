@@ -107,6 +107,8 @@ case "$1 $2" in
         printf '{"id":"cli:agent:wait","result":{"agent":{"name":"%s","agent_status":"idle"}}}\n' "$3"
         ;;
     "agent list") cat "$STUB_DIR/list.json" ;;
+    "tab list") cat "$STUB_DIR/tabs.json" ;;
+    "pane close") printf '{"id":"cli:pane:close","result":{"type":"ok"}}\n' ;;
     *) fail_with unexpected "stub herdr got: $*" ;;
 esac
 STUB
@@ -141,6 +143,20 @@ case "$1 ${2:-}" in
         [[ ! -e "$STUB_DIR/read_fail_$id" ]] || { echo "stub: cannot mark $id" >&2; exit 1; }
         echo "$id" >>"$STUB_DIR/read_ids"
         exit 0 ;;
+    # retire's reads: am_unknown_<name> makes `agents show` fail;
+    # reservations.json is `robot reservations --all --json`; reserved_ever
+    # the `file_reservations list --all` table.
+    "agents show")
+        [[ ! -e "$STUB_DIR/am_unknown_$3" ]] || { echo "agent not found" >&2; exit 1; }
+        printf '{"id":1,"name":"%s"}\n' "$3"
+        exit 0 ;;
+    "robot reservations")
+        cat "$STUB_DIR/reservations.json" 2>/dev/null || printf '{"all_active":[]}\n'
+        exit 0 ;;
+    "file_reservations list")
+        printf 'ID   PATTERN              AGENT       EXPIRES               REASON\n'
+        cat "$STUB_DIR/reserved_ever" 2>/dev/null || true
+        exit 0 ;;
 esac
 n=$(( $(cat "$STUB_DIR/am_count" 2>/dev/null || echo 0) + 1 ))
 echo "$n" >"$STUB_DIR/am_count"
@@ -166,7 +182,20 @@ case "$*" in
         ;;
 esac
 STUB
-chmod +x "$WORK/bin/herdr" "$WORK/bin/am" "$WORK/bin/codex"
+# The stub curl stands in for Agent Mail's HTTP MCP endpoint: it records the
+# request body and answers a tool result (curl_refuse: a refusal).
+cat >"$WORK/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'curl %s\n' "$*" >>"$STUB_DIR/calls"
+cat >"$STUB_DIR/curl_body"
+if [[ -e "$STUB_DIR/curl_refuse" ]]; then
+    printf '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"invalid registration_token"}],"isError":true}}\n'
+else
+    printf 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{}"}],"isError":false}}\n'
+fi
+STUB
+chmod +x "$WORK/bin/herdr" "$WORK/bin/am" "$WORK/bin/codex" "$WORK/bin/curl"
 
 # A fresh stub state per case.
 reset_stub() {
@@ -782,6 +811,122 @@ write_mailbox
 RC=0
 PATH="$WORK/bin:$PATH" AGENT_NAME='' AGENT_MAIL_AGENT='' bash "$HELPER" inbox >/dev/null 2>&1 || RC=$?
 check "inbox without an agent refuses and calls no am" test "$RC/$(count_calls '^am ')" = "1/0"
+
+echo "retire"
+
+# A git repo for this case, with origin/main at its first commit.
+retire_repo() {
+    REPO="$STUB_DIR/repo"
+    git init -q -b main "$REPO"
+    printf 'a\n' >"$REPO/a.txt"
+    printf 'b\n' >"$REPO/b.txt"
+    git -C "$REPO" add a.txt b.txt
+    git -C "$REPO" -c user.name=t -c user.email=t@example.invalid commit -q -m init
+    git -C "$REPO" update-ref refs/remotes/origin/main HEAD
+}
+# Tab w9:t1 holds $1 panes (default 1).
+write_tabs() {
+    printf '{"result":{"tabs":[{"label":"AlphaFox","pane_count":%s,"tab_id":"w9:t1","workspace_id":"w9"},{"label":"BetaOwl","pane_count":1,"tab_id":"w9:t2","workspace_id":"w9"}]}}\n' \
+        "${1:-1}" >"$STUB_DIR/tabs.json"
+}
+retire_case() {
+    reset_stub "$1"
+    write_list
+    write_tabs "${2:-1}"
+    retire_repo
+}
+
+retire_case rdry
+run_helper retire AlphaFox --cwd "$REPO" --dry-run
+check "retire --dry-run exits 0 and says it would close the agent's tab" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "would close tab w9:t1" <<<"$2"' _ "$RC" "$ERR"
+check "retire --dry-run closes nothing" test "$(count_calls 'close')" -eq 0
+check "without a token the identity stays, and retire says so" grep -q "identity stays active" <<<"$ERR"
+
+retire_case rtab
+run_helper retire AlphaFox --cwd "$REPO"
+check "retire closes the tab of an agent alone in it" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qx "herdr tab close w9:t1" "$2"' _ "$RC" "$STUB_DIR/calls"
+check "retire looks the agent up in Agent Mail by its Agent Mail name" \
+    grep -qx -- "am agents show AlphaFox --project $REPO --json" "$STUB_DIR/calls"
+
+retire_case rpane 2
+run_helper retire AlphaFox --cwd "$REPO"
+check "in a grouped tab, retire closes only the agent's pane" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qx "herdr pane close w9:p1" "$2" && ! grep -q "tab close" "$2"' _ "$RC" "$STUB_DIR/calls"
+
+retire_case rheld
+printf '{"all_active":[{"agent":"AlphaFox","path":"a.txt"},{"agent":"BetaOwl","path":"b.txt"}]}\n' >"$STUB_DIR/reservations.json"
+run_helper retire AlphaFox --cwd "$REPO"
+check "an agent holding reservations is refused, naming them, and nothing closes" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "refused: AlphaFox still holds reservations: a.txt$" <<<"$2" && ! grep -q close "$3"' _ "$RC" "$ERR" "$STUB_DIR/calls"
+
+retire_case rdirty
+printf '7    *.txt                AlphaFox    2026-10-10T08:00:00.  acfs-x\n' >"$STUB_DIR/reserved_ever"
+printf 'changed\n' >>"$REPO/a.txt"
+printf 'changed\n' >>"$REPO/b.txt"
+printf '{"all_active":[{"agent":"BetaOwl","path":"b.txt"}]}\n' >"$STUB_DIR/reservations.json"
+run_helper retire AlphaFox --cwd "$REPO"
+check "uncommitted changes in a file the agent once reserved refuse retirement" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "uncommitted changes in files AlphaFox reserved: a.txt$" <<<"$2"' _ "$RC" "$ERR"
+printf '{"all_active":[{"agent":"BetaOwl","path":"*.txt"}]}\n' >"$STUB_DIR/reservations.json"
+run_helper retire AlphaFox --cwd "$REPO"
+check "a changed file another agent holds now is not the retiring agent's" test "$RC" -eq 0
+
+retire_case rworking
+sed -i 's/"agent_status":"idle","name":"alphafox"/"agent_status":"working","name":"alphafox"/' "$STUB_DIR/list.json"
+run_helper retire AlphaFox --cwd "$REPO"
+check "a working agent is refused" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "alphafox is working" <<<"$2" && ! grep -q close "$3"' _ "$RC" "$ERR" "$STUB_DIR/calls"
+
+retire_case rself
+RC=0
+PATH="$WORK/bin:$PATH" HERDR_PANE_ID=w9:p1 bash "$HELPER" retire AlphaFox --cwd "$REPO" >/dev/null 2>"$STUB_DIR/err" || RC=$?
+check "retire refuses the agent in this pane" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "runs in this pane" "$2"' _ "$RC" "$STUB_DIR/err"
+
+retire_case rwt
+git -C "$REPO" worktree add -q "$STUB_DIR/alphafox-merged" HEAD
+git -C "$REPO" worktree add -q -b side "$STUB_DIR/alphafox-ahead" HEAD
+git -C "$STUB_DIR/alphafox-ahead" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m ahead
+git -C "$REPO" worktree add -q "$STUB_DIR/betaowl-other" HEAD
+run_helper retire AlphaFox --cwd "$REPO"
+check "an unmerged worktree naming the agent refuses retirement" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "worktree .*alphafox-ahead is not merged to origin/main" <<<"$2"' _ "$RC" "$ERR"
+check "a refused retirement removes no worktree" test -d "$STUB_DIR/alphafox-merged"
+git -C "$REPO" worktree remove --force "$STUB_DIR/alphafox-ahead"
+printf 'x\n' >"$STUB_DIR/alphafox-merged/new.txt"
+run_helper retire AlphaFox --cwd "$REPO"
+check "a dirty worktree naming the agent refuses retirement" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "alphafox-merged has uncommitted changes" <<<"$2"' _ "$RC" "$ERR"
+rm -f "$STUB_DIR/alphafox-merged/new.txt"
+run_helper retire AlphaFox --cwd "$REPO"
+check "a clean merged worktree naming the agent is removed, others stay" \
+    bash -c '[[ "$1" -eq 0 && ! -e "$2/alphafox-merged" && -d "$2/betaowl-other" ]]' _ "$RC" "$STUB_DIR"
+
+retire_case rtoken
+run_helper retire AlphaFox --cwd "$REPO" --token tok123
+check "with a token, retire soft-retires the identity through retire_agent" \
+    bash -c '[[ "$1" -eq 0 ]] && jq -e --arg p "$3" ".params.name == \"retire_agent\" and .params.arguments == {project_key: \$p, agent_name: \"AlphaFox\", registration_token: \"tok123\"}" "$2" >/dev/null' \
+    _ "$RC" "$STUB_DIR/curl_body" "$REPO"
+check "the identity is retired after the tab closes" \
+    test "$(grep -E -o '^(herdr tab close|curl)' "$STUB_DIR/calls" | tr '\n' '|')" = "herdr tab close|curl|"
+touch "$STUB_DIR/curl_refuse"
+run_helper retire AlphaFox --cwd "$REPO" --token bad
+check "a refused retire_agent fails retire and says why" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "retire_agent refused: invalid registration_token" <<<"$2"' _ "$RC" "$ERR"
+
+retire_case rdropped
+sed -i '/"name":"alphafox"/d' "$STUB_DIR/list.json"
+run_helper retire AlphaFox --cwd "$REPO"
+check "an agent whose herdr name dropped is found by its tab label" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qx "herdr tab close w9:t1" "$2"' _ "$RC" "$STUB_DIR/calls"
+
+retire_case runknown
+touch "$STUB_DIR/am_unknown_NoSuch"
+run_helper retire NoSuch --cwd "$REPO"
+check "retire refuses a name Agent Mail doesn't have, before touching herdr" \
+    bash -c '[[ "$1" -ne 0 ]] && ! grep -q "^herdr" "$2"' _ "$RC" "$STUB_DIR/calls"
 
 echo
 echo "passed: $PASS, failed: $FAIL"

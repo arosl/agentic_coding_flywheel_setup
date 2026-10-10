@@ -16,6 +16,7 @@
 #   acfs agents list [--workspace ID] [--kind K] [--json]
 #   acfs agents inbox [--agent NAME] [--project KEY] [--keep-unread]
 #   acfs agents codex-daemon (status [--json] | start | restart)
+#   acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token T] [--dry-run]
 # ============================================================
 
 set -euo pipefail
@@ -41,6 +42,7 @@ Usage:
   acfs agents list  [--workspace ID] [--kind KIND] [--json]
   acfs agents inbox [--agent NAME] [--project KEY] [--keep-unread]
   acfs agents codex-daemon (status [--json] | start | restart)
+  acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token TOKEN] [--dry-run]
 
 spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        an Agent Mail identity first; its herdr name is that name lowercased and
@@ -87,6 +89,16 @@ codex-daemon
        when it carries any); start and restart run it with every HERDR_*
        variable removed. restart interrupts every running Codex agent's
        connection to the daemon.
+retire Retire an agent whose work is done: leave a handoff comment on its bead
+       first. Refuses while the agent holds Agent Mail reservations, while a
+       file it ever reserved has uncommitted changes (unless another agent
+       holds that file now), while it is working, and while a worktree whose
+       path names it is dirty or not merged to origin/main. Otherwise it
+       removes its merged worktrees (git worktree remove, never --force),
+       closes its herdr pane (its tab, when that is the tab's only pane) and,
+       given the agent's registration token (--token or
+       AGENT_MAIL_REGISTRATION_TOKEN), soft-retires its Agent Mail identity;
+       unretire_agent restores it. --dry-run lists what it would do.
 
 The workspace is --workspace, else $HERDR_WORKSPACE_ID. --cwd defaults to the
 git top level of the current directory, which is also the Agent Mail project key.
@@ -964,6 +976,191 @@ herdr_agents_inbox() {
     (( failed == 0 )) || return 1
 }
 
+# The repo's files with uncommitted changes, one path per line.
+herdr_agents_dirty_files() {
+    git -C "$1" status --porcelain=v1 -z --untracked-files=all 2>/dev/null \
+        | tr '\0' '\n' | sed -n 's/^.. //p'
+}
+
+# Patterns the agent ever reserved in the project (active, expired or
+# released), one per line. `am file_reservations list` prints a table whose
+# columns are separated by two or more spaces.
+herdr_agents_reserved_ever() {
+    am file_reservations list "$1" --all 2>/dev/null \
+        | awk -v agent="$2" 'NR > 1 { n = split($0, f, /  +/); if (n >= 3 && f[3] == agent) print f[2] }'
+}
+
+# Soft-retire an Agent Mail identity. Over HTTP the server takes only the
+# agent's own registration token.
+herdr_agents_retire_identity() {
+    local cwd="$1" mail_name="$2" token="$3" url response
+    url="${AGENT_MAIL_URL:-http://127.0.0.1:${ACFS_AGENT_MAIL_PORT:-8765}/mcp/}"
+    response="$(jq -nc --arg p "$cwd" --arg a "$mail_name" --arg t "$token" \
+        '{jsonrpc: "2.0", id: 1, method: "tools/call",
+          params: {name: "retire_agent", arguments: {project_key: $p, agent_name: $a, registration_token: $t}}}' \
+        | curl -sS --max-time 15 -X POST "$url" -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' --data-binary @- 2>&1)" || {
+        herdr_agents_note "retire_agent failed: $response"
+        return 1
+    }
+    # A streamed answer arrives as an SSE "data:" line.
+    response="$(sed -n 's/^data: //p; /^{/p' <<<"$response" | tail -n 1)"
+    if [[ "$(jq -r '(.error != null) or (.result.isError == true)' <<<"$response" 2>/dev/null)" != false ]]; then
+        herdr_agents_note "retire_agent refused: $(jq -r '.error.message // (.result.content[0].text // .)' <<<"$response" 2>/dev/null || printf '%s' "$response")"
+        return 1
+    fi
+}
+
+herdr_agents_retire() {
+    local workspace="" cwd="" dry_run=false token="${AGENT_MAIL_REGISTRATION_TOKEN:-}" mail_name=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --workspace) [[ $# -ge 2 ]] || herdr_agents_die "--workspace needs a value"; workspace="$2"; shift 2 ;;
+            --cwd) [[ $# -ge 2 ]] || herdr_agents_die "--cwd needs a value"; cwd="$2"; shift 2 ;;
+            --token) [[ $# -ge 2 ]] || herdr_agents_die "--token needs a value"; token="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            -h|--help) herdr_agents_usage; return 0 ;;
+            -*) herdr_agents_die "unknown retire option: $1" ;;
+            *) [[ -z "$mail_name" ]] || herdr_agents_die "retire takes one agent name"; mail_name="$1"; shift ;;
+        esac
+    done
+    [[ -n "$mail_name" ]] || herdr_agents_die "retire needs the agent's Agent Mail name"
+    herdr_agents_require herdr jq am git
+    [[ -z "$token" ]] || herdr_agents_require curl
+    if [[ -z "$cwd" ]]; then
+        cwd="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    fi
+    [[ -d "$cwd" ]] || herdr_agents_die "--cwd is not a directory: $cwd"
+    cwd="$(cd "$cwd" && pwd -P)"
+    local herdr_name
+    herdr_name="$(herdr_agents_herdr_name "$mail_name")" || herdr_agents_die "$HERDR_AGENTS_NAME_ERROR"
+    am agents show "$mail_name" --project "$cwd" --json >/dev/null 2>&1 \
+        || herdr_agents_die "Agent Mail has no agent $mail_name in project $cwd"
+
+    local -a refusals=() actions=()
+
+    # 1. Reservations: the agent releases its own.
+    local active held
+    active="$(am robot reservations --project "$cwd" --all --json 2>/dev/null)" \
+        || herdr_agents_die "could not read Agent Mail's reservations for $cwd"
+    held="$(jq -r --arg a "$mail_name" '[.all_active[]? | select(.agent == $a) | .path] | join(", ")' <<<"$active")"
+    [[ -z "$held" ]] || refusals+=("$mail_name still holds reservations: $held")
+
+    # 2. Uncommitted changes it owns: a changed file that matches a pattern it
+    # ever reserved, unless another agent holds that file now.
+    local file pattern owned=""
+    local -a ever=() others=()
+    mapfile -t ever < <(herdr_agents_reserved_ever "$cwd" "$mail_name")
+    mapfile -t others < <(jq -r --arg a "$mail_name" '.all_active[]? | select(.agent != $a) | .path' <<<"$active")
+    if (( ${#ever[@]} > 0 )); then
+        while IFS= read -r file; do
+            [[ -n "$file" ]] || continue
+            local mine=false
+            for pattern in "${ever[@]}"; do
+                # shellcheck disable=SC2053 # the pattern is a reservation glob
+                [[ "$file" == $pattern ]] && { mine=true; break; }
+            done
+            for pattern in "${others[@]}"; do
+                # shellcheck disable=SC2053
+                [[ "$file" == $pattern ]] && { mine=false; break; }
+            done
+            [[ "$mine" == false ]] || owned+="${owned:+, }$file"
+        done < <(herdr_agents_dirty_files "$cwd")
+    fi
+    [[ -z "$owned" ]] || refusals+=("uncommitted changes in files $mail_name reserved: $owned")
+
+    # 3. Its worktrees (a path naming the agent): a clean one whose HEAD is on
+    # origin/main is removed; any other refuses the retirement.
+    local wt
+    local -a merged_worktrees=()
+    while IFS= read -r wt; do
+        [[ -n "$wt" && "$wt" != "$cwd" ]] || continue
+        [[ "${wt,,}" == *"$herdr_name"* ]] || continue
+        if [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]]; then
+            refusals+=("worktree $wt has uncommitted changes")
+        elif ! git -C "$wt" merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
+            refusals+=("worktree $wt is not merged to origin/main")
+        else
+            merged_worktrees+=("$wt")
+            actions+=("remove merged worktree $wt (git worktree remove)")
+        fi
+    done < <(git -C "$cwd" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
+
+    # 4. Its pane: never a working agent, never this pane. A tab with other
+    # panes keeps them, and only the agent's pane closes.
+    herdr_agents_herdr agent list || herdr_agents_die "herdr agent list failed: $HERDR_AGENTS_ERR_MESSAGE"
+    local agent pane="" tab="" tab_workspace="" status="" close_cmd=() pane_count
+    agent="$(jq -c --arg n "$herdr_name" --arg w "$workspace" \
+        '[.result.agents[]? | select(.name == $n) | select($w == "" or .workspace_id == $w)] | first // empty' <<<"$HERDR_AGENTS_OUT")"
+    if [[ -n "$agent" ]]; then
+        pane="$(jq -r '.pane_id' <<<"$agent")"
+        tab="$(jq -r '.tab_id' <<<"$agent")"
+        tab_workspace="$(jq -r '.workspace_id' <<<"$agent")"
+        status="$(jq -r '.agent_status // "unknown"' <<<"$agent")"
+    else
+        # herdr can drop an agent's name (acfs-i7p); its tab keeps the label.
+        tab_workspace="$workspace"
+        [[ -n "$tab_workspace" ]] || tab_workspace="${HERDR_WORKSPACE_ID:-}"
+    fi
+    if [[ -n "$tab_workspace" ]]; then
+        herdr_agents_herdr tab list --workspace "$tab_workspace" \
+            || herdr_agents_die "herdr tab list failed: $HERDR_AGENTS_ERR_MESSAGE"
+        local tab_row
+        tab_row="$(jq -c --arg t "$tab" --arg l "$mail_name" \
+            '[.result.tabs[]? | select(if $t != "" then .tab_id == $t else .label == $l end)] | first // empty' <<<"$HERDR_AGENTS_OUT")"
+        if [[ -n "$tab_row" ]]; then
+            tab="$(jq -r '.tab_id' <<<"$tab_row")"
+            pane_count="$(jq -r '.pane_count // 1' <<<"$tab_row")"
+            if [[ -n "$pane" ]] && (( pane_count > 1 )); then
+                close_cmd=(pane close "$pane")
+                actions+=("close pane $pane (tab $tab keeps its other panes)")
+            elif [[ -n "$pane" ]] || (( pane_count == 1 )); then
+                close_cmd=(tab close "$tab")
+                actions+=("close tab $tab")
+            else
+                refusals+=("herdr lists no agent $herdr_name, and tab $tab labelled $mail_name has $pane_count panes")
+            fi
+        fi
+    fi
+    if [[ "$status" == working ]]; then
+        refusals+=("$herdr_name is working; retire it once its turn is done")
+    fi
+    if [[ -n "${HERDR_PANE_ID:-}" && -n "$pane" && "$pane" == "$HERDR_PANE_ID" ]]; then
+        refusals+=("$herdr_name runs in this pane")
+    fi
+    (( ${#close_cmd[@]} > 0 )) || herdr_agents_note "no herdr pane or tab found for $mail_name; nothing to close"
+
+    if [[ -n "$token" ]]; then
+        actions+=("soft-retire Agent Mail identity $mail_name (unretire_agent restores it)")
+    else
+        herdr_agents_note "no registration token (--token or AGENT_MAIL_REGISTRATION_TOKEN): the Agent Mail identity stays active; the agent can call retire_agent itself"
+    fi
+
+    local line
+    if (( ${#refusals[@]} > 0 )); then
+        for line in "${refusals[@]}"; do herdr_agents_note "refused: $line"; done
+        return 1
+    fi
+    if [[ "$dry_run" == true ]]; then
+        for line in "${actions[@]}"; do herdr_agents_note "would $line"; done
+        return 0
+    fi
+    for wt in "${merged_worktrees[@]}"; do
+        git -C "$cwd" worktree remove "$wt" || herdr_agents_die "git worktree remove $wt failed; retirement stopped"
+        herdr_agents_note "removed worktree $wt"
+    done
+    if (( ${#close_cmd[@]} > 0 )); then
+        herdr_agents_herdr "${close_cmd[@]}" \
+            || herdr_agents_die "herdr ${close_cmd[*]} failed: $HERDR_AGENTS_ERR_MESSAGE"
+        herdr_agents_note "closed ${close_cmd[0]} ${close_cmd[2]}"
+    fi
+    if [[ -n "$token" ]]; then
+        herdr_agents_retire_identity "$cwd" "$mail_name" "$token" || return 1
+        herdr_agents_note "retired Agent Mail identity $mail_name"
+    fi
+    herdr_agents_note "retired $mail_name"
+}
+
 herdr_agents_main() {
     local subcommand="${1:-help}"
     [[ $# -gt 0 ]] && shift
@@ -973,6 +1170,7 @@ herdr_agents_main() {
         list|ls) herdr_agents_list "$@" ;;
         inbox) herdr_agents_inbox "$@" ;;
         codex-daemon) herdr_agents_codex_daemon "$@" ;;
+        retire) herdr_agents_retire "$@" ;;
         help|-h|--help) herdr_agents_usage ;;
         *) herdr_agents_usage >&2; return 1 ;;
     esac
