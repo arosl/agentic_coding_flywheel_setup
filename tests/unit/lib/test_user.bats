@@ -196,6 +196,58 @@ EOF
     assert_equal "$(cat "$ACFS_TARGET_HOME/.ssh/authorized_keys")" "ssh-rsa TESTKEY"
 }
 
+# cloud-init's disable_root line, as it writes it into root's authorized_keys.
+_disable_root_line() {
+    printf '%s\n' "no-port-forwarding,no-agent-forwarding,no-X11-forwarding,command=\"echo 'Please login as the user \\\"ubuntu\\\" rather than the user \\\"root\\\".';echo;sleep 10;exit 142\" $1"
+}
+
+@test "migrate_ssh_keys: skips cloud-init's disable_root copy of a key the target already has" {
+    local key="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyOne operator@laptop"
+    mkdir -p "$HOME/.ssh" "$ACFS_TARGET_HOME/.ssh"
+    _disable_root_line "$key" > "$HOME/.ssh/authorized_keys"
+    printf '%s\n' "$key" > "$ACFS_TARGET_HOME/.ssh/authorized_keys"
+
+    user_resolve_current_user() {
+        printf "%s\n" "otheruser"
+    }
+
+    run migrate_ssh_keys
+    assert_success
+
+    assert_equal "$(cat "$ACFS_TARGET_HOME/.ssh/authorized_keys")" "$key"
+}
+
+@test "migrate_ssh_keys: copies a disable_root-only key without its forced command" {
+    local key="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyTwo operator@laptop"
+    local other="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABFakeKeyThree"
+    mkdir -p "$HOME/.ssh" "$ACFS_TARGET_HOME/.ssh"
+    _disable_root_line "$key" > "$HOME/.ssh/authorized_keys"
+    printf '%s\n' "$other" >> "$HOME/.ssh/authorized_keys"
+    printf '%s\n' "$other other-comment" > "$ACFS_TARGET_HOME/.ssh/authorized_keys"
+
+    user_resolve_current_user() {
+        printf "%s\n" "otheruser"
+    }
+
+    run migrate_ssh_keys
+    assert_success
+
+    assert_equal "$(cat "$ACFS_TARGET_HOME/.ssh/authorized_keys")" "$other other-comment
+$key"
+}
+
+@test "user_authorized_key_blob: finds the key after options with spaces" {
+    run user_authorized_key_blob "$(_disable_root_line "sk-ssh-ed25519@openssh.com AAAAGnNrFake  comment")"
+    assert_success
+    assert_output "sk-ssh-ed25519@openssh.com AAAAGnNrFake"
+
+    run user_authorized_key_blob "# just a comment"
+    assert_failure
+
+    run user_authorized_key_blob "# ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDisabledKey"
+    assert_failure
+}
+
 @test "migrate_ssh_keys: repairs stale TARGET_HOME from resolved target home" {
     local stale_home
     local resolved_home

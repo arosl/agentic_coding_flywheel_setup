@@ -7647,27 +7647,10 @@ normalize_user() {
         fi
 
         try_step "Ensuring authorized_keys exists" $SUDO touch "$TARGET_HOME/.ssh/authorized_keys" || return 1
-        # shellcheck disable=SC2016  # Variables expand inside the bash -c script, not here.
-        try_step "Merging SSH authorized_keys" bash -c '
-            set -euo pipefail
-            src="/root/.ssh/authorized_keys"
-            dst="$1"
-            while IFS= read -r line || [[ -n "$line" ]]; do
-                [[ -n "$line" ]] || continue
-                if grep -Fxq "$line" "$dst" 2>/dev/null; then
-                    continue
-                fi
-                # Ensure destination file ends with newline before appending
-                if [[ -s "$dst" ]]; then
-                    last_char=""
-                    last_char=$(tail -c 1 "$dst" | od -An -t u1 | tr -d " " 2>/dev/null || true)
-                    if [[ "$last_char" != "10" ]]; then
-                        printf "\n" >> "$dst"
-                    fi
-                fi
-                printf "%s\n" "$line" >> "$dst"
-            done < "$src"
-        ' -- "$TARGET_HOME/.ssh/authorized_keys" || return 1
+        # user.sh: skips keys already present and copies cloud-init's
+        # disable_root keys without the forced command that refuses the login.
+        try_step "Merging SSH authorized_keys" user_merge_authorized_keys \
+            /root/.ssh/authorized_keys "$TARGET_HOME/.ssh/authorized_keys" || return 1
         try_step "Setting SSH directory ownership" acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/.ssh" || return 1
         try_step "Setting SSH directory permissions" $SUDO chmod 700 "$TARGET_HOME/.ssh" || return 1
         try_step "Setting authorized_keys permissions" $SUDO chmod 600 "$TARGET_HOME/.ssh/authorized_keys" || return 1

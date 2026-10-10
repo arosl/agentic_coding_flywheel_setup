@@ -387,6 +387,71 @@ enable_passwordless_sudo() {
     log_success "Passwordless sudo enabled"
 }
 
+# Print the "type base64" key of an authorized_keys line, without its options
+# and comment, so the same key under different options compares equal.
+user_authorized_key_blob() {
+    local line="${1:-}" word="" prev=""
+    local -a words=()
+
+    [[ ! "$line" =~ ^[[:space:]]*# ]] || return 1
+    read -r -a words <<< "$line" || true
+    for word in "${words[@]}"; do
+        if [[ "$prev" =~ ^(ssh-[a-z0-9@.-]+|ecdsa-sha2-[a-z0-9@.-]+|sk-[a-z0-9@.-]+)$ && "$word" == AAAA* ]]; then
+            printf '%s %s\n' "$prev" "$word"
+            return 0
+        fi
+        prev="$word"
+    done
+    return 1
+}
+
+# cloud-init's disable_root rewrites root's keys behind a forced command that
+# prints "Please login as the user ... rather than the user ..." and exits.
+user_authorized_key_is_disable_root() {
+    local line="${1:-}"
+    [[ "$line" == *'command="'*'Please login as the user '*' rather than the user '* ]]
+}
+
+# Append the keys in <src> that <dst> lacks. A key already in <dst> is skipped
+# whatever its options; a key on cloud-init's disable_root line is copied
+# without that line's options, which would refuse every login with it.
+# Lines that carry no key are merged by exact match, as before.
+user_merge_authorized_keys() {
+    local src="${1:-}" dst="${2:-}"
+    local line="" blob="" last_char=""
+    local -A have=()
+
+    [[ -n "$src" && -n "$dst" ]] || return 1
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if blob="$(user_authorized_key_blob "$line")"; then
+            have["$blob"]=1
+        fi
+    done < <(${SUDO:-} cat "$dst" 2>/dev/null)
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -n "$line" ]] || continue
+        if blob="$(user_authorized_key_blob "$line")"; then
+            [[ -z "${have["$blob"]+x}" ]] || continue
+            if user_authorized_key_is_disable_root "$line"; then
+                log_detail "Copying ${blob%% *} key without cloud-init's disable_root command"
+                line="${blob}${line#*"${blob#* }"}"
+            fi
+            have["$blob"]=1
+        elif ${SUDO:-} grep -Fxq -- "$line" "$dst" 2>/dev/null; then
+            continue
+        fi
+
+        # Ensure dst ends with a newline before appending.
+        if ${SUDO:-} test -s "$dst"; then
+            last_char=$(${SUDO:-} tail -c 1 "$dst" 2>/dev/null | od -An -t u1 | tr -d ' ' || true)
+            if [[ "$last_char" != "10" ]]; then
+                printf '\n' | ${SUDO:-} tee -a "$dst" >/dev/null || return 1
+            fi
+        fi
+        printf '%s\n' "$line" | ${SUDO:-} tee -a "$dst" >/dev/null || return 1
+    done < "$src"
+}
+
 # Copy SSH keys from current user to target user
 # Handles root -> ubuntu key migration common on fresh VPS
 migrate_ssh_keys() {
@@ -508,28 +573,10 @@ migrate_ssh_keys() {
         return 1
     fi
 
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        [[ -n "$line" ]] || continue
-        if $SUDO grep -Fxq "$line" "$target_keys" 2>/dev/null; then
-            continue
-        fi
-
-        # Ensure target file ends with a newline before appending.
-        # We use a robust check that handles files without any newlines at all.
-        if [[ -s "$target_keys" ]]; then
-            local last_char
-            last_char=$($SUDO tail -c 1 "$target_keys" 2>/dev/null | od -An -t u1 | tr -d ' ' || true)
-            if [[ "$last_char" != "10" ]]; then
-                # Last char is not \n (ASCII 10)
-                printf '\n' | $SUDO tee -a "$target_keys" >/dev/null
-            fi
-        fi
-
-        if ! printf '%s\n' "$line" | $SUDO tee -a "$target_keys" >/dev/null; then
-            log_error "Failed to append SSH key to: $target_keys"
-            return 1
-        fi
-    done < "$source_keys"
+    if ! user_merge_authorized_keys "$source_keys" "$target_keys"; then
+        log_error "Failed to append SSH key to: $target_keys"
+        return 1
+    fi
 
     # Fix permissions
     $SUDO chown -hR "$target:$target" "$target_home/.ssh"

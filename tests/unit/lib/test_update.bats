@@ -14824,17 +14824,13 @@ EOF
     [[ ! -e "$CHECKSUMS_LOCAL" ]]
 }
 
-@test "install.sh: authorized_keys merge subprocess avoids top-level local" {
-    local merge_block=""
+@test "install.sh: authorized_keys merge runs user.sh's helper, not a bash -c subprocess" {
+    local merge_line=""
 
-    merge_block="$(awk '/try_step "Merging SSH authorized_keys"/,/^        . --/ { print }' "$PROJECT_ROOT/install.sh")"
+    merge_line="$(grep -F 'try_step "Merging SSH authorized_keys"' "$PROJECT_ROOT/install.sh")"
 
-    [[ -n "$merge_block" ]]
-    [[ "$merge_block" != *"local last_char"* ]]
-    [[ "$merge_block" != *"tr -d ' '"* ]]
-    [[ "$merge_block" == *'last_char=""'* ]]
-    [[ "$merge_block" == *'tr -d " "'* ]]
-    [[ "$merge_block" == *'printf "\n" >> "$dst"'* ]]
+    [[ "$merge_line" == *"user_merge_authorized_keys"* ]]
+    [[ "$merge_line" != *"bash -c"* ]]
 }
 
 @test "fd close helpers do not redirect installer stderr permanently" {
