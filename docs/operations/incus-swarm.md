@@ -18,8 +18,10 @@ Once, on the host: `incus.sh host-setup --storage <pool|directory> [--memory SIZ
 ## 2. Create and check the new machine
 
 ```bash
-scripts/providers/incus.sh dev --ssh-key laptop.pub --jump <host> --state-size <size> --data-size <size>
+scripts/providers/machine.sh up dev --ssh-key laptop.pub --jump <host> --state-size <size> --data-size <size>
 ```
+
+(`machine.sh up` hands everything to `incus.sh`; calling `incus.sh dev …` directly is the same.)
 
 The volumes are sized at creation, so give them room for what step 3 copies. When it has finished, log in and run `acfs doctor`. **This is a fresh install, so it is also the product test:** fix what fails in ACFS before you go on, not by hand in the machine. Install what the old machine had beyond ACFS, such as a database you still use.
 
@@ -73,7 +75,7 @@ Downtime starts here.
    - Agent Mail's inbox
    - `br ready --json`
 
-   `acfs machine verify`, which will do this in one command, isn't built yet (acfs-ioo3.4).
+   `machine.sh verify`, which will do this in one command, isn't built yet (acfs-ioo3.4.2).
 4. Clear the old pane mappings in Agent Mail (`cleanup_pane_identities`).
 5. Respawn the agents: `claude --resume <id>` or `codex resume <id>` for those your list marked worth resuming (their transcripts are keyed by the working directory, which didn't change), and fresh agents for the rest.
 
