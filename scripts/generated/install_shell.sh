@@ -449,6 +449,8 @@ acfs_generated_install_shell_omz() {
                             install_success=true
                         else
                             log_error "shell.omz: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else

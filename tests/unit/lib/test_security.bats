@@ -716,3 +716,77 @@ EOF
     assert_equal "$(get_checksum "sentinel_tool")" "$existing_sha"
     assert_equal "$ACFS_CHECKSUMS_REMOTE_REFRESHED" "false"
 }
+
+# acfs_explain_github_rate_limit (acfs-ohk) asks GitHub's rate_limit endpoint;
+# a stub curl answers with $RATE_LIMIT_BODY, or fails with $RATE_LIMIT_EXIT.
+stub_rate_limit_curl() {
+    local bin="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$bin"
+    cat > "$bin/curl" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/curl-args"
+[[ "${RATE_LIMIT_EXIT:-0}" == 0 ]] || exit "$RATE_LIMIT_EXIT"
+printf '%s\n' "$RATE_LIMIT_BODY"
+EOF
+    chmod +x "$bin/curl"
+    eval "real_$(declare -f acfs_security_system_binary_path)"
+    acfs_security_system_binary_path() {
+        if [[ "$1" == curl ]]; then printf '%s\n' "$BATS_TEST_TMPDIR/bin/curl"; return 0; fi
+        real_acfs_security_system_binary_path "$@"
+    }
+}
+
+@test "rate limit: a spent core limit is named, with its reset time in UTC" {
+    stub_rate_limit_curl
+    export RATE_LIMIT_BODY='{"resources":{"core":{"limit":60,"remaining":0,"reset":1791763200,"used":60}}}'
+
+    run acfs_explain_github_rate_limit
+
+    assert_success
+    assert_output --partial "GitHub's API rate limit for this IP is spent"
+    assert_output --partial "resets at 2026-10-12T00:00:00Z"
+    run cat "$BATS_TEST_TMPDIR/curl-args"
+    assert_output --partial "https://api.github.com/rate_limit"
+}
+
+@test "rate limit: says nothing while requests remain" {
+    stub_rate_limit_curl
+    export RATE_LIMIT_BODY='{"resources":{"core":{"limit":60,"remaining":12,"reset":1791763200,"used":48}}}'
+
+    run acfs_explain_github_rate_limit
+
+    assert_failure
+    assert_output ""
+}
+
+@test "rate limit: says nothing when GitHub can't be asked or answers nonsense" {
+    stub_rate_limit_curl
+    export RATE_LIMIT_EXIT=22
+    run acfs_explain_github_rate_limit
+    assert_failure
+    assert_output ""
+
+    export RATE_LIMIT_EXIT=0 RATE_LIMIT_BODY='<html>rate limited</html>'
+    run acfs_explain_github_rate_limit
+    assert_failure
+    assert_output ""
+}
+
+@test "rate limit: fetch_and_run_with_runner explains a failed installer, not a passing one" {
+    local calls="$BATS_TEST_TMPDIR/explained"
+    acfs_explain_github_rate_limit() { printf 'x\n' >> "$BATS_TEST_TMPDIR/explained"; return 0; }
+    acfs_stage_verified_installer() {
+        local -n staged="$1"
+        staged="$BATS_TEST_TMPDIR/installer.sh"
+        printf 'exit "${INSTALLER_EXIT:-0}"\n' > "$staged"
+    }
+    _acfs_remove_temp_files() { :; }
+
+    INSTALLER_EXIT=0 run fetch_and_run_with_runner bash "https://example.com/i.sh" "$(printf '%064d' 1)" tool
+    assert_success
+    [[ ! -e "$calls" ]]
+
+    INSTALLER_EXIT=3 run fetch_and_run_with_runner bash "https://example.com/i.sh" "$(printf '%064d' 1)" tool
+    assert_failure 3
+    assert_equal "$(wc -l < "$calls")" "1"
+}

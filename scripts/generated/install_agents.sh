@@ -410,6 +410,8 @@ acfs_generated_install_agents_claude() {
                             install_success=true
                         else
                             log_error "agents.claude: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -1275,6 +1277,8 @@ acfs_generated_install_agents_antigravity() {
                             install_success=true
                         else
                             log_error "agents.antigravity: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -1525,6 +1529,8 @@ acfs_generated_install_agents_opencode() {
                             install_success=true
                         else
                             log_error "agents.opencode: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -1850,6 +1856,8 @@ acfs_generated_install_agents_omp() {
                             install_success=true
                         else
                             log_error "agents.omp: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -2179,6 +2187,8 @@ acfs_generated_install_agents_grok() {
                             install_success=true
                         else
                             log_error "agents.grok: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else

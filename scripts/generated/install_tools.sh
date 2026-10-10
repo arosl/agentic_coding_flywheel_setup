@@ -783,6 +783,8 @@ acfs_generated_install_tools_atuin() {
                             install_success=true
                         else
                             log_error "tools.atuin: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -982,6 +984,8 @@ acfs_generated_install_tools_zoxide() {
                             install_success=true
                         else
                             log_error "tools.zoxide: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -1223,6 +1227,8 @@ acfs_generated_install_tools_herdr() {
                             install_success=true
                         else
                             log_error "tools.herdr: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -1360,6 +1366,8 @@ acfs_generated_install_utils_giil() {
                             install_success=true
                         else
                             log_error "utils.giil: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -1498,6 +1506,8 @@ acfs_generated_install_utils_csctf() {
                             install_success=true
                         else
                             log_error "utils.csctf: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -1636,6 +1646,8 @@ acfs_generated_install_utils_xf() {
                             install_success=true
                         else
                             log_error "utils.xf: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -1774,6 +1786,8 @@ acfs_generated_install_utils_toon_rust() {
                             install_success=true
                         else
                             log_error "utils.toon_rust: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -1912,6 +1926,8 @@ acfs_generated_install_utils_rano() {
                             install_success=true
                         else
                             log_error "utils.rano: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -2050,6 +2066,8 @@ acfs_generated_install_utils_mdwb() {
                             install_success=true
                         else
                             log_error "utils.mdwb: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -2188,6 +2206,8 @@ acfs_generated_install_utils_s2p() {
                             install_success=true
                         else
                             log_error "utils.s2p: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else

@@ -410,6 +410,8 @@ acfs_generated_install_lang_bun() {
                             install_success=true
                         else
                             log_error "lang.bun: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -522,6 +524,8 @@ acfs_generated_install_lang_uv() {
                             install_success=true
                         else
                             log_error "lang.uv: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -634,6 +638,8 @@ acfs_generated_install_lang_rust() {
                             install_success=true
                         else
                             log_error "lang.rust: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -796,6 +802,8 @@ acfs_generated_install_lang_nvm() {
                             install_success=true
                         else
                             log_error "lang.nvm: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else

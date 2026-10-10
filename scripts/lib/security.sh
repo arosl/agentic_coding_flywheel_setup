@@ -1720,6 +1720,33 @@ verify_checksum() {
     return "$status"
 }
 
+# Say so when a verified installer failed because GitHub's API rate limit is
+# spent (acfs-ohk). Most stack installers look up their latest release through
+# api.github.com, which allows 60 unauthenticated requests an hour per IP, and
+# fail without naming the limit. GitHub doesn't count the rate_limit request
+# against it. Prints the reason and the reset time (UTC) and returns 0 when
+# the core limit is spent; returns 1, silently, otherwise or when it can't
+# tell.
+acfs_explain_github_rate_limit() {
+    local curl_bin="" jq_bin="" date_bin="" body="" remaining="" reset="" reset_utc=""
+
+    curl_bin="$(acfs_security_system_binary_path curl 2>/dev/null)" || return 1
+    jq_bin="$(acfs_security_system_binary_path jq 2>/dev/null)" || return 1
+    body="$("$curl_bin" -fsS --max-time 5 -H 'Accept: application/vnd.github+json' \
+        https://api.github.com/rate_limit 2>/dev/null)" || return 1
+    remaining="$("$jq_bin" -r '.resources.core.remaining // empty' <<<"$body" 2>/dev/null)" || return 1
+    reset="$("$jq_bin" -r '.resources.core.reset // empty' <<<"$body" 2>/dev/null)" || return 1
+    [[ "$remaining" == 0 && "$reset" =~ ^[0-9]+$ ]] || return 1
+
+    reset_utc="epoch $reset"
+    if date_bin="$(acfs_security_system_binary_path date 2>/dev/null)"; then
+        reset_utc="$("$date_bin" -u -d "@$reset" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || reset_utc="epoch $reset"
+    fi
+    log_error "  GitHub's API rate limit for this IP is spent (60 requests an hour without a token);"
+    log_error "  the installer likely failed on it. It resets at $reset_utc: re-run the install then."
+    return 0
+}
+
 # Stage a fully verified installer in a target-readable, read-only file.
 #
 # The caller supplies the name of a variable that receives the staging path and
@@ -1846,6 +1873,7 @@ fetch_and_run_with_runner() {
         status=0
     else
         status=$?
+        acfs_explain_github_rate_limit || true
     fi
 
     _acfs_remove_temp_files "$verified_installer_file"

@@ -2167,6 +2167,7 @@ describe("stack.cass per-run installer TMPDIR cleanup", () => {
     "run_as_target_shell() { cat >/dev/null; }",
     "log_error() { printf 'ERROR %s\\n' \"$*\" >&2; }",
     "log_warn() { printf 'WARN %s\\n' \"$*\" >&2; }",
+    'acfs_explain_github_rate_limit() { : > "$TARGET_HOME/explained-rate-limit"; return 1; }',
     // Record what mktemp hands back so every scenario can prove the exact
     // directory existed and is gone, not merely that nothing is left.
     "run_as_target() {",
@@ -2258,6 +2259,14 @@ describe("stack.cass per-run installer TMPDIR cleanup", () => {
     expect(run.stdout).toMatch(/^status=[1-9]\d* reason=installer execution$/m);
     expect(run.seen).toBe(run.made);
     expectOnlyThisRunRemoved(run);
+  });
+
+  test("asks about GitHub's rate limit only when the installer itself fails (acfs-ohk)", () => {
+    const explained = (run: ReturnType<typeof runCass>) =>
+      existsSync(resolve(run.home, "explained-rate-limit"));
+    expect(explained(runCass("runner"))).toBe(true);
+    expect(explained(runCass("success"))).toBe(false);
+    expect(explained(runCass("checksum"))).toBe(false);
   });
 
   test("removes the run's TMPDIR after a setup failure and keeps the reason", () => {

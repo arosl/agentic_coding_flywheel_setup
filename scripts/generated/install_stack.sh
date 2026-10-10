@@ -410,6 +410,8 @@ acfs_generated_install_stack_mcp_agent_mail() {
                             install_success=true
                         else
                             log_error "stack.mcp_agent_mail: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -911,6 +913,8 @@ acfs_generated_install_stack_meta_skill() {
                             install_success=true
                         else
                             log_error "stack.meta_skill: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -1033,6 +1037,8 @@ acfs_generated_install_stack_automated_plan_reviser() {
                             install_success=true
                         else
                             log_error "stack.automated_plan_reviser: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -1181,6 +1187,8 @@ acfs_generated_install_stack_jeffreysprompts() {
                             install_success=true
                         else
                             log_error "stack.jeffreysprompts: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -1329,6 +1337,8 @@ acfs_generated_install_stack_process_triage() {
                             install_success=true
                         else
                             log_error "stack.process_triage: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -1477,6 +1487,8 @@ acfs_generated_install_stack_ultimate_bug_scanner() {
                             install_success=true
                         else
                             log_error "stack.ultimate_bug_scanner: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -1599,6 +1611,8 @@ acfs_generated_install_stack_beads_rust() {
                             install_success=true
                         else
                             log_error "stack.beads_rust: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -1721,6 +1735,8 @@ acfs_generated_install_stack_beads_viewer() {
                             install_success=true
                         else
                             log_error "stack.beads_viewer: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -1879,6 +1895,8 @@ acfs_generated_install_stack_cass() {
                             install_success=true
                         else
                             log_error "stack.cass: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -2012,6 +2030,8 @@ acfs_generated_install_stack_cm() {
                             install_success=true
                         else
                             log_error "stack.cm: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -2134,6 +2154,8 @@ acfs_generated_install_stack_caam() {
                             install_success=true
                         else
                             log_error "stack.caam: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -2246,6 +2268,8 @@ acfs_generated_install_stack_slb() {
                             install_success=true
                         else
                             log_error "stack.slb: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -2384,6 +2408,8 @@ acfs_generated_install_stack_dcg() {
                             install_success=true
                         else
                             log_error "stack.dcg: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -2560,6 +2586,8 @@ acfs_generated_install_stack_ru() {
                             install_success=true
                         else
                             log_error "stack.ru: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -2672,6 +2700,8 @@ acfs_generated_install_stack_brenner_bot() {
                             install_success=true
                         else
                             log_error "stack.brenner_bot: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -2810,6 +2840,8 @@ acfs_generated_install_stack_rch() {
                             install_success=true
                         else
                             log_error "stack.rch: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -2948,6 +2980,8 @@ acfs_generated_install_stack_srps() {
                             install_success=true
                         else
                             log_error "stack.srps: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -3223,6 +3257,8 @@ acfs_generated_install_stack_frankensearch() {
                                 install_success=true
                             else
                                 log_error "stack.frankensearch: verified installer execution failed"
+                                # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                                if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                                 ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                             fi
                         fi
@@ -3362,6 +3398,8 @@ acfs_generated_install_stack_storage_ballast_helper() {
                             install_success=true
                         else
                             log_error "stack.storage_ballast_helper: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -3500,6 +3538,8 @@ acfs_generated_install_stack_cross_agent_session_resumer() {
                             install_success=true
                         else
                             log_error "stack.cross_agent_session_resumer: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -3638,6 +3678,8 @@ acfs_generated_install_stack_doodlestein_self_releaser() {
                             install_success=true
                         else
                             log_error "stack.doodlestein_self_releaser: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -3776,6 +3818,8 @@ acfs_generated_install_stack_agent_settings_backup() {
                             install_success=true
                         else
                             log_error "stack.agent_settings_backup: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -3999,6 +4043,8 @@ INSTALL_STACK_PCR_PRE_INSTALL_CHECK
                             install_success=true
                         else
                             log_error "stack.pcr: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -4181,6 +4227,8 @@ acfs_generated_install_stack_eidetic_engine_cli() {
                             install_success=true
                         else
                             log_error "stack.eidetic_engine_cli: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -4319,6 +4367,8 @@ acfs_generated_install_stack_franken_markdown() {
                             install_success=true
                         else
                             log_error "stack.franken_markdown: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -4457,6 +4507,8 @@ acfs_generated_install_stack_pi_agent_rust() {
                             install_success=true
                         else
                             log_error "stack.pi_agent_rust: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
@@ -4595,6 +4647,8 @@ acfs_generated_install_stack_power_failure_resumer() {
                             install_success=true
                         else
                             log_error "stack.power_failure_resumer: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
                             ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
                         fi
                     else
