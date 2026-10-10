@@ -16381,6 +16381,66 @@ FAKE
     [[ ! -e "$HOME/.acfs/herdr-integrations-pending" ]]
 }
 
+# acfs-74rq: an agent CLI installed after tools.herdr ran has no pending
+# entry, and its integration stays "not installed" unless update adds it.
+write_fake_agent_clis() {
+    local cli
+    for cli in "$@"; do
+        printf '#!/bin/bash\nexit 0\n' > "$HOME/.local/bin/$cli"
+        chmod +x "$HOME/.local/bin/$cli"
+    done
+}
+
+@test "update_herdr_integrations installs a missing integration whose agent CLI is installed" {
+    write_fake_herdr_for_integrations
+    write_fake_agent_clis codex
+    DRY_RUN=false
+
+    run update_herdr_integrations
+    assert_success
+    # codex is on PATH and not installed, so it goes in before the outdated
+    # refreshes. pi has no CLI here, and antigravity-cli's agy isn't on PATH.
+    run cat "$HOME/herdr-installs"
+    assert_output $'codex\nclaude\nopencode\nletta'
+    [[ ! -e "$HOME/.acfs/herdr-integrations-pending" ]]
+}
+
+@test "update_herdr_integrations records a refused missing integration as pending" {
+    write_fake_herdr_for_integrations
+    write_fake_agent_clis codex agy
+    printf '%s\n' antigravity-cli > "$HOME/herdr-refuse"
+    DRY_RUN=false
+
+    run update_herdr_integrations
+    assert_success
+    run cat "$HOME/herdr-installs"
+    assert_output $'codex\nantigravity-cli\nclaude\nopencode\nletta'
+    # herdr refused antigravity-cli (no config dir yet), so a later update
+    # retries it through the pending file.
+    run cat "$HOME/.acfs/herdr-integrations-pending"
+    assert_output "antigravity-cli"
+}
+
+@test "update_herdr_integrations installs a missing target once when it is also pending" {
+    write_fake_herdr_for_integrations
+    write_fake_agent_clis codex
+    printf '%s\n' codex > "$HOME/.acfs/herdr-integrations-pending"
+    DRY_RUN=false
+
+    run update_herdr_integrations
+    assert_success
+    run cat "$HOME/herdr-installs"
+    assert_output $'codex\nclaude\nopencode\nletta'
+}
+
+@test "update.sh's CLI-to-integration pairs are tools.herdr's install step's" {
+    local manifest_pairs update_pairs
+    manifest_pairs="$(sed -n 's/^ *for pair in \(.*\); do$/\1/p' "$PROJECT_ROOT/acfs.manifest.yaml" | grep -m 1 'claude:claude')"
+    update_pairs="$(sed -n 's/^UPDATE_HERDR_INTEGRATION_PAIRS=(\(.*\))$/\1/p' "$PROJECT_ROOT/scripts/lib/update.sh")"
+    [[ -n "$update_pairs" ]]
+    assert_equal "$update_pairs" "$manifest_pairs"
+}
+
 @test "update_stack runs update_herdr_integrations right after updating herdr" {
     local stack
     stack="$(sed -n '/^update_stack() {$/,/^}$/p' "$PROJECT_ROOT/scripts/lib/update.sh")"

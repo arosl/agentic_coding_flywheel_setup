@@ -7357,11 +7357,17 @@ update_go() {
     log_to_file "Go version: $go_version (path: $go_path)"
 }
 
+# The agent CLI to herdr integration pairs are tools.herdr's install step's
+# (acfs.manifest.yaml); tests/unit/lib/test_update.bats keeps them equal.
+UPDATE_HERDR_INTEGRATION_PAIRS=(claude:claude codex:codex agy:antigravity-cli opencode:opencode omp:omp grok:grok)
+
 # herdr integrations. tools.herdr's install step records each integration herdr
 # refused (the agent had no config directory yet) in
 # ~/.acfs/herdr-integrations-pending; retry those, and reinstall the ones herdr
-# reports as outdated, which a herdr update leaves behind. Never adds a hook
-# for an agent ACFS did not ask for.
+# reports as outdated, which a herdr update leaves behind. An agent CLI from
+# those pairs that was installed after tools.herdr ran has no pending entry,
+# so its "not installed" integration goes in too (acfs-74rq), and a refusal
+# leaves it pending. Never adds a hook for an agent ACFS did not ask for.
 update_herdr_integrations() {
     local herdr_bin=""
     local target_home=""
@@ -7369,8 +7375,12 @@ update_herdr_integrations() {
     local bash_bin=""
     local target=""
     local line=""
+    local pair=""
+    local rewrite_pending=false
     local -a pending=()
     local -a outdated=()
+    local -a not_installed=()
+    local -a missing=()
     local -a still_pending=()
 
     herdr_bin="$(update_binary_path herdr 2>/dev/null || true)"
@@ -7386,16 +7396,26 @@ update_herdr_integrations() {
     fi
     # herdr has no machine-readable status, and --outdated-only prints prose;
     # act only on full-status lines of the form
-    # "<target>[ (experimental)]: outdated (v8 < v10) (<hook path>)".
+    # "<target>[ (experimental)]: outdated (v8 < v10) (<hook path>)" or
+    # "<target>[ (experimental)]: not installed (<hook path>)".
     while IFS= read -r line; do
         if [[ "$line" =~ ^([a-z][a-z0-9-]*)(\ \(experimental\))?:\ outdated\  ]]; then
             outdated+=("${BASH_REMATCH[1]}")
+        elif [[ "$line" =~ ^([a-z][a-z0-9-]*)(\ \(experimental\))?:\ not\ installed\  ]]; then
+            not_installed+=("${BASH_REMATCH[1]}")
         fi
     done < <(update_run_in_target_context "" "$herdr_bin" integration status 2>/dev/null || true)
 
-    (( ${#pending[@]} + ${#outdated[@]} > 0 )) || return 0
+    for pair in "${UPDATE_HERDR_INTEGRATION_PAIRS[@]}"; do
+        target="${pair#*:}"
+        [[ " ${not_installed[*]} " == *" $target "* ]] || continue
+        [[ " ${pending[*]} " != *" $target "* ]] || continue
+        update_binary_exists "${pair%%:*}" && missing+=("$target")
+    done
+
+    (( ${#pending[@]} + ${#missing[@]} + ${#outdated[@]} > 0 )) || return 0
     if [[ "$DRY_RUN" == "true" ]]; then
-        log_item "skip" "herdr integrations" "dry-run: would install ${pending[*]} ${outdated[*]}"
+        log_item "skip" "herdr integrations" "dry-run: would install ${pending[*]} ${missing[*]} ${outdated[*]}"
         return 0
     fi
 
@@ -7407,6 +7427,16 @@ update_herdr_integrations() {
             log_item "skip" "herdr $target integration" "start the agent once; acfs update retries it"
         fi
     done
+    (( ${#pending[@]} == 0 )) || rewrite_pending=true
+    for target in "${missing[@]}"; do
+        if update_run_in_target_context "" "$herdr_bin" integration install "$target" >/dev/null 2>&1; then
+            log_item "ok" "herdr $target integration" "installed"
+        else
+            still_pending+=("$target")
+            rewrite_pending=true
+            log_item "skip" "herdr $target integration" "start the agent once; acfs update retries it"
+        fi
+    done
     for target in "${outdated[@]}"; do
         if update_run_in_target_context "" "$herdr_bin" integration install "$target" >/dev/null 2>&1; then
             log_item "ok" "herdr $target integration" "refreshed"
@@ -7415,7 +7445,7 @@ update_herdr_integrations() {
         fi
     done
 
-    if (( ${#pending[@]} > 0 )); then
+    if [[ "$rewrite_pending" == true ]]; then
         bash_bin="$(update_system_binary_path bash 2>/dev/null || true)"
         if [[ -z "$bash_bin" ]] || ! update_run_in_target_context "" "$bash_bin" -c \
                 'f="$1"; shift; if (( $# )); then printf "%s\n" "$@" > "$f"; else : > "$f"; fi' \
