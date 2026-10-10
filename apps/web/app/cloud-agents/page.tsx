@@ -41,6 +41,7 @@ import {
   CLAUDE_CODE_WEB_SCRIPT_SOURCE_URL,
   CLAUDE_CODE_WEB_TOOLS,
   CLOUD_AGENTS,
+  CLOUD_AGENTS_README_URL,
   CLOUD_AGENT_RESEARCH_DATE,
   CLOUD_EXECUTABLES,
   cloudSubsetRecipe,
@@ -51,7 +52,6 @@ import { copyTextToClipboard, safeGetItem, safeSetItem } from "@/lib/utils";
 import { CLOUD_WALKTHROUGHS, getCloudAgentSetupInstructions, type SetupScreenshot, type SetupStep } from "@/lib/cloud-agent-walkthroughs";
 
 const GITHUB_URL = "https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup";
-const README_URL = `${GITHUB_URL}#cloud-agent-environments`;
 const DOWNLOAD_HOSTS = "raw.githubusercontent.com\ndownloads.agent-flywheel.com";
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const [researchYear, researchMonth, researchDay] = CLOUD_AGENT_RESEARCH_DATE.split("-").map(Number);
@@ -1343,7 +1343,7 @@ export default function CloudAgentsPage() {
           </Link>
           <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1 text-sm text-muted-foreground">
             <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className={textLink}>GitHub</a>
-            <a href={README_URL} target="_blank" rel="noopener noreferrer" className={textLink}>README section</a>
+            <a href={CLOUD_AGENTS_README_URL} target="_blank" rel="noopener noreferrer" className={textLink}>README section</a>
             <Link href="/tldr" className={textLink}>TL;DR</Link>
             <Link href="/omarchy" className={textLink}>Omarchy</Link>
             <Link href="/" className={textLink}>Home</Link>

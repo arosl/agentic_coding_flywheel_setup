@@ -513,7 +513,7 @@ The bootstrap downloads completely before it runs, with a 20-second transfer lim
 - It writes a managed block into `~/.claude/CLAUDE.md` (or `$CLAUDE_CONFIG_DIR/CLAUDE.md`), which cloud sessions load as user instructions, so Claude knows which flywheel tools exist and how to call them. Content outside the block is preserved. If existing managed markers are incomplete, setup leaves the file untouched and logs the retained replacement guide's location.
 - Re-runs repair the exact old ACFS Agent Mail entry that launched `mcp-agent-mail` without arguments, retaining a private config backup. Custom MCP registrations remain unchanged.
 
-**Left out on purpose:** everything in `install.sh` that provisions a long-lived machine (users, zsh theming, the Ubuntu upgrade, systemd services, Tailscale, PostgreSQL, Vault, cloud CLIs), plus `ntm` (no interactive terminal to drive), `dcg` (it installs a user-level Claude Code hook, and cloud sessions only run hooks from the repository's `.claude/settings.json`), `rch` (needs SSH build workers), and `caam`, `ru`, `slb`.
+**Left out on purpose:** everything in `install.sh` that provisions a long-lived machine (users, zsh theming, the Ubuntu upgrade, systemd services, Tailscale, PostgreSQL, Vault, cloud CLIs), plus `herdr` (no interactive terminal to drive), `dcg` (it installs a user-level Claude Code hook, and cloud sessions only run hooks from the repository's `.claude/settings.json`), `rch` (needs SSH build workers), and `caam`, `ru`, `slb`.
 
 **Options**, set inline so the setup script itself sees them (for example `curl -fsSL … | ACFS_CLOUD_TOOLS="br bv am ubs" bash`):
 
@@ -2543,7 +2543,7 @@ Available packs: `database.*`, `containers.*`, `kubernetes.*`, `cloud.*`, `infra
 - **Commit sweep**: groups uncommitted changes across repositories into logical conventional commits (plan first, `--execute` to apply)
 - **AI code review**: Orchestrate Claude Code review sessions for open issues/PRs
 - **Work-stealing queue**: Parallel execution with load-balanced workers
-- **NTM integration**: Session management via Named Tmux Manager
+- **Review drivers**: `ru review` drives its sessions through ntm, which ACFS doesn't install, or with `--mode=local` without it
 
 ### Quick Start
 

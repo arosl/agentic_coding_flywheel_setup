@@ -13,6 +13,9 @@ export const CLAUDE_CODE_WEB_SCRIPT_URL = `https://raw.githubusercontent.com/aro
 
 export const CLAUDE_CODE_WEB_SCRIPT_SOURCE_URL = `https://github.com/arosl/agentic_coding_flywheel_setup/blob/main/${CLAUDE_CODE_WEB_SCRIPT_PATH}`;
 
+/** The README section that documents this script, in the same repository. */
+export const CLOUD_AGENTS_README_URL = "https://github.com/arosl/agentic_coding_flywheel_setup#cloud-agent-environments";
+
 /** What to paste into the environment dialog's "Setup script" field. */
 export const CLOUD_SETUP_DOWNLOAD_COMMAND = `curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -H 'Accept-Encoding: identity' ${CLAUDE_CODE_WEB_SCRIPT_URL}`;
 

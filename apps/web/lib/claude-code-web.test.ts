@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import {
   CLAUDE_CODE_WEB_OPTIONS,
   CLAUDE_CODE_WEB_SCRIPT_PATH,
+  CLAUDE_CODE_WEB_SCRIPT_SOURCE_URL,
   CLAUDE_CODE_WEB_SCRIPT_URL,
   CLAUDE_CODE_WEB_SETUP_SCRIPT,
   CLAUDE_CODE_WEB_TOOLS,
@@ -21,6 +22,7 @@ import {
   GENERIC_CLOUD_SETUP_SCRIPT,
   GENERIC_CLOUD_TASK_INSTRUCTIONS,
   CLOUD_AGENTS,
+  CLOUD_AGENTS_README_URL,
   CLOUD_AGENT_ROUTE,
   CLOUD_EXECUTABLES,
   cloudSubsetRecipe,
@@ -190,6 +192,14 @@ describe("cloud agent page data", () => {
     expect(readme).toContain(CODEX_CLOUD_START_SKILL);
     expect(readme).toContain(GENERIC_CLOUD_SETUP_SCRIPT);
     expect(readme).toContain(GENERIC_CLOUD_TASK_INSTRUCTIONS);
+  });
+
+  test("the README link opens the section in the repository the script comes from", () => {
+    const repo = CLAUDE_CODE_WEB_SCRIPT_SOURCE_URL.replace(/\/blob\/.*$/, "");
+    expect(CLOUD_AGENTS_README_URL).toBe(`${repo}#cloud-agent-environments`);
+    expect(readme).toContain("\n## Cloud agent environments\n");
+    expect(readFileSync(join(REPO_ROOT, "apps/web/app/cloud-agents/page.tsx"), "utf8"))
+      .toContain("href={CLOUD_AGENTS_README_URL}");
   });
 
   test("the neutral canonical route is wired into metadata, homepage and redirect", async () => {
