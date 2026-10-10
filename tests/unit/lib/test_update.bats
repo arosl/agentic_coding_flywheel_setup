@@ -10840,7 +10840,7 @@ EOF
     run grep -F 'elif vault_bin="$(binary_path vault 2>/dev/null || true)" && [[ -n "$vault_bin" ]]; then' "$installer"
     assert_success
 
-    run grep -F 'binary_installed "go" || missing_lang+=("go")' "$installer"
+    run grep -F 'binary_installed "go" || { missing_lang+=("go"); missing_lang_modules+=(lang.go); }' "$installer"
     assert_success
 
     run grep -F 'gh_bin="$(binary_path gh 2>/dev/null || true)"' "$installer"
@@ -12990,11 +12990,23 @@ EOF
     run grep -E '(Fix:|re-run:|Re-run:|Install bun first:).*--only-phase' "$installer" "$smoke_lib"
     assert_failure
 
-    run grep -F 'acfs_smoke_install_fix_command lang.bun lang.uv lang.rust lang.go' "$installer"
+    # The smoke test names only the selected modules that are missing (acfs-hz7).
+    run grep -F 'acfs_smoke_install_fix_command "${missing_lang_modules[@]}"' "$installer"
     assert_success
 
-    run grep -F 'acfs_smoke_install_fix_command agents.claude agents.codex agents.antigravity' "$installer"
+    local module
+    for module in lang.bun lang.uv lang.rust lang.go; do
+        run grep -F "missing_lang_modules+=($module)" "$installer"
+        assert_success
+    done
+
+    run grep -F 'acfs_smoke_install_fix_command "${missing_agent_modules[@]}"' "$installer"
     assert_success
+
+    for module in agents.claude agents.codex agents.antigravity; do
+        run grep -F "missing_agent_modules+=($module)" "$installer"
+        assert_success
+    done
 
     run grep -F 'acfs_smoke_install_fix_command tools.herdr' "$installer"
     assert_success
