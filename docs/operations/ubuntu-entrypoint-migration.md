@@ -1,8 +1,8 @@
 # Ubuntu upgrade entrypoint: supported targets and preserved checkpoints
 
 The root installer's default destination is Ubuntu 26.04 LTS. An older supported
-LTS destination is an explicit `--target-ubuntu=22.04` or `--target-ubuntu=24.04`
-choice; `--skip-ubuntu-upgrade` suppresses a new distribution upgrade, not the
+LTS destination is an explicit `--target-ubuntu=24.04` choice (in the fork, 22.04 is
+an upgrade source only, never a destination: acfs-d91); `--skip-ubuntu-upgrade` suppresses a new distribution upgrade, not the
 checks protecting an interrupted upgrade. An empty result or
 failure while loading upgrade machinery, detecting the release, or computing
 the upgrade path must not turn into a successful normal installation.

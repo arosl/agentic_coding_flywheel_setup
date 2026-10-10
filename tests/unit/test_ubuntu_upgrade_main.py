@@ -263,7 +263,7 @@ confirm_resume() { trace normal_install_ready; exit 0; }
                 self.assertFalse(any(e.startswith(('mut:', 'checkpoint:')) for e in events), events)
 
     def test_invalid_targets_stop_before_network_or_environment_loading(self):
-        for target in ('25.10', '', '24.04.1', '26.10', '$(touch never)', '26.04\n', '026.04'):
+        for target in ('22.04', '25.10', '', '24.04.1', '26.10', '$(touch never)', '26.04\n', '026.04'):
             with self.subTest(target=target):
                 result, events, _ = self.run_main(overrides={'TARGET_UBUNTU_VERSION': target, 'SCRIPT_DIR': ''})
                 self.assert_no_mutation(result, events)
@@ -338,7 +338,7 @@ class IntegratedUpgradeFlowTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.source = definitions(MAIN.read_text(), ['main'], [
+        cls.source = definitions(MAIN.read_text(), ['main', 'ensure_ubuntu'], [
             'acfs_validate_ubuntu_target', 'acfs_ubuntu_upgrade_requested',
             'acfs_guard_ubuntu_install_checkpoint'])
         source = PHASE.read_text()
@@ -406,7 +406,7 @@ ubuntu_start_upgrade_sequence() {
             extra='\n'.join([self.reader, self.phase, self.loader, setup, extra]), arguments=arguments, uid=uid)
 
     def test_default_preserves_supported_lts_and_continues_install(self):
-        for version in ('22.04', '24.04'):
+        for version in ('24.04', '26.04'):
             with self.subTest(version=version):
                 result, events, _ = self.integrated(version=version)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -414,6 +414,18 @@ ubuntu_start_upgrade_sequence() {
                 self.assertNotIn('upgrade_lock', events)
                 self.assertNotIn('upgrade_preflight', events)
                 self.assertFalse(any(e.startswith('release_target:') for e in events), events)
+
+    def test_ubuntu_2204_refuses_unless_an_upgrade_is_requested(self):
+        for name, options in (
+                ('no target', {}),
+                ('skip wins over target', {'TARGET_UBUNTU_VERSION_EXPLICIT': 'true', 'SKIP_UBUNTU_UPGRADE': 'true'}),
+                ('target 22.04', {'TARGET_UBUNTU_VERSION': '22.04', 'TARGET_UBUNTU_VERSION_EXPLICIT': 'true'})):
+            with self.subTest(case=name):
+                result, events, _ = self.integrated(version='22.04', options=options)
+                self.assert_no_mutation(result, events)
+                self.assertFalse(any(e.startswith(('upgrade_lock', 'release_target:')) for e in events), events)
+                if name != 'target 22.04':
+                    self.assertIn('--target-ubuntu=26.04', result.stderr)
 
     def test_explicit_old_lts_upgrade_precedes_normal_installs(self):
         for version, hops in (('22.04', '24.04,26.04,'), ('24.04', '26.04,'), ('25.10', '26.04,')):
@@ -493,7 +505,7 @@ ubuntu_start_upgrade_sequence() {
         self.assertEqual((root / 'recovery/state.json').read_text(), state)
 
     def test_nonubuntu_path_does_not_apply_ubuntu_release_policy(self):
-        result, events, _ = self.integrated(options={'TEST_OS':'arch', 'ACFS_DISTRO_FAMILY':'arch'})
+        result, events, _ = self.integrated(options={'TEST_OS':'arch', 'ACFS_DISTRO_FAMILY':'arch', 'ACFS_IS_OMARCHY':'false'})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('normal_install_ready', events)
         self.assertFalse(any(e.startswith(('real_checkpoint:', 'release_target:')) for e in events))

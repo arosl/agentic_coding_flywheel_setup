@@ -138,7 +138,7 @@ By default it treats cross-CLI session isolation as expected behavior; strict mo
 
 #### Docker vs Factory-Host Installer E2E
 
-`tests/vm/test_install_ubuntu.sh` is the fast regression harness. It runs the installer in Ubuntu containers, defaulting to `24.04` and covering the supported LTS matrix (`22.04`, `24.04`, `26.04`) when invoked with `--all`. It is appropriate for CI, checksum drift, module-install smoke coverage, and idempotency checks.
+`tests/vm/test_install_ubuntu.sh` is the fast regression harness. It runs the installer in Ubuntu containers, defaulting to `24.04` and covering the supported LTS matrix (`24.04`, `26.04`) when invoked with `--all`. It is appropriate for CI, checksum drift, module-install smoke coverage, and idempotency checks.
 
 `tests/vm/test_factory_install_ubuntu.sh` is the authoritative beginner-path harness. It requires SSH access to a freshly provisioned systemd-capable Ubuntu host, defaults to initial Ubuntu `24.04` and final Ubuntu `24.04`, runs the public `curl|bash` installer as root, and fails by default if the `ubuntu` user already exists before install. It then verifies user creation, SSH key merge/de-dupe behavior, passwordless sudo in vibe mode, `acfs doctor --json` with zero failures and zero warnings, core stack binaries, Agent Mail health, systemd user services, the nightly timer, and a second idempotent installer run.
 

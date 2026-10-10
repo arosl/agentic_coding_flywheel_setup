@@ -22,7 +22,7 @@ If I tell you to do something, even if it goes against what follows below, YOU M
 4. **`main` only.** Work, branches and merges target `main`. `master` mirrors `main` for legacy install URLs: push both together, with `git push origin main main:master`, never forced. Never reference `master` in code or docs.
 5. **What ACFS installs is `acfs.manifest.yaml`,** the single source of truth. Never keep a second list of tools in a doc or in this file.
 6. **Bun for everything JS/TS** in the project's scripts and docs, never npm, yarn or pnpm. `bun.lock` is the only lockfile. `bun install -g <pkg>` is valid syntax (an alias for `bun add -g`), so don't "fix" it.
-7. **Bash for the installer and scripts,** checked with shellcheck (`.shellcheckrc` lists the disabled checks). The installer targets Ubuntu LTS and Arch-family. It keeps a supported 22.04 or 24.04 host on its release, and upgrades only on `--target-ubuntu=26.04`, which `--skip-ubuntu-upgrade` suppresses. It is idempotent and checkpointed: safe to re-run, and its phases resume after a failure. The upgrade path is in `docs/operations/ubuntu-upgrade.md`.
+7. **Bash for the installer and scripts,** checked with shellcheck (`.shellcheckrc` lists the disabled checks). The installer targets Ubuntu 24.04 and 26.04 LTS and Arch-family. It keeps a supported 24.04 or 26.04 host on its release, and upgrades only on `--target-ubuntu=26.04` (or `24.04`), which `--skip-ubuntu-upgrade` suppresses. On 22.04 it stops unless such an upgrade is requested. It is idempotent and checkpointed: safe to re-run, and its phases resume after a failure. The upgrade path is in `docs/operations/ubuntu-upgrade.md`.
 8. **Installer output goes through `scripts/lib/logging.sh`,** to stderr, so stdout stays clean for piping. `--quiet` suppresses progress, never errors.
 9. **Revise files in place.** Never add variations such as `install_v2.sh` or `install_improved.sh`. A new file is only for functionality that fits in no existing file.
 10. **No backwards-compatibility shims.** There are no users to keep compatible, so fix the code directly, and don't wrap a deprecated API.
@@ -71,7 +71,7 @@ The fork tracks upstream ACFS and changes its toolset: herdr instead of ntm, wez
 
 - **Deploys as:** nothing from this repo. Users run `install.sh` on their own VPS, through the one-liner that fetches it from GitHub, and the fork has no deployment of its own; upstream deploys the wizard website (`apps/web/`) to Vercel.
 - **Incus first, Docker optional** (the operator's ruling, 2026-10-10, reversing the 2026-10-08 rejection of Docker): Incus is installed by default, and Docker and lazydocker come back as opt-in modules (acfs-e22).
-- **Ubuntu 22.04 is being dropped** (the operator's ruling, 2026-10-10): supported are Ubuntu 24.04 and 26.04, and Arch through upstream's path (acfs-d91). Until that lands, project rule 7 still describes the installer as it is.
+- **Ubuntu 22.04 is dropped** (the operator's ruling, 2026-10-10): supported are Ubuntu 24.04 and 26.04, and Arch through upstream's path (acfs-d91). 22.04 is an upgrade source only.
 - **Planned, implementation last** (the operator, 2026-10-10): NixOS integration (acfs-e6f). Its planning (acfs-nuj) comes first and goes deep; don't build or scaffold it before the plan is reviewed and turned into beads.
 - **Rejected** (2026-10-08; not to be built or reopened): ntm, wezterm_automata, and ACFS's tmux config and `agents` session, which herdr replaces. The reasons: `README.md`, "About this fork".
 - **Upstream compatibility** (the operator's standing rule, 2026-10-09, widened 2026-10-10): use upstream whenever we can, and diverge only where upstream would undo why we are a fork: herdr in the widest sense (the whole herdr-based way of running and coordinating agents, not just the tool), Incus first with Docker optional, and the supported platforms. Porting upstream content to herdr beats deleting it.
@@ -86,6 +86,7 @@ The fork tracks upstream ACFS and changes its toolset: herdr instead of ntm, wez
   - acfs-m3l: the support inventory fixture in `test_support_resource_profile.sh` probes at the current time, not upstream's 2099, which `swarm_inventory.sh` excludes as a future probe.
   - acfs-xe3: `test_install_fetch_composition.sh`'s A6 resolves against the default owner, not upstream's.
   - acfs-b0u: `security.sh` adds `--compressed` to upstream's identity request, because some hosts gzip anyway (antigravity, 2026-10-10).
+  - acfs-d91: the installer refuses Ubuntu 22.04 unless `--target-ubuntu=24.04|26.04` upgrades it first, and 22.04 is no longer an upgrade target (`install.sh`, `ubuntu_upgrade.sh`, `upgrade_resume.sh`, `preflight.sh`, their tests and CI's 22.04 job); upstream still installs on 22.04. Existing 22.04 installs keep running `acfs update`. The manifest's 22.04 branches (PostgreSQL's jammy PGDG) and the wizard's 22.04 image option, whose command upgrades it, stay as upstream's.
 
 ## Commands and gates
 

@@ -109,7 +109,7 @@ ubuntu_get_version_string() { printf '%s\n' "$TEST_VERSION"; }
 _source_ubuntu_upgrade_lib() {
     trace "library:${UBUNTU_TARGET_VERSION:-unset}:${UBUNTU_TARGET_VERSION_NUM:-unset}"
     UBUNTU_TARGET_VERSION="${UBUNTU_TARGET_VERSION:-26.04}"
-    case "$UBUNTU_TARGET_VERSION" in 22.04|24.04|26.04) ;; *) return 1 ;; esac
+    case "$UBUNTU_TARGET_VERSION" in 24.04|26.04) ;; *) return 1 ;; esac
     UBUNTU_TARGET_VERSION_NUM="${UBUNTU_TARGET_VERSION/./}"
 }
 acfs_early_system_binary_path() {
@@ -191,7 +191,7 @@ sleep() { trace UNEXPECTED_SLEEP; exit 98; }
                 self.assertEqual(events, ['restored:/preserved/original-state.json'])
 
     def test_requested_target_is_bound_before_library_load(self):
-        for target in ('22.04', '24.04', '26.04'):
+        for target in ('24.04', '26.04'):
             with self.subTest(target=target):
                 rc, events, errors = self.invoke(version=target, target=target)
                 self.assertEqual(rc, 0, errors)
@@ -203,7 +203,7 @@ sleep() { trace UNEXPECTED_SLEEP; exit 98; }
         self.assertIn('library:26.04:2604', events)
 
     def test_unsupported_targets_are_rejected_before_loading_or_packages(self):
-        for target in ('25.10', '25.04', '24.10', '26.10', '26.04.1', '24', '', '026.04',
+        for target in ('22.04', '25.10', '25.04', '24.10', '26.10', '26.04.1', '24', '', '026.04',
                        '26.04;false', 'x[$(id)]', '999999999999999999999.04'):
             with self.subTest(target=target):
                 rc, events, _ = self.invoke(target=target)
@@ -232,7 +232,7 @@ sleep() { trace UNEXPECTED_SLEEP; exit 98; }
                 self.assertIn('hops:' + hops, events)
 
     def test_supported_matching_or_higher_lts_is_noop(self):
-        for version, target in (('26.04','26.04'),('24.04','24.04'),('22.04','22.04'),('26.04','24.04')):
+        for version, target in (('26.04','26.04'),('24.04','24.04'),('26.04','24.04')):
             rc, events, errors = self.invoke(version=version, target=target)
             self.assertEqual(rc, 0, errors)
             self.assertFalse(any(e.startswith('start:') for e in events))

@@ -67,7 +67,7 @@ check_bad_edge() {
 run 'default is 26.04 and numeric target is derived' check_default
 run 'stale numeric target cannot override 26.04' check_source_target 26.04 2604
 run 'explicit supported target 24.04 remains available' check_source_target 24.04 2404
-for target in 20.04 24.10 25.04 25.10 26.10 28.04 99.99 26.04.1 '26.04;exit 0' 'a[0]'; do
+for target in 20.04 22.04 24.10 25.04 25.10 26.10 28.04 99.99 26.04.1 '26.04;exit 0' 'a[0]'; do
     run "refuse target $target" check_bad_target "$target"
 done
 run '22.04 to 26.04 follows both LTS hops' check_path 2204 2604 $'24.04\n26.04'
@@ -80,7 +80,7 @@ for source in 2004 2410 2504 2610 2804 unknown 'a[0]'; do
     run "refuse unreviewed source $source" check_bad_path "$source" 2604
 done
 run 'EOL host cannot masquerade as already above older target' check_bad_path 2510 2404
-for target in 2510 2610 2804 'a[0]'; do
+for target in 2204 2510 2610 2804 'a[0]'; do
     run "refuse unreviewed numeric target $target" check_bad_path 2404 "$target"
 done
 for edge in 24.04 25.10 26.10 garbage '26.04;echo unsafe'; do

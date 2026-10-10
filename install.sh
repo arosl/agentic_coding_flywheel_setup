@@ -89,7 +89,7 @@ if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ] || {
         done
     fi
     printf '%s\n' "ERROR: ACFS requires bash 4.4+ (found ${BASH_VERSION:-unknown})." >&2
-    printf '%s\n' "ACFS officially supports Ubuntu 22.04+; on macOS install a newer bash first:" >&2
+    printf '%s\n' "ACFS officially supports Ubuntu 24.04+; on macOS install a newer bash first:" >&2
     printf '%s\n' "    brew install bash" >&2
     printf '%s\n' "    PATH=\"/opt/homebrew/bin:\$PATH\" bash install.sh" >&2
     printf '%s\n' "For a curl pipeline, pipe directly to the newer interpreter:" >&2
@@ -2399,7 +2399,7 @@ Options:
   --no-deps               Disable automatic dependency closure (expert/debug)
   --verified-installer-cache <dir>
                           Use a verified installer entrypoint cache and refuse live fallback
-  --target-ubuntu <VER>   Opt into a release upgrade (22.04, 24.04, or 26.04 LTS)
+  --target-ubuntu <VER>   Opt into a release upgrade (24.04 or 26.04 LTS; required on 22.04)
   --skip-ubuntu-upgrade   Suppress an explicitly requested release upgrade
   --help, -h              Show this help message
 EOF
@@ -6593,11 +6593,12 @@ validate_target_user() {
 }
 
 ensure_ubuntu() {
-    # Historical name kept for compatibility; accepts Ubuntu 22.04+ and any
-    # Arch-family distro (Arch, Omarchy). ACFS_DISTRO_FAMILY is set at the top
-    # of this script from /etc/os-release.
+    # Historical name kept for compatibility; accepts Ubuntu 24.04+ and any
+    # Arch-family distro (Arch, Omarchy). Ubuntu 22.04 passes only on its way
+    # to an explicitly requested 24.04 or 26.04 upgrade. ACFS_DISTRO_FAMILY is
+    # set at the top of this script from /etc/os-release.
     if [[ ! -f /etc/os-release ]]; then
-        log_fatal "Cannot detect OS. ACFS supports Ubuntu 22.04+ or Arch Linux."
+        log_fatal "Cannot detect OS. ACFS supports Ubuntu 24.04+ or Arch Linux."
     fi
 
     if [[ "$ACFS_DISTRO_FAMILY" == "arch" ]]; then
@@ -6613,7 +6614,7 @@ ensure_ubuntu() {
     source /etc/os-release
 
     if [[ "${ID:-}" != "ubuntu" ]]; then
-        log_fatal "Unsupported OS: ${PRETTY_NAME:-${ID:-unknown}}. ACFS supports Ubuntu 22.04+ or Arch Linux."
+        log_fatal "Unsupported OS: ${PRETTY_NAME:-${ID:-unknown}}. ACFS supports Ubuntu 24.04+ or Arch Linux."
     fi
 
     local version_id="${VERSION_ID:-}"
@@ -6623,11 +6624,16 @@ ensure_ubuntu() {
 
     local VERSION_MAJOR="${version_id%%.*}"
     if [[ "$VERSION_MAJOR" -lt 22 ]]; then
-        log_fatal "Unsupported Ubuntu version: ${version_id}. ACFS supports Ubuntu 22.04+ only."
+        log_fatal "Unsupported Ubuntu version: ${version_id}. ACFS supports Ubuntu 24.04+ only."
     fi
 
     if [[ "$VERSION_MAJOR" -lt 24 ]]; then
-        log_warn "Ubuntu $version_id detected. Recommended: Ubuntu 24.04 or 26.04 LTS"
+        if ! acfs_ubuntu_upgrade_requested; then
+            log_error "ACFS no longer installs on Ubuntu ${version_id} (see docs/operations/ubuntu-upgrade.md)."
+            log_fatal "Re-run with --target-ubuntu=26.04 (or 24.04) to upgrade first, or provision Ubuntu 26.04."
+        fi
+        log_detail "OS: Ubuntu $version_id (upgrading to $TARGET_UBUNTU_VERSION before installing)"
+        return 0
     fi
 
     log_detail "OS: Ubuntu $version_id"
@@ -6742,9 +6748,9 @@ run_ubuntu_upgrade_phase() {
     # An explicit destination opts into this phase. Normal installs keep
     # supported LTS releases in place and never enter the upgrade machinery.
     case "$TARGET_UBUNTU_VERSION" in
-        22.04|24.04|26.04) ;;
+        24.04|26.04) ;;
         *)
-            log_error "Unsupported Ubuntu target; use 26.04 LTS (or supported 22.04/24.04 LTS)."
+            log_error "Unsupported Ubuntu target; use 26.04 LTS (or supported 24.04 LTS)."
             return 1
             ;;
     esac
@@ -11782,9 +11788,9 @@ $summary_content"
 # ============================================================
 acfs_validate_ubuntu_target() {
     case "${TARGET_UBUNTU_VERSION:-}" in
-        22.04|24.04|26.04) return 0 ;;
+        24.04|26.04) return 0 ;;
         *)
-            log_error "Unsupported Ubuntu target; use 26.04 LTS (or supported 22.04/24.04 LTS)."
+            log_error "Unsupported Ubuntu target; use 26.04 LTS (or supported 24.04 LTS)."
             return 1
             ;;
     esac

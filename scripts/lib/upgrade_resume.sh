@@ -293,7 +293,7 @@ read_target_version_from_state() {
 # be explicitly recovered, not silently relabelled as a different target.
 validate_resume_target() {
     case "${1:-}" in
-        22.04|24.04|26.04) return 0 ;;
+        24.04|26.04) return 0 ;;
         *)
             log_error "Unsupported saved Ubuntu target. Review the upgrade state and explicitly select Ubuntu 26.04 LTS with the current installer; the target was not changed."
             return 1

@@ -11,10 +11,12 @@
 # UBUNTU_TARGET_VERSION before sourcing. The numeric form is always derived;
 # an inherited number must not disagree with the requested/stored release.
 export UBUNTU_TARGET_VERSION="${UBUNTU_TARGET_VERSION:-26.04}"
+# 22.04 is a supported upgrade source, never a destination: ACFS no longer
+# installs on it.
 case "$UBUNTU_TARGET_VERSION" in
-    22.04|24.04|26.04) ;;
+    24.04|26.04) ;;
     *)
-        printf 'ERROR: Unsupported Ubuntu upgrade target: %s. Use 26.04 LTS (or a supported 22.04/24.04 LTS target).\n' "$UBUNTU_TARGET_VERSION" >&2
+        printf 'ERROR: Unsupported Ubuntu upgrade target: %s. Use 26.04 LTS (or a supported 24.04 LTS target).\n' "$UBUNTU_TARGET_VERSION" >&2
         return 1 2>/dev/null || exit 1
         ;;
 esac
@@ -878,7 +880,7 @@ ubuntu_validate_upgrade_versions() {
     local current="${1:-}"
     local target="${2:-$UBUNTU_TARGET_VERSION_NUM}"
     case "$target" in
-        2204|2404|2604) ;;
+        2404|2604) ;;
         *) log_error "Unsupported Ubuntu target: $target (recommended: 26.04 LTS)"; return 1 ;;
     esac
     case "$current" in

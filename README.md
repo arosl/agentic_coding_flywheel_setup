@@ -5,7 +5,7 @@
 </div>
 
 ![Version](https://img.shields.io/badge/Version-0.7.0-bd93f9?style=for-the-badge)
-![Platform](https://img.shields.io/badge/Platform-Ubuntu%2022.04%2B%20%7C%20Arch%2FOmarchy-6272a4?style=for-the-badge)
+![Platform](https://img.shields.io/badge/Platform-Ubuntu%2024.04%2B%20%7C%20Arch%2FOmarchy-6272a4?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-MIT%2BOpenAI%2FAnthropic%20Rider-blue?style=for-the-badge)
 ![Shell](https://img.shields.io/badge/Shell-Bash-ff79c6?style=for-the-badge)
 
@@ -108,7 +108,7 @@ graph LR
     end
 
     subgraph vps ["Fresh VPS"]
-        UBUNTU["Ubuntu 22.04 / 24.04 LTS"]
+        UBUNTU["Ubuntu 24.04 / 26.04 LTS"]
         INSTALLER["install.sh"]
         CONFIGURED["Configured VPS"]
     end
@@ -699,7 +699,7 @@ curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setu
 ```
 
 This checks:
-- OS compatibility (Ubuntu 22.04+ or Arch-family: Arch, Omarchy; supported LTS releases stay in place unless an upgrade is explicitly requested)
+- OS compatibility (Ubuntu 24.04+ or Arch-family: Arch, Omarchy; supported LTS releases stay in place unless an upgrade is explicitly requested, and Ubuntu 22.04 is refused unless one is)
 - Architecture (x86_64 or ARM64)
 - Memory and disk space (warns below 4GB RAM; fails below 20GB free disk)
 - Network connectivity to required URLs
@@ -749,7 +749,7 @@ The installer uses semantic colors for progress visibility:
 
 ### Optional Ubuntu Release Upgrade
 
-A no-flags install keeps supported **Ubuntu 22.04 and 24.04 LTS** hosts on their current release. Non-root users with sudo and Ubuntu 24.04 Docker/WSL environments can install ACFS without opting into an OS upgrade.
+A no-flags install keeps supported **Ubuntu 24.04 and 26.04 LTS** hosts on their current release. ACFS no longer installs on **Ubuntu 22.04**: there the installer stops unless you pass `--target-ubuntu=26.04` (or `24.04`), which upgrades the host first. Non-root users with sudo and Ubuntu 24.04 Docker/WSL environments can install ACFS without opting into an OS upgrade.
 
 Pass **`--target-ubuntu=26.04`** to explicitly request an upgrade to Ubuntu 26.04 LTS. An OS upgrade requires a root-run installer on a host that can reboot; it is separate from installing or updating the ACFS tools.
 
@@ -2847,7 +2847,7 @@ schedule: "30 7 * * *" # daily
 jobs:
   canary:
     - Run tests/vm/test_install_ubuntu.sh (vibe mode)
-    - Defaults to Ubuntu 24.04; --all covers the supported LTS releases 22.04, 24.04, and 26.04
+    - Defaults to Ubuntu 24.04; --all covers the supported LTS releases 24.04 and 26.04
     - Uses ACFS_CHECKSUMS_REF=main for freshest hashes
 ```
 
@@ -2970,7 +2970,7 @@ Plan names, specs, and prices below were verified against the provider sites in 
 ### Requirements
 
 | Requirement | Minimum | Recommended |
-| **OS** | Ubuntu 22.04+ or Arch-family (Arch, Omarchy) | Ubuntu 24.04 LTS; supported LTS hosts stay on their current release by default |
+| **OS** | Ubuntu 24.04+ or Arch-family (Arch, Omarchy); 22.04 only with `--target-ubuntu` | Ubuntu 24.04 LTS; supported LTS hosts stay on their current release by default |
 | **RAM** | 32GB (tight) | 48-64GB |
 | **Storage** | 250GB NVMe SSD | 300GB+ NVMe SSD |
 | **CPU** | 12 vCPU | 16 vCPU |
@@ -3223,7 +3223,7 @@ harness_summary  # Outputs: 15 passed, 0 failed, 2 skipped
 # Full Docker integration test on supported Ubuntu 24.04 LTS
 ./tests/vm/test_install_ubuntu.sh --ubuntu 24.04
 
-# Docker integration matrix across the supported LTS releases (22.04, 24.04, 26.04)
+# Docker integration matrix across the supported LTS releases (24.04, 26.04)
 ./tests/vm/test_install_ubuntu.sh --all
 
 # Interrupted install (SIGHUP after cli_tools) that --resume must finish
@@ -4185,7 +4185,8 @@ This section covers common issues and their solutions. For quick debugging, star
 | Cause | Detection | Fix |
 |-------|-----------|-----|
 | Not running as root | "Permission denied" | `sudo bash` or use `sudo` in curl command |
-| Neither Ubuntu nor Arch-family | "Unsupported OS" | ACFS supports Ubuntu 22.04+, Arch, and Omarchy |
+| Neither Ubuntu nor Arch-family | "Unsupported OS" | ACFS supports Ubuntu 24.04+, Arch, and Omarchy |
+| Ubuntu 22.04 without `--target-ubuntu` | "ACFS no longer installs on Ubuntu 22.04" | Re-run with `--target-ubuntu=26.04` (or `24.04`) to upgrade first, or provision Ubuntu 26.04 |
 | No internet | "curl: (6) Could not resolve host" | Check DNS, try `ping google.com` |
 | Old bash | Syntax errors | Upgrade to bash 4+ |
 
@@ -4964,7 +4965,7 @@ The installer supports extensive command-line customization:
 --target-ubuntu 26.04           # Alternative syntax
 ```
 
-Without `--target-ubuntu`, supported Ubuntu 22.04/24.04 LTS hosts stay on their current release. Active system upgrade checkpoints still block normal installation, including when `--skip-ubuntu-upgrade` is set.
+Without `--target-ubuntu`, supported Ubuntu 24.04/26.04 LTS hosts stay on their current release, and the installer refuses Ubuntu 22.04. Active system upgrade checkpoints still block normal installation, including when `--skip-ubuntu-upgrade` is set.
 
 **Skip Flags:**
 ```bash

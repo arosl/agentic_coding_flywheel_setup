@@ -655,7 +655,7 @@ check_os() {
         pass "Operating System: ${pretty_name} (Arch family)"
         return
     elif [[ "${ID:-}" != "ubuntu" ]]; then
-        fail "Operating System: ${pretty_name}" "ACFS supports Ubuntu 22.04+ or Arch Linux"
+        fail "Operating System: ${pretty_name}" "ACFS supports Ubuntu 24.04+ or Arch Linux"
         return
     fi
 
@@ -664,9 +664,9 @@ check_os() {
     if (( major >= 24 )); then
         pass "Operating System: Ubuntu ${VERSION_ID}"
     elif (( major >= 22 )); then
-        pass "Operating System: Ubuntu ${VERSION_ID}" "22.04+ supported, 24.04+ recommended"
+        warn "Operating System: Ubuntu ${VERSION_ID}" "ACFS no longer installs on Ubuntu 22.04: the installer upgrades it first only with --target-ubuntu=26.04 (the wizard's command passes it), or provision Ubuntu 26.04."
     else
-        fail "Operating System: Ubuntu ${VERSION_ID}" "ACFS supports Ubuntu 22.04+ only. Upgrade Ubuntu or provision a newer VPS image."
+        fail "Operating System: Ubuntu ${VERSION_ID}" "ACFS supports Ubuntu 24.04+ only. Provision a newer VPS image."
     fi
 }
 

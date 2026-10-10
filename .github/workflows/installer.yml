@@ -290,6 +290,35 @@ jobs:
           bash scripts/tests/test_ru_update.sh
           bash scripts/tests/test_ru_doctor.sh
 
+  # ACFS no longer installs on Ubuntu 22.04 (acfs-d91): without an explicit
+  # --target-ubuntu=24.04|26.04 the installer must stop before installing.
+  refuse-ubuntu-2204:
+    name: Installer refuses Ubuntu 22.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: ubuntu:22.04
+    steps:
+      - name: Install container prerequisites
+        working-directory: /
+        run: |
+          apt-get update
+          apt-get install -y sudo curl git ca-certificates jq
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Installer stops on 22.04
+        run: |
+          for args in "" "--skip-ubuntu-upgrade --target-ubuntu=26.04"; do
+            # shellcheck disable=SC2086  # args is a word list on purpose
+            if ACFS_CI=true bash install.sh --yes --skip-preflight $args > out.log 2>&1; then
+              cat out.log; echo "install.sh accepted Ubuntu 22.04 with args: '$args'"; exit 1
+            fi
+            grep -F -- '--target-ubuntu=26.04' out.log || { cat out.log; exit 1; }
+            if command -v zsh >/dev/null || command -v gum >/dev/null; then
+              echo "install.sh installed packages before refusing"; exit 1
+            fi
+          done
+
   test-installer:
     name: Test installer (Ubuntu ${{ matrix.ubuntu }}, mode ${{ matrix.mode }})
     runs-on: ubuntu-latest
@@ -298,8 +327,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - ubuntu: '22.04'
-            mode: vibe
           - ubuntu: '24.04'
             mode: vibe
           - ubuntu: '26.04'

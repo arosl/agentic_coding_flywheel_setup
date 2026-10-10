@@ -7,7 +7,7 @@
 #
 # Usage:
 #   ./tests/vm/test_install_ubuntu.sh              # defaults to 24.04
-#   ./tests/vm/test_install_ubuntu.sh --all        # run 22.04 + 24.04 + 26.04
+#   ./tests/vm/test_install_ubuntu.sh --all        # run 24.04 + 26.04
 #   ./tests/vm/test_install_ubuntu.sh --ubuntu 26.04
 #   ./tests/vm/test_install_ubuntu.sh --mode safe
 #   ./tests/vm/test_install_ubuntu.sh --interrupt-resume
@@ -29,8 +29,8 @@ Usage:
   ./tests/vm/test_install_ubuntu.sh [options]
 
 Options:
-  --ubuntu <version>   Ubuntu tag (e.g. 22.04, 24.04, 26.04). Repeatable.
-  --all                Run on the supported LTS releases: 22.04, 24.04, and 26.04.
+  --ubuntu <version>   Ubuntu tag (e.g. 24.04, 26.04). Repeatable.
+  --all                Run on the supported LTS releases: 24.04 and 26.04.
   --mode <mode>        Install mode: vibe or safe (default: vibe).
   --strict             Enable strict installer mode (checksum mismatches fail).
   --interrupt-resume   Hang up the first install once cli_tools is checkpointed,
@@ -78,7 +78,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --all)
-      ubuntus=("22.04" "24.04" "26.04")
+      ubuntus=("24.04" "26.04")
       shift
       ;;
     --mode)
