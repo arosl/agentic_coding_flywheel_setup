@@ -6,7 +6,8 @@
 # multi-agent spawn and no broadcast: each agent is a tab plus
 # `herdr agent start`, and a broadcast is a loop over `herdr agent list`
 # and `herdr agent prompt`. This wraps exactly that and keeps no state, but
-# for wake's per-agent mail cursors under ~/.acfs/state/wake/.
+# for the mail cursors and timers of wake, limits, recycle and reap under
+# ~/.acfs/state/.
 #
 # Names come from Agent Mail first (`am agents create`); the herdr name is
 # that name lowercased, and the tab label is the Agent Mail name.
@@ -21,6 +22,7 @@
 #   acfs agents codex-daemon (status [--json] | start | restart)
 #   acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token T] [--dry-run]
 #   acfs agents recycle (<MailName> | --watch [--coordinator NAME] [--loop]) [--prompt TEXT] [--dry-run]
+#   acfs agents reap [--idle MIN] [--workspace ID] [--coordinator NAME [--project KEY]] [--loop [--interval SEC]] [--dry-run]
 #   acfs agents quota [--json] | quota check <kind> | quota record-claude   (agent_quota.sh)
 # ============================================================
 
@@ -59,6 +61,8 @@ Usage:
   acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token TOKEN] [--dry-run]
   acfs agents recycle (<MailName> | --watch [--coordinator NAME] [--loop [--interval SEC]])
                     [--workspace ID] [--project KEY] [--prompt TEXT] [--timeout MS] [--dry-run]
+  acfs agents reap  [--idle MIN] [--workspace ID] [--coordinator NAME [--project KEY]]
+                    [--loop [--interval SEC]] [--prompt TEXT] [--timeout MS] [--dry-run]
   acfs agents quota [--json] | quota check KIND [--limit PERCENT] | quota record-claude
 
 spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
@@ -81,8 +85,10 @@ spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        Each kickoff prompt must be seen submitted, as for send.
        Spawn refuses a kind whose plan has used $ACFS_AGENTS_QUOTA_LIMIT
        percent (default 90) of its 5-hour window, or reports a limit
-       reached ('acfs agents quota check', before anything is created);
-       --force spawns anyway. Unknown usage never refuses.
+       reached ('acfs agents quota check', before anything is created),
+       and refuses when the host's MemAvailable is under
+       $ACFS_AGENTS_MIN_MEM_MIB MiB (default 4096); --force spawns anyway.
+       Unknown usage or memory never refuses.
 send   Prompt every matching agent, and wait until each is seen working, which
        proves the prompt was submitted (with --wait: until its turn ends), for
        at most --timeout ms (default 15000). Exits non-zero when any agent
@@ -160,6 +166,46 @@ recycle
        An agent still in its turn is tried again each cycle, for an hour.
        --loop repeats every --interval seconds (default 60); its state
        lives in ~/.acfs/state/recycle/.
+reap   Retire, through retire and all its refusals, each agent of the herdr
+       server (every workspace and project, or only --workspace) that has
+       been idle or done for --idle minutes (default 15) and has no bead in
+       progress assigned to its Agent Mail name (its tab label). Each
+       agent's project is its cwd: its beads, reservations and identity are
+       looked up there. Idle time is what reap itself saw: herdr reports no
+       timestamps, so an agent counts from the first cycle that saw it
+       between turns, and starts again when its state changes. A refused
+       agent is tried again after another --idle minutes (at least 5).
+       Never reaped: the focused pane, the pane running reap, a name
+       ~/.config/acfs/agents.toml protects ($ACFS_AGENTS_CONFIG), and, in a
+       project agents.toml names nothing for, the oldest agent of each
+       workspace (lowest pane id), which is taken to be its coordinator:
+         [reap]
+         protected = ["GreenCastle"]           # in every project
+         [reap.projects."/data/projects/app"]
+         protected = []                        # the oldest agent is not exempt
+       With --coordinator NAME, reap also reads NAME's mail in --project
+       (default the git top level), as recycle --watch does, and acts on
+       each "[loop] <Name>: done ..." mail: when 'bv --robot-next' has ready
+       work in the project, it recycles the agent; otherwise it retires it.
+       One coordinator's mail is read by either recycle --watch or reap,
+       never both. The Agent Mail identity stays active (reap has no
+       registration tokens; 'am agents reap' sweeps stale ones).
+       --dry-run retires and recycles nothing, and says what it would do and
+       why it keeps each agent. --loop repeats every --interval seconds
+       (default 60); state lives in ~/.acfs/state/reap/. Nothing runs reap
+       by default. A systemd user timer runs it unattended; installing one
+       is a host unit change, the operator's call:
+         ~/.config/systemd/user/acfs-agents-reap.service
+           [Service]
+           Type=oneshot
+           ExecStart=%h/.acfs/bin/acfs agents reap
+         ~/.config/systemd/user/acfs-agents-reap.timer
+           [Timer]
+           OnBootSec=5min
+           OnUnitActiveSec=5min
+           [Install]
+           WantedBy=timers.target
+         systemctl --user enable --now acfs-agents-reap.timer
 quota  Show how full each plan's 5-hour and weekly usage windows are, and how
        many live agents of each kind there are (agent_quota.sh; see
        'acfs agents quota --help'). Read-only.
@@ -677,6 +723,16 @@ herdr_agents_spawn() {
                 *) herdr_agents_note "could not check $quota_kind's usage (agent_quota.sh exited $quota_status); spawning anyway" ;;
             esac
         done
+        # Each Claude agent holds about 450 MB with its MCP servers; spawning
+        # into a full host gets agents and Agent Mail OOM-killed (acfs-2xtg).
+        local min_mib="${ACFS_AGENTS_MIN_MEM_MIB:-4096}" avail_kib
+        [[ "$min_mib" =~ ^[0-9]+$ ]] || herdr_agents_die "ACFS_AGENTS_MIN_MEM_MIB must be whole MiB: $min_mib"
+        avail_kib="$(awk '$1 == "MemAvailable:" { print $2; exit }' "${HERDR_AGENTS_PROC_ROOT:-/proc}/meminfo" 2>/dev/null || true)"
+        if [[ ! "$avail_kib" =~ ^[0-9]+$ ]]; then
+            herdr_agents_note "could not read MemAvailable from ${HERDR_AGENTS_PROC_ROOT:-/proc}/meminfo; spawning anyway"
+        elif (( avail_kib / 1024 < min_mib )); then
+            herdr_agents_die "spawn refused: MemAvailable is $((avail_kib / 1024)) MiB, under ${min_mib} MiB (ACFS_AGENTS_MIN_MEM_MIB); retire idle agents ('acfs agents reap'), or --force spawns anyway"
+        fi
     fi
     if [[ -z "$cwd" ]]; then
         cwd="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -1627,9 +1683,12 @@ herdr_agents_recycle_one() {
 # each agent whose "[loop] <Name>: done ..." mail came from that agent,
 # unless its subject says it continues. An agent not yet between turns stays
 # pending for up to HERDR_AGENTS_RECYCLE_PENDING_MAX seconds (default 3600).
-# State (the delivery cursor and the pending agents) lives in file $7.
+# State (the delivery cursor and the pending agents) lives in file $7. $8 is
+# what a done mail does: recycle (the default), or reap (recycle when bv has
+# ready work, otherwise retire).
 herdr_agents_recycle_watch_cycle() {
     local coordinator="$1" workspace="$2" project="$3" template="$4" timeout="$5" dry_run="$6" file="$7"
+    local action="${8:-recycle}" verb="recycled"
     local max_age="${HERDR_AGENTS_RECYCLE_PENDING_MAX:-3600}"
     local state page scan has_more now pending count i name since rc kept="[]" failed=0
     now="$(date +%s)"
@@ -1662,20 +1721,43 @@ herdr_agents_recycle_watch_cycle() {
     done
 
     count="$(jq 'length' <<<"$pending")"
+    local hint="recycle it by hand"
+    if [[ "$action" == reap ]]; then
+        verb="recycled or retired"
+        hint="reap retires it once it has been idle for --idle minutes"
+    fi
     for ((i = 0; i < count; i++)); do
         name="$(jq -r ".[$i].name" <<<"$pending")"
         since="$(jq -r ".[$i].since" <<<"$pending")"
         rc=0
-        herdr_agents_recycle_one "$name" "$workspace" "$project" "$template" "$timeout" "$dry_run" || rc=$?
+        if [[ "$action" == reap ]]; then
+            herdr_agents_reap_done_one "$name" "$workspace" "$project" "$template" "$timeout" "$dry_run" || rc=$?
+        else
+            herdr_agents_recycle_one "$name" "$workspace" "$project" "$template" "$timeout" "$dry_run" || rc=$?
+        fi
         if (( rc == 2 )) && (( now - since < max_age )); then
             kept="$(jq -c --argjson e "$(jq -c ".[$i]" <<<"$pending")" '. + [$e]' <<<"$kept")"
         elif (( rc != 0 )); then
-            herdr_agents_note "$(date -u +%Y-%m-%dT%H:%M:%SZ) not recycled: $name ($(jq -r ".[$i].subject" <<<"$pending")); recycle it by hand"
+            herdr_agents_note "$(date -u +%Y-%m-%dT%H:%M:%SZ) not $verb: $name ($(jq -r ".[$i].subject" <<<"$pending")); $hint"
             failed=$((failed + 1))
         fi
     done
     [[ "$dry_run" == true ]] || herdr_agents_wake_save "$file" "$(jq -nc --argjson c "$scan" --argjson p "$kept" '{cursor: $c, pending: $p}')"
     (( failed == 0 ))
+}
+
+# Open coordinator $1's mail-watch state in project $2: take its lock and
+# set HERDR_AGENTS_WATCH_FILE. Two watchers over one mailbox (recycle
+# --watch or reap --coordinator) would act on each done mail twice.
+HERDR_AGENTS_WATCH_FILE=""
+herdr_agents_watch_open() {
+    local state_dir lock_fd
+    state_dir="${ACFS_HOME:-$HOME/.acfs}/state/recycle/$(printf '%s' "$2" | sha256sum | cut -c1-16)"
+    mkdir -p "$state_dir"
+    printf '%s\n' "$2" >"$state_dir/project"
+    HERDR_AGENTS_WATCH_FILE="$state_dir/$1.json"
+    exec {lock_fd}>"$state_dir/$1.lock"
+    flock -n "$lock_fd" || herdr_agents_die "another acfs agents recycle --watch or reap --coordinator is running for $1 in $2"
 }
 
 herdr_agents_recycle() {
@@ -1715,14 +1797,9 @@ herdr_agents_recycle() {
     [[ "$coordinator" =~ ^[A-Za-z][A-Za-z0-9_-]{0,63}$ ]] || herdr_agents_die "not an Agent Mail name: $coordinator"
     herdr_agents_require herdr am jq flock sha256sum
 
-    local state_dir lock_fd file
-    state_dir="${ACFS_HOME:-$HOME/.acfs}/state/recycle/$(printf '%s' "$project" | sha256sum | cut -c1-16)"
-    mkdir -p "$state_dir"
-    printf '%s\n' "$project" >"$state_dir/project"
-    file="$state_dir/$coordinator.json"
-    # Two watchers over one mailbox would recycle each agent twice.
-    exec {lock_fd}>"$state_dir/$coordinator.lock"
-    flock -n "$lock_fd" || herdr_agents_die "another acfs agents recycle --watch is running for $coordinator in $project"
+    local file
+    herdr_agents_watch_open "$coordinator" "$project"
+    file="$HERDR_AGENTS_WATCH_FILE"
 
     if [[ "$loop" == false ]]; then
         herdr_agents_recycle_watch_cycle "$coordinator" "$workspace" "$project" "$template" "$timeout" "$dry_run" "$file"
@@ -1731,6 +1808,269 @@ herdr_agents_recycle() {
     herdr_agents_note "recycling agents on '[loop] <Name>: done' mail to $coordinator, every ${interval}s"
     while :; do
         ( herdr_agents_recycle_watch_cycle "$coordinator" "$workspace" "$project" "$template" "$timeout" "$dry_run" "$file" ) || true
+        sleep "$interval"
+    done
+}
+
+# ------------------------------------------------------------
+# reap
+# ------------------------------------------------------------
+
+# The reap exemptions in agents.toml, as JSON: {protected: [names],
+# projects: {key: [names]}}. No file exempts nothing by name; a file that
+# can't be read fails, so that reap retires nobody.
+herdr_agents_reap_config() {
+    local file="${ACFS_AGENTS_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/acfs/agents.toml}"
+    if [[ ! -e "$file" ]]; then
+        printf '{"protected":[],"projects":{}}\n'
+        return 0
+    fi
+    command -v python3 >/dev/null 2>&1 || { herdr_agents_note "reap: reading $file needs python3; nobody is reaped"; return 1; }
+    python3 -I - "$file" <<'PY' || { herdr_agents_note "reap: $file is not a valid reap config; nobody is reaped"; return 1; }
+import json
+import sys
+import tomllib
+
+
+def names(table, where):
+    value = table.get("protected", [])
+    if not isinstance(value, list) or not all(isinstance(name, str) for name in value):
+        sys.exit(f"{where}.protected must be a list of Agent Mail names")
+    return value
+
+
+try:
+    with open(sys.argv[1], "rb") as handle:
+        reap = tomllib.load(handle).get("reap", {})
+except (OSError, tomllib.TOMLDecodeError) as error:
+    sys.exit(f"{sys.argv[1]}: {error}")
+projects = reap.get("projects", {}) if isinstance(reap, dict) else None
+if not isinstance(projects, dict) or not all(isinstance(table, dict) for table in projects.values()):
+    sys.exit("[reap] and [reap.projects.\"<project key>\"] must be tables")
+print(json.dumps({
+    "protected": names(reap, "reap"),
+    "projects": {key: names(table, f"reap.projects.{key!r}") for key, table in projects.items()},
+}))
+PY
+}
+
+# What reap needs from the herdr server, in workspace $1 ("" = every one):
+# HERDR_AGENTS_REAP_CONFIG (agents.toml), HERDR_AGENTS_REAP_AGENTS (herdr's
+# agents) and HERDR_AGENTS_REAP_OLDEST (each workspace's lowest pane id,
+# named or not; herdr numbers panes in the order it opens them).
+HERDR_AGENTS_REAP_CONFIG=""
+HERDR_AGENTS_REAP_AGENTS=""
+HERDR_AGENTS_REAP_OLDEST=""
+herdr_agents_reap_load() {
+    HERDR_AGENTS_REAP_CONFIG="$(herdr_agents_reap_config)" || return 1
+    # select dies on a failed `herdr agent list`; here that only ends its subshell.
+    HERDR_AGENTS_REAP_AGENTS="$(herdr_agents_select "$1" "[]" "[]")" || return 1
+    HERDR_AGENTS_REAP_OLDEST="$(jq -c '
+        group_by(.workspace_id)
+        | map({key: .[0].workspace_id,
+               value: (sort_by(.pane_id | sub("^.*:p"; "") | [length, .]) | .[0].pane_id)})
+        | from_entries' <<<"$HERDR_AGENTS_REAP_AGENTS")"
+}
+
+# Why agent $1 (herdr's JSON for it; Agent Mail name $2) is never reaped, or
+# nothing when it may be.
+herdr_agents_reap_exemption() {
+    jq -r --arg mail "${2,,}" --arg self "${HERDR_PANE_ID:-}" \
+        --argjson config "$HERDR_AGENTS_REAP_CONFIG" --argjson oldest "$HERDR_AGENTS_REAP_OLDEST" '
+        (.cwd // "") as $project
+        | ($config.projects[$project] // null) as $named
+        | if .focused == true then "it is the focused pane"
+          elif $self != "" and .pane_id == $self then "it runs in this pane"
+          elif $config.protected | map(ascii_downcase) | index($mail) then "agents.toml protects it"
+          elif $named != null then
+              (if $named | map(ascii_downcase) | index($mail) then "agents.toml protects it in \($project)" else empty end)
+          elif .pane_id == $oldest[.workspace_id] then
+              "it is the oldest agent of workspace \(.workspace_id), and agents.toml names no protected agent for \($project)"
+          else empty end' <<<"$1"
+}
+
+# How many beads in progress project $1 has assigned to $2. A project
+# without .beads has none; failing to read them fails.
+herdr_agents_reap_beads() {
+    [[ -d "$1/.beads" ]] || { printf '0\n'; return 0; }
+    command -v br >/dev/null 2>&1 || return 1
+    (cd "$1" && br list --status in_progress --assignee "$2" --json </dev/null 2>/dev/null) \
+        | jq -e '.issues | length' 2>/dev/null
+}
+
+# Retire agent $1 (herdr's JSON for it; Agent Mail name $2) unless an
+# exemption or a bead in progress keeps it; $3 says why it is reaped, $4
+# true only says what would happen. Returns 0 when it is retired or kept on
+# purpose, 1 when it could not be checked or retire refused.
+herdr_agents_reap_one() {
+    local agent="$1" mail_name="$2" why="$3" dry_run="$4" name workspace cwd reason beads
+    local -a retire_args=()
+    name="$(jq -r '.name' <<<"$agent")"
+    workspace="$(jq -r '.workspace_id' <<<"$agent")"
+    cwd="$(jq -r '.cwd // empty' <<<"$agent")"
+    reason="$(herdr_agents_reap_exemption "$agent" "$mail_name")"
+    if [[ -n "$reason" ]]; then
+        [[ "$dry_run" == false ]] || herdr_agents_note "reap: keeps $mail_name: $reason"
+        return 0
+    fi
+    if [[ -z "$cwd" || ! -d "$cwd" ]]; then
+        herdr_agents_note "reap: keeps $mail_name: its cwd '${cwd}' is not a directory"
+        return 1
+    fi
+    if ! beads="$(herdr_agents_reap_beads "$cwd" "$mail_name")"; then
+        herdr_agents_note "reap: keeps $mail_name: the beads in $cwd could not be read"
+        return 1
+    fi
+    if (( beads > 0 )); then
+        [[ "$dry_run" == false ]] || herdr_agents_note "reap: keeps $mail_name: $beads bead(s) in progress are assigned to it in $cwd"
+        return 0
+    fi
+    herdr_agents_note "$(date -u +%Y-%m-%dT%H:%M:%SZ) reap: retiring $mail_name ($name, workspace $workspace, $cwd): $why"
+    retire_args=("$mail_name" --workspace "$workspace" --cwd "$cwd")
+    [[ "$dry_run" == false ]] || retire_args+=(--dry-run)
+    # The token in this environment, if any, is the caller's own, never the
+    # reaped agent's: retire_agent would refuse it after the pane closed.
+    if ! (unset AGENT_MAIL_REGISTRATION_TOKEN; herdr_agents_retire "${retire_args[@]}") </dev/null; then
+        herdr_agents_note "reap: $mail_name was not retired"
+        return 1
+    fi
+}
+
+# Agent $1 (Agent Mail name) mailed "[loop] <Name>: done": recycle it when
+# bv has ready work in project $3, otherwise retire it. Returns as
+# recycle_one does: 2 while the agent is not between turns yet.
+herdr_agents_reap_done_one() {
+    local mail_name="$1" workspace="$2" project="$3" template="$4" timeout="$5" dry_run="$6" agent status next
+    herdr_agents_reap_load "$workspace" || return 1
+    agent="$(jq -c --arg n "${mail_name,,}" '[.[] | select(.name == $n)] | if length == 1 then .[0] else empty end' \
+        <<<"$HERDR_AGENTS_REAP_AGENTS")"
+    if [[ -z "$agent" ]]; then
+        herdr_agents_note "reap: herdr lists no single agent named ${mail_name,,}${workspace:+ in workspace $workspace}"
+        return 1
+    fi
+    status="$(jq -r '.agent_status // "unknown"' <<<"$agent")"
+    case "$status" in
+        idle|done) ;;
+        *) return 2 ;;
+    esac
+    if ! next="$(cd "$project" && bv --robot-next </dev/null 2>/dev/null)"; then
+        herdr_agents_note "reap: bv --robot-next failed in $project"
+        return 1
+    fi
+    if jq -e '.actionable == true and ((.id // "") != "")' <<<"$next" >/dev/null 2>&1; then
+        herdr_agents_recycle_one "$mail_name" "$workspace" "$project" "$template" "$timeout" "$dry_run"
+        return
+    fi
+    herdr_agents_reap_one "$agent" "$mail_name" "it mailed done, and bv has no ready work in $project" "$dry_run"
+}
+
+# One sweep over workspace $1 ("" = every one): retire each agent seen
+# between turns for $2 minutes, as reap_one decides. File $4 keeps, per
+# pane and name, herdr's state_change_seq, when reap first saw it between
+# turns at that seq, and when retiring it last failed.
+herdr_agents_reap_sweep() {
+    local workspace="$1" idle_min="$2" dry_run="$3" file="$4"
+    local now state agent key name tab mail_name failed=0
+    local idle_s=$(( $2 * 60 )) retry_s
+    retry_s=$(( idle_s > 300 ? idle_s : 300 ))
+    (( idle_min > 0 )) || retry_s=0
+    herdr_agents_reap_load "$workspace" || return 1
+    now="$(date +%s)"
+    state="$(jq -c 'if type == "object" then . else empty end' "$file" 2>/dev/null || true)"
+    [[ -n "$state" ]] || state="{}"
+    # Only agents between turns are tracked; any other state starts over.
+    state="$(jq -c --argjson prev "$state" --argjson now "$now" '
+        map(select(.name != null and (.agent_status == "idle" or .agent_status == "done"))
+            | (.pane_id + " " + .name) as $key
+            | (.state_change_seq // null) as $seq
+            | ($prev[$key] // {}) as $p
+            | {key: $key, value: (if $p.since != null and $p.seq == $seq then $p else {seq: $seq, since: $now} end)})
+        | from_entries' <<<"$HERDR_AGENTS_REAP_AGENTS")"
+
+    local -A labels=()
+    local ws
+    while IFS= read -r agent; do
+        name="$(jq -r '.name' <<<"$agent")"
+        key="$(jq -r '.pane_id' <<<"$agent") $name"
+        jq -e --arg k "$key" --argjson now "$now" --argjson idle "$idle_s" --argjson retry "$retry_s" '
+            .[$k] as $e | $e != null and $now - $e.since >= $idle
+            and ($e.failed == null or $now - $e.failed >= $retry)' <<<"$state" >/dev/null || continue
+        # The Agent Mail name is the tab label, which spawn sets.
+        ws="$(jq -r '.workspace_id' <<<"$agent")"
+        if [[ -z "${labels[$ws]+set}" ]]; then
+            if herdr_agents_herdr tab list --workspace "$ws"; then
+                labels[$ws]="$(jq -c '[.result.tabs[]? | {key: .tab_id, value: (.label // "")}] | from_entries' <<<"$HERDR_AGENTS_OUT")"
+            else
+                herdr_agents_note "reap: herdr tab list failed for workspace $ws: $HERDR_AGENTS_ERR_MESSAGE"
+                labels[$ws]="{}"
+            fi
+        fi
+        tab="$(jq -r '.tab_id' <<<"$agent")"
+        mail_name="$(jq -r --arg t "$tab" '.[$t] // empty' <<<"${labels[$ws]}")"
+        if [[ "${mail_name,,}" != "$name" ]]; then
+            [[ "$dry_run" == false ]] || herdr_agents_note "reap: keeps $name: its tab label '${mail_name}' is not its Agent Mail name"
+            continue
+        fi
+        if ! herdr_agents_reap_one "$agent" "$mail_name" \
+            "between turns for $(( (now - $(jq -r --arg k "$key" '.[$k].since' <<<"$state")) / 60 )) min, with no bead in progress" "$dry_run"; then
+            failed=$((failed + 1))
+            state="$(jq -c --arg k "$key" --argjson now "$now" '.[$k].failed = $now' <<<"$state")"
+        fi
+    done < <(jq -c '.[] | select(.name != null)' <<<"$HERDR_AGENTS_REAP_AGENTS")
+    herdr_agents_wake_save "$file" "$state"
+    (( failed == 0 ))
+}
+
+herdr_agents_reap() {
+    local workspace="" idle=15 loop=false interval=60 dry_run=false coordinator="" project="${AGENT_MAIL_PROJECT:-}"
+    local timeout="$HERDR_AGENTS_PROMPT_TIMEOUT_MS" template="${ACFS_AGENTS_RECYCLE_PROMPT:-$HERDR_AGENTS_RECYCLE_PROMPT}"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --workspace) [[ $# -ge 2 ]] || herdr_agents_die "--workspace needs a value"; workspace="$2"; shift 2 ;;
+            --idle) [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || herdr_agents_die "--idle needs whole minutes"; idle="$((10#$2))"; shift 2 ;;
+            --coordinator) [[ $# -ge 2 ]] || herdr_agents_die "--coordinator needs a value"; coordinator="$2"; shift 2 ;;
+            --project) [[ $# -ge 2 ]] || herdr_agents_die "--project needs a value"; project="$2"; shift 2 ;;
+            --prompt) [[ $# -ge 2 && -n "$2" ]] || herdr_agents_die "--prompt needs a text"; template="$2"; shift 2 ;;
+            --timeout) [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || herdr_agents_die "--timeout needs milliseconds"; timeout="$2"; shift 2 ;;
+            --loop) loop=true; shift ;;
+            --interval) [[ $# -ge 2 && "$2" =~ ^[1-9][0-9]*$ ]] || herdr_agents_die "--interval needs whole seconds"; interval="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            -h|--help) herdr_agents_usage; return 0 ;;
+            *) herdr_agents_die "unknown reap option: $1" ;;
+        esac
+    done
+    herdr_agents_require herdr jq am git flock sha256sum
+    local state_dir lock_fd file watch_file=""
+    state_dir="${ACFS_HOME:-$HOME/.acfs}/state/reap"
+    mkdir -p "$state_dir"
+    file="$state_dir/idle.json"
+    # Two reapers would retire one agent twice and share one state file.
+    exec {lock_fd}>"$state_dir/reap.lock"
+    flock -n "$lock_fd" || herdr_agents_die "another acfs agents reap is running"
+    if [[ -n "$coordinator" ]]; then
+        [[ "$coordinator" =~ ^[A-Za-z][A-Za-z0-9_-]{0,63}$ ]] || herdr_agents_die "not an Agent Mail name: $coordinator"
+        herdr_agents_require bv
+        [[ -n "$project" ]] || project="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+        herdr_agents_watch_open "$coordinator" "$project"
+        watch_file="$HERDR_AGENTS_WATCH_FILE"
+    fi
+
+    herdr_agents_reap_cycle() {
+        local rc=0
+        if [[ -n "$watch_file" ]]; then
+            herdr_agents_recycle_watch_cycle "$coordinator" "$workspace" "$project" "$template" "$timeout" \
+                "$dry_run" "$watch_file" reap || rc=1
+        fi
+        herdr_agents_reap_sweep "$workspace" "$idle" "$dry_run" "$file" || rc=1
+        return "$rc"
+    }
+    if [[ "$loop" == false ]]; then
+        herdr_agents_reap_cycle
+        return
+    fi
+    herdr_agents_note "reaping agents between turns for ${idle} min${coordinator:+, and on '[loop] <Name>: done' mail to $coordinator}, every ${interval}s"
+    while :; do
+        ( herdr_agents_reap_cycle ) || true
         sleep "$interval"
     done
 }
@@ -1748,6 +2088,7 @@ herdr_agents_main() {
         codex-daemon) herdr_agents_codex_daemon "$@" ;;
         retire) herdr_agents_retire "$@" ;;
         recycle) herdr_agents_recycle "$@" ;;
+        reap) herdr_agents_reap "$@" ;;
         quota) exec bash "$HERDR_AGENTS_SCRIPT_DIR/agent_quota.sh" "$@" ;;
         help|-h|--help) herdr_agents_usage ;;
         *) herdr_agents_usage >&2; return 1 ;;
