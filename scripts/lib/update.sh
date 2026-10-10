@@ -996,6 +996,36 @@ init_logging() {
         echo "==============================================="
         echo ""
     } >> "$UPDATE_LOG_FILE"
+
+    update_give_log_to_target_user
+}
+
+# Run as root for another user (TARGET_USER), the log lands in that user's
+# ~/.acfs. Hand them what this run created there, or their next `acfs update`
+# can't open its own log. Only root-owned paths below the home change hands,
+# and never through a symlink.
+update_give_log_to_target_user() {
+    [[ "${EUID:-$(id -u)}" -eq 0 ]] || return 0
+    local target_user="" target_home="" path=""
+    target_user="$(update_target_user 2>/dev/null || true)"
+    [[ -n "$target_user" && "$target_user" != "root" ]] || return 0
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    [[ -n "$target_home" && "$UPDATE_LOG_FILE" == "$target_home/"* ]] || return 0
+
+    # A link anywhere below the home could point the chown outside it.
+    path="$UPDATE_LOG_FILE"
+    while [[ "$path" == "$target_home/"* ]]; do
+        [[ ! -L "$path" ]] || return 0
+        path="${path%/*}"
+    done
+
+    path="$UPDATE_LOG_FILE"
+    while [[ "$path" == "$target_home/"* ]]; do
+        if [[ "$(stat -c %u -- "$path" 2>/dev/null)" == "0" ]]; then
+            chown -h "$target_user:$target_user" -- "$path" 2>/dev/null || chown -h "$target_user" -- "$path" 2>/dev/null || true
+        fi
+        path="${path%/*}"
+    done
 }
 
 log_to_file() {
