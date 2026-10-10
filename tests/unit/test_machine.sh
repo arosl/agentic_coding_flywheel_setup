@@ -170,8 +170,9 @@ cat >"$WORK/bin/ssh" <<'STUB'
 printf '%s\n' "$*" >>"$STUB_DIR/calls-ssh"
 exit "${STUB_SSH_EXIT:-0}"
 STUB
-# sudo -n <command>: `true` passes unless STUB_NO_SUDO; `test -e <path>`
-# looks under $STUB_ROOTFS; `acfs state lease status` prints a fixture.
+# sudo -n <command>: `true` passes unless STUB_NO_SUDO; `find` runs as is
+# (the search root is $STUB_ROOTFS); `acfs state lease status` prints a
+# fixture.
 cat >"$WORK/bin/sudo" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_DIR/calls-sudo"
@@ -179,9 +180,15 @@ printf '%s\n' "$*" >>"$STUB_DIR/calls-sudo"
 [[ -z "${STUB_NO_SUDO:-}" ]] || exit 1
 case "$1" in
     true) exit 0 ;;
-    test) [[ -e "$STUB_ROOTFS$3" ]] ;;
+    find) exec "$@" ;;
     acfs) printf 'volume lease:   set\ninstance lease: set\nmatch: %s\n' "${STUB_LEASE_MATCH:-yes}" ;;
 esac
+STUB
+# findmnt -rn -o TARGET: the root and $STUB_DIR/mounts, never this host's.
+cat >"$WORK/bin/findmnt" <<'STUB'
+#!/usr/bin/env bash
+echo /
+[[ ! -f "$STUB_DIR/mounts" ]] || cat "$STUB_DIR/mounts"
 STUB
 chmod +x "$WORK"/bin/*
 
@@ -206,7 +213,8 @@ login_file() {
 # PATH (or, with --no-tools, with only incus and the launcher), HOME in
 # the case, and the launcher pointed at the stub.
 run_machine() {
-    local path="$WORK/bin:$PATH"
+    # PATH_PREFIX puts a case's own wrappers ahead of the stubs.
+    local path="${PATH_PREFIX:+$PATH_PREFIX:}$WORK/bin:$PATH"
     if [[ "${1:-}" == --no-tools ]]; then
         # Only what machine.sh itself needs, so a real gh, ssh or tailscale
         # on this host isn't found either.
@@ -225,7 +233,7 @@ run_machine() {
         XDG_STATE_HOME="$CASE/home/.local/state" ACFS_MACHINE_STATE_DIR="$CASE/state" \
         ACFS_MACHINE_LAUNCHER="${LAUNCHER_OVERRIDE:-$WORK/bin/launcher}" \
         ACFS_VERIFY_HOST_KEYS="$CASE/host_key.pub" ACFS_MACHINE_GUEST_SOCK="$CASE/guest.sock" \
-        ACFS_VERIFY_PROJECT="$CASE/project" \
+        ACFS_VERIFY_PROJECT="$CASE/project" ACFS_VERIFY_SEARCH_ROOT="$CASE/rootfs" \
         bash "$MACHINE" "$@" >"$CASE/out" 2>"$CASE/err"
     RC=$?
     set -e
@@ -520,8 +528,9 @@ check "exits 0" rc_is 0
 for tool in claude codex agy gemini pi gh agent-mail tailscale ssh-host-key herdr beads cm; do
     check "$tool: ok" status_is "$tool" ok
 done
-check "claude is asked with -p and the text format" grep -qx -- '-p reply with ok --output-format text' "$CASE/calls-claude"
-check "codex: login status, then one exec" bash -c 'grep -qx "login status" "$1" && grep -q "^exec --skip-git-repo-check reply with ok$" "$1"' _ "$CASE/calls-codex"
+check "claude is asked with -p and the text format, saving no session" grep -qx -- '-p reply with ok --output-format text --no-session-persistence' "$CASE/calls-claude"
+check "codex: login status, then one exec, saving no session" bash -c 'grep -qx "login status" "$1" && grep -q "^exec --skip-git-repo-check --ephemeral reply with ok$" "$1"' _ "$CASE/calls-codex"
+check "sessions: not-configured without a saved one" bash -c '[[ "$(awk "\$1 == \"claude.session\" {print \$2}" "$1")" == not-configured && "$(awk "\$1 == \"codex.session\" {print \$2}" "$1")" == not-configured ]]' _ "$CASE/err"
 check "agy: one print-mode request with a time limit" grep -q -- '^-p reply with ok --output-format text --print-timeout 90s$' "$CASE/calls-agy"
 check "pi: no request without ACFS_VERIFY_PI_CMD" bash -c '[[ ! -s "$1" ]]' _ "$CASE/calls-pi"
 check "pi: says why" detail_has pi 'no request made'
@@ -581,6 +590,20 @@ check "codex: login status failing is an invalid login" detail_has codex 'not lo
 check "agy: network" detail_has agy 'network failure'
 check "gemini: an unclassified failure names the exit and hides the output" detail_has gemini 'exit 7 \(1 lines of output, not shown\)'
 check "gh: invalid login" detail_has gh 'invalid or expired'
+check "each failure's class is its status" bash -c '
+    for pair in claude=quota codex=invalid-login agy=network gemini=fail gh=invalid-login; do
+        [[ "$(awk -v c="${pair%%=*}" "\$1 == c {print \$2; exit}" "$1")" == "${pair#*=}" ]] || { echo "$pair"; exit 1; }
+    done' _ "$CASE/err"
+new_case verify-chatter
+all_logins
+# A working run whose output holds a session id and a token count with
+# 401 and 429 in them: still ok.
+export STUB_CLAUDE_OUT='session 7f401-a429; tokens used 1,429; ok'
+export STUB_GEMINI_EXIT=1 STUB_GEMINI_OUT='error id 4291 at step 4013'
+run_machine verify
+unset STUB_CLAUDE_OUT STUB_GEMINI_EXIT STUB_GEMINI_OUT
+check "a success whose output holds 401 and 429 is ok" status_is claude ok
+check "numbers holding 401 or 429 aren't status codes" status_is gemini fail
 check "the tools' output never reaches the report" bash -c '! grep -q "rate limit reached\|something else went wrong\|ENOTFOUND api" "$1" "$2"' _ "$CASE/out" "$CASE/err"
 check "prints no secret" no_secret_printed
 
@@ -593,6 +616,41 @@ run_machine verify --timeout 1
 unset STUB_CLAUDE_SLEEP
 check "exits 1" rc_is 1
 check "claude: no answer within 1s" detail_has claude 'no answer within 1s'
+check "claude: a timeout is network" status_is claude network
+
+echo "== verify: one session per kind, resumed as an unsaved fork in its own cwd"
+new_case verify-sessions
+all_logins
+mkdir -p "$CASE/home/.claude/projects/-work" "$CASE/work" "$CASE/home/.codex/sessions/2026/10/10" "$CASE/repo"
+printf '{"type":"summary"}\n{"cwd":"%s","sessionId":"x"}\n' "$CASE/work" >"$CASE/home/.claude/projects/-work/1111-2222.jsonl"
+printf '{"type":"summary"}\n' >"$CASE/home/.claude/projects/-work/0000-old.jsonl"
+touch -d '2026-01-01' "$CASE/home/.claude/projects/-work/0000-old.jsonl"
+printf '{"type":"session_meta","payload":{"id":"0199-aaaa","cwd":"%s"}}\n' "$CASE/repo" \
+    >"$CASE/home/.codex/sessions/2026/10/10/rollout-2026-10-10T10-00-00-0199-aaaa.jsonl"
+# The stubs record where they ran.
+for t in claude codex; do
+    cat >"$CASE/$t-pwd" <<STUB
+#!/usr/bin/env bash
+printf '%s @ %s\n' "\$*" "\$PWD" >>"$CASE/calls-$t-pwd"
+exec "$WORK/bin/$t" "\$@"
+STUB
+    chmod +x "$CASE/$t-pwd"
+done
+mkdir -p "$CASE/bin-pwd"
+ln -sf "$CASE/claude-pwd" "$CASE/bin-pwd/claude"
+ln -sf "$CASE/codex-pwd" "$CASE/bin-pwd/codex"
+PATH_PREFIX="$CASE/bin-pwd" run_machine verify
+check "claude.session: ok" status_is claude.session ok
+check "codex.session: ok" status_is codex.session ok
+check "the newest claude session is forked, unsaved, in its own cwd" \
+    grep -qxF -- "-p reply with ok --resume 1111-2222 --fork-session --no-session-persistence --output-format text @ $CASE/work" "$CASE/calls-claude-pwd"
+check "the newest codex session is forked, unsaved, in its own cwd" \
+    grep -qxF -- "exec fork --skip-git-repo-check --ephemeral 0199-aaaa reply with ok @ $CASE/repo" "$CASE/calls-codex-pwd"
+rm -rf "$CASE/repo"
+run_machine verify
+check "a session whose cwd is gone fails, naming it" bash -c '[[ "$(awk "\$1 == \"codex.session\" {print \$2}" "$1")" == fail ]] && grep -q "0199-aaaa.s working directory .* doesn.t exist here" "$1"' _ "$CASE/err"
+run_machine verify --read-only
+check "--read-only skips the resumes (they are requests)" status_is claude.session skip
 
 echo "== verify: a login file others can read fails before any request"
 new_case verify-mode
@@ -630,6 +688,14 @@ printf 'SECRET-root\n' >"$CASE/rootfs/root/.codex/auth.json"
 run_machine verify
 check "credentials-outside: fail, naming the path only" detail_has credentials-outside '/root/.codex/auth.json \(a rebuild loses them\)'
 check "prints no secret" no_secret_printed
+# The volumes' paths and every other mount are left out of the search.
+mkdir -p "$CASE/rootfs/home/ubuntu/.codex" "$CASE/rootfs/data/x" "$CASE/rootfs/mnt/vol" "$CASE/rootfs/etc/stray"
+touch "$CASE/rootfs/home/ubuntu/.codex/auth.json" "$CASE/rootfs/data/x/.credentials.json" \
+    "$CASE/rootfs/mnt/vol/hosts.yml" "$CASE/rootfs/etc/stray/oauth_creds.json"
+printf '/mnt/vol\n' >"$CASE/mounts"
+run_machine verify
+check "the home, /data and another mount are left out; the root volume's files are found" \
+    bash -c 'grep -E "^credentials-outside +fail +login files outside the state volume: /(root/.codex/auth.json /etc/stray/oauth_creds.json|etc/stray/oauth_creds.json /root/.codex/auth.json) \(a rebuild loses them\)$" "$1" >/dev/null' _ "$CASE/err"
 export STUB_NO_SUDO=1
 run_machine verify
 unset STUB_NO_SUDO

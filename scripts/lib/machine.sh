@@ -83,7 +83,9 @@ verify   The authenticated login checklist: per configured tool its stored
                    checks (the lease key, the SSH entry).
   --read-only      Only the local, unpaid parts: files and modes, the host
                    key, the lease, the credential search, the tool lists.
-  --json           A JSON array of {check, status, detail} on stdout.
+  --json           A JSON array of {check, status, detail} on stdout. A
+                   status is ok, not-configured or skip, or a failure:
+                   invalid-login, network, quota, or fail for any other.
   --timeout SEC    Per request (default 90).
 
 Exit status: 0 when nothing failed, 1 when a check failed, 2 on usage.
@@ -421,12 +423,16 @@ MACHINE_VERIFY_ROWS=()
 MACHINE_CAPTURE_FILE=""
 trap '[[ -z "$MACHINE_CAPTURE_FILE" ]] || rm -f -- "$MACHINE_CAPTURE_FILE"' EXIT
 
-# record <check> <status> <detail>: status is ok, fail, not-configured or
-# skip. The detail never carries file contents or command output beyond
+# record <check> <status> <detail>: status is ok, not-configured or skip,
+# or one of the failures: invalid-login, network, quota, or fail for any
+# other. The detail never carries file contents or command output beyond
 # the verdict machine_request distilled from it.
 machine_record() {
     local check="$1" status="$2" detail="$3"
-    [[ "$status" != fail ]] || MACHINE_VERIFY_FAILED=1
+    case "$status" in
+        ok|not-configured|skip) ;;
+        *) MACHINE_VERIFY_FAILED=1 ;;
+    esac
     MACHINE_VERIFY_ROWS+=("$check"$'\t'"$status"$'\t'"$detail")
     [[ -n "$MACHINE_VERIFY_JSON" ]] || printf '%-16s %-15s %s\n' "$check" "$status" "$detail" >&2
 }
@@ -462,35 +468,37 @@ machine_login_file() {
 }
 
 # Runs a request under the timeout, capturing output to a file nobody
-# prints, and classifies the result: ok, or fail with one of invalid
-# login, network, quota or the exit status.
+# prints, and classifies the result as its status: ok; quota, invalid-login
+# or network; or fail with the exit status. A success wins whatever its
+# output says (session ids and token counts may hold any of the words).
+# Among failures quota comes first, since a rate-limit message often
+# mentions the account too, and status codes match as whole numbers.
 machine_request() {
     local check="$1" tag="$2"
     shift 2
-    local out rc=0
+    local out rc=0 status detail
     out="$(mktemp "${TMPDIR:-/tmp}/acfs-verify.XXXXXX")"
     MACHINE_CAPTURE_FILE="$out"
     timeout "$MACHINE_VERIFY_TIMEOUT" "$@" >"$out" 2>&1 </dev/null || rc=$?
-    local verdict
     if ((rc == 0)); then
-        verdict="ok"
+        status=ok detail="answered"
     elif ((rc == 124)); then
-        verdict="fail: no answer within ${MACHINE_VERIFY_TIMEOUT}s (network, or a prompt waiting for input)"
-    elif grep -qiE 'rate.?limit|usage limit|quota|too many requests|429|insufficient_quota|out of credits' "$out"; then
-        verdict="fail: quota or rate limit exhausted (exit $rc)"
-    elif grep -qiE 'not logged in|please (log|sign) in|login required|unauthori[sz]ed|invalid (api )?key|invalid.*token|expired|401|403|authentication' "$out"; then
-        verdict="fail: the login is invalid or expired (exit $rc)"
+        status=network detail="no answer within ${MACHINE_VERIFY_TIMEOUT}s (network, or a prompt waiting for input)"
+    elif grep -qiE 'rate.?limit|usage limit|quota|too many requests|(^|[^0-9])429([^0-9]|$)|insufficient_quota|out of credits' "$out"; then
+        status=quota detail="quota or rate limit exhausted (exit $rc)"
+    elif grep -qiE 'not logged in|please (log|sign) in|login required|unauthori[sz]ed|invalid (api )?key|invalid.*token|expired|(^|[^0-9])40[13]([^0-9]|$)|authentication' "$out"; then
+        status=invalid-login detail="the login is invalid or expired (exit $rc)"
     elif grep -qiE 'ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|could not resolve|network is unreachable|connection (refused|reset|timed out)|fetch failed|dns' "$out"; then
-        verdict="fail: network failure (exit $rc)"
+        status=network detail="network failure (exit $rc)"
     else
-        verdict="fail: exit $rc ($(wc -l <"$out" | tr -d ' ') lines of output, not shown)"
+        status=fail detail="exit $rc ($(wc -l <"$out" | tr -d ' ') lines of output, not shown)"
     fi
     rm -f -- "$out"
     MACHINE_CAPTURE_FILE=""
-    if [[ "$verdict" == ok ]]; then
+    if [[ "$status" == ok ]]; then
         machine_record "$check" ok "$MACHINE_LOGIN_DETAIL; $tag answered"
     else
-        machine_record "$check" fail "$MACHINE_LOGIN_DETAIL; $tag: ${verdict#fail: }"
+        machine_record "$check" "$status" "$MACHINE_LOGIN_DETAIL; $tag: $detail"
     fi
 }
 
@@ -511,9 +519,10 @@ machine_check_tool() {
     machine_request "$check" "$tag" "$@"
 }
 
+# The one-shots save no session, so verify leaves nothing to resume later.
 machine_check_claude() {
     machine_check_tool claude "$HOME/.claude/.credentials.json" "claude -p" \
-        claude -p "$MACHINE_VERIFY_PROMPT" --output-format text
+        claude -p "$MACHINE_VERIFY_PROMPT" --output-format text --no-session-persistence
 }
 
 machine_check_codex() {
@@ -527,10 +536,66 @@ machine_check_codex() {
     fi
     # Two calls: the stored login's status, then one small request.
     if ! timeout "$MACHINE_VERIFY_TIMEOUT" codex login status >/dev/null 2>&1 </dev/null; then
-        machine_record "$check" fail "$MACHINE_LOGIN_DETAIL; codex login status says not logged in"
+        machine_record "$check" invalid-login "$MACHINE_LOGIN_DETAIL; codex login status says not logged in"
         return 0
     fi
-    machine_request "$check" "codex exec" codex exec --skip-git-repo-check "$MACHINE_VERIFY_PROMPT"
+    machine_request "$check" "codex exec" codex exec --skip-git-repo-check --ephemeral "$MACHINE_VERIFY_PROMPT"
+}
+
+# The newest file under a directory matching a find expression.
+machine_newest() {
+    local dir="$1"
+    shift
+    [[ -d "$dir" ]] || return 0
+    find "$dir" "$@" -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n 1 | cut -d' ' -f2-
+}
+
+# A session resumed per agent kind, the plan's "sessions survive an
+# update": the newest saved session, forked so the original never changes,
+# saving nothing, in its own working directory (project trust included).
+# $1 check, $2 the session file, $3 its id, $4 its cwd, $5.. the request.
+machine_check_session() {
+    local check="$1" session="$2" id="$3" cwd="$4" here
+    shift 4
+    if [[ -z "$id" || -z "$cwd" ]]; then
+        machine_record "$check" fail "the newest session ${session/#$HOME/\~} names no id or no working directory"
+        return 0
+    fi
+    if [[ ! -d "$cwd" ]]; then
+        machine_record "$check" fail "session $id's working directory ${cwd/#$HOME/\~} doesn't exist here (lost in the rebuild?)"
+        return 0
+    fi
+    MACHINE_LOGIN_DETAIL="session $id in ${cwd/#$HOME/\~}"
+    here="$PWD"
+    cd "$cwd" || { machine_record "$check" fail "can't enter ${cwd/#$HOME/\~}"; return 0; }
+    machine_request "$check" "resumed as an unsaved fork" "$@"
+    cd "$here" || true
+}
+
+machine_check_claude_session() {
+    local check=claude.session session id cwd
+    command -v claude >/dev/null 2>&1 && [[ -f "$HOME/.claude/.credentials.json" ]] \
+        || { machine_record "$check" not-configured "no claude login"; return 0; }
+    [[ -z "$MACHINE_VERIFY_READ_ONLY" ]] || { machine_record "$check" skip "a resume is a request (--read-only)"; return 0; }
+    session="$(machine_newest "$HOME/.claude/projects" -maxdepth 2 -name '*.jsonl')"
+    [[ -n "$session" ]] || { machine_record "$check" not-configured "no saved session under ~/.claude/projects"; return 0; }
+    id="$(basename "$session" .jsonl)"
+    cwd="$(jq -r 'select(.cwd != null) | .cwd' "$session" 2>/dev/null | head -n 1)"
+    machine_check_session "$check" "$session" "$id" "$cwd" \
+        claude -p "$MACHINE_VERIFY_PROMPT" --resume "$id" --fork-session --no-session-persistence --output-format text
+}
+
+machine_check_codex_session() {
+    local check=codex.session session id cwd
+    command -v codex >/dev/null 2>&1 && [[ -f "$HOME/.codex/auth.json" ]] \
+        || { machine_record "$check" not-configured "no codex login"; return 0; }
+    [[ -z "$MACHINE_VERIFY_READ_ONLY" ]] || { machine_record "$check" skip "a resume is a request (--read-only)"; return 0; }
+    session="$(machine_newest "$HOME/.codex/sessions" -name 'rollout-*.jsonl')"
+    [[ -n "$session" ]] || { machine_record "$check" not-configured "no saved session under ~/.codex/sessions"; return 0; }
+    id="$(head -n 1 "$session" | jq -r '.payload.id // empty' 2>/dev/null)"
+    cwd="$(head -n 1 "$session" | jq -r '.payload.cwd // empty' 2>/dev/null)"
+    machine_check_session "$check" "$session" "$id" "$cwd" \
+        codex exec fork --skip-git-repo-check --ephemeral "$id" "$MACHINE_VERIFY_PROMPT"
 }
 
 # ACFS installs agy as agy-locked (its model guard) and gives interactive
@@ -631,8 +696,8 @@ machine_baseline() {
     fi
 }
 
-# herdr: the server answers and its workspaces are listed. Resuming a
-# session per agent kind needs a pane, so it stays out of the checklist.
+# herdr: the server answers and its workspaces are listed. The sessions
+# themselves are claude.session's and codex.session's, resumed headless.
 machine_check_herdr() {
     local check=herdr n
     command -v herdr >/dev/null 2>&1 || { machine_record "$check" not-configured "herdr isn't installed"; return 0; }
@@ -680,23 +745,43 @@ machine_check_lease() {
     fi
 }
 
-# No credential outside the state volume: root's home and /etc must hold
-# none of the known login files. Paths are reported, never contents.
+# No credential outside the state volume (plan 3.6): a search of the whole
+# root volume for the known login files' names. The home, /data and the
+# two host-state directories are the volumes' and are left out, and so is
+# every other mount, by name from findmnt: a dir pool shares st_dev, so
+# -xdev can't tell them apart. Paths are reported, never contents.
 machine_check_credential_search() {
-    local check=credentials-outside found=() f
+    local check=credentials-outside root="${ACFS_VERIFY_SEARCH_ROOT:-/}" mount out rc=0 f
+    local -a prune=() found=()
     if ! sudo -n true 2>/dev/null; then
-        machine_record "$check" skip "needs sudo without a password to look under /root"
+        machine_record "$check" skip "needs sudo without a password to search the root volume"
         return 0
     fi
-    for f in /root/.claude/.credentials.json /root/.claude.json /root/.codex/auth.json \
-        /root/.gemini/oauth_creds.json /root/.pi/agent/auth.json /root/.config/gh/hosts.yml \
-        /root/.config/mcp-agent-mail/config.env /etc/acfs/config.env; do
-        sudo -n test -e "$f" 2>/dev/null && found+=("$f")
+    for mount in /home /data /etc/ssh/acfs-host-keys /var/lib/tailscale; do
+        prune+=(-path "${root%/}$mount" -prune -o)
     done
+    # findmnt -r escapes a space in a target as \x20.
+    while IFS= read -r mount; do
+        [[ -n "$mount" && "$mount" != / ]] || continue
+        mount="$(printf '%b' "$mount")"
+        prune+=(-path "${root%/}$mount" -prune -o)
+    done < <(findmnt -rn -o TARGET 2>/dev/null)
+    # find exits non-zero on an unreadable path; what it printed still counts.
+    out="$(timeout "$MACHINE_VERIFY_TIMEOUT" sudo -n find "$root" "${prune[@]}" \
+        \( -name .credentials.json -o -name .claude.json -o -name auth.json -o -name hosts.yml \
+           -o -name oauth_creds.json -o -name '*oauth*token*' -o -path '*/mcp-agent-mail/config.env' \
+           -o -path "${root%/}/etc/acfs/config.env" \) -print 2>/dev/null </dev/null)" || rc=$?
+    if ((rc == 124)); then
+        machine_record "$check" fail "the search of the root volume didn't finish within ${MACHINE_VERIFY_TIMEOUT}s"
+        return 0
+    fi
+    while IFS= read -r f; do
+        [[ -n "$f" ]] && found+=("${f#"${root%/}"}")
+    done <<<"$out"
     if ((${#found[@]} == 0)); then
-        machine_record "$check" ok "none of the known login files is under /root or /etc"
+        machine_record "$check" ok "no login file on the root volume outside the state volume"
     else
-        machine_record "$check" fail "login files outside the user's home: ${found[*]} (a rebuild loses them)"
+        machine_record "$check" fail "login files outside the state volume: ${found[*]} (a rebuild loses them)"
     fi
 }
 
@@ -704,6 +789,8 @@ machine_verify_local() {
     machine_require jq
     machine_check_claude
     machine_check_codex
+    machine_check_claude_session
+    machine_check_codex_session
     machine_check_agy
     machine_check_gemini
     machine_check_pi
