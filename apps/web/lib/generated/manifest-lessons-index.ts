@@ -70,6 +70,11 @@ export const manifestLessonLinks: ManifestLessonLink[] = [
     lessonSlug: "sbh",
     displayName: "Storage Ballast Helper",
   },
+  {
+    moduleId: "tools.herdr",
+    lessonSlug: "herdr",
+    displayName: "herdr",
+  },
 ];
 
 /** Lookup lesson slug by module ID */
@@ -86,4 +91,5 @@ export const lessonSlugByModuleId: Record<string, string> = {
   "stack.process_triage": "pt",
   "stack.rch": "rch",
   "stack.storage_ballast_helper": "sbh",
+  "tools.herdr": "herdr",
 };

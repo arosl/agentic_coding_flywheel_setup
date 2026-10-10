@@ -1767,6 +1767,27 @@ modules:
     optional: false
     enabled_by_default: true
     tags: [recommended, agents]
+    web:
+      display_name: "herdr"
+      short_name: "herdr"
+      tagline: "Where your agents run - panes, tabs, workspaces, and each agent's state"
+      icon: "layout-grid"
+      color: "#0EA5E9"
+      href: "https://herdr.dev"
+      features:
+        - "Workspaces, tabs and panes that outlive your SSH session"
+        - "Knows each agent's state: working, blocked, done or idle"
+        - "Starts, prompts and waits on agents from the command line"
+        - "Integrations for Claude Code, Codex and other agent CLIs"
+      tech_stack: ["Rust"]
+      use_cases:
+        - "Running several coding agents side by side on one VPS"
+        - "Prompting an agent and waiting until its turn is done"
+        - "Picking up your agents again after a disconnect"
+      language: "Rust"
+      cli_name: "herdr"
+      command_example: "herdr agent list"
+      lesson_slug: "herdr"
     # The integrations below are added only for agent CLIs already on PATH.
     # On the generated path, phase 9 runs after the phase-7 agents. install.sh
     # installs Grok, oh-my-pi and OpenCode in its stack phase instead, and

@@ -816,6 +816,32 @@ export const manifestTldrTools: ManifestTldrTool[] = [
     stars: 132,
   },
   {
+    id: "tools-herdr",
+    moduleId: "tools.herdr",
+    displayName: "herdr",
+    shortName: "herdr",
+    tagline: "Where your agents run - panes, tabs, workspaces, and each agent's state",
+    tldrSnippet: "herdr terminal workspace manager for coding agents, with its agent integrations",
+    icon: "layout-grid",
+    color: "#0EA5E9",
+    href: "https://herdr.dev",
+    features: [
+      "Workspaces, tabs and panes that outlive your SSH session",
+      "Knows each agent's state: working, blocked, done or idle",
+      "Starts, prompts and waits on agents from the command line",
+      "Integrations for Claude Code, Codex and other agent CLIs",
+    ],
+    techStack: [
+      "Rust",
+    ],
+    useCases: [
+      "Running several coding agents side by side on one VPS",
+      "Prompting an agent and waiting until its turn is done",
+      "Picking up your agents again after a disconnect",
+    ],
+    language: "Rust",
+  },
+  {
     id: "utils-aadc",
     moduleId: "utils.aadc",
     displayName: "ASCII Art Diagram Corrector",

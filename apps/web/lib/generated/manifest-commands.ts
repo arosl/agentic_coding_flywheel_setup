@@ -282,6 +282,16 @@ export const manifestCommands: ManifestCommand[] = [
     docsUrl: "https://github.com/Dicklesworthstone/ultimate_bug_scanner",
   },
   {
+    moduleId: "tools.herdr",
+    displayName: "herdr",
+    moduleCategory: "tools",
+    cliName: "herdr",
+    cliAliases: [],
+    description: "herdr terminal workspace manager for coding agents, with its agent integrations",
+    commandExample: "herdr agent list",
+    docsUrl: "https://herdr.dev",
+  },
+  {
     moduleId: "utils.aadc",
     displayName: "ASCII Art Diagram Corrector",
     moduleCategory: "tools",
