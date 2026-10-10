@@ -1,0 +1,38 @@
+name: herdr agents (stub herdr)
+
+# The fork's own workflow. It runs scripts/lib/herdr_agents.sh (acfs agents
+# spawn/send/list) against a stub herdr and a stub am. Upstream's
+# installer.yml runs each tests/unit script by name, so a new one needs its
+# own job.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/lib/herdr_agents.sh'
+      - 'tests/unit/test_herdr_agents.sh'
+      - '.github/workflows/herdr-agents.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/lib/herdr_agents.sh'
+      - 'tests/unit/test_herdr_agents.sh'
+      - '.github/workflows/herdr-agents.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  stub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+      - name: Agent helper against a stub herdr
+        run: HOME="$(mktemp -d)" bash tests/unit/test_herdr_agents.sh
