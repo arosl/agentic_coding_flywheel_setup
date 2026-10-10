@@ -41,12 +41,15 @@ jobs:
 
       - name: Lint workflow YAML files
         run: |
-          # Create minimal config that catches critical YAML syntax errors
+          # Create minimal config that catches critical YAML syntax errors.
+          # Line length is style, not syntax: upstream's workflows carry
+          # error messages longer than 200 characters, so it only warns.
           cat > /tmp/yamllint.yml << 'EOF'
           extends: default
           rules:
             line-length:
               max: 200
+              level: warning
             key-ordering: disable
             comments:
               min-spaces-from-content: 1

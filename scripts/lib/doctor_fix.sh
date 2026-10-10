@@ -1745,7 +1745,9 @@ dispatch_fix() {
             fix_verified_install "$check_id" "herdr" "herdr"
             ;;
         stack.ubs|stack.ultimate_bug_scanner|stack.ultimate_bug_scanner.*)
-            fix_verified_install "$check_id" "ubs" "ubs" --easy-mode
+            # Same args as the manifest: hooks are ACFS's (#400), and
+            # tools.ast_grep provides ast-grep (acfs-9ij4).
+            fix_verified_install "$check_id" "ubs" "ubs" --easy-mode --skip-hooks --skip-ast-grep
             ;;
         stack.beads_viewer|stack.bv)
             fix_verified_install "$check_id" "bv" "bv"

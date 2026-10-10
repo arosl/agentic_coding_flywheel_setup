@@ -16118,6 +16118,28 @@ STUBS
     assert_failure
 }
 
+@test "UBS installs never fetch their own ast-grep (acfs-9ij4)" {
+    # UBS's installer misses the cargo ast-grep (tools.ast_grep, a dependency)
+    # when ~/.cargo/bin is off its PATH, then takes the first of ast-grep/sg that
+    # find lists in the release zip. When that is the sg launcher, it lands as
+    # ~/.local/bin/ast-grep, and sg and ast-grep exec each other until EAGAIN.
+    run grep -F 'update_run_verified_installer ubs --easy-mode --skip-hooks --skip-ast-grep' \
+        "$PROJECT_ROOT/scripts/lib/update.sh"
+    assert_success
+    run grep -F 'acfs_run_verified_upstream_script_as_target "ubs" "bash" --easy-mode --skip-hooks --skip-ast-grep' \
+        "$PROJECT_ROOT/install.sh"
+    assert_success
+    run grep -F 'fix_verified_install "$check_id" "ubs" "ubs" --easy-mode --skip-hooks --skip-ast-grep' \
+        "$PROJECT_ROOT/scripts/lib/doctor_fix.sh"
+    assert_success
+    run grep -F 'args: ["--easy-mode", "--skip-hooks", "--skip-ast-grep"]' \
+        "$PROJECT_ROOT/acfs.manifest.yaml"
+    assert_success
+    run grep -F "'--easy-mode' '--skip-hooks' '--skip-ast-grep'" \
+        "$PROJECT_ROOT/scripts/generated/install_stack.sh"
+    assert_success
+}
+
 @test "acfs origin check: insteadOf-injected credentials are accepted but never logged" {
     local tokened="https://x-access-token:gho_FAKE0000000000000000000000000000000@github.com/Dicklesworthstone/agentic_coding_flywheel_setup.git"
 

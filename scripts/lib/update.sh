@@ -7577,7 +7577,9 @@ update_stack() {
     # $CLAUDE_PROJECT_DIR-relative hook paths into the user-level
     # ~/.claude/settings.json every night (#400). ACFS wires agent hooks (DCG)
     # itself; per-project UBS hooks are a choice made inside a repo.
-    run_cmd "Ultimate Bug Scanner" update_run_verified_installer ubs --easy-mode --skip-hooks
+    # --skip-ast-grep: tools.ast_grep provides it; UBS's own fetch could install
+    # the sg launcher as ~/.local/bin/ast-grep, which execs itself (acfs-9ij4).
+    run_cmd "Ultimate Bug Scanner" update_run_verified_installer ubs --easy-mode --skip-hooks --skip-ast-grep
 
     # Beads Viewer - always install/update
     run_cmd "Beads Viewer" update_run_verified_installer bv

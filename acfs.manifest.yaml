@@ -2422,7 +2422,10 @@ modules:
       # --skip-hooks: ACFS wires agent hooks itself (DCG); the UBS installer's
       # auto-accepted hook prompts wrote user-level Claude settings when run
       # outside a repo (#400).
-      args: ["--easy-mode", "--skip-hooks"]
+      # --skip-ast-grep: tools.ast_grep installs it. Without ~/.cargo/bin on
+      # its PATH, UBS fetched its own and could install ast-grep's sg launcher
+      # as ~/.local/bin/ast-grep, which then execs itself (acfs-9ij4).
+      args: ["--easy-mode", "--skip-hooks", "--skip-ast-grep"]
     install: []
     verify:
       - ubs --help
