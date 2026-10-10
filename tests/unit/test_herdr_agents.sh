@@ -86,6 +86,12 @@ case "$1 $2" in
             [[ ! -e "$STUB_DIR/${code}_$3" ]] || fail_with "$code" "agent $3: $code"
         done
         printf '%s' "$4" >"$STUB_DIR/prompt_$3"
+        # /clear and /new start a fresh session with an empty input box,
+        # unless no_reset_<name> says the command did not take.
+        if [[ "$4" == /clear || "$4" == /new ]] && [[ ! -e "$STUB_DIR/no_reset_$3" ]]; then
+            printf 'fresh-%s' "$3" >"$STUB_DIR/session_$3"
+            printf '\342\235\257 \n' >"$STUB_DIR/screen_$3"
+        fi
         for code in agent_prompt_stalled timeout; do
             [[ ! -e "$STUB_DIR/${code}_$3" ]] || fail_with "$code" "agent $3: $code"
         done
@@ -107,6 +113,13 @@ case "$1 $2" in
         printf '{"id":"cli:agent:wait","result":{"agent":{"name":"%s","agent_status":"idle"}}}\n' "$3"
         ;;
     "agent list") cat "$STUB_DIR/list.json" ;;
+    "agent get")
+        # The agent from list.json, with the session session_<name> holds.
+        jq -c --arg n "$3" --arg s "$(cat "$STUB_DIR/session_$3" 2>/dev/null)" '
+            first(.result.agents[] | select(.name == $n))
+            | if $s != "" then .agent_session = {value: $s} else . end
+            | {id: "cli:agent:get", result: {agent: ., type: "agent"}}' "$STUB_DIR/list.json"
+        ;;
     "tab list") cat "$STUB_DIR/tabs.json" ;;
     "pane close") printf '{"id":"cli:pane:close","result":{"type":"ok"}}\n' ;;
     *) fail_with unexpected "stub herdr got: $*" ;;
@@ -1179,6 +1192,158 @@ wake_case wakeinterval
 run_wake --loop --interval 0
 check "--interval takes only whole seconds above zero" \
     bash -c '[[ "$1" -ne 0 ]] && grep -q -- "--interval needs whole seconds" <<<"$2"' _ "$RC" "$ERR"
+
+echo "recycle"
+# AlphaFox: Claude, idle, in session old-a; BetaOwl: Codex, done, no
+# session (Codex reports none); GammaYak: Claude, working; DeltaElk: Claude,
+# idle, in this pane (w9:p9). Each case uses its own project key.
+export HERDR_AGENTS_RECYCLE_WAIT_TRIES=3 HERDR_AGENTS_RECYCLE_WAIT_INTERVAL=0
+recycle_case() {
+    reset_stub "$1"
+    RECYCLE_PROJECT="/proj/$1"
+    cat >"$STUB_DIR/list.json" <<'EOF'
+{"id":"cli:agent:list","result":{"agents":[
+ {"agent":"claude","agent_session":{"value":"old-a"},"agent_status":"idle","name":"alphafox","pane_id":"w9:p1","tab_id":"w9:t1","workspace_id":"w9"},
+ {"agent":"codex","agent_session":null,"agent_status":"done","name":"betaowl","pane_id":"w9:p2","tab_id":"w9:t2","workspace_id":"w9"},
+ {"agent":"claude","agent_session":{"value":"old-g"},"agent_status":"working","name":"gammayak","pane_id":"w9:p3","tab_id":"w9:t3","workspace_id":"w9"},
+ {"agent":"claude","agent_session":{"value":"old-d"},"agent_status":"idle","name":"deltaelk","pane_id":"w9:p9","tab_id":"w9:t9","workspace_id":"w9"}
+]}}
+EOF
+    printf '\342\235\257 \n' >"$STUB_DIR/screen_alphafox"
+    printf '\342\200\272 \n' >"$STUB_DIR/screen_betaowl"
+}
+run_recycle() { run_helper recycle --project "$RECYCLE_PROJECT" "$@"; }
+# The herdr calls, without list, read and get.
+sends() { grep '^herdr agent prompt' "$STUB_DIR/calls" || true; }
+
+recycle_case rclaude
+run_recycle AlphaFox
+check "a Claude agent gets /clear, and the prompt once herdr shows its new session" \
+    bash -c '[[ "$1" -eq 0 ]] && [[ "$(grep -c . <<<"$2")" -eq 2 ]] \
+        && grep -q "^herdr agent prompt alphafox /clear$" <<<"$2" \
+        && [[ "$(sed -n 2p <<<"$2")" == "herdr agent prompt alphafox You are AlphaFox in Agent Mail (herdr name alphafox), project key /proj/rclaude;"*"--wait --until working --until blocked --timeout 15000" ]]' \
+    _ "$RC" "$(sends)"
+check "the new session is checked between the two prompts" \
+    bash -c 'grep -n "" "$1" | grep -A1 "prompt alphafox /clear" | grep -q "herdr agent get alphafox"' _ "$STUB_DIR/calls"
+check "a recycle is one line on stderr, with the time in UTC" \
+    bash -c 'grep -Eq "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z recycled alphafox \(AlphaFox\): /clear, then the prompt$" <<<"$1"' _ "$ERR"
+
+recycle_case rcodex
+run_recycle BetaOwl
+check "a Codex agent gets /new, then the prompt" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "^herdr agent prompt betaowl /new$" <<<"$2" && grep -q "^herdr agent prompt betaowl You are BetaOwl" <<<"$2"' \
+    _ "$RC" "$(sends)"
+
+recycle_case rworking
+run_recycle GammaYak
+check "a working agent is refused with exit 2, and nothing is sent" \
+    bash -c '[[ "$1" -eq 2 && -z "$2" ]] && grep -q "gammayak is working; an agent is recycled only between turns" <<<"$3"' _ "$RC" "$(sends)" "$ERR"
+
+recycle_case rdialog
+printf 'Do you want to proceed?\n\342\235\257 1. Yes\n  Esc to cancel\n' >"$STUB_DIR/screen_alphafox"
+run_recycle AlphaFox
+check "a dialog on the screen is refused with exit 2, and nothing is sent" \
+    bash -c '[[ "$1" -eq 2 && -z "$2" ]] && grep -q "a dialog is on the screen of alphafox" <<<"$3"' _ "$RC" "$(sends)" "$ERR"
+
+recycle_case rtyped
+printf '\342\235\257 half a sentence\n' >"$STUB_DIR/screen_alphafox"
+run_recycle AlphaFox
+check "unsent text in the input box is refused with exit 2, and nothing is sent" \
+    bash -c '[[ "$1" -eq 2 && -z "$2" ]] && grep -q "unsent text is in the input box of alphafox" <<<"$3"' _ "$RC" "$(sends)" "$ERR"
+
+recycle_case rnoreset
+touch "$STUB_DIR/no_reset_alphafox"
+run_recycle AlphaFox
+check "a /clear that starts no new session fails, and the prompt is not sent" \
+    bash -c '[[ "$1" -eq 1 && "$(grep -c . <<<"$2")" -eq 1 ]] && grep -q "alphafox shows no fresh session after /clear" <<<"$3"' _ "$RC" "$(sends)" "$ERR"
+
+recycle_case rself
+run_recycle DeltaElk
+check "the pane running recycle is never recycled" \
+    bash -c '[[ "$1" -eq 1 && -z "$2" ]] && grep -q "deltaelk runs in this pane" <<<"$3"' _ "$RC" "$(sends)" "$ERR"
+
+recycle_case rmissing
+run_recycle NoSuch
+check "a name herdr does not list fails, naming the dropped-name hint" \
+    bash -c '[[ "$1" -eq 1 && -z "$2" ]] && grep -q "herdr lists 0 agents named nosuch" <<<"$3"' _ "$RC" "$(sends)" "$ERR"
+
+recycle_case rprompt
+run_recycle AlphaFox --prompt 'A&B {{agent}} as {{herdr}} in {{project}}'
+check "--prompt fills in {{agent}}, {{herdr}} and {{project}}, and keeps & literal" \
+    test "$(cat "$STUB_DIR/prompt_alphafox")" = "A&B AlphaFox as alphafox in /proj/rprompt"
+
+recycle_case rdry
+run_recycle AlphaFox --dry-run
+check "--dry-run says what it would send and sends nothing" \
+    bash -c '[[ "$1" -eq 0 && -z "$2" ]] && grep -q "would recycle alphafox (AlphaFox): send /clear, then: You are AlphaFox" <<<"$3"' _ "$RC" "$(sends)" "$ERR"
+
+echo "recycle --watch"
+recycle_state() { printf '%s/acfs-home/state/recycle/%s/Boss.json' "$WORK" "$(printf '%s' "$RECYCLE_PROJECT" | sha256sum | cut -c1-16)"; }
+run_watch() { run_recycle --watch --coordinator Boss "$@"; }
+# Deliver to Boss message cursor $1 from $2 with subject $3.
+mail_boss() {
+    local file="$STUB_DIR/events_Boss.json"
+    [[ -s "$file" ]] || printf '[]\n' >"$file"
+    jq -c --argjson c "$1" --arg f "$2" --arg s "$3" '. + [{cursor: $c, message_id: $c, kind: "to", from: $f, subject: $s}]' "$file" >"$file.new"
+    mv "$file.new" "$file"
+}
+
+recycle_case wfirst
+mail_boss 1 AlphaFox "[loop] AlphaFox: done acfs-old"
+run_watch
+check "mail from before the first watch recycles nobody" \
+    bash -c '[[ "$1" -eq 0 && -z "$2" ]] && jq -e ".cursor == 1 and .pending == []" "$3" >/dev/null' _ "$RC" "$(sends)" "$(recycle_state)"
+mail_boss 2 AlphaFox "[loop] AlphaFox: done acfs-1"
+mail_boss 3 BetaOwl "[loop] AlphaFox: done acfs-2"
+mail_boss 4 BetaOwl "[loop] BetaOwl: done acfs-3, continue on the same code"
+mail_boss 5 BetaOwl "[acfs-3] Completed"
+run_watch
+check "a done mail from the agent it names recycles that agent" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "^herdr agent prompt alphafox /clear$" <<<"$2"' _ "$RC" "$(sends)"
+check "a done mail naming another agent, one that continues, and other mail recycle nobody" \
+    bash -c '! grep -q "betaowl" <<<"$1" && [[ "$(grep -c "alphafox /clear" <<<"$1")" -eq 1 ]]' _ "$(sends)"
+run_watch
+check "the next cycle does not recycle it again" test "$(count_calls '^herdr agent prompt alphafox /clear')" = 1
+
+recycle_case wpending
+run_watch
+mail_boss 1 GammaYak "[loop] GammaYak: done acfs-4"
+run_watch
+check "an agent still in its turn stays pending, and nothing is sent" \
+    bash -c '[[ "$1" -eq 0 && -z "$2" ]] && jq -e ".pending | map(.name) == [\"GammaYak\"]" "$3" >/dev/null' _ "$RC" "$(sends)" "$(recycle_state)"
+set_status gammayak idle
+printf '\342\235\257 \n' >"$STUB_DIR/screen_gammayak"
+run_watch
+check "once its turn ends, the pending agent is recycled and leaves the list" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "^herdr agent prompt gammayak /clear$" <<<"$2" && jq -e ".pending == []" "$3" >/dev/null' _ "$RC" "$(sends)" "$(recycle_state)"
+
+recycle_case wexpire
+run_watch
+mail_boss 1 GammaYak "[loop] GammaYak: done acfs-5"
+HERDR_AGENTS_RECYCLE_PENDING_MAX=0 run_watch
+check "a pending agent past the limit is dropped, and the cycle says to recycle it by hand" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "not recycled: GammaYak (\[loop\] GammaYak: done acfs-5); recycle it by hand" <<<"$2" && jq -e ".pending == []" "$3" >/dev/null' _ "$RC" "$ERR" "$(recycle_state)"
+
+recycle_case wdry
+run_watch
+mail_boss 1 AlphaFox "[loop] AlphaFox: done acfs-6"
+run_watch --dry-run
+check "--watch --dry-run sends nothing and keeps the cursor" \
+    bash -c '[[ "$1" -eq 0 && -z "$2" ]] && grep -q "would recycle alphafox" <<<"$3" && jq -e ".cursor == 0" "$4" >/dev/null' _ "$RC" "$(sends)" "$ERR" "$(recycle_state)"
+
+recycle_case wlock
+run_watch
+exec {recycle_lock_fd}>"$(dirname "$(recycle_state)")/Boss.lock"
+flock -n "$recycle_lock_fd"
+run_watch
+exec {recycle_lock_fd}>&-
+check "a second watcher for the same coordinator refuses to run" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "another acfs agents recycle --watch is running for Boss" <<<"$2"' _ "$RC" "$ERR"
+
+recycle_case wnocoord
+AGENT_MAIL_AGENT='' AGENT_NAME='' run_recycle --watch
+check "--watch without a coordinator is refused" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "recycle --watch needs --coordinator" <<<"$2"' _ "$RC" "$ERR"
 
 echo
 echo "passed: $PASS, failed: $FAIL"

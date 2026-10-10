@@ -19,6 +19,7 @@
 #   acfs agents wake [--workspace ID] [--project KEY] [--loop [--interval SEC]] [--dry-run]
 #   acfs agents codex-daemon (status [--json] | start | restart)
 #   acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token T] [--dry-run]
+#   acfs agents recycle (<MailName> | --watch [--coordinator NAME] [--loop]) [--prompt TEXT] [--dry-run]
 #   acfs agents quota [--json] | quota check <kind> | quota record-claude   (agent_quota.sh)
 # ============================================================
 
@@ -36,6 +37,9 @@ HERDR_AGENTS_INBOX_LIMIT=1000000
 # wake: what an agent is sent, and the fewest seconds between two wakes of one agent.
 HERDR_AGENTS_WAKE_PROMPT="Check your Agent Mail inbox."
 HERDR_AGENTS_WAKE_GAP=120
+# recycle: what an agent is sent after its context is cleared, unless
+# --prompt or ACFS_AGENTS_RECYCLE_PROMPT says otherwise.
+HERDR_AGENTS_RECYCLE_PROMPT="You are {{agent}} in Agent Mail (herdr name {{herdr}}), project key {{project}}; your identity already exists. Fresh session: read AGENTS.md, then check your Agent Mail inbox and continue from there."
 
 herdr_agents_usage() {
     cat <<'EOF'
@@ -50,6 +54,8 @@ Usage:
   acfs agents wake  [--workspace ID] [--project KEY] [--loop [--interval SEC]] [--dry-run]
   acfs agents codex-daemon (status [--json] | start | restart)
   acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token TOKEN] [--dry-run]
+  acfs agents recycle (<MailName> | --watch [--coordinator NAME] [--loop [--interval SEC]])
+                    [--workspace ID] [--project KEY] [--prompt TEXT] [--timeout MS] [--dry-run]
   acfs agents quota [--json] | quota check KIND [--limit PERCENT] | quota record-claude
 
 spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
@@ -122,6 +128,25 @@ retire Retire an agent whose work is done: leave a handoff comment on its bead
        given the agent's registration token (--token or
        AGENT_MAIL_REGISTRATION_TOKEN), soft-retires its Agent Mail identity;
        unretire_agent restores it. --dry-run lists what it would do.
+recycle
+       Give an agent a fresh context in its own pane, tab and names, between
+       two tasks: send /clear (Claude Code) or /new (Codex), see that it
+       took, then send the prompt. Claude Code must show a new session in
+       herdr; Codex, which reports none, must show an empty input box. The
+       prompt is --prompt, else $ACFS_AGENTS_RECYCLE_PROMPT, else one that
+       tells the agent who it is and to reread AGENTS.md and its inbox;
+       {{agent}}, {{herdr}} and {{project}} in it become the Agent Mail
+       name, the herdr name and the project key. Refuses, sending nothing,
+       an agent that is not idle or done, or whose screen shows a dialog or
+       unsent text (exit 2), and the pane running recycle (exit 1).
+       --watch reads the coordinator's mail (--coordinator, else
+       $AGENT_MAIL_AGENT, else $AGENT_NAME) and recycles each agent that
+       mailed it "[loop] <Name>: done ...", unless that subject says the
+       agent continues ("continue", "continuing"). Mail from before the first
+       watch, and a done mail whose sender is not <Name>, recycle nobody.
+       An agent still in its turn is tried again each cycle, for an hour.
+       --loop repeats every --interval seconds (default 60); its state
+       lives in ~/.acfs/state/recycle/.
 quota  Show how full each plan's 5-hour and weekly usage windows are, and how
        many live agents of each kind there are (agent_quota.sh; see
        'acfs agents quota --help'). Read-only.
@@ -1361,6 +1386,216 @@ herdr_agents_retire() {
     herdr_agents_note "retired $mail_name"
 }
 
+# ------------------------------------------------------------
+# recycle
+# ------------------------------------------------------------
+
+# Prompt template $1 with {{agent}} (Agent Mail name $2), {{herdr}} (herdr
+# name $3) and {{project}} ($4) filled in. The replacements are quoted, so
+# an & in them stays literal under patsub_replacement.
+herdr_agents_recycle_prompt() {
+    local text="$1"
+    text="${text//\{\{agent\}\}/"$2"}"
+    text="${text//\{\{herdr\}\}/"$3"}"
+    text="${text//\{\{project\}\}/"$4"}"
+    printf '%s\n' "$text"
+}
+
+# Recycle agent $1 (Agent Mail name) in workspace $2 ("" = any): send its
+# kind's clear command, see that it took, then send the prompt from
+# template $4 (project key $3), each confirmed within $5 ms. $6 = true only
+# says what it would do. Returns 0 when recycled, 2 when the agent is not
+# between turns yet (working, blocked, a dialog or unsent text on its
+# screen) and nothing was sent, 1 on any other failure.
+herdr_agents_recycle_one() {
+    local mail_name="$1" workspace="$2" project="$3" template="$4" timeout="$5" dry_run="$6"
+    local herdr_name agents count agent status kind pane before command state prompt i
+    local tries="${HERDR_AGENTS_RECYCLE_WAIT_TRIES:-30}" interval="${HERDR_AGENTS_RECYCLE_WAIT_INTERVAL:-0.5}"
+    herdr_name="$(herdr_agents_herdr_name "$mail_name")" || { herdr_agents_note "recycle: $HERDR_AGENTS_NAME_ERROR"; return 1; }
+    # select dies on a failed `herdr agent list`; here that only ends its subshell.
+    agents="$(herdr_agents_select "$workspace" "[]" "$(jq -nc --arg n "$herdr_name" '[$n]')")" || return 1
+    count="$(jq 'length' <<<"$agents")"
+    if (( count != 1 )); then
+        herdr_agents_note "recycle: herdr lists $count agents named $herdr_name${workspace:+ in workspace $workspace}; its herdr name may have dropped (see 'acfs agents list')"
+        return 1
+    fi
+    agent="$(jq -c '.[0]' <<<"$agents")"
+    status="$(jq -r '.agent_status // "unknown"' <<<"$agent")"
+    kind="$(jq -r '.agent // empty' <<<"$agent")"
+    pane="$(jq -r '.pane_id' <<<"$agent")"
+    before="$(jq -r '.agent_session.value // empty' <<<"$agent")"
+    if [[ -n "${HERDR_PANE_ID:-}" && "$pane" == "$HERDR_PANE_ID" ]]; then
+        herdr_agents_note "recycle: $herdr_name runs in this pane"
+        return 1
+    fi
+    case "$kind" in
+        claude) command=/clear ;;
+        codex) command=/new ;;
+        *) herdr_agents_note "recycle: $herdr_name is a ${kind:-unknown} agent; recycle knows claude (/clear) and codex (/new)"; return 1 ;;
+    esac
+    case "$status" in
+        idle|done) ;;
+        *) herdr_agents_note "recycle: $herdr_name is $status; an agent is recycled only between turns (idle or done)"; return 2 ;;
+    esac
+    # Never type over a dialog or over text someone typed and has not sent.
+    if ! herdr_agents_herdr agent read "$herdr_name" --source visible --lines 30 --format ansi; then
+        herdr_agents_note "recycle: the screen of $herdr_name could not be read ($HERDR_AGENTS_ERR_CODE)"
+        return 1
+    fi
+    state="$(herdr_agents_screen_state <<<"$HERDR_AGENTS_OUT")"
+    case "$state" in
+        empty|suggestion) ;;
+        dialog) herdr_agents_note "recycle: a dialog is on the screen of $herdr_name; answer it in its pane first"; return 2 ;;
+        typed) herdr_agents_note "recycle: unsent text is in the input box of $herdr_name; look at its pane first"; return 2 ;;
+        *) herdr_agents_note "recycle: no input box is recognised on the screen of $herdr_name"; return 2 ;;
+    esac
+    prompt="$(herdr_agents_recycle_prompt "$template" "$mail_name" "$herdr_name" "$project")"
+    if [[ "$dry_run" == true ]]; then
+        herdr_agents_note "would recycle $herdr_name ($mail_name): send $command, then: $prompt"
+        return 0
+    fi
+
+    if ! herdr_agents_herdr agent prompt "$herdr_name" "$command"; then
+        herdr_agents_note "recycle: $command was not sent to $herdr_name ($HERDR_AGENTS_ERR_CODE): $HERDR_AGENTS_ERR_MESSAGE"
+        return 1
+    fi
+    # Claude Code starts a new session on /clear, which herdr reports as a
+    # new agent_session. Codex reports no session, so for it the command
+    # must at least have left the input box (it is not still typed there).
+    for ((i = 0; i < tries; i++)); do
+        if [[ -n "$before" ]]; then
+            herdr_agents_herdr agent get "$herdr_name" \
+                && jq -e --arg b "$before" '.result.agent
+                    | (.agent_session.value // "") as $s
+                    | $s != "" and $s != $b and (.agent_status == "idle" or .agent_status == "done")' \
+                    <<<"$HERDR_AGENTS_OUT" >/dev/null 2>&1 \
+                && break
+        elif herdr_agents_herdr agent read "$herdr_name" --source visible --lines 30 --format ansi; then
+            state="$(herdr_agents_screen_state <<<"$HERDR_AGENTS_OUT")"
+            [[ "$state" != empty && "$state" != suggestion ]] || break
+        fi
+        sleep "$interval"
+    done
+    if (( i == tries )); then
+        herdr_agents_note "recycle: $herdr_name shows no fresh session after $command; look at its pane (the prompt was not sent)"
+        return 1
+    fi
+    herdr_agents_prompt_one "$herdr_name" "$prompt" "$timeout" false quiet || return 1
+    herdr_agents_note "$(date -u +%Y-%m-%dT%H:%M:%SZ) recycled $herdr_name ($mail_name): $command, then the prompt"
+}
+
+# One watch cycle: read coordinator $1's new mail in project $3, and recycle
+# each agent whose "[loop] <Name>: done ..." mail came from that agent,
+# unless its subject says it continues. An agent not yet between turns stays
+# pending for up to HERDR_AGENTS_RECYCLE_PENDING_MAX seconds (default 3600).
+# State (the delivery cursor and the pending agents) lives in file $7.
+herdr_agents_recycle_watch_cycle() {
+    local coordinator="$1" workspace="$2" project="$3" template="$4" timeout="$5" dry_run="$6" file="$7"
+    local max_age="${HERDR_AGENTS_RECYCLE_PENDING_MAX:-3600}"
+    local state page scan has_more now pending count i name since rc kept="[]" failed=0
+    now="$(date +%s)"
+    state="$(jq -c 'select((.cursor | type) == "number" and (.pending | type) == "array")' "$file" 2>/dev/null || true)"
+    if [[ -z "$state" ]]; then
+        # Mail from before the watcher's first cycle recycles nobody.
+        page="$(am inbox-events --agent "$coordinator" --project "$project" --position-now --json </dev/null)" \
+            || { herdr_agents_note "recycle: am inbox-events failed for $coordinator"; return 1; }
+        state="$(jq -c '{cursor: .next_cursor, pending: []}' <<<"$page")" \
+            || { herdr_agents_note "recycle: could not read am's inbox events for $coordinator"; return 1; }
+    fi
+    scan="$(jq -r '.cursor' <<<"$state")"
+    pending="$(jq -c '.pending' <<<"$state")"
+    while :; do
+        page="$(am inbox-events --agent "$coordinator" --project "$project" --after "$scan" --limit 1000 --json </dev/null)" \
+            || { herdr_agents_note "recycle: am inbox-events failed for $coordinator"; return 1; }
+        pending="$(jq -c --argjson pending "$pending" --argjson now "$now" '
+            reduce (.events[]?
+                    | select(.kind == "to" or .kind == "cc" or .kind == "bcc")
+                    | (.subject // "") as $s
+                    | ($s | capture("^\\[loop\\] (?<name>[A-Za-z][A-Za-z0-9_-]*): done ")? // empty) as $m
+                    | select(.from == $m.name)
+                    | select($s | test("continu"; "i") | not)
+                    | {name: $m.name, subject: $s, since: $now}) as $e
+                ($pending; if any(.[]; .name == $e.name) then . else . + [$e] end)' <<<"$page")" \
+            || { herdr_agents_note "recycle: could not read am's inbox events for $coordinator"; return 1; }
+        scan="$(jq -r '.next_cursor' <<<"$page")"
+        has_more="$(jq -r '.has_more' <<<"$page")"
+        [[ "$has_more" == true ]] || break
+    done
+
+    count="$(jq 'length' <<<"$pending")"
+    for ((i = 0; i < count; i++)); do
+        name="$(jq -r ".[$i].name" <<<"$pending")"
+        since="$(jq -r ".[$i].since" <<<"$pending")"
+        rc=0
+        herdr_agents_recycle_one "$name" "$workspace" "$project" "$template" "$timeout" "$dry_run" || rc=$?
+        if (( rc == 2 )) && (( now - since < max_age )); then
+            kept="$(jq -c --argjson e "$(jq -c ".[$i]" <<<"$pending")" '. + [$e]' <<<"$kept")"
+        elif (( rc != 0 )); then
+            herdr_agents_note "$(date -u +%Y-%m-%dT%H:%M:%SZ) not recycled: $name ($(jq -r ".[$i].subject" <<<"$pending")); recycle it by hand"
+            failed=$((failed + 1))
+        fi
+    done
+    [[ "$dry_run" == true ]] || herdr_agents_wake_save "$file" "$(jq -nc --argjson c "$scan" --argjson p "$kept" '{cursor: $c, pending: $p}')"
+    (( failed == 0 ))
+}
+
+herdr_agents_recycle() {
+    local workspace="" project="${AGENT_MAIL_PROJECT:-}" watch=false loop=false interval=60 dry_run=false
+    local coordinator="${AGENT_MAIL_AGENT:-${AGENT_NAME:-}}" mail_name="" timeout="$HERDR_AGENTS_PROMPT_TIMEOUT_MS"
+    local template="${ACFS_AGENTS_RECYCLE_PROMPT:-$HERDR_AGENTS_RECYCLE_PROMPT}"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --workspace) [[ $# -ge 2 ]] || herdr_agents_die "--workspace needs a value"; workspace="$2"; shift 2 ;;
+            --project) [[ $# -ge 2 ]] || herdr_agents_die "--project needs a value"; project="$2"; shift 2 ;;
+            --prompt) [[ $# -ge 2 && -n "$2" ]] || herdr_agents_die "--prompt needs a text"; template="$2"; shift 2 ;;
+            --timeout) [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || herdr_agents_die "--timeout needs milliseconds"; timeout="$2"; shift 2 ;;
+            --watch) watch=true; shift ;;
+            --coordinator) [[ $# -ge 2 ]] || herdr_agents_die "--coordinator needs a value"; coordinator="$2"; shift 2 ;;
+            --loop) loop=true; shift ;;
+            --interval) [[ $# -ge 2 && "$2" =~ ^[1-9][0-9]*$ ]] || herdr_agents_die "--interval needs whole seconds"; interval="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            -h|--help) herdr_agents_usage; return 0 ;;
+            -*) herdr_agents_die "unknown recycle option: $1" ;;
+            *) [[ -z "$mail_name" ]] || herdr_agents_die "recycle takes one agent name"; mail_name="$1"; shift ;;
+        esac
+    done
+    if [[ -z "$project" ]]; then
+        project="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    fi
+
+    if [[ "$watch" == false ]]; then
+        [[ -n "$mail_name" ]] || herdr_agents_die "recycle needs the agent's Agent Mail name, or --watch"
+        [[ "$loop" == false ]] || herdr_agents_die "--loop goes with --watch"
+        herdr_agents_require herdr jq
+        local rc=0
+        herdr_agents_recycle_one "$mail_name" "$workspace" "$project" "$template" "$timeout" "$dry_run" || rc=$?
+        return "$rc"
+    fi
+    [[ -z "$mail_name" ]] || herdr_agents_die "recycle --watch takes no agent name"
+    [[ -n "$coordinator" ]] || herdr_agents_die "recycle --watch needs --coordinator NAME (or AGENT_MAIL_AGENT / AGENT_NAME)"
+    [[ "$coordinator" =~ ^[A-Za-z][A-Za-z0-9_-]{0,63}$ ]] || herdr_agents_die "not an Agent Mail name: $coordinator"
+    herdr_agents_require herdr am jq flock sha256sum
+
+    local state_dir lock_fd file
+    state_dir="${ACFS_HOME:-$HOME/.acfs}/state/recycle/$(printf '%s' "$project" | sha256sum | cut -c1-16)"
+    mkdir -p "$state_dir"
+    printf '%s\n' "$project" >"$state_dir/project"
+    file="$state_dir/$coordinator.json"
+    # Two watchers over one mailbox would recycle each agent twice.
+    exec {lock_fd}>"$state_dir/$coordinator.lock"
+    flock -n "$lock_fd" || herdr_agents_die "another acfs agents recycle --watch is running for $coordinator in $project"
+
+    if [[ "$loop" == false ]]; then
+        herdr_agents_recycle_watch_cycle "$coordinator" "$workspace" "$project" "$template" "$timeout" "$dry_run" "$file"
+        return
+    fi
+    herdr_agents_note "recycling agents on '[loop] <Name>: done' mail to $coordinator, every ${interval}s"
+    while :; do
+        ( herdr_agents_recycle_watch_cycle "$coordinator" "$workspace" "$project" "$template" "$timeout" "$dry_run" "$file" ) || true
+        sleep "$interval"
+    done
+}
+
 herdr_agents_main() {
     local subcommand="${1:-help}"
     [[ $# -gt 0 ]] && shift
@@ -1372,6 +1607,7 @@ herdr_agents_main() {
         wake) herdr_agents_wake "$@" ;;
         codex-daemon) herdr_agents_codex_daemon "$@" ;;
         retire) herdr_agents_retire "$@" ;;
+        recycle) herdr_agents_recycle "$@" ;;
         quota) exec bash "$HERDR_AGENTS_SCRIPT_DIR/agent_quota.sh" "$@" ;;
         help|-h|--help) herdr_agents_usage ;;
         *) herdr_agents_usage >&2; return 1 ;;
