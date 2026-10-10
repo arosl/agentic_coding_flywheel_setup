@@ -2864,7 +2864,7 @@ modules:
       - brenner --version || brenner --help
     notes:
       - "ACFS installs no ntm: start research sessions with `brenner cockpit start --skip-ntm --skip-broadcast` (or `brenner session start`), which only send the Agent Mail kickoff"
-      - "The agents run in herdr panes and read the kickoff from Agent Mail; a waker (or `herdr agent prompt`) tells an idle agent to read its inbox"
+      - "The agents run in herdr panes and read the kickoff from Agent Mail; `herdr agent prompt` tells an idle agent to read its inbox"
       - "Run `brenner doctor --skip-ntm`, since brenner's doctor checks for ntm by default"
 
   - id: stack.rch

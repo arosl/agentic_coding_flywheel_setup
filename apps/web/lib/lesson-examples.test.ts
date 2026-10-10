@@ -387,6 +387,18 @@ const ROWS: ExampleRow[] = [
     wrong: /acfs beads\b/,
     right: { pattern: /acfs newproj myproject/, in: [L("welcome-lesson.tsx")] },
   },
+  // ---------------------------------------------------------- acfs-c3k
+  // ACFS ships no waker: an idle agent is told to read its mail with
+  // `herdr agent prompt`.
+  {
+    issue: "acfs-c3k",
+    cli: "herdr",
+    wrong: /\bwaker\b/i,
+    right: {
+      pattern: /herdr agent prompt`? .*inbox/,
+      in: [O("19_brenner_bot.md"), MANIFEST],
+    },
+  },
 ];
 
 describe("lesson examples match the installed CLIs", () => {

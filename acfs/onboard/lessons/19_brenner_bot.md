@@ -84,8 +84,8 @@ brenner cockpit start --thread-id RS-001 --sender <YourAgentName> --to Claude,Co
   --skip-ntm --skip-broadcast
 ```
 
-An idle agent doesn't read its mail by itself. Tell it to, with a waker if you
-run one, or with `herdr agent prompt <agent> "Read your Agent Mail inbox."`.
+An idle agent doesn't read its mail by itself. Tell it to with
+`herdr agent prompt <agent> "Read your Agent Mail inbox."`.
 Check brenner's setup with `brenner doctor --skip-ntm`.
 
 ### Session Outputs
