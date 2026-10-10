@@ -6,13 +6,14 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  rmSync,
   symlinkSync,
   truncateSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { gzipSync } from "node:zlib";
 import {
   PLUGIN_ARCHIVE_LIMITS,
@@ -24,6 +25,7 @@ import {
 
 const ROOT = "acfs-plugin-package/";
 const directory = mkdtempSync(join(tmpdir(), "acfs-plugin-archive-"));
+after(() => rmSync(directory, { recursive: true, force: true }));
 let serial = 0;
 const digest = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 interface Entry {

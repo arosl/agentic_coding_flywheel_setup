@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { chmodSync, chownSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import test, { after } from "node:test";
 import {
   buildRehearsalPlan, rehearseProfiles, parseNativeAuth, nativeAuthArgs,
   preflightEvidencePath, writeRehearsalEvidence, formatRehearsal,
@@ -12,6 +12,7 @@ import {
 } from "./agent-profile-rehearsal.js";
 
 const ROOT = mkdtempSync(join(tmpdir(), "acfs-native-rehearsal-tests-"));
+after(() => rmSync(ROOT, { recursive: true, force: true }));
 const response = (stdout: string, stderr = "", exitCode = 0): ProbeResult => ({
   outcome: exitCode === 0 ? "ok" : "exit_nonzero", exitCode,
   stdout: Buffer.from(stdout), stderr: Buffer.from(stderr),

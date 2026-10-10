@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, truncateSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -27,6 +27,16 @@ import {
 import { parseManifestFile } from "./parser.js";
 import { ModuleSchema } from "./schema.js";
 import type { Manifest } from "./types.js";
+
+const temporaryDirectories: string[] = [];
+function temporaryDirectory(prefix: string): string {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
 
 const PACKAGE_CHECKSUM = "a".repeat(64);
 const INSTALLER_CHECKSUM = "b".repeat(64);
@@ -1272,7 +1282,7 @@ describe("validatePluginPackage", () => {
 
 describe("loadPluginManifestFromFile", () => {
   test("loads and validates a valid JSON plugin file", () => {
-    const dir = mkdtempSync(join(tmpdir(), "acfs-plugin-test-"));
+    const dir = temporaryDirectory("acfs-plugin-test-");
     const pluginPath = join(dir, "plugin.json");
     const plugin = validPlugin();
     const pluginBytes = JSON.stringify(plugin, null, 2);
@@ -1286,7 +1296,7 @@ describe("loadPluginManifestFromFile", () => {
   });
 
   test("refuses to infer an archive hash from extracted manifest bytes", () => {
-    const dir = mkdtempSync(join(tmpdir(), "acfs-untrusted-plugin-test-"));
+    const dir = temporaryDirectory("acfs-untrusted-plugin-test-");
     const pluginPath = join(dir, "plugin.json");
     writeFileSync(pluginPath, JSON.stringify(validPlugin()), "utf-8");
     const opts = validationOptions();
@@ -1309,7 +1319,7 @@ describe("loadPluginManifestFromFile", () => {
   });
 
   test("refuses YAML before parsing even when its content is valid JSON", () => {
-    const dir = mkdtempSync(join(tmpdir(), "acfs-yaml-plugin-test-"));
+    const dir = temporaryDirectory("acfs-yaml-plugin-test-");
     const pluginPath = join(dir, "plugin.yaml");
     const pluginBytes = JSON.stringify(validPlugin());
     writeFileSync(pluginPath, pluginBytes, "utf-8");
@@ -1327,7 +1337,7 @@ describe("loadPluginManifestFromFile", () => {
   });
 
   test("refuses an oversized manifest before syntax parsing", () => {
-    const dir = mkdtempSync(join(tmpdir(), "acfs-oversized-plugin-test-"));
+    const dir = temporaryDirectory("acfs-oversized-plugin-test-");
     const pluginPath = join(dir, "plugin.json");
     writeFileSync(pluginPath, "{", "utf-8");
     truncateSync(pluginPath, MAX_PLUGIN_MANIFEST_BYTES + 1);
@@ -1349,7 +1359,7 @@ describe("loadPluginManifestFromFile", () => {
   });
 
   test("refuses invalid UTF-8 that a lossy decoder could turn into valid JSON", () => {
-    const dir = mkdtempSync(join(tmpdir(), "acfs-invalid-utf8-plugin-test-"));
+    const dir = temporaryDirectory("acfs-invalid-utf8-plugin-test-");
     const pluginPath = join(dir, "plugin.json");
     const pluginBytes = Buffer.from(JSON.stringify(validPlugin()), "utf-8");
     const displayNameOffset = pluginBytes.indexOf(Buffer.from("Example Tools"));
@@ -1370,7 +1380,7 @@ describe("loadPluginManifestFromFile", () => {
   });
 
   test("refuses duplicate JSON keys instead of silently accepting the last value", () => {
-    const dir = mkdtempSync(join(tmpdir(), "acfs-duplicate-key-plugin-test-"));
+    const dir = temporaryDirectory("acfs-duplicate-key-plugin-test-");
     const pluginPath = join(dir, "plugin.json");
     const pluginBytes = JSON.stringify(validPlugin()).replace(
       '"displayName":"Example Tools"',
@@ -1391,7 +1401,7 @@ describe("loadPluginManifestFromFile", () => {
   });
 
   test("refuses excessive JSON nesting before recursive schema inspection", () => {
-    const dir = mkdtempSync(join(tmpdir(), "acfs-deep-json-plugin-test-"));
+    const dir = temporaryDirectory("acfs-deep-json-plugin-test-");
     const pluginPath = join(dir, "plugin.json");
     const plugin = validPlugin();
     const nestedValue = `${'{"next":'.repeat(MAX_PLUGIN_JSON_NESTING_DEPTH + 1)}null${"}".repeat(MAX_PLUGIN_JSON_NESTING_DEPTH + 1)}`;
@@ -1475,7 +1485,7 @@ describe("collectPluginInputPaths", () => {
   });
 
   test("refuses missing option values and missing directories", () => {
-    const workingDirectory = mkdtempSync(join(tmpdir(), "acfs-plugin-input-errors-"));
+    const workingDirectory = temporaryDirectory("acfs-plugin-input-errors-");
 
     expect(() => collectPluginInputPaths(["--plugin"], {}, workingDirectory)).toThrow(
       "--plugin requires a value",
@@ -1486,7 +1496,7 @@ describe("collectPluginInputPaths", () => {
   });
 
   test("expands supported directory entries deterministically", () => {
-    const directory = mkdtempSync(join(tmpdir(), "acfs-plugin-inputs-"));
+    const directory = temporaryDirectory("acfs-plugin-inputs-");
     const first = join(directory, "a.json");
     const second = join(directory, "b.json");
     writeFileSync(second, "{}\n", "utf8");
@@ -1498,7 +1508,7 @@ describe("collectPluginInputPaths", () => {
   });
 
   test("refuses explicitly configured empty plugin inputs", () => {
-    const directory = mkdtempSync(join(tmpdir(), "acfs-empty-plugin-inputs-"));
+    const directory = temporaryDirectory("acfs-empty-plugin-inputs-");
 
     expect(() => collectPluginInputPaths([], { ACFS_PLUGIN_PATHS: "  " })).toThrow(
       "ACFS_PLUGIN_PATHS must name at least one plugin package",

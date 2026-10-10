@@ -1,10 +1,10 @@
 import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import {
   PluginReviewError,
   parsePluginTarget,
@@ -13,6 +13,7 @@ import {
 } from "./plugin-review.js";
 
 const root = mkdtempSync(join(tmpdir(), "acfs-plugin-review-"));
+after(() => rmSync(root, { recursive: true, force: true }));
 let serial = 0;
 const NOW = Date.parse("2026-09-17T12:00:00Z");
 const target = parsePluginTarget("ubuntu/26.04/x86_64/glibc");

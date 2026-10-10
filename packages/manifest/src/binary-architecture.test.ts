@@ -1,9 +1,19 @@
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspectBinary, inspectElf, normalizeArchitecture } from "./binary-architecture.js";
+
+const temporaryDirectories: string[] = [];
+function temporaryDirectory(prefix: string): string {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
 
 function elf(machine = 62, interpreter?: string): Buffer {
   const data = Buffer.alloc(512);
@@ -86,7 +96,7 @@ test("payloads are not read in order to inspect their architecture", () => {
 });
 
 test("disk inspection follows executable symlinks but preserves source bytes", () => {
-  const dir = mkdtempSync(join(tmpdir(), "acfs-architecture-"));
+  const dir = temporaryDirectory("acfs-architecture-");
   const file = join(dir, "tool"); const link = join(dir, "link"); const data = elf();
   writeFileSync(file, data); symlinkSync(file, link);
   assert.equal(inspectBinary(link, { target: "x86_64" }).status, "compatible");
@@ -96,7 +106,7 @@ test("disk inspection follows executable symlinks but preserves source bytes", (
 });
 
 test("a script that would create a marker is only classified, never run", () => {
-  const dir = mkdtempSync(join(tmpdir(), "acfs-architecture-")); const file = join(dir, "script");
+  const dir = temporaryDirectory("acfs-architecture-"); const file = join(dir, "script");
   const marker = join(dir, "never-created");
   writeFileSync(file, `#!/bin/sh\nprintf executed > '${marker}'\n`); chmodSync(file, 0o755);
   assert.equal(inspectBinary(file, { target: "x86_64" }).code, "script_payload_unverified");
@@ -114,7 +124,7 @@ test("a real system ELF is classified without launching it", () => {
 });
 
 test("a missing local ELF loader fails while a cross-target loader is not probed", () => {
-  const dir = mkdtempSync(join(tmpdir(), "acfs-architecture-")); const path = join(dir, "tool");
+  const dir = temporaryDirectory("acfs-architecture-"); const path = join(dir, "tool");
   const arch = normalizeArchitecture(process.arch); if (process.platform !== "linux" || !arch) return;
   writeFileSync(path, elf(arch === "x86_64" ? 62 : 183, join(dir, "missing-loader")));
   assert.equal(inspectBinary(path, { target: arch, checkHostInterpreter: true }).code, "interpreter_missing");

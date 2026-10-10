@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -218,8 +218,15 @@ function writeRealFile(path: string, content: string, executableFile = false): v
   }
 }
 
+const fixtureRoots: string[] = [];
+
+afterEach(() => {
+  for (const root of fixtureRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
 function createCliFixture() {
   const root = mkdtempSync(join(tmpdir(), "acfs-agent-readiness-"));
+  fixtureRoots.push(root);
   const home = join(root, "home");
   const bin = join(root, "bin");
   const secret = `${REDACTION_SAMPLE}-cli`;

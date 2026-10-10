@@ -1,9 +1,9 @@
 import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, renameSync } from "node:fs";
+import { mkdtempSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import {
   parsePluginInstallArguments,
   pluginInstallMain,
@@ -18,7 +18,12 @@ import {
   type PluginInstallHealth,
 } from "./plugin-runtime.js";
 
-const script = Buffer.from('set -eu\nmkdir -p "$HOME/.local/bin"\nprintf "#!/bin/sh\\nexit 0\\n" > "$HOME/.local/bin/acfs_health_cli"\nchmod 755 "$HOME/.local/bin/acfs_health_cli"\n');
+const homes: string[] = [];
+afterEach(() => {
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+});
+
+const script =Buffer.from('set -eu\nmkdir -p "$HOME/.local/bin"\nprintf "#!/bin/sh\\nexit 0\\n" > "$HOME/.local/bin/acfs_health_cli"\nchmod 755 "$HOME/.local/bin/acfs_health_cli"\n');
 function makePlan(): PluginInstallPlan {
   return buildPluginInstallPlan({
     modules: [{
@@ -218,6 +223,7 @@ test("CLI health dispatch detects real installed-binary drift while preserving t
 }, async () => {
   const item = harness();
   const home = mkdtempSync(join(tmpdir(), "acfs-health-cli-"));
+  homes.push(home);
   await executePluginInstallPlan(item.plan, { home, download: async () => script });
   const path = join(home, ".acfs/plugin-installs", `${item.plan.planSha256}.json`);
   const before = readFileSync(path);

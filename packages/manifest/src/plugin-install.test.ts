@@ -1,10 +1,10 @@
 import { strict as assert } from "node:assert";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   loadPluginInstallPlan,
@@ -14,6 +14,11 @@ import {
 } from "./plugin-install.js";
 import { buildPluginInstallPlan, type PluginPlanInput } from "./plugin-plan.js";
 import type { PluginInstallReceipt } from "./plugin-runtime.js";
+
+const temporaryDirectories: string[] = [];
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
 
 const base = [
   "--archive",
@@ -243,6 +248,7 @@ test("canonical archive-to-plan integration binds real review, manifest and inst
   const canonical = parse(manifestBytes.toString());
   const installer = parse(checksumBytes.toString()).installers.bun;
   const directory = mkdtempSync(join(tmpdir(), "acfs-plugin-cli-integration-"));
+  temporaryDirectories.push(directory);
   const root = join(directory, "acfs-plugin-package");
   mkdirSync(root);
   const manifest = {
