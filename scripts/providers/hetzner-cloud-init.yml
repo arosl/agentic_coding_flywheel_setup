@@ -60,7 +60,7 @@ write_files:
       log_dir=/var/log/acfs
       run_dir=/run/acfs-cloud-init
       state_dir=/var/lib/acfs/cloud-init
-      repo=Dicklesworthstone/agentic_coding_flywheel_setup
+      repo=arosl/agentic_coding_flywheel_setup
       upgrade_lock=/run/acfs-upgrade.lock
       upgrade_state=/var/lib/acfs/state.json
       reboot_required=/run/reboot-required

@@ -126,7 +126,7 @@ You'll be prompted to enter the root password from Step 5.
 Do not create the `ubuntu` user manually. Run ACFS from the initial `root` session:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --mode vibe
+curl -fsSL https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --mode vibe
 ```
 
 ACFS creates the `ubuntu` user and enables passwordless sudo for that user in vibe mode. If you deliberately added a root SSH key in Contabo, ACFS copies that key into `/home/ubuntu/.ssh/authorized_keys`.

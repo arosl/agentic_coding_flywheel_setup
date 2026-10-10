@@ -484,7 +484,7 @@ class CloudInitTest(unittest.TestCase):
         self.seed_status("succeeded", phase="complete")
         source = self.work / "state/source.json"
         source.write_text(json.dumps({"schema_version": 1,
-            "repository": "Dicklesworthstone/agentic_coding_flywheel_setup", "commit": "b" * 40}))
+            "repository": "arosl/agentic_coding_flywheel_setup", "commit": "b" * 40}))
         result, _ = self.run_driver(driver_args=("--status",))
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
@@ -499,7 +499,7 @@ class CloudInitTest(unittest.TestCase):
         self.assertTrue(requests[0][-1].endswith(f"/{SHA}/install.sh"))
         lookup = json.loads((self.work / "git.jsonl").read_text().splitlines()[0])
         self.assertEqual(lookup["argv"], ["-C", "/", "ls-remote", "--exit-code", "--refs",
-            "https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup.git", "refs/heads/main"])
+            "https://github.com/arosl/agentic_coding_flywheel_setup.git", "refs/heads/main"])
         self.assertEqual(lookup["env"]["HOME"], "/")
         self.assertEqual(lookup["env"]["GIT_CONFIG_NOSYSTEM"], "1")
         self.assertEqual(lookup["env"]["GIT_CONFIG_GLOBAL"], "/dev/null")
@@ -624,7 +624,7 @@ for index, entry in enumerate(["", "ubuntu:x:0:0::/:/bin/bash", "ubuntu:x:00:0::
 
 for index, body in enumerate(["", "null", "{}", "{} {}", "not JSON",
     json.dumps({"schema_version": 1, "repository": "unrelated/repo", "commit": SHA}),
-    json.dumps({"schema_version": 1, "repository": "Dicklesworthstone/agentic_coding_flywheel_setup", "commit": "main"})]):
+    json.dumps({"schema_version": 1, "repository": "arosl/agentic_coding_flywheel_setup", "commit": "main"})]):
     def check(self, body=body):
         state = self.work / "state"
         state.mkdir()
@@ -804,7 +804,7 @@ class ProviderGuideTest(unittest.TestCase):
     GUIDES = sorted((ROOT / "scripts/providers").glob("*.md"))
 
     def test_guides_exist(self):
-        self.assertEqual([guide.name for guide in self.GUIDES], ["contabo.md", "hetzner.md", "ovh.md"])
+        self.assertEqual([guide.name for guide in self.GUIDES], ["contabo.md", "hetzner.md", "incus.md", "ovh.md"])
 
     def test_no_screenshot_placeholders(self):
         placeholder = re.compile(

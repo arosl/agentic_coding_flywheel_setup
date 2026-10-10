@@ -138,7 +138,7 @@ Hetzner uses `root` by default with the SSH key you added in Step 6.
 Do not create the `ubuntu` user manually. Run ACFS from the initial `root` session:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --mode vibe
+curl -fsSL https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --mode vibe
 ```
 
 ACFS creates the `ubuntu` user, enables passwordless sudo for it in vibe mode, and copies the root

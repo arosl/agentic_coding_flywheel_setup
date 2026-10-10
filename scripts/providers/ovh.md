@@ -150,7 +150,7 @@ sudo reboot
 Once connected as root, run the ACFS installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --mode vibe
+curl -fsSL https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --mode vibe
 ```
 
 When the installer finishes, follow its reconnect command for the `ubuntu` user. If it prints an SSH-key follow-up warning, run the printed command from your local machine once, then reconnect with the ACFS SSH key.
