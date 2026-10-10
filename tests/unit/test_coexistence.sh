@@ -420,6 +420,37 @@ OUT="$(
 check "doctor: a timed-out helper keeps the findings it printed" has "CHECK coexist.firewall|Firewall backend|pass|iptables: nf_tables"
 check "doctor: ... never shows the ones it didn't reach" lacks "coexist.subnets"
 check "doctor: ... and warns that the rest timed out" has "CHECK coexist|Container coexistence|warn|timed out after 1s"
+# An override that isn't a positive whole number of seconds ('abc' made
+# timeout exit 125 with nothing shown; 0 disabled the limit) falls back to 60.
+FAST_HOME="$ROOT/fast-home"
+mkdir -p "$FAST_HOME/.acfs/scripts/lib"
+printf '%s\n' "printf 'pass\\tcoexist.firewall\\tFirewall backend\\tiptables: nf_tables\\t\\n'" \
+    > "$FAST_HOME/.acfs/scripts/lib/coexistence.sh"
+for bad in abc 0; do
+    OUT="$(
+        doctor_binary_exists() { [[ "$1" == incus ]]; }
+        doctor_runtime_home() { printf '%s\n' "$FAST_HOME"; }
+        check() { printf 'CHECK %s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "${5:-}"; }
+        # shellcheck source=/dev/null
+        source "$doctor_fn"
+        ACFS_DOCTOR_COEXISTENCE_TIMEOUT="$bad" check_coexistence
+    )"
+    check "doctor: a limit of '$bad' still runs the check" has "CHECK coexist.firewall|Firewall backend|pass|"
+done
+# The doctor discards the helper's stderr, so the timeout stub records the
+# limit it was given in a file.
+LIMIT_LOG="$ROOT/coexistence-limit.log"
+(
+    doctor_binary_exists() { [[ "$1" == incus ]]; }
+    doctor_runtime_home() { printf '%s\n' "$FAST_HOME"; }
+    check() { :; }
+    timeout() { printf '%s\n' "$1" > "$LIMIT_LOG"; shift; "$@"; }
+    # shellcheck source=/dev/null
+    source "$doctor_fn"
+    ACFS_DOCTOR_COEXISTENCE_TIMEOUT=0 check_coexistence
+)
+OUT="$(cat "$LIMIT_LOG" 2>/dev/null)"
+check "doctor: a limit of 0 falls back to 60s instead of disabling it" test "$OUT" = 60
 
 # ------------------------------------------------------------
 printf '\nTests passed: %s\nTests failed: %s\n' "$TESTS_PASSED" "$TESTS_FAILED"

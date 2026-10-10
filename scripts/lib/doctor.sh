@@ -3716,6 +3716,9 @@ check_coexistence() {
     local seconds="${ACFS_DOCTOR_COEXISTENCE_TIMEOUT:-60}"
     local -a limit=()
 
+    # Only a positive whole number: anything else made timeout exit 125
+    # with nothing shown, and 0 turned the limit off.
+    [[ "$seconds" =~ ^[1-9][0-9]*$ ]] || seconds=60
     doctor_binary_exists incus || return 0
     helper="$(doctor_runtime_home)/.acfs/scripts/lib/coexistence.sh"
     if [[ ! -r "$helper" ]]; then
