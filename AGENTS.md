@@ -87,6 +87,7 @@ The fork tracks upstream ACFS and changes its toolset: herdr instead of ntm, wez
   - acfs-xe3: `test_install_fetch_composition.sh`'s A6 resolves against the default owner, not upstream's.
   - acfs-b0u: `security.sh` adds `--compressed` to upstream's identity request, because some hosts gzip anyway (antigravity, 2026-10-10).
   - acfs-d91: the installer refuses Ubuntu 22.04 unless `--target-ubuntu=24.04|26.04` upgrades it first, and 22.04 is no longer an upgrade target (`install.sh`, `ubuntu_upgrade.sh`, `upgrade_resume.sh`, `preflight.sh`, their tests and CI's 22.04 job); upstream still installs on 22.04. Existing 22.04 installs keep running `acfs update`. The manifest's 22.04 branches (PostgreSQL's jammy PGDG) and the wizard's 22.04 image option, whose command upgrades it, stay as upstream's.
+  - acfs-yca: Docker is the opt-in module `tools.docker`, not part of `cli.modern`, which upstream installs by default. It takes Ubuntu's `docker-compose-v2` where apt offers it, because `docker-compose-plugin` exists only in Docker's own repository. dsr depends on the module.
 
 ## Commands and gates
 
