@@ -120,28 +120,33 @@ create delivery receipts. Its `send_command` requires a hash binding **the
 launch request and original targets plus the batch and every packet**. A hash
 from the lower-level packet dispatcher does not authorize this command.
 
-**Delivery still runs through NTM** (`ntm --robot-send` and its receipts) until
-acfs-qzc (K5) moves it to herdr. Use the returned command only after reviewing the
-packet Markdown and the slot-to-pane mapping. Each new submission rechecks the
-original agent, then uses the existing single-packet sender's live ready-queue
-check, private durable intent, exact payload hash and stdin transport. It does
-not create workspaces, register identities, claim Beads or acquire reservations.
+Delivery sends each packet over herdr's socket, as one `agent.prompt` request,
+so the prompt never appears in process arguments
+([packet delivery](swarm-packet-delivery.md)). Use the returned command only after
+reviewing the packet Markdown and the slot-to-pane mapping. Each new submission
+rechecks the original agent, then uses the single-packet sender's live
+ready-queue check, private create-only intent and result files, and exact
+payload hash. It does not create workspaces, register identities, claim Beads or
+acquire reservations.
 
-Dispatch is sequential, not transactional. An uncertain submission or failed
-identity check stops the batch, retains earlier submissions, and marks later
-entries `not_attempted`. Keep the unchanged batch, packets, launch receipt/result,
-and per-delivery receipts. Repeating the same approved command queries known
-intents first and continues pending entries only after earlier submissions are
-confirmed. A known intent never enters a send-capable path again during that
-invocation, even if its file is moved after validation. Do not remove receipts
-between invocations: an absent receipt cannot prove a previous send did not occur.
+Dispatch is sequential, not transactional. A refused or uncertain submission, or
+a failed identity check, stops the batch, retains earlier submissions, and marks
+later entries `not_attempted`. Keep the unchanged batch, packets, launch
+receipt/result, and per-delivery receipts with their result files. Repeating the
+same approved command reads the recorded results of known intents first and
+continues pending entries only after earlier submissions are `submitted`. A
+known intent never enters a send-capable path again during that invocation, even
+if its file is moved after validation. Do not remove receipts between
+invocations: an absent receipt cannot prove a previous send did not occur.
 
-Historical submission receipts can be queried after the original agents exit;
-new work still requires the original live identities. A missing upstream receipt,
-wrong operation/payload/target, or malformed response stays `unconfirmed` and
-never authorizes resending. `submitted` means matching submission evidence,
-not task execution or completion. `submission_may_have_occurred` flags uncertain
-child execution even when no valid result was returned.
+Recorded results can be read after the original agents exit; new work still
+requires the original live identities. herdr keeps no record of a prompt, so an
+intent without a result, a result for another operation, payload or target, or a
+malformed result stays `unconfirmed` on every rerun and never authorizes
+resending; inspect the agent with `herdr agent read PANE_ID`. `submitted` means
+herdr accepted the prompt for that agent, not task execution or completion.
+`submission_may_have_occurred` flags uncertain child execution even when no valid
+result was returned.
 
 The identity check and the send are separate operations, not an atomic
 compare-and-send. Do not restart agents or replace panes during dispatch. This

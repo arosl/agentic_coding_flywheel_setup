@@ -6,18 +6,18 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from herdr_socket_stub import HerdrStub, agent_row  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 LAUNCH = ROOT / "scripts/lib/swarm_launch.sh"
 PACKET = ROOT / "scripts/lib/swarm_packet.sh"
 ASSIGN = ROOT / "scripts/lib/swarm_assign.sh"
 HELPER = ROOT / "scripts/lib/herdr_agents.sh"
-# The real packet preparer still takes tmux pane IDs (%N) and delivers through
-# ntm; acfs-qzc (K5) ports it to herdr. Until then the launcher's herdr targets
-# reach it only through the fixture.
-K5_PENDING = "swarm_packet.sh still expects tmux pane IDs; acfs-qzc (K5) ports it to herdr"
 
 PROBE = r'''#!/usr/bin/env python3
 import hashlib, json, os, pathlib, sys
@@ -36,39 +36,7 @@ if name == "plan":
         "quiesce_advisory":{"recommendation":"proceed"},"recommendation":"launch",
         "checks":[{"id":"capacity","status":"pass"}]}))
 elif name == "ntm":
-    def opt(key): return next(a.split("=",1)[1] for a in args if a.startswith(key + "="))
-    if args[0].startswith("--robot-send-receipt="):
-        assert args[1:] == ["--robot-format=json"]
-        path = root / ("ntm-" + opt("--robot-send-receipt") + ".json")
-        if not path.exists():
-            print('{"success":false,"error_code":"NOT_FOUND"}'); sys.exit(1)
-        data = json.loads(path.read_text())
-        if mode == "query-wrong-digest": data["operation"]["payload_sha256"] = "0" * 64
-        if mode == "query-wrong-target": data["successful"] = ["wrong"]
-        if mode == "query-scalar": print("[]"); sys.exit(0)
-        print(json.dumps({"success":True,"session":"project","operation":data["operation"],"outcome":data}))
-        sys.exit(0)
-    if args[0].startswith("--robot-send="):
-        assert opt("--robot-send") == "project" and "--msg-file=-" in args
-        assert "--no-cass" in args and "--with-memory=false" in args
-        pane, kind = opt("--panes"), opt("--type")
-        assert kind == ("codex" if pane == "w9:p2" else "claude"), (pane,kind)
-        payload = sys.stdin.buffer.read()
-        assert payload.startswith(b"# ACFS Swarm Startup Packet\n")
-        if "--dry-run" in args:
-            print(json.dumps({"success":True,"session":"project","dry_run":True,"blocked":False,
-                "would_send_to":[pane],"successful":[],"failed":[]})); sys.exit(0)
-        op = opt("--op-id")
-        result = {"success":True,"session":"project","targets":[pane],"successful":[pane],"failed":[],
-            "operation":{"operation_id":op,"payload_sha256":hashlib.sha256(payload).hexdigest(),
-                "payload_bytes":len(payload),"status":"completed","admissions":[{"target":pane,"state":"submitted"}]}}
-        (root / "sent").write_text("yes")
-        (root / ("payload-" + op)).write_bytes(payload)
-        if mode != "missing-upstream": (root / ("ntm-" + op + ".json")).write_text(json.dumps(result))
-        if mode == "missing-upstream" or (mode == "lost-first" and op == "work-1"):
-            print("private-provider-error",file=sys.stderr); sys.exit(1)
-        print(json.dumps(result)); sys.exit(0)
-    raise AssertionError("ntm only delivers work; agents start through herdr")
+    raise AssertionError("delivery goes through herdr's socket, never ntm")
 elif name == "am":
     assert args[:2] in (["agents","create"], ["agents","list"]) and flag("--project") == str(root / "repo")
     count = root / "am-count"
@@ -109,7 +77,7 @@ elif name == "herdr":
     if args[:2] == ["agent","list"]:
         rows = [] if mode == "missing-pane" else [dict(a) for a in st["agents"]]
         for a in rows:
-            if changed or (mode == "change-after-first" and a["pane_id"] == "w9:p3" and (root / "sent").exists()):
+            if changed or (mode == "change-after-first" and a["pane_id"] == "w9:p3" and (root / "sends").exists()):
                 a["terminal_id"] += "x"
             if mode == "wrong-repo": a["cwd"] = str(root)
         ok({"agents":rows})
@@ -126,7 +94,7 @@ elif name == "br":
 elif name == "packet":
     assert args[0] == "--prepare-batch" and "--send" not in args
     output = pathlib.Path(args[1])
-    assert flag("--repo") == str(root / "repo") and flag("--session") == "project"
+    assert flag("--repo") == str(root / "repo") and flag("--workspace") == "w9" and "--session" not in args
     assert "--no-live-context" in args
     received = {key: json.loads(pathlib.Path(flag(key)).read_text()) for key in
         ("--scopes-file","--assignments","--ready-file","--triage-file","--beads-file") if key in args}
@@ -134,7 +102,7 @@ elif name == "packet":
     (root / "preparation-inputs").write_text(json.dumps({"targets":targets,"sources":received}))
     (root / "prepared-called").write_text("yes")
     if mode == "preparation-failed":
-        print("private failure",file=sys.stderr); print('{"schema":"acfs.packet-delivery.v1","status":"error"}'); sys.exit(2)
+        print("private failure",file=sys.stderr); print('{"schema":"acfs.packet-delivery.v2","status":"error"}'); sys.exit(2)
     if mode == "no-work":
         print(json.dumps({"schema":"acfs.packet-preparation.v1","status":"no_work","delivery_count":0,
             "sends_prompt":False,"directory_created":False,"idle_targets":targets})); sys.exit(1)
@@ -148,8 +116,11 @@ else:
 '''
 
 
+# Stands in for swarm_packet.sh --deliver: it writes the same create-only intent
+# and <receipt>.result.json that the real deliverer writes around herdr's
+# agent.prompt, and logs each prompt that reached a pane in `sends`.
 DISPATCH_PACKET = r'''#!/usr/bin/env python3
-import hashlib, json, os, pathlib, subprocess, sys
+import hashlib, json, os, pathlib, sys
 root = pathlib.Path(os.environ["HANDOFF_ROOT"])
 args = sys.argv[1:]
 mode = os.environ.get("HANDOFF_MODE", "ok")
@@ -165,12 +136,16 @@ def request(item, parent):
     assert packet["schema_version"] == 1 and packet["output"]["truncated"] is False
     payload = packet["packet_markdown"].encode()
     assert payload.startswith(b"# ACFS Swarm Startup Packet\n")
-    r = {"repo":str((parent/item["repo"]).absolute()),"session":item["session"],"pane":item["pane"],
+    r = {"repo":str((parent/item["repo"]).absolute()),"workspace":item["workspace"],"pane_id":item["pane_id"],
          "agent_type":item["agent_type"],"operation_id":item["operation_id"],"bead_id":packet["bead"]["id"],
          "packet_sha256":digest(raw),"payload_sha256":digest(payload),"payload_bytes":len(payload)}
     return r, path, (parent/item["receipt"]).absolute(), payload
+def publish(path, value):
+    fd = os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+    with os.fdopen(fd,"wb") as f:
+        f.write(enc(value)); f.flush(); os.fsync(f.fileno())
 def fail():
-    print('{"schema":"acfs.packet-delivery.v1","status":"error"}'); sys.exit(2)
+    print('{"schema":"acfs.packet-delivery.v2","status":"error"}'); sys.exit(2)
 try:
     if args[0] == "--deliver-batch":
         assert "--send" not in args
@@ -180,8 +155,8 @@ try:
             r, packet, receipt, payload = request(item,path.parent)
             if receipt.exists():
                 saved = json.loads(receipt.read_text())
-                assert saved["schema"] == "acfs.packet-delivery.v1" and saved["request"] == r
-            details.append({"schema":"acfs.packet-delivery.v1","status":"preview","request":r,
+                assert saved["schema"] == "acfs.packet-delivery.v2" and saved["request"] == r
+            details.append({"schema":"acfs.packet-delivery.v2","status":"preview","request":r,
                 "receipt":str(receipt),"sends_prompt":False,"send_command":"unguarded command must not escape"})
             reviewed.append({"request":r,"packet":str(packet),"receipt":str(receipt)})
         review = {"schema":batch["schema"],"manifest_sha256":digest(raw),"deliveries":reviewed}
@@ -199,23 +174,31 @@ try:
         sys.exit(0)
     assert args[0] == "--deliver" and "--send" in args
     item = {k:flag("--"+k.replace("_","-")) for k in
-            ("repo","session","pane","agent_type","operation_id","receipt")}
+            ("repo","workspace","pane_id","agent_type","operation_id","receipt")}
     item["packet"] = args[1]
     r, packet, receipt, payload = request(item,pathlib.Path.cwd())
     assert flag("--expect-sha256") == r["packet_sha256"]
+    assert r["workspace"] == "w9" and r["agent_type"] == ("codex" if r["pane_id"] == "w9:p2" else "claude"), r
     # A recovery request must never call this send-capable path.
-    assert not receipt.exists()
-    fd = os.open(receipt,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
-    with os.fdopen(fd,"wb") as f:
-        f.write(enc({"schema":"acfs.packet-delivery.v1","request":r,"target":r["pane"]}))
-        f.flush(); os.fsync(f.fileno())
-    sent = subprocess.run(["ntm","--robot-send="+r["session"],"--panes="+r["pane"],"--type="+r["agent_type"],
-        "--msg-file=-","--op-id="+r["operation_id"],"--robot-format=json","--no-cass","--with-memory=false"],
-        input=payload,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    assert not receipt.exists() and not pathlib.Path(str(receipt) + ".result.json").exists()
+    terminal = "term_" + r["pane_id"].rsplit(":p",1)[1]
+    publish(receipt,{"schema":"acfs.packet-delivery.v2","request":r,"target":terminal,"agent_session":None})
+    op = r["operation_id"]
+    if mode == "refused-first" and op == "work-1":
+        status, evidence = "refused", {"error_code":"agent_blocked"}
+    else:
+        with (root / "sends").open("a") as f: f.write(json.dumps([r["pane_id"],op]) + "\n")
+        (root / ("payload-" + op)).write_bytes(payload)
+        status, evidence = ("unconfirmed", {}) if mode == "lost-first" and op == "work-1" else \
+            ("submitted", {"pane_id":r["pane_id"],"terminal_id":terminal,"workspace_id":"w9"})
+    if status != "unconfirmed":
+        publish(str(receipt) + ".result.json",{"schema":"acfs.packet-delivery.v2","request":r,"target":terminal,
+            "status":status,"evidence":evidence})
     if mode == "bad-child-response": print("[]"); sys.exit(0)
-    print(json.dumps({"schema":"acfs.packet-delivery.v1","status":"submitted" if sent.returncode==0 else "unconfirmed",
-        "request":r,"receipt":str(receipt),"sends_prompt":True,"reconciled_only":False,"agent_execution_verified":False}))
-    sys.exit(0 if sent.returncode==0 else 1)
+    print(json.dumps({"schema":"acfs.packet-delivery.v2","status":status,"evidence":evidence,
+        "request":r,"receipt":str(receipt),"sends_prompt":status != "refused","reconciled_only":False,
+        "agent_execution_verified":False}))
+    sys.exit(0 if status == "submitted" else 1)
 except (AssertionError, KeyError, ValueError, OSError):
     fail()
 '''
@@ -423,7 +406,6 @@ class HandoffTests(unittest.TestCase):
         code, result = self.handoff(extra=("--scopes-file","scopes.json"))
         self.assertEqual(code,0,result)
 
-    @unittest.skip(K5_PENDING)
     def test_real_preparer_and_allocator_consume_verified_launch(self):
         self.launch()
         shutil.copyfile(PACKET,self.lib / PACKET.name)
@@ -442,7 +424,8 @@ class HandoffTests(unittest.TestCase):
             "--beads-file",str(path),"--triage-file",str(triage)))
         self.assertEqual((code,result["status"]),(0,"prepared"),result)
         batch = json.loads((self.output / "batch.json").read_text())
-        self.assertEqual([d["pane"] for d in batch["deliveries"]],["%43","%42"])
+        self.assertEqual([d["pane_id"] for d in batch["deliveries"]],["w9:p2","w9:p3"])
+        self.assertEqual({d["workspace"] for d in batch["deliveries"]},{"w9"})
         self.assertEqual([d["agent_type"] for d in batch["deliveries"]],["codex","claude"])
         first = json.loads((self.output / "packet-01.json").read_text())
         self.assertEqual(first["agent"]["name"],"BlueLake")
@@ -467,13 +450,13 @@ class DispatchTests(unittest.TestCase):
                 "agent":{"name":"BlueLake" if slot==1 else "RedFox"},"bead":{"id":f"bd-{slot}","status":"open"},
                 "output":{"truncated":False},"packet_markdown":f"# ACFS Swarm Startup Packet\nDo task bd-{slot}.\n"}
             (self.bundle / f"packet-{slot}.json").write_text(json.dumps(packet))
-            self.items.append({"repo":str(self.repo),"session":"project","pane":pane,"agent_type":kind,
+            self.items.append({"repo":str(self.repo),"workspace":"w9","pane_id":pane,"agent_type":kind,
                 "packet":f"packet-{slot}.json","operation_id":f"work-{slot}","receipt":f"delivery-{slot}.json"})
         self.write_batch()
         self.args = ["--dispatch-batch",str(self.batch),"--receipt",str(self.case.receipt)]
 
     def write_batch(self):
-        self.batch.write_text(json.dumps({"schema":"acfs.packet-delivery-batch.v1","deliveries":self.items}))
+        self.batch.write_text(json.dumps({"schema":"acfs.packet-delivery-batch.v2","deliveries":self.items}))
 
     def invoke(self, mode="ok", review=None, send=False):
         args = list(self.args)
@@ -487,8 +470,8 @@ class DispatchTests(unittest.TestCase):
         return report
 
     def sends(self):
-        return [argv for name,argv in self.case.calls()
-                if name == "ntm" and "--robot-send=project" in argv and "--dry-run" not in argv]
+        path = self.root / "sends"
+        return [json.loads(s) for s in path.read_text().splitlines()] if path.exists() else []
 
     def assert_no_new_spawn(self):
         self.assertEqual(sum(name == "herdr" and argv[:2] == ["workspace","create"]
@@ -523,7 +506,8 @@ class DispatchTests(unittest.TestCase):
             self.assertEqual(report["summary"]["reconciled"],attempt*2)
             self.assertFalse(report["agent_execution_verified"])
             if attempt:
-                self.assertEqual([n for n,_ in self.case.calls()[before:]],["packet","ntm","ntm"])
+                # Reconciling reads the recorded results; it calls nothing that can send.
+                self.assertEqual([n for n,_ in self.case.calls()[before:]],["packet"])
         self.assertEqual(len(self.sends()),2)
         for i in (1,2):
             expected = json.loads((self.bundle/f"packet-{i}.json").read_text())["packet_markdown"].encode()
@@ -538,9 +522,9 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(self.sends(),[])
         self.assertFalse(list(self.bundle.glob("delivery-*")))
 
-    def test_other_session_repository_pane_or_provider_rejected(self):
+    def test_other_workspace_repository_pane_or_provider_rejected(self):
         original = dict(self.items[1])
-        for key,value in (("session","other"),("repo",str(self.root)),("pane","w9:p99"),("agent_type","codex")):
+        for key,value in (("workspace","w8"),("repo",str(self.root)),("pane_id","w9:p99"),("agent_type","codex")):
             with self.subTest(key=key):
                 self.items[1] = {**original,key:value}; self.write_batch()
                 self.assertEqual(self.invoke()[0],2)
@@ -573,24 +557,34 @@ class DispatchTests(unittest.TestCase):
         self.assertTrue((self.bundle/"delivery-1.json").exists())
         self.assertFalse((self.bundle/"delivery-2.json").exists())
 
-    def test_lost_response_stops_then_queries_and_continues_once(self):
+    def test_lost_answer_stays_unconfirmed_and_never_resends(self):
+        # herdr keeps no receipt to query, so a lost answer is never settled by
+        # guessing: the intent stays unconfirmed and blocks later work.
         review = self.preview()["review_sha256"]
         code, report = self.invoke(mode="lost-first",review=review,send=True)
         self.assertEqual((code,report["status"]),(1,"stopped"),report)
         self.assertEqual([d["status"] for d in report["deliveries"]],["unconfirmed","not_attempted"])
-        self.assertNotIn("private-provider",json.dumps(report))
-        code, report = self.invoke(review=review,send=True)
-        self.assertEqual((code,report["status"]),(0,"submitted"),report)
-        self.assertEqual(report["summary"]["reconciled"],1)
-        self.assertEqual(len(self.sends()),2)
+        self.assertTrue(report["submission_may_have_occurred"])
+        for _ in (0,1):
+            code, report = self.invoke(review=review,send=True)
+            self.assertEqual((code,report["status"]),(1,"stopped"),report)
+            self.assertEqual([d["status"] for d in report["deliveries"]],["unconfirmed","not_attempted"])
+            self.assertTrue(report["deliveries"][0]["reconciled_only"])
+        self.assertEqual(len(self.sends()),1)
+        self.assertFalse((self.bundle/"delivery-2.json").exists())
 
-    def test_missing_upstream_receipt_never_resends(self):
+    def test_refused_delivery_is_recorded_and_stops_later_work(self):
         review = self.preview()["review_sha256"]
-        self.assertEqual(self.invoke(mode="missing-upstream",review=review,send=True)[0],1)
+        code, report = self.invoke(mode="refused-first",review=review,send=True)
+        self.assertEqual((code,report["status"]),(1,"stopped"),report)
+        self.assertEqual([d["status"] for d in report["deliveries"]],["refused","not_attempted"])
+        self.assertEqual(report["summary"]["refused"],1)
+        self.assertFalse(report["submission_may_have_occurred"])
         code, report = self.invoke(review=review,send=True)
         self.assertEqual((code,report["status"]),(1,"stopped"),report)
+        self.assertEqual(report["deliveries"][0]["status"],"refused")
         self.assertTrue(report["deliveries"][0]["reconciled_only"])
-        self.assertEqual(len(self.sends()),1)
+        self.assertEqual(self.sends(),[])
         self.assertFalse((self.bundle/"delivery-2.json").exists())
 
     def test_confirmed_submissions_reconcile_after_agents_exit(self):
@@ -599,17 +593,28 @@ class DispatchTests(unittest.TestCase):
         before = len(self.case.calls())
         code, report = self.invoke(mode="missing-pane",review=review,send=True)
         self.assertEqual((code,report["status"]),(0,"submitted"),report)
-        self.assertEqual([n for n,_ in self.case.calls()[before:]],["packet","ntm","ntm"])
+        self.assertEqual([n for n,_ in self.case.calls()[before:]],["packet"])
         self.assertEqual(report["summary"]["reconciled"],2)
         self.assertEqual(len(self.sends()),2)
 
-    def test_query_digest_target_and_shape_must_match(self):
+    def test_recorded_result_must_match_request_target_and_shape(self):
         review = self.preview()["review_sha256"]
         self.assertEqual(self.invoke(review=review,send=True)[0],0)
-        for mode in ("query-wrong-digest","query-wrong-target","query-scalar"):
-            with self.subTest(mode=mode):
-                code, report = self.invoke(mode=mode,review=review,send=True)
+        path = self.bundle/"delivery-1.json.result.json"
+        original = path.read_text()
+        good = json.loads(original)
+        for name,value in (("digest",{**good,"request":{**good["request"],"payload_sha256":"0"*64}}),
+                           ("target",{**good,"target":"term_99"}),("status",{**good,"status":"delivered"}),
+                           ("scalar",[])):
+            with self.subTest(name=name):
+                path.write_text(json.dumps(value))
+                code, report = self.invoke(review=review,send=True)
                 self.assertEqual((code,report["status"]),(1,"stopped"),report)
+                self.assertEqual(report["deliveries"][0]["status"],"unconfirmed")
+        path.write_text(original)
+        path.chmod(0o644)
+        code, report = self.invoke(review=review,send=True)
+        self.assertEqual((code,report["deliveries"][0]["status"]),(1,"unconfirmed"),report)
         self.assertEqual(len(self.sends()),2)
 
     def test_removing_known_intent_during_validation_cannot_turn_query_into_send(self):
@@ -661,8 +666,11 @@ class DispatchTests(unittest.TestCase):
             os.close(fd)
         self.assertEqual(self.sends(),[])
 
-    @unittest.skip(K5_PENDING)
     def test_real_launch_prepare_review_dispatch_and_reconcile(self):
+        herdr = HerdrStub([agent_row("w9:p2",self.repo,agent="codex",terminal_id="term_2"),
+                           agent_row("w9:p3",self.repo,terminal_id="term_3")])
+        self.addCleanup(herdr.close)
+        self.case.env = herdr.env(self.case.env)
         shutil.copyfile(PACKET,self.case.lib/PACKET.name)
         shutil.copyfile(ASSIGN,self.case.lib/ASSIGN.name)
         path = self.case.bin/"br"; path.write_text(PROBE); path.chmod(0o755)
@@ -687,7 +695,8 @@ class DispatchTests(unittest.TestCase):
         code, result = self.case.invoke(send,mode="missing-pane")
         self.assertEqual(code,0,result)
         self.assertEqual(result["summary"]["reconciled"],2)
-        self.assertEqual(len(self.sends()),2)
+        self.assertEqual([p["target"] for p in herdr.prompts()],["w9:p2","w9:p3"])
+        self.assertTrue(all(p["text"].startswith("# ACFS Swarm Startup Packet\n") for p in herdr.prompts()))
         self.assert_no_new_spawn()
 
 

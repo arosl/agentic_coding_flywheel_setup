@@ -24,7 +24,7 @@ class ReceiptPeer:
         self.mutate_query = None
 
     def __call__(self, entry, mode):
-        if mode not in ("read-receipt", "query-receipt"):
+        if mode not in ("read-receipt", "read-result"):
             return self.base(entry, mode)
         ident = entry["host"]["id"]
         self.calls.append((ident, mode))
@@ -33,15 +33,13 @@ class ReceiptPeer:
         if original is None:
             return 2, b"private missing receipt diagnostics"
         actual = next(d for d in original["deliveries"] if d["slot"] == delivery["slot"])
-        request, target = actual["request"], str(actual["slot"])
+        request, target = actual["request"], "term_" + str(actual["slot"])
         if mode == "read-receipt":
-            value = {"schema": "acfs.packet-delivery.v1", "request": copy.deepcopy(request), "target": target}
+            value = {"schema": "acfs.packet-delivery.v2", "request": copy.deepcopy(request), "target": target,
+                     "agent_session": None}
         else:
-            value = {"success": True, "session": request["session"], "operation": {
-                "operation_id": request["operation_id"], "payload_sha256": request["payload_sha256"],
-                "payload_bytes": request["payload_bytes"], "status": "completed",
-                "admissions": [{"target": target, "state": "submitted"}]},
-                "outcome": {"success": True, "targets": [target], "successful": [target], "failed": []}}
+            value = {"schema": "acfs.packet-delivery.v2", "request": copy.deepcopy(request), "target": target,
+                     "status": "submitted", "evidence": {"pane_id": request["pane_id"], "terminal_id": target}}
         if self.mutate_query:
             replacement = self.mutate_query(entry, mode, value)
             if replacement is not None:
@@ -79,7 +77,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(report["status"], "partial")
         self.assertFalse(report["send_attempted"])
         self.assertEqual([h["status"] for h in report["hosts"]], ["submitted", "not_attempted"])
-        self.assertEqual(self.peer.calls, [("worker-0", m) for _ in range(2) for m in ("read-receipt", "query-receipt")])
+        self.assertEqual(self.peer.calls, [("worker-0", m) for _ in range(2) for m in ("read-receipt", "read-result")])
         self.assertEqual(before, self.state_bytes())
 
     def test_resume_confirms_lost_response_and_sends_only_untouched_host(self):
@@ -88,7 +86,7 @@ class RecoveryTests(unittest.TestCase):
         report, code = self.run_dispatch("resume", approval)
         self.assertEqual(code, 0, report)
         self.assertEqual(report["status"], "submitted")
-        self.assertEqual([m for h, m in self.peer.calls if h == "worker-0"], ["read-receipt", "query-receipt"] * 2)
+        self.assertEqual([m for h, m in self.peer.calls if h == "worker-0"], ["read-receipt", "read-result"] * 2)
         self.assertEqual([m for h, m in self.peer.calls if h == "worker-1"], ["launch-status", "preview", "send"])
         self.assertTrue((self.state / "worker-0.result.json").exists())
         self.assertEqual(old_intent, (self.state / "worker-0.attempt.json").read_bytes())
@@ -97,7 +95,7 @@ class RecoveryTests(unittest.TestCase):
         report, code = self.run_dispatch("resume", approval)
         self.assertEqual(code, 0, report)
         self.assertFalse(report["send_attempted"])
-        self.assertTrue(all(m in ("read-receipt", "query-receipt") for _, m in self.peer.calls))
+        self.assertTrue(all(m in ("read-receipt", "read-result") for _, m in self.peer.calls))
         self.assertEqual(before, self.state_bytes())
 
     def test_receipt_recovery_works_without_live_agents_or_packet_files(self):
@@ -132,35 +130,50 @@ class RecoveryTests(unittest.TestCase):
         self.assertTrue(all(h == "worker-0" and m != "send" for h, m in self.peer.calls))
         self.assertFalse((self.state / "worker-0.result.json").exists())
 
-    def test_ntm_proof_rejects_wrong_digest_target_size_operation_and_incomplete_admission(self):
+    def test_recorded_result_rejects_wrong_request_target_status_and_shape(self):
         approval = self.begin()
-        mutations = [lambda v: v["operation"].update(payload_sha256="0" * 64),
-                     lambda v: v["operation"].update(payload_bytes=True),
-                     lambda v: v["operation"].update(operation_id="wrong"),
-                     lambda v: v["operation"].update(status="pending"),
-                     lambda v: v["operation"].update(admissions=[]),
-                     lambda v: v["outcome"].update(targets=["999"]),
-                     lambda v: v["outcome"].update(successful=[]),
-                     lambda v: v["outcome"].update(failed=["1"]),
-                     lambda v: v.update(session="another-session"), lambda v: v.update(success="true")]
+        mutations = [lambda v: v["request"].update(payload_sha256="0" * 64),
+                     lambda v: v["request"].update(payload_bytes=True),
+                     lambda v: v["request"].update(operation_id="wrong"),
+                     lambda v: v["request"].update(pane_id="w1:p999"),
+                     lambda v: v.update(target="term_999"),
+                     lambda v: v.update(status="refused"), lambda v: v.update(status="unconfirmed"),
+                     lambda v: v.update(schema="acfs.packet-delivery.v1"),
+                     lambda v: v.update(evidence=[]), lambda v: v.update(extra=True), lambda v: v.pop("status")]
         for mutation in mutations:
             def bad(_entry, mode, value):
-                if mode == "query-receipt":
+                if mode == "read-result":
                     mutation(value)
             self.peer.mutate_query = bad
             with self.subTest(mutation=mutation):
                 self.assertEqual(self.run_dispatch("resume", approval)[1], 1)
         self.assertFalse((self.state / "worker-0.result.json").exists())
-        self.assertTrue(all(m in ("read-receipt", "query-receipt") for _, m in self.peer.calls))
+        self.assertTrue(all(m in ("read-receipt", "read-result") for _, m in self.peer.calls))
 
-    def test_native_receipt_mismatch_prevents_ntm_query(self):
-        self.begin()
-        def bad(_entry, mode, value):
-            if mode == "read-receipt":
-                value["request"]["pane"] = "%999"
-        self.peer.mutate_query = bad
-        self.assertEqual(self.run_dispatch("reconcile")[1], 1)
-        self.assertTrue(all(m == "read-receipt" for _, m in self.peer.calls))
+    def test_native_receipt_mismatch_prevents_result_read(self):
+        for mutation in (lambda v: v["request"].update(pane_id="w1:p999"), lambda v: v.pop("agent_session"),
+                         lambda v: v.update(agent_session="bad session"), lambda v: v.update(target="")):
+            with self.subTest(mutation=mutation):
+                self.setUp()
+                self.begin()
+                def bad(_entry, mode, value):
+                    if mode == "read-receipt":
+                        mutation(value)
+                self.peer.mutate_query = bad
+                self.assertEqual(self.run_dispatch("reconcile")[1], 1)
+                self.assertTrue(all(m == "read-receipt" for _, m in self.peer.calls))
+
+    def test_refused_result_is_reported_and_never_resent(self):
+        approval = self.begin()
+        def refused(_entry, mode, value):
+            if mode == "read-result":
+                value.update(status="refused", evidence={"error_code": "agent_blocked"})
+        self.peer.mutate_query = refused
+        report, code = self.run_dispatch("resume", approval)
+        self.assertEqual(code, 1)
+        self.assertEqual({d.get("code") for d in report["hosts"][0]["deliveries"]}, {"delivery_refused"})
+        self.assertTrue(all(m in ("read-receipt", "read-result") for _, m in self.peer.calls))
+        self.assertFalse((self.state / "worker-0.result.json").exists())
 
     def test_duplicate_json_keys_and_raw_diagnostics_never_become_success(self):
         self.begin()
@@ -344,18 +357,31 @@ sys.exit(99)
                 self.assertEqual(result.stdout, b"")
         self.assertEqual(public.read_bytes(), b"private")
 
-    def test_query_transport_cannot_accept_send_commands_or_inject_operation(self):
-        entry = {"delivery": {"request": {"operation_id": "op.review-1"}}}
-        command = dispatch.remote_command(entry, "query-receipt")
-        self.assertIn("--robot-send-receipt=op.review-1", command)
-        self.assertNotIn("--robot-send=", command)
-        self.assertNotIn("--send", command)
-        self.assertNotIn("--launch", command)
-        entry["delivery"]["request"]["operation_id"] = "op; touch BAD"
+    def test_result_read_is_the_fixed_reader_on_the_receipts_result_file(self):
+        root, path, identity = self.remote_fixture()
+        result_file = Path(str(path) + ".result.json")
+        result_file.write_bytes(b'{"schema":"fixture","value":"recorded result"}')
+        result_file.chmod(0o600)
+        if identity:
+            os.chown(result_file, identity["user"], identity["group"])
+        command = dispatch.remote_command({"delivery": {"receipt": str(path)}}, "read-result")
+        self.assertEqual(command, "exec python3 -I -c " + shlex.quote(dispatch.READ_RECEIPT) + " "
+                         + shlex.quote(str(result_file)))
+        for word in ("ntm", "herdr", "--send", "--launch", "swarm_launch"):
+            self.assertNotIn(word, command.replace(dispatch.READ_RECEIPT, ""))
+        bin_dir = root / "bin"
+        bin_dir.mkdir(mode=0o755)
+        (bin_dir / "python3").symlink_to(sys.executable)
+        result = subprocess.run(["/bin/bash", "--noprofile", "--norc", "-p", "-c", command],
+                                env={"PATH": f"{bin_dir}:/usr/bin:/bin"}, capture_output=True, timeout=5, **identity)
+        self.assertEqual((result.returncode, result.stdout), (0, result_file.read_bytes()), result.stderr)
+        self.assertFalse((root / "BAD").exists())
         with self.assertRaises(fleet.Refused):
-            dispatch.remote_command(entry, "query-receipt")
+            dispatch.remote_command({"delivery": {"receipt": "relative.receipt"}}, "read-result")
+        with self.assertRaises(fleet.Refused):
+            dispatch.remote_command({"delivery": {"receipt": str(path)}}, "query-receipt")
 
-    def test_real_unprivileged_shell_transports_exact_native_and_query_arguments(self):
+    def test_real_unprivileged_shell_transports_exact_native_arguments(self):
         root, _, identity = self.remote_fixture()
         native = root / ".acfs/scripts/lib/swarm_launch.sh"
         native.parent.mkdir(parents=True)
@@ -365,18 +391,13 @@ sys.exit(99)
         native.chmod(0o755)
         bin_dir = root / "bin"
         bin_dir.mkdir()
-        ntm = bin_dir / "ntm"
-        ntm.write_text(body)
-        ntm.chmod(0o755)
         entry = {"host": self.launch["spec"]["hosts"][0],
-                 "batch": str(root / "batch 'quoted' $(touch BAD).json"), "review_sha256": "f" * 64,
-                 "delivery": {"request": {"operation_id": "exact-op.1"}}}
+                 "batch": str(root / "batch 'quoted' $(touch BAD).json"), "review_sha256": "f" * 64}
         expected = {
             "launch-status": ["--reconcile", "--receipt", entry["host"]["request"]["receipt"]],
             "preview": ["--dispatch-batch", entry["batch"], "--receipt", entry["host"]["request"]["receipt"]],
             "send": ["--dispatch-batch", entry["batch"], "--receipt", entry["host"]["request"]["receipt"],
                      "--expect-sha256", "f" * 64, "--send"],
-            "query-receipt": ["--robot-send-receipt=exact-op.1", "--robot-format=json"],
         }
         for mode, argv in expected.items():
             with self.subTest(mode=mode):

@@ -1,75 +1,34 @@
-"""Real Bash/Python delivery entry point with executable NTM/tmux/br fixtures."""
+"""Real Bash/Python delivery entry point against a herdr socket stub and a br fixture."""
 import hashlib
 import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from herdr_socket_stub import HerdrStub, agent_row  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/lib/swarm_packet.sh"
+SCHEMA_FIXTURE = ROOT / "tests/fixtures/herdr/agent_prompt_schema.json"
 
-FIXTURE = r'''#!/usr/bin/env python3
-import hashlib, json, os, pathlib, sys
-name = pathlib.Path(sys.argv[0]).name
-args = sys.argv[1:]
+BR = r'''#!/usr/bin/env python3
+import json, os, pathlib, sys
 root = pathlib.Path(os.environ["FIXTURE_ROOT"])
-mode = os.environ.get("FIXTURE_MODE", "ok")
 with (root / "calls.jsonl").open("a") as f:
-    f.write(json.dumps([name, args]) + "\n")
-if name == "br":
-    assert args == ["ready", "--json"], args
-    print(json.dumps([] if mode == "closed" else [{"id": "bd-work", "status": "open"}]))
-    sys.exit(0)
-if name == "tmux":
-    assert args[:5] == ["display-message", "-p", "-t", "%42", "#{session_name}\t#{pane_id}\t#{pane_current_path}\t#{pane_dead}\t#{pane_current_command}"], args
-    cwd = str(root / "repo") if mode != "wrong-repo" else str(root)
-    print("project\t%42\t" + cwd + "\t0\t" + ("bash" if mode == "stale-title" else "claude"))
-    sys.exit(0)
-assert name == "ntm"
-if args[0].startswith("--robot-send-receipt="):
-    assert args == ["--robot-send-receipt=work-one", "--robot-format=json"], args
-    store = root / "ntm-operation.json"
-    if not store.exists():
-        print(json.dumps({"success": False, "error_code": "NOT_FOUND"}))
-        sys.exit(1)
-    recorded = json.loads(store.read_text())
-    print(json.dumps({"success": True, "session": "project", "operation": recorded["operation"], "outcome": recorded}))
-    sys.exit(0)
-assert "--robot-send=project" in args, args
-assert "--panes=%42" in args and "--type=claude" in args and "--msg-file=-" in args, args
-assert "--robot-format=json" in args and "--no-cass" in args and "--with-memory=false" in args, args
-payload = sys.stdin.buffer.read()
-assert payload == (root / "expected-prompt").read_bytes()
-if "--dry-run" in args:
-    assert not any(a.startswith("--op-id=") for a in args)
-    if mode == "unsupported":
-        print("Unknown option", file=sys.stderr)
-        sys.exit(2)
-    preview = {"success": True, "session": "project", "dry_run": True, "blocked": False,
-               "successful": [], "failed": [], "would_send_to": ["1"]}
-    if mode == "shell": preview["would_send_to"] = []
-    if mode == "broad": preview["would_send_to"] = ["1", "2"]
-    if mode == "injection": preview["cm_injection"] = {"enabled": True, "tokens_added": 10}
-    print(json.dumps(preview))
-    sys.exit(0)
-assert "--op-id=work-one" in args and "--dry-run" not in args
-response = {"success": True, "session": "project", "targets": ["1"], "successful": ["1"], "failed": [],
-            "operation": {"operation_id": "work-one", "status": "completed",
-                          "payload_sha256": hashlib.sha256(payload).hexdigest(), "payload_bytes": len(payload),
-                          "admissions": [{"target": "1", "state": "submitted"}]}}
-if mode == "digest-mismatch": response["operation"]["payload_sha256"] = "0" * 64
-if mode == "failed": response["successful"] = []
-if mode == "no-operation": del response["operation"]
-if mode != "missing-receipt": (root / "ntm-operation.json").write_text(json.dumps(response))
-if mode in ("lost-response", "missing-receipt"):
-    print("secret-raw-output", file=sys.stderr)
-    sys.exit(1)
-print(json.dumps(response))
+    f.write(json.dumps([pathlib.Path(sys.argv[0]).name, sys.argv[1:]]) + "\n")
+assert sys.argv[1:] == ["ready", "--json"], sys.argv
+closed = (root / "closed").exists()
+print(json.dumps([] if closed else [{"id": "bd-work", "status": "open"}]))
 '''
+
+PANE = "w9:p3"
 
 
 class DeliveryTests(unittest.TestCase):
@@ -85,14 +44,16 @@ class DeliveryTests(unittest.TestCase):
         # developer virtualenv startup hooks; the production path still resolves python3.
         if Path("/usr/bin/python3").is_file():
             (self.bin / "python3").symlink_to("/usr/bin/python3")
-        for name in ("ntm", "tmux", "br"):
-            path = self.bin / name
-            path.write_text(FIXTURE)
-            path.chmod(0o755)
-        self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"], FIXTURE_ROOT=str(self.root))
+        (self.bin / "br").write_text(BR)
+        (self.bin / "br").chmod(0o755)
+        self.herdr = HerdrStub([agent_row(PANE, self.repo)])
+        self.addCleanup(self.herdr.close)
+        self.env = self.herdr.env(dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
+                                       FIXTURE_ROOT=str(self.root)))
         self.packet = self.root / "packet.json"
         self.receipt = self.root / "receipt.json"
-        self.prompt = "# ACFS Swarm Startup Packet\n\nImplement bd-work; literal $(touch should-not-exist).\n"
+        self.result = self.root / "receipt.json.result.json"
+        self.prompt = "# ACFS Swarm Startup Packet\n\nImplement bd-work; literal $(touch should-not-exist).\n\tIndented.\n"
         self.report = {"schema_version": 1, "status": "pass", "repository": {"path": str(self.repo)},
                        "bead": {"id": "bd-work", "status": "open"},
                        "output": {"truncated": False}, "packet_markdown": self.prompt}
@@ -100,25 +61,23 @@ class DeliveryTests(unittest.TestCase):
 
     def write_packet(self):
         self.packet.write_text(json.dumps(self.report), encoding="utf-8")
-        (self.root / "expected-prompt").write_bytes(self.report["packet_markdown"].encode())
         self.hash = hashlib.sha256(self.packet.read_bytes()).hexdigest()
 
-    def calls(self):
+    def br_calls(self):
         path = self.root / "calls.jsonl"
         return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
     def send_count(self):
-        return sum(name == "ntm" and "--robot-send=project" in args and "--dry-run" not in args
-                   for name, args in self.calls())
+        return len(self.herdr.prompts())
 
-    def invoke(self, send=False, mode="ok", extra=()):
-        env = dict(self.env, FIXTURE_MODE=mode)
+    def invoke(self, send=False, mode="ok", extra=(), workspace="w9", pane=PANE, agent_type="claude", env=None):
+        self.herdr.mode = mode
         args = ["bash", str(SCRIPT), "--deliver", str(self.packet), "--repo", str(self.repo),
-                "--session", "project", "--pane", "%42", "--agent-type", "claude",
+                "--workspace", workspace, "--pane-id", pane, "--agent-type", agent_type,
                 "--operation-id", "work-one", "--receipt", str(self.receipt)]
         if send:
             args += ["--expect-sha256", self.hash, "--send"]
-        result = subprocess.run(args + list(extra), env=env, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(args + list(extra), env=env or self.env, capture_output=True, text=True, timeout=60)
         self.assertEqual(result.stderr, "", result.stderr)
         return result.returncode, json.loads(result.stdout)
 
@@ -127,100 +86,185 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(report["status"], "preview")
         self.assertEqual(report["request"]["packet_sha256"], self.hash)
+        self.assertEqual(report["herdr_request"], {"method": "agent.prompt", "target": PANE})
         self.assertIn("--expect-sha256", shlex.split(report["send_command"]))
-        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.br_calls(), [])
+        self.assertEqual(self.herdr.calls, [])
         self.assertFalse(self.receipt.exists())
         self.assertFalse(report["sends_prompt"])
 
-    def test_submit_exact_prompt_and_private_receipt(self):
+    def test_submit_exact_prompt_over_the_socket_with_private_receipts(self):
         code, report = self.invoke(send=True)
         self.assertEqual((code, report["status"]), (0, "submitted"), report)
         self.assertTrue(report["sends_prompt"])
         self.assertFalse(report["agent_execution_verified"])
-        self.assertEqual(self.send_count(), 1)
-        self.assertEqual(stat.S_IMODE(self.receipt.stat().st_mode), 0o600)
-        self.assertNotIn(self.prompt, self.receipt.read_text())
+        self.assertEqual(self.herdr.prompts(), [{"target": PANE, "text": self.prompt}])
+        self.assertEqual([method for method, _ in self.herdr.calls],
+                         ["agent.list", "pane.process_info", "agent.list", "pane.process_info", "agent.prompt"])
+        self.assertEqual([name for name, _ in self.br_calls()], ["br"])
+        for path in (self.receipt, self.result):
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertNotIn("should-not-exist", path.read_text())
+        result = json.loads(self.result.read_text())
+        self.assertEqual((result["status"], result["target"]), ("submitted", "term_w9_p3"))
         self.assertFalse((self.repo / "should-not-exist").exists())
-        self.assertEqual([name for name, _ in self.calls()], ["br", "tmux", "ntm", "tmux", "ntm"])
 
-    def test_completed_retry_queries_receipt_without_sending(self):
+    def test_payload_never_reaches_argv(self):
         self.invoke(send=True)
-        saved = self.receipt.read_bytes()
+        self.assertTrue(all(self.prompt not in json.dumps(args) for _, args in self.br_calls()))
+
+    def test_completed_retry_reads_result_without_sending(self):
+        self.invoke(send=True)
+        saved = self.receipt.read_bytes(), self.result.read_bytes()
+        calls = len(self.herdr.calls)
         code, report = self.invoke(send=True)
         self.assertEqual((code, report["status"]), (0, "submitted"), report)
         self.assertTrue(report["reconciled_only"])
         self.assertFalse(report["sends_prompt"])
-        self.assertEqual(self.send_count(), 1)
-        self.assertEqual(self.receipt.read_bytes(), saved)
+        self.assertEqual(len(self.herdr.calls), calls)
+        self.assertEqual((self.receipt.read_bytes(), self.result.read_bytes()), saved)
 
-    def test_lost_response_reconciles_recorded_submission(self):
-        code, report = self.invoke(send=True, mode="lost-response")
-        self.assertEqual((code, report["status"]), (1, "unconfirmed"))
-        self.assertNotIn("secret-raw-output", json.dumps(report))
+    def test_uncertain_answers_are_unconfirmed_and_never_resent(self):
+        for mode in ("disconnect", "garbage", "wrong_id", "wrong_pane", "unknown_error", "oversize"):
+            with self.subTest(mode=mode):
+                for path in (self.receipt, self.result):
+                    if path.exists():
+                        path.unlink()
+                before = self.send_count()
+                code, report = self.invoke(send=True, mode=mode)
+                self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
+                self.assertTrue(report["sends_prompt"])
+                self.assertTrue(self.receipt.exists())
+                self.assertFalse(self.result.exists())
+                self.assertIn("herdr agent read " + PANE, report["recovery"])
+                code, report = self.invoke(send=True)
+                self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
+                self.assertTrue(report["reconciled_only"])
+                self.assertEqual(self.send_count(), before + 1)
+
+    def test_refusal_before_typing_is_recorded_and_never_retried(self):
+        for mode, error_code in (("blocked", "agent_blocked"), ("not_found", "agent_not_found")):
+            with self.subTest(mode=mode):
+                for path in (self.receipt, self.result):
+                    if path.exists():
+                        path.unlink()
+                code, report = self.invoke(send=True, mode=mode)
+                self.assertEqual((code, report["status"]), (1, "refused"), report)
+                self.assertFalse(report["sends_prompt"])
+                self.assertEqual(report["evidence"], {"error_code": error_code})
+                self.assertEqual(json.loads(self.result.read_text())["status"], "refused")
+                before = self.send_count()
+                code, report = self.invoke(send=True)
+                self.assertEqual((code, report["status"]), (1, "refused"), report)
+                self.assertEqual(self.send_count(), before)
+
+    def test_orphan_result_file_blocks_before_any_send(self):
+        self.result.write_text("someone else's result")
+        self.result.chmod(0o600)
+        code, report = self.invoke(send=True)
+        self.assertEqual(code, 2, report)
+        self.assertIn("result file already exists", report["error"])
+        self.assertEqual(self.send_count(), 0)
+        self.assertFalse(self.receipt.exists())
+        self.assertEqual(self.result.read_text(), "someone else's result")
+
+    def test_packet_cannot_be_the_result_file(self):
+        self.receipt = self.root / "packet"
+        self.packet.rename(self.root / "packet.result.json")
+        self.packet = self.root / "packet.result.json"
+        code, _ = self.invoke(send=True)
+        self.assertEqual(code, 2)
+        self.assertEqual(self.herdr.calls, [])
+
+    def test_agent_session_is_bound_through_the_send(self):
+        self.herdr.agents[PANE] = agent_row(PANE, self.repo, session="session-one")
+        code, report = self.invoke(send=True, mode="session_changed")
+        self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
+        self.assertEqual(json.loads(self.receipt.read_text())["agent_session"], "session-one")
+        self.assertFalse(self.result.exists())
+        self.receipt.unlink()
         code, report = self.invoke(send=True)
         self.assertEqual((code, report["status"]), (0, "submitted"), report)
-        self.assertEqual(self.send_count(), 1)
-
-    def test_missing_upstream_receipt_never_resends(self):
-        self.invoke(send=True, mode="missing-receipt")
-        code, report = self.invoke(send=True)
-        self.assertEqual((code, report["status"]), (1, "unconfirmed"))
-        self.assertTrue(report["reconciled_only"])
-        self.assertEqual(self.send_count(), 1)
+        self.assertEqual(report["evidence"]["agent_session"], "session-one")
 
     def test_live_closed_bead_blocks_before_receipt(self):
-        code, report = self.invoke(send=True, mode="closed")
+        (self.root / "closed").write_text("")
+        code, report = self.invoke(send=True)
         self.assertEqual(code, 2)
         self.assertIn("ready queue", report["error"])
         self.assertFalse(self.receipt.exists())
-        self.assertEqual(self.send_count(), 0)
+        self.assertEqual(self.herdr.calls, [])
 
-    def test_wrong_repository_blocks_before_dry_run(self):
-        code, _ = self.invoke(send=True, mode="wrong-repo")
-        self.assertEqual(code, 2)
-        self.assertFalse(self.receipt.exists())
-        self.assertFalse(any(name == "ntm" for name, _ in self.calls()))
-
-    def test_shell_with_stale_agent_title_is_not_a_delivery_target(self):
-        code, _ = self.invoke(send=True, mode="stale-title")
-        self.assertEqual(code, 2)
-        self.assertEqual(self.send_count(), 0)
-        self.assertFalse(self.receipt.exists())
-
-    def test_shell_broad_unsupported_and_context_injection_block(self):
-        for mode in ("shell", "broad", "unsupported", "injection"):
-            with self.subTest(mode=mode):
-                code, _ = self.invoke(send=True, mode=mode)
-                self.assertEqual(code, 2)
+    def test_target_mismatches_block_before_receipt(self):
+        cases = {
+            "wrong repository": dict(cwd=str(self.root)),
+            "wrong agent": dict(agent="codex"),
+            "dialog": dict(agent_status="blocked"),
+            "other workspace": dict(workspace_id="w8"),
+        }
+        for label, change in cases.items():
+            with self.subTest(label):
+                self.herdr.agents[PANE] = dict(agent_row(PANE, self.repo), **change)
+                code, report = self.invoke(send=True)
+                self.assertEqual(code, 2, report)
                 self.assertFalse(self.receipt.exists())
                 self.assertEqual(self.send_count(), 0)
 
-    def test_ambiguous_outcome_does_not_claim_success(self):
-        code, report = self.invoke(send=True, mode="digest-mismatch")
-        self.assertEqual((code, report["status"]), (1, "unconfirmed"))
-        self.assertTrue(self.receipt.exists())
+    def test_shell_pane_is_not_a_delivery_target(self):
+        self.herdr.processes[PANE] = [{"name": "zsh", "argv": ["/usr/bin/zsh"], "pid": 1}]
+        code, _ = self.invoke(send=True)
+        self.assertEqual(code, 2)
+        self.assertEqual(self.send_count(), 0)
+        self.assertFalse(self.receipt.exists())
+        del self.herdr.agents[PANE]
+        code, _ = self.invoke(send=True)
+        self.assertEqual(code, 2)
+        self.assertEqual(self.send_count(), 0)
 
-    def test_absent_durable_operation_is_not_success(self):
-        code, report = self.invoke(send=True, mode="no-operation")
-        self.assertEqual((code, report["status"]), (1, "unconfirmed"))
+    def test_agy_is_recognized_by_its_argv0(self):
+        self.herdr.agents[PANE] = agent_row(PANE, self.repo, agent="agy")
+        self.herdr.processes[PANE] = [{"name": "python3", "argv": ["python3", "agy-locked"], "pid": 1},
+                                      {"name": "agy-real", "argv": ["agy", "--model", "x"], "pid": 2}]
+        code, report = self.invoke(send=True, agent_type="agy")
+        self.assertEqual((code, report["status"]), (0, "submitted"), report)
 
-    def test_failed_admission_is_not_success(self):
-        code, report = self.invoke(send=True, mode="failed")
-        self.assertEqual((code, report["status"]), (1, "unconfirmed"))
+    def test_pane_outside_workspace_and_bad_ids_rejected_before_tools(self):
+        for workspace, pane in (("w8", PANE), ("w9", "%42"), ("w9", "w9:t3")):
+            with self.subTest(pane=pane):
+                code, _ = self.invoke(send=True, workspace=workspace, pane=pane)
+                self.assertEqual(code, 2)
+        self.assertEqual(self.herdr.calls, [])
+        self.assertEqual(self.br_calls(), [])
+
+    def test_socket_must_be_this_users_socket(self):
+        fake = self.root / "not-a-socket"
+        fake.write_text("")
+        code, report = self.invoke(send=True, env=dict(self.env, HERDR_SOCKET_PATH=str(fake)))
+        self.assertEqual(code, 2)
+        self.assertIn("socket", report["error"])
+        self.assertFalse(self.receipt.exists())
 
     def test_preview_hash_required_and_changed_packet_rejected(self):
         code, _ = self.invoke(extra=("--send",))
         self.assertEqual(code, 2)
         code, _ = self.invoke(send=True, extra=("--expect-sha256", "0" * 64))
         self.assertEqual(code, 2)
-        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.herdr.calls, [])
 
     def test_different_request_cannot_reuse_receipt(self):
         self.invoke(send=True)
-        before = len(self.calls())
+        before = len(self.herdr.calls)
         code, _ = self.invoke(send=True, extra=("--operation-id", "different"))
         self.assertEqual(code, 2)
-        self.assertEqual(len(self.calls()), before)
+        self.assertEqual(len(self.herdr.calls), before)
+        self.assertEqual(self.send_count(), 1)
+
+    def test_foreign_result_file_is_not_trusted(self):
+        self.invoke(send=True, mode="disconnect")
+        self.result.write_text(json.dumps({"schema": "acfs.packet-delivery.v2", "status": "submitted"}))
+        self.result.chmod(0o600)
+        code, report = self.invoke(send=True)
+        self.assertEqual(code, 2, report)
         self.assertEqual(self.send_count(), 1)
 
     def test_truncated_packet_not_delivered(self):
@@ -228,13 +272,13 @@ class DeliveryTests(unittest.TestCase):
         self.write_packet()
         code, _ = self.invoke(send=True)
         self.assertEqual(code, 2)
-        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.herdr.calls, [])
 
     def test_duplicate_keys_rejected_before_tools(self):
         self.packet.write_text('{"schema_version":0,' + json.dumps(self.report)[1:])
         code, _ = self.invoke()
         self.assertEqual(code, 2)
-        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.herdr.calls, [])
 
     def test_existing_user_file_not_overwritten(self):
         self.receipt.write_text("user work")
@@ -242,7 +286,7 @@ class DeliveryTests(unittest.TestCase):
         code, _ = self.invoke(send=True)
         self.assertEqual(code, 2)
         self.assertEqual(self.receipt.read_text(), "user work")
-        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.herdr.calls, [])
 
     def test_receipt_symlink_is_not_followed(self):
         target = self.root / "keep"
@@ -251,7 +295,20 @@ class DeliveryTests(unittest.TestCase):
         code, _ = self.invoke(send=True)
         self.assertEqual(code, 2)
         self.assertEqual(target.read_text(), "untouched")
-        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.herdr.calls, [])
+
+    def test_receipt_directory_others_can_write_is_refused(self):
+        shared = self.root / "shared"
+        shared.mkdir()
+        self.receipt = shared / "delivery.json"
+        for mode in (0o775, 0o757, 0o1777):
+            with self.subTest(mode=oct(mode)):
+                shared.chmod(mode)
+                code, report = self.invoke(send=True)
+                self.assertEqual(code, 2, report)
+                self.assertIn("Receipt directory", report["error"])
+                self.assertEqual(list(shared.iterdir()), [])
+        self.assertEqual(self.herdr.calls, [])
 
     def test_real_generator_output_can_be_delivered(self):
         (self.repo / "AGENTS.md").write_text("Use current project policy.\n")
@@ -265,6 +322,52 @@ class DeliveryTests(unittest.TestCase):
         self.write_packet()
         code, report = self.invoke(send=True)
         self.assertEqual((code, report["status"]), (0, "submitted"), report)
+        self.assertEqual(self.herdr.prompts()[0]["text"], self.report["packet_markdown"])
+
+
+class HerdrSchemaContractTests(unittest.TestCase):
+    """Delivery's socket requests match herdr's published API schema."""
+
+    def setUp(self):
+        self.fixture = json.loads(SCHEMA_FIXTURE.read_text())
+
+    def check_request(self, method, params):
+        self.assertIn(method, self.fixture["methods"])
+        schema = self.fixture["params"][self.fixture["methods"][method]]
+        properties = schema.get("properties", {})
+        self.assertLessEqual(set(params), set(properties), (method, params))
+        self.assertLessEqual(set(schema.get("required", [])), set(params), (method, params))
+        for key, value in params.items():
+            allowed = properties[key].get("type")
+            allowed = allowed if isinstance(allowed, list) else [allowed]
+            self.assertIn("string", allowed, (method, key))
+            self.assertIsInstance(value, str)
+
+    def test_every_request_a_delivery_sends_fits_the_schema(self):
+        case = DeliveryTests("test_submit_exact_prompt_over_the_socket_with_private_receipts")
+        case.setUp()
+        self.addCleanup(case.doCleanups)
+        code, report = case.invoke(send=True)
+        self.assertEqual((code, report["status"]), (0, "submitted"), report)
+        self.assertEqual({method for method, _ in case.herdr.calls}, set(self.fixture["methods"]))
+        for method, params in case.herdr.calls:
+            self.check_request(method, params)
+
+    def test_fixture_matches_the_installed_herdr(self):
+        herdr = shutil.which("herdr")
+        if herdr is None:
+            self.skipTest("herdr is not installed; the committed fixture is the contract")
+        live = json.loads(subprocess.run([herdr, "api", "schema", "--json"], capture_output=True,
+                                         text=True, timeout=30, check=True).stdout)
+        requests = {item["properties"]["method"]["const"]: item["properties"]["params"]["$ref"].rsplit("/", 1)[1]
+                    for item in live["schemas"]["request"]["oneOf"]}
+        self.assertEqual(live["protocol"], self.fixture["protocol"],
+                         "herdr's protocol changed; re-check delivery and refresh the fixture")
+        for method, name in self.fixture["methods"].items():
+            self.assertEqual(requests.get(method), name, method)
+        for name, schema in self.fixture["params"].items():
+            self.assertEqual(live["schemas"]["request"]["$defs"][name], schema, name)
+        self.assertEqual(live["schemas"]["error_response"]["$defs"]["ErrorBody"], self.fixture["error_body"])
 
 
 if __name__ == "__main__":

@@ -7,14 +7,14 @@ It removes the manual packet/manifest assembly between `swarm assign` and
 
 ## Select work and prepare in one command
 
-With a scope map and existing agent panes, preparation can run the installed
+With a scope map and existing herdr agents, preparation can run the installed
 scope-aware allocator directly in the target repository:
 
 ```bash
 acfs swarm packet --prepare-batch ./handoff \
   --scopes-file scopes.json --roles implementation,documentation \
-  --repo "$PWD" --session myproject \
-  --target '1:RedFox:claude:%42' --target '2:BlueLake:codex:%43'
+  --repo "$PWD" --workspace w9 \
+  --target '1:RedFox:claude:w9:p3' --target '2:BlueLake:codex:w9:p4'
 ```
 
 This reads `br ready --json`, optionally enriches ranking with `bv --robot-triage`,
@@ -27,7 +27,7 @@ idle. The role count must equal `N`. Without `--roles`, the default is the exist
 or move a slot to another pane.
 
 Conflicting or unscoped work remains deferred. Only assigned slots produce
-packets; `idle_targets` explains unused panes by name and stable ID. When no
+packets; `idle_targets` explains unused panes by name and pane ID. When no
 independent work is available, the command returns `status: "no_work"` and exit
 code `1`, with the full assignment explanation and **no output directory or
 sendable manifest**. A prepared nonempty bundle exits `0`; input or preparation
@@ -56,16 +56,18 @@ acfs swarm assign --roles implementation,documentation \
   --scopes-file scopes.json --json > assignments.json
 ```
 
-Read the assigned slots and bind each one to an existing native Claude or Codex
-pane. Use the actual registered Agent Mail identities, not the example names:
+Read the assigned slots and bind each one to an existing native Claude, Codex or
+agy agent in one herdr workspace (`herdr agent list` shows their pane IDs). Use
+the actual registered Agent Mail identities, not the example names:
 
 ```bash
 acfs swarm packet --prepare-batch ./handoff \
-  --assignments assignments.json --repo "$PWD" --session myproject \
-  --target '1:RedFox:claude:%42' --target '2:BlueLake:codex:%43'
+  --assignments assignments.json --repo "$PWD" --workspace w9 \
+  --target '1:RedFox:claude:w9:p3' --target '2:BlueLake:codex:w9:p4'
 ```
 
-Each target is `SLOT:AGENT_NAME:AGENT_TYPE:STABLE_PANE_ID`. Provide exactly one
+Each target is `SLOT:AGENT_NAME:AGENT_TYPE:PANE_ID`, where the pane ID belongs to
+the `--workspace`. Provide exactly one
 for every **assigned** slot, excluding idle slots. Argument order does not matter;
 a slot is never reassigned to another pane merely because another slot is idle.
 Panes, slots and agent identities must be distinct. Scope-aware assignments are
@@ -95,7 +97,7 @@ acfs swarm packet --deliver-batch ./handoff/batch.json
 ```
 
 That separate preview returns the hash-bound send command. Submission may start
-paid model work and project edits. Delivery performs its existing live pane and
+paid model work and project edits. Delivery performs its live herdr agent and
 ready-queue checks. See [delivery and recovery](swarm-packet-delivery.md).
 
 ## Publication and recovery
@@ -127,5 +129,5 @@ python3 -B tests/unit/test_swarm_packet_preparation.py
 ```
 
 Tests execute the actual Bash/Python preparation and packet generator, then the
-actual batch delivery/reconciliation entrypoint against NTM/tmux/br contract
-fixtures. No installed providers or paid model sessions are exercised.
+actual batch delivery/reconciliation entrypoint against a herdr socket stub and
+br contract fixtures. No installed providers or paid model sessions are exercised.

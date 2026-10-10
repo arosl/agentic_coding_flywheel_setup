@@ -26,8 +26,8 @@ RUNTIME = Path(sys.argv.pop(1)).resolve(strict=True)
 SCHEMA = "acfs.swarm-launch.v2"
 RECOVERY_SCHEMA = "acfs.swarm-launch-recovery.v2"
 DISPATCH_SCHEMA = "acfs.swarm-dispatch.v1"
-PACKET_SCHEMA = "acfs.packet-delivery.v1"
-BATCH_SCHEMA = "acfs.packet-delivery-batch.v1"
+PACKET_SCHEMA = "acfs.packet-delivery.v2"
+BATCH_SCHEMA = "acfs.packet-delivery-batch.v2"
 LIMIT = 1024 * 1024
 # herdr identifiers. A pane, tab or workspace ID such as w9:p3; a terminal ID
 # such as term_65d6a6; an agent name as herdr accepts it.
@@ -478,7 +478,7 @@ def preparation_main(arguments):
             selected = set(slots)
         with tempfile.TemporaryDirectory(prefix="acfs-launch-handoff-") as scratch:
             argv = [binary("bash"), str(preparer), "--prepare-batch", str(output),
-                    "--repo", request["repo"], "--session", request["session"]]
+                    "--repo", request["repo"], "--workspace", targets[0]["workspace_id"]]
             for option, data in inputs.items():
                 path = Path(scratch) / (option + ".json")
                 path.write_bytes(data)
@@ -526,26 +526,19 @@ def packet_intent(path, request=None):
 
 
 def query_delivery(entry, saved):
-    """A known intent NEVER goes back through a send-capable execution path."""
+    """A known intent NEVER goes back through a send-capable execution path:
+    only the delivery's recorded result file is read."""
     request, target = entry["request"], saved["target"]
     report = {"schema": PACKET_SCHEMA, "request": request, "receipt": str(entry["receipt"]),
               "status": "unconfirmed", "sends_prompt": False, "reconciled_only": True,
               "agent_execution_verified": False}
     try:
-        code, data = run([binary("ntm"), "--robot-send-receipt=" + request["operation_id"],
-                          "--robot-format=json"], request["repo"])
-        response = parse(data)
-        operation = response.get("operation") if isinstance(response, dict) else None
-        outcome = response.get("outcome") if isinstance(response, dict) else None
-        if (code == 0 and isinstance(response, dict) and response.get("success") is True and response.get("session") == request["session"]
-                and isinstance(operation, dict) and operation.get("operation_id") == request["operation_id"]
-                and operation.get("payload_sha256") == request["payload_sha256"]
-                and type(operation.get("payload_bytes")) is int and operation["payload_bytes"] == request["payload_bytes"]
-                and operation.get("status") == "completed" and isinstance(outcome, dict)
-                and outcome.get("success") is True and outcome.get("targets") == [target]
-                and outcome.get("successful") == [target] and outcome.get("failed") == []
-                and operation.get("admissions") == [{"target": target, "state": "submitted"}]):
-            report["status"] = "submitted"
+        with receipt_directory(entry["receipt"]) as fd:
+            result = read_receipt(fd, entry["receipt"].name + ".result.json")
+        if (isinstance(result, dict) and result.get("schema") == PACKET_SCHEMA and result.get("request") == request
+                and result.get("target") == target and result.get("status") in ("submitted", "refused")
+                and isinstance(result.get("evidence"), dict)):
+            report.update(status=result["status"], evidence=result["evidence"])
     except (LaunchError, OSError, UnicodeError):
         pass
     return report, 0 if report["status"] == "submitted" else 1
@@ -557,7 +550,7 @@ def dispatch_preview(batch, request, targets, packet_script):
     require(isinstance(spec, dict) and set(spec) == {"schema", "deliveries"}
             and spec["schema"] == BATCH_SCHEMA and isinstance(spec["deliveries"], list)
             and 1 <= len(spec["deliveries"]) <= len(targets), "Expected a nonempty batch for this recorded launch.")
-    keys = {"packet", "repo", "session", "pane", "agent_type", "operation_id", "receipt"}
+    keys = {"packet", "repo", "workspace", "pane_id", "agent_type", "operation_id", "receipt"}
     known_intents = {}
     for item in spec["deliveries"]:
         require(isinstance(item, dict) and set(item) == keys
@@ -580,16 +573,17 @@ def dispatch_preview(batch, request, targets, packet_script):
                 and isinstance(detail, dict) and isinstance(detail.get("request"), dict), "Invalid batch entry.")
         packet, receipt, repo = (Path(os.path.abspath(batch.parent / item[k])) for k in ("packet", "receipt", "repo"))
         r = detail["request"]
-        require(r.get("repo") == str(repo) == request["repo"] and r.get("session") == item["session"] == request["session"]
-                and r.get("pane") == item["pane"] and r["pane"] in by_pane and r["pane"] not in panes
-                and r.get("agent_type") == item["agent_type"] == by_pane[r["pane"]]["agent_type"]
+        require(r.get("repo") == str(repo) == request["repo"]
+                and r.get("pane_id") == item["pane_id"] and r["pane_id"] in by_pane and r["pane_id"] not in panes
+                and r.get("workspace") == item["workspace"] == by_pane[r["pane_id"]]["workspace_id"]
+                and r.get("agent_type") == item["agent_type"] == by_pane[r["pane_id"]]["agent_type"]
                 and r.get("operation_id") == item["operation_id"] and detail.get("receipt") == str(receipt)
                 and all(isinstance(r.get(k), str) and re.fullmatch(r"[a-f0-9]{64}", r[k])
                         for k in ("packet_sha256", "payload_sha256"))
                 and type(r.get("payload_bytes")) is int and 1 <= r["payload_bytes"] <= 65536,
                 "Batch target does not match the original launch; no work was sent.")
-        panes.add(r["pane"])
-        entry = {"packet": packet, "receipt": receipt, "request": r, "target": by_pane[r["pane"]]}
+        panes.add(r["pane_id"])
+        entry = {"packet": packet, "receipt": receipt, "request": r, "target": by_pane[r["pane_id"]]}
         prior, current = known_intents[receipt], packet_intent(receipt, r)
         require(prior is None or (prior["request"] == r and (current is None or current == prior)),
                 "Delivery intent changed during validation; preserve it and inspect the recorded submission.")
@@ -655,7 +649,7 @@ def dispatch_main(arguments):
                     else:
                         check_target(target, request)
                         argv = [binary("bash"), str(packet_script), "--deliver", str(entry["packet"])]
-                        for key in ("repo", "session", "pane", "agent_type", "operation_id"):
+                        for key in ("repo", "workspace", "pane_id", "agent_type", "operation_id"):
                             argv.extend(("--" + key.replace("_", "-"), r[key]))
                         argv.extend(("--receipt", str(entry["receipt"]), "--expect-sha256", r["packet_sha256"], "--send"))
                         send_invoked = True
@@ -663,7 +657,7 @@ def dispatch_main(arguments):
                         outcome = parse(data)
                         require(isinstance(outcome, dict) and outcome.get("schema") == PACKET_SCHEMA
                                 and outcome.get("request") == r and outcome.get("receipt") == str(entry["receipt"])
-                                and (code, outcome.get("status")) in ((0, "submitted"), (1, "unconfirmed"))
+                                and (code, outcome.get("status")) in ((0, "submitted"), (1, "refused"), (1, "unconfirmed"))
                                 and type(outcome.get("sends_prompt")) is bool,
                                 "Delivery did not return matching submission evidence; retain its receipt.")
                     result.update(outcome)
@@ -677,7 +671,7 @@ def dispatch_main(arguments):
             sends_prompt=any(r.get("sends_prompt") for r in results),
             submission_may_have_occurred=any(r.get("sends_prompt") or r.get("submission_may_have_occurred") for r in results))
         report["summary"] = {s: sum(r["status"] == s for r in results)
-                             for s in ("submitted", "unconfirmed", "error", "not_attempted")}
+                             for s in ("submitted", "refused", "unconfirmed", "error", "not_attempted")}
         report["summary"]["reconciled"] = sum(r.get("reconciled_only") is True for r in results)
         report["recovery"] = "Keep launch and delivery receipts plus unchanged packets and manifest. Repeat this command to " \
                              "query known intents and continue pending entries; never delete receipts to force a resend."

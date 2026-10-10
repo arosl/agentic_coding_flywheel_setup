@@ -1,0 +1,84 @@
+{
+  "_source": "herdr api schema --json, protocol 22: the requests acfs swarm packet delivery sends (acfs-qzc)",
+  "protocol": 22,
+  "methods": {
+    "agent.list": "EmptyParams",
+    "agent.prompt": "AgentPromptParams",
+    "pane.process_info": "PaneProcessInfoParams"
+  },
+  "params": {
+    "AgentPromptParams": {
+      "properties": {
+        "target": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "wait": {
+          "anyOf": [
+            {
+              "$ref": "#/schemas/request/$defs/AgentPromptWaitOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "target",
+        "text"
+      ],
+      "type": "object"
+    },
+    "AgentPromptWaitOptions": {
+      "properties": {
+        "timeout_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "until": {
+          "items": {
+            "$ref": "#/schemas/request/$defs/AgentStatus"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "EmptyParams": {
+      "type": "object"
+    },
+    "PaneProcessInfoParams": {
+      "properties": {
+        "pane_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  "error_body": {
+    "properties": {
+      "code": {
+        "type": "string"
+      },
+      "message": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "code",
+      "message"
+    ],
+    "type": "object"
+  }
+}

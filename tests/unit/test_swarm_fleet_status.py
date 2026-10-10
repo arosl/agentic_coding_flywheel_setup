@@ -102,8 +102,8 @@ class FleetFixture:
             value.update(status="preview", sends_prompt=False, deliveries=[])
             for target in entry["targets"]:
                 bead = f"bd-{entry['host']['id']}-{target['slot']}"
-                request = {k: entry["host"]["request"][k] for k in ("repo", "session")}
-                request.update(pane=target["pane_id"], agent_type=target["agent_type"], operation_id="op-" + bead,
+                request = {"repo": entry["host"]["request"]["repo"], "workspace": target["workspace_id"]}
+                request.update(pane_id=target["pane_id"], agent_type=target["agent_type"], operation_id="op-" + bead,
                                bead_id=bead, packet_sha256="b" * 64, payload_sha256="c" * 64, payload_bytes=123)
                 value["deliveries"].append({"slot": target["slot"], "request": request,
                     "receipt": "/home/ubuntu/" + bead + ".delivery.json", "action": "submit"})
@@ -114,15 +114,12 @@ class FleetFixture:
         if mode == "launch-status":
             return self.native(entry["host"], "reconcile")
         if mode == "read-receipt":
-            return 0, fleet.encoded({"schema": "acfs.packet-delivery.v1",
-                "request": entry["delivery"]["request"], "target": "pane:recorded"})
-        if mode == "query-receipt":
+            return 0, fleet.encoded({"schema": "acfs.packet-delivery.v2",
+                "request": entry["delivery"]["request"], "target": "term_recorded", "agent_session": "session-1"})
+        if mode == "read-result":
             request = entry["delivery"]["request"]
-            return 0, fleet.encoded({"success": True, "session": request["session"],
-                "operation": {"operation_id": request["operation_id"], "payload_sha256": request["payload_sha256"],
-                    "payload_bytes": request["payload_bytes"], "status": "completed",
-                    "admissions": [{"target": "pane:recorded", "state": "submitted"}]},
-                "outcome": {"success": True, "targets": ["pane:recorded"], "successful": ["pane:recorded"], "failed": []}})
+            return 0, fleet.encoded({"schema": "acfs.packet-delivery.v2", "request": request, "target": "term_recorded",
+                "status": "submitted", "evidence": {"pane_id": request["pane_id"], "terminal_id": "term_recorded"}})
         if mode == "work-snapshot":
             request = entry["snapshot_request"]
             return 0, fleet.encoded({"schema": status.SNAPSHOT_SCHEMA, "request": request, "sha256": "d" * 64,
@@ -170,7 +167,7 @@ class StatusTests(unittest.TestCase):
         self.assertNotIn("PRIVATE-", text)
         self.assertNotIn("/home/ubuntu/", text)
         self.assertEqual(before, self.fx.snapshot())
-        self.assertEqual(set(m for _, m in self.fx.calls), {"launch-status", "read-receipt", "query-receipt", "work-snapshot"})
+        self.assertEqual(set(m for _, m in self.fx.calls), {"launch-status", "read-receipt", "read-result", "work-snapshot"})
 
     def test_launch_only_does_not_query_work_or_receipts(self):
         report, code = self.fx.collect(dispatch_state=False)
@@ -210,20 +207,26 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(report["hosts"][0]["agents"]["code"], "adopted_session_requires_manual_review")
 
-    def test_forged_receipt_payload_is_unconfirmed_even_with_closed_work(self):
+    def test_forged_result_payload_is_unconfirmed_even_with_closed_work(self):
         def change(value):
-            value["operation"]["payload_sha256"] = "0" * 64
-        report, code = self.fx.collect(self.mutate("query-receipt", change))
+            value["request"]["payload_sha256"] = "0" * 64
+        report, code = self.fx.collect(self.mutate("read-result", change))
         self.assertEqual(code, 1)
         self.assertEqual(report["summary"]["confirmed_submissions"], 0)
-        self.assertEqual(report["hosts"][0]["deliveries"][0]["code"], "submission_not_confirmed")
+        self.assertEqual(report["hosts"][0]["deliveries"][0]["code"], "delivery_result_mismatch")
 
-    def test_native_intent_mismatch_prevents_ntm_receipt_query(self):
+    def test_refused_result_is_not_a_submission(self):
+        report, code = self.fx.collect(self.mutate("read-result", lambda v: v.update(status="refused")))
+        self.assertEqual(code, 1)
+        self.assertEqual(report["summary"]["confirmed_submissions"], 0)
+        self.assertEqual(report["hosts"][0]["deliveries"][0]["code"], "delivery_refused")
+
+    def test_native_intent_mismatch_prevents_result_read(self):
         def change(value):
             value["request"]["bead_id"] = "bd-other"
         report, code = self.fx.collect(self.mutate("read-receipt", change))
         self.assertEqual(code, 1)
-        self.assertFalse(any(mode == "query-receipt" for _, mode in self.fx.calls))
+        self.assertFalse(any(mode == "read-result" for _, mode in self.fx.calls))
         self.assertEqual(report["hosts"][0]["deliveries"][0]["code"], "native_receipt_mismatch")
 
     def test_stale_exports_never_contribute_recent_counts(self):

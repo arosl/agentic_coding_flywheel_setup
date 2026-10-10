@@ -82,7 +82,7 @@ def bundle_snapshot(entry):
     fleet.require(files["assignments.json"] == fleet.encoded(entry["assignments"]), "assignment_bytes_changed")
     batch = fleet.decode(files["batch.json"])
     fleet.require(type(batch) is dict and set(batch) == {"schema", "deliveries"}
-        and batch["schema"] == "acfs.packet-delivery-batch.v1" and type(batch["deliveries"]) is list
+        and batch["schema"] == "acfs.packet-delivery-batch.v2" and type(batch["deliveries"]) is list
         and len(batch["deliveries"]) == len(items), "prepared_batch_invalid")
     targets = {t["slot"]: t for t in entry["targets"]}
     operations = set()
@@ -92,10 +92,10 @@ def bundle_snapshot(entry):
         name = "packet-" + str(slot).zfill(2)
         target, request = targets[slot], entry["host"]["request"]
         fleet.require(type(delivery) is dict and set(delivery) == {
-            "packet", "repo", "session", "pane", "agent_type", "operation_id", "receipt"}
+            "packet", "repo", "workspace", "pane_id", "agent_type", "operation_id", "receipt"}
             and delivery["packet"] == name + ".json" and delivery["receipt"] == name + ".receipt.json"
-            and delivery["repo"] == request["repo"] and delivery["session"] == request["session"]
-            and delivery["pane"] == target["pane_id"] and delivery["agent_type"] == target["agent_type"]
+            and delivery["repo"] == request["repo"] and delivery["workspace"] == target["workspace_id"]
+            and delivery["pane_id"] == target["pane_id"] and delivery["agent_type"] == target["agent_type"]
             and fleet.matches(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", delivery["operation_id"])
             and delivery["operation_id"] not in operations, "prepared_target_invalid")
         operations.add(delivery["operation_id"])

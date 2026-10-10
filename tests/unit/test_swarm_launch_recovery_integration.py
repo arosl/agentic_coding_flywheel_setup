@@ -107,7 +107,6 @@ class RecoveryIntegrationTests(unittest.TestCase):
         self.assertFalse(report["launch"]["starts_agents"])
         self.assert_one_spawn_and_no_sends()
 
-    @unittest.skip(handoff.K5_PENDING)
     def test_recovered_session_produces_real_scoped_packets(self):
         self.unconfirmed()
         self.adopt()
@@ -125,7 +124,8 @@ class RecoveryIntegrationTests(unittest.TestCase):
             "--ready-file", str(beads), "--beads-file", str(beads), "--triage-file", str(triage)))
         self.assertEqual((code, report["status"]), (0, "prepared"), report)
         batch = json.loads((self.case.output / "batch.json").read_text())
-        self.assertEqual([d["pane"] for d in batch["deliveries"]], ["%43", "%42"])
+        self.assertEqual([d["pane_id"] for d in batch["deliveries"]], ["w9:p2", "w9:p3"])
+        self.assertEqual({d["workspace"] for d in batch["deliveries"]}, {"w9"})
         self.assertEqual([d["agent_type"] for d in batch["deliveries"]], ["codex", "claude"])
         self.assertIn("Return 200", json.loads((self.case.output / "packet-01.json").read_text())["packet_markdown"])
         self.assertFalse(list(self.case.output.glob("*.receipt.json")))

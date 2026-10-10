@@ -86,9 +86,9 @@ class Fixture:
             (bundle / (name + ".md")).write_text(text)
             (bundle / (name + ".md")).chmod(0o600)
             deliveries.append({"packet": name + ".json", "receipt": name + ".receipt.json", "repo": req["repo"],
-                "session": req["session"], "pane": target["pane_id"], "agent_type": target["agent_type"],
+                "workspace": target["workspace_id"], "pane_id": target["pane_id"], "agent_type": target["agent_type"],
                 "operation_id": "operation-" + item["bead_id"]})
-        self.private(bundle / "batch.json", {"schema": "acfs.packet-delivery-batch.v1", "deliveries": deliveries})
+        self.private(bundle / "batch.json", {"schema": "acfs.packet-delivery-batch.v2", "deliveries": deliveries})
         result = self.peer["bundle_snapshot"](entry)
         self.private(root / "complete.json", result)
         return result

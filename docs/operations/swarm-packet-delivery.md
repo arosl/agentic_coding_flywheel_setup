@@ -1,14 +1,15 @@
 # Deliver a reviewed work packet to an existing agent
 
-The packet generator can now hand its prompt to one explicitly selected NTM
-pane. Ordinary `acfs swarm packet --bead …` generation remains read-only.
+The packet generator can hand its prompt to one explicitly selected herdr
+agent. Ordinary `acfs swarm packet --bead …` generation remains read-only.
 Delivery is a separate `--deliver` mode, previews by default, and requires
 `--send` plus the previewed packet hash to submit anything.
 
-This starts work in an **existing native Claude or Codex agent**. It does not
-spawn agents, authenticate accounts, clear input, interrupt a session, change
-trust settings, claim Beads, or reserve files. Submission can trigger paid model
-calls and project edits by the receiving agent. Review the prompt first.
+This starts work in an **existing native Claude, Codex or Antigravity (agy)
+agent**. It does not spawn agents, authenticate accounts, clear input, interrupt
+a session, change trust settings, claim Beads, or reserve files. Submission can
+trigger paid model calls and project edits by the receiving agent. Review the
+prompt first.
 
 ## Generate, review, then deliver
 
@@ -27,17 +28,17 @@ Use an already registered Agent Mail identity where the packet names one. The
 receiving agent must still inspect its inbox, current Beads, and reservations.
 A packet is not a work claim or evidence that its instructions are current.
 
-Find the stable pane ID, not a layout index:
+Find the agent's herdr workspace and pane IDs, not a tab or layout number:
 
 ```bash
-tmux list-panes -a -F '#{session_name} #{pane_id} #{pane_current_command} #{pane_current_path}'
+herdr agent list
 ```
 
 Preview the handoff (no tools are called and no receipt is written):
 
 ```bash
 acfs swarm packet --deliver work-packet.json --repo "$PWD" \
-  --session myproject --pane '%42' --agent-type claude \
+  --workspace w9 --pane-id w9:p3 --agent-type claude \
   --operation-id myproject-bd-example-1 --receipt work-packet.receipt.json
 ```
 
@@ -45,53 +46,72 @@ The JSON output includes `send_command`, a copyable invocation with `--send` and
 `--expect-sha256` already filled in. Execute that command only after reviewing
 the prompt, pane, repository, and potential model costs.
 
-Before sending, ACFS checks the live `br ready --json` queue, verifies the pane
-belongs to the named session and repository, requires its foreground command to
-be the requested native agent, and asks NTM for a dry run. NTM must select
-exactly one agent. A shell with an old agent title is not accepted. Node-hosted
-legacy agent wrappers and other provider types are not yet supported here.
+Before sending, ACFS checks the live `br ready --json` queue, then asks herdr
+twice, over its socket, whether the pane is the requested agent: it must be
+listed in `herdr agent list` with that agent type, in the named workspace, with
+its working directory inside the repository, and with the agent among the pane's
+foreground processes. A shell, an agent of another type, or an agent waiting at
+a dialog (`blocked`) is refused, and nothing is sent.
 
-Requires an NTM version supporting `--robot-send`, `--msg-file=-`, `--panes`,
-`--type`, `--dry-run`, `--op-id`, and `--robot-send-receipt`. The prompt is sent
-through stdin, never shell-evaluated or placed in process arguments. NTM context
-injection is refused when reported enabled: this packet already contains its
-reviewed context. ACFS does not edit the NTM configuration to turn it off.
+The prompt travels only in one `agent.prompt` request on herdr's socket. It is
+never shell-evaluated, placed in process arguments, or written to a log. ACFS
+finds the socket from `$HERDR_SOCKET_PATH`, which herdr sets in its panes, or
+else from `herdr status server`; the server must be running and report a
+compatible endpoint, and the socket must belong to the current user.
 
 ## Interruptions and uncertain outcomes
 
+herdr keeps no record of a prompt: unlike a durable send queue, it cannot be
+asked afterwards whether a prompt arrived. ACFS's receipt files are therefore
+the only record, and a receipt is **never** sent again.
+
 Immediately before submission, ACFS writes a create-only, mode-0600 intent
-receipt. It records the packet hash, target, and operation ID, not the prompt.
-**Keep both the packet and receipt.**
+receipt. It records the packet hash, pane, terminal and operation ID, not the
+prompt. After herdr answers, ACFS writes a create-only result file beside it,
+`RECEIPT.result.json`, with the outcome. **Keep the packet, the receipt and its
+result file.** The receipt's directory must be yours and writable by nobody
+else (no group or world write): whoever can write it could remove an intent
+and turn the next run into a resend. ACFS refuses any other directory before
+it contacts herdr.
+
+- `submitted`: herdr accepted the prompt for that agent, and its answer names
+  the same pane and terminal.
+- `refused`: herdr answered with an error it returns before typing anything
+  (`agent_not_found`, `agent_blocked`). Nothing was sent.
+- `unconfirmed`: anything else. The connection failed or closed, the answer was
+  late, oversized or malformed, it named another agent, or herdr returned another
+  error. No result file is written, because ACFS cannot tell whether the prompt
+  arrived.
 
 Repeat the identical delivery command after a dropped connection or uncertain
-result. When the receipt exists, ACFS only queries NTM's durable receipt. It does
-not resend, even when the upstream receipt is missing or still in progress.
-This intentionally avoids NTM's stale-operation takeover becoming a blind retry.
-It also means an intent written just before a crash may require manual inspection
-when no send actually reached NTM. Do not remove receipts merely to retry.
+result. When the receipt exists, ACFS only reads its result file and never
+contacts herdr to send. A delivery without a result stays `unconfirmed` on every
+rerun. Look at the agent with `herdr agent read PANE_ID` before deliberately
+creating a new operation and receipt for another attempt. Do not remove
+receipts merely to retry.
 
-`submitted` means a matching NTM durable operation reports one successful pane
-submission with the expected payload digest and byte count. It does **not**
-prove model comprehension, task execution, or task completion. Changed or
-transformed payloads, missing operations, and incomplete admissions remain
-`unconfirmed`. Review NTM and the actual pane before deliberately creating a new
-operation/receipt for another attempt.
+`submitted` does **not** prove model comprehension, task execution, or task
+completion.
 
-Exit codes: `0` for a preview or confirmed submission, `1` for an unconfirmed
-outcome, and `2` for invalid inputs, failed preflight, or interruption. Never
-interpret a nonzero exit as proof that nothing was typed; retain the receipt.
-No raw NTM output, model prompt, or service error body is echoed in delivery
+Exit codes: `0` for a preview or confirmed submission, `1` for a refused or
+unconfirmed outcome, and `2` for invalid inputs, failed preflight, or
+interruption. Never interpret a nonzero exit as proof that nothing was typed;
+retain the receipt. No model prompt or raw herdr output is echoed in delivery
 reports. Saved packet JSON can contain private project context; do not publish it.
 
 ## Tests
 
 ```bash
-bash tests/unit/test_swarm_packet_delivery.sh
+python3 -B tests/unit/test_swarm_packet_delivery.py
+python3 -B tests/unit/test_swarm_packet_delivery_batch.py
 ```
 
-The suite drives the real Bash/Python command, real packet generation, and
-executable NTM/tmux/Beads contract fixtures. Live provider/NTM acceptance must be
-run separately on a configured VPS; these tests make no model calls.
+The suites drive the real Bash/Python command and real packet generation against
+a herdr socket stub (`tests/unit/herdr_socket_stub.py`) and a Beads fixture.
+Every request delivery sends is checked against
+`tests/fixtures/herdr/agent_prompt_schema.json`, taken from `herdr api schema
+--json`; where herdr is installed, the fixture is also compared with the live
+schema, so a protocol change fails loudly. These tests make no model calls.
 
 ## Deliver different work to several agents
 
@@ -102,13 +122,13 @@ Keep the batch manifest next to the saved packets:
 
 ```json
 {
-  "schema": "acfs.packet-delivery-batch.v1",
+  "schema": "acfs.packet-delivery-batch.v2",
   "deliveries": [
     {
       "packet": "implementation.json",
       "repo": "/data/projects/myproject",
-      "session": "myproject",
-      "pane": "%42",
+      "workspace": "w9",
+      "pane_id": "w9:p3",
       "agent_type": "claude",
       "operation_id": "myproject-implementation-1",
       "receipt": "implementation.receipt.json"
@@ -116,8 +136,8 @@ Keep the batch manifest next to the saved packets:
     {
       "packet": "tests.json",
       "repo": "/data/projects/myproject",
-      "session": "myproject",
-      "pane": "%43",
+      "workspace": "w9",
+      "pane_id": "w9:p4",
       "agent_type": "codex",
       "operation_id": "myproject-tests-1",
       "receipt": "tests.receipt.json"
@@ -145,21 +165,23 @@ includes that combined hash and `--send`. It is not just a hash of the manifest:
 editing a referenced packet also invalidates the reviewed batch.
 
 Authorized dispatch is sequential. Each target still receives the single-agent
-live ready-queue, native-pane, NTM dry-run and durable-intent checks described
-above. The reviewed packet bytes are retained in memory for the run. Agents may
-begin working as soon as their packet is submitted; this is **not** a transaction,
-a reservation, or evidence that their editing scopes are independent. Use the
-scope-aware assignment planner and Agent Mail coordination when preparing work.
+live ready-queue, agent and durable-intent checks described above. The reviewed
+packet bytes are retained in memory for the run. Agents may begin working as
+soon as their packet is submitted; this is **not** a transaction, a reservation,
+or evidence that their editing scopes are independent. Use the scope-aware
+assignment planner and Agent Mail coordination when preparing work.
 
-A failed preflight or uncertain outcome stops dispatch immediately. The JSON
-report keeps the earlier results and labels later entries `not_attempted`.
-Completed submissions are not rolled back. Preserve the unchanged batch,
-packets and receipts, then repeat the same authorized command: earlier intents
-are queried, not resent, and remaining agents are dispatched only after those
-outcomes are confirmed. A missing or ambiguous upstream receipt continues to
-block later entries rather than triggering a blind resend.
+A failed preflight, refusal or uncertain outcome stops dispatch immediately. The
+JSON report keeps the earlier results and labels later entries `not_attempted`.
+Completed submissions are not rolled back. Preserve the unchanged batch, packets
+and receipts, then repeat the same authorized command: earlier outcomes are read
+from their result files, not resent, and remaining agents are dispatched only
+after those outcomes are `submitted`. An unconfirmed entry keeps blocking later
+entries on every rerun rather than triggering a blind resend; after inspecting
+the agent, prepare a new batch for the remaining work.
 
-The batch report exposes per-entry `submitted`, `unconfirmed`, `error`, and
-`not_attempted` states plus summary counts and a reconciled count. Its exit code
-is `0` after preview or all submissions, `1` when an outcome is unconfirmed, or
-`2` for validation/preflight/interruption errors. It never claims task completion.
+The batch report exposes per-entry `submitted`, `refused`, `unconfirmed`,
+`error`, and `not_attempted` states plus summary counts and a reconciled count.
+Its exit code is `0` after preview or all submissions, `1` when an outcome is
+refused or unconfirmed, or `2` for validation/preflight/interruption errors. It
+never claims task completion.

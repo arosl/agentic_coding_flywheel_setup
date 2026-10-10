@@ -365,8 +365,8 @@ for item in entry['assignments']['assignments']:
             'declared_write_scopes':item['reservation_surfaces'],'reservations_acquired':False,'bead_source':'file'}}
     write(name+'.json',enc(packet)); write(name+'.md',text.encode())
     deliveries.append({'packet':name+'.json','receipt':name+'.receipt.json','repo':request['repo'],
-        'session':request['session'],'pane':t['pane_id'],'agent_type':t['agent_type'],'operation_id':'test-operation-'+str(slot)})
-write('batch.json',enc({'schema':'acfs.packet-delivery-batch.v1','deliveries':deliveries}))
+        'workspace':t['workspace_id'],'pane_id':t['pane_id'],'agent_type':t['agent_type'],'operation_id':'test-operation-'+str(slot)})
+write('batch.json',enc({'schema':'acfs.packet-delivery-batch.v2','deliveries':deliveries}))
 print(json.dumps({'schema':'acfs.packet-preparation.v1','status':'prepared','directory':str(out),'sends_prompt':False,
     'launch':{'receipt':request['receipt'],'session':request['session'],'request_sha256':sha(enc(request)),
         'identities_rechecked':True,'starts_agents':False,'work_dispatched':False,

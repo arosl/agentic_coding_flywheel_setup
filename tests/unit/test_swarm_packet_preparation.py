@@ -7,8 +7,12 @@ from pathlib import Path
 import shlex
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from herdr_socket_stub import HerdrStub, agent_row  # noqa: E402
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/lib/swarm_packet.sh"
 
@@ -32,35 +36,7 @@ if name == "bv":
     assert args == ["--robot-triage"] and pathlib.Path.cwd() == root / "repo", args
     print((root / "triage.json").read_text())
     sys.exit(0)
-if name == "tmux":
-    assert args[:3] == ["display-message", "-p", "-t"], args
-    pane = args[3]
-    assert pane in ("%42", "%43"), pane
-    print("project\t" + pane + "\t" + str(root / "repo") + "\t0\t" + ("claude" if pane == "%42" else "codex"))
-    sys.exit(0)
-assert name == "ntm", name
-if args[0].startswith("--robot-send-receipt="):
-    op = args[0].split("=", 1)[1]
-    data = json.loads((root / (op + ".json")).read_text())
-    print(json.dumps({"success": True, "session": "project", "operation": data["operation"], "outcome": data}))
-    sys.exit(0)
-assert "--robot-send=project" in args and "--msg-file=-" in args, args
-pane = next(a.split("=", 1)[1] for a in args if a.startswith("--panes="))
-assert "--type=" + ("claude" if pane == "%42" else "codex") in args, args
-payload = sys.stdin.buffer.read()
-assert b"Acceptance criteria" in payload and b"Declared Write Scope" in payload
-assert (b"bd-api" if pane == "%42" else b"bd-doc") in payload
-if "--dry-run" in args:
-    print(json.dumps({"success": True, "session": "project", "dry_run": True, "blocked": False,
-                      "successful": [], "failed": [], "would_send_to": [pane]}))
-    sys.exit(0)
-op = next(a.split("=", 1)[1] for a in args if a.startswith("--op-id="))
-data = {"success": True, "session": "project", "targets": [pane], "successful": [pane], "failed": [],
-        "operation": {"operation_id": op, "status": "completed", "payload_sha256": hashlib.sha256(payload).hexdigest(),
-                      "payload_bytes": len(payload), "admissions": [{"target": pane, "state": "submitted"}]}}
-(root / (op + ".json")).write_text(json.dumps(data))
-(root / (pane[1:] + ".prompt")).write_bytes(payload)
-print(json.dumps(data))
+sys.exit("unexpected tool: " + name)
 '''
 
 
@@ -75,12 +51,15 @@ class PreparationTests(unittest.TestCase):
         (self.repo / "README.md").write_text("The project.\n")
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        for name in ("br", "bv", "tmux", "ntm", "cm", "cass"):
+        for name in ("br", "bv", "cm", "cass"):
             path = self.bin / name
             path.write_text(TOOLS)
             path.chmod(0o755)
-        self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
-                        PREPARATION_TEST_ROOT=str(self.root))
+        self.herdr = HerdrStub([agent_row("w9:p42", self.repo), agent_row("w9:p43", self.repo, agent="codex"),
+                                agent_row("w9:p44", self.repo)])
+        self.addCleanup(self.herdr.close)
+        self.env = self.herdr.env(dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
+                                       PREPARATION_TEST_ROOT=str(self.root)))
         self.output = self.root / "prepared work"
         self.assignments = {"schema_version": 1, "status": "pass", "advisory_only": True,
             "scope_admission": {"mode": "explicit-scopes", "status": "pass"},
@@ -118,8 +97,8 @@ class PreparationTests(unittest.TestCase):
 
     def invoke(self, offline=True, targets=None, extra=()):
         args = ["bash", str(SCRIPT), "--prepare-batch", str(self.output), "--repo", str(self.repo),
-                "--session", "project", "--assignments", str(self.assignment_path), "--no-live-context"]
-        for target in targets or ["3:BlueLake:codex:%43", "1:RedFox:claude:%42"]:
+                "--workspace", "w9", "--assignments", str(self.assignment_path), "--no-live-context"]
+        for target in targets or ["3:BlueLake:codex:w9:p43", "1:RedFox:claude:w9:p42"]:
             args += ["--target", target]
         if offline:
             args += ["--beads-file", str(self.bead_path)]
@@ -132,8 +111,8 @@ class PreparationTests(unittest.TestCase):
 
     def invoke_auto(self, offline=True, targets=None, roles="implementation,documentation", extra=(), cwd=None):
         args = ["bash", str(SCRIPT), "--prepare-batch", str(self.output), "--repo", str(self.repo),
-                "--session", "project", "--scopes-file", str(self.scopes_path), "--no-live-context"]
-        for target in targets or ["1:RedFox:claude:%42", "2:BlueLake:codex:%43"]:
+                "--workspace", "w9", "--scopes-file", str(self.scopes_path), "--no-live-context"]
+        for target in targets or ["1:RedFox:claude:w9:p42", "2:BlueLake:codex:w9:p43"]:
             args += ["--target", target]
         if roles is not None:
             args += ["--roles", roles]
@@ -174,7 +153,9 @@ class PreparationTests(unittest.TestCase):
         code, report = self.invoke()
         self.assertEqual(code, 0, report)
         batch = json.loads((self.output / "batch.json").read_text())
-        self.assertEqual([d["pane"] for d in batch["deliveries"]], ["%42", "%43"])
+        self.assertEqual([d["pane_id"] for d in batch["deliveries"]], ["w9:p42", "w9:p43"])
+        self.assertEqual({d["workspace"] for d in batch["deliveries"]}, {"w9"})
+        self.assertEqual(batch["schema"], "acfs.packet-delivery-batch.v2")
         self.assertEqual([d["agent_type"] for d in batch["deliveries"]], ["claude", "codex"])
         self.assertEqual([self.packet(s)["agent"]["name"] for s in (1, 3)], ["RedFox", "BlueLake"])
         self.assertEqual([d["packet"] for d in batch["deliveries"]], ["packet-01.json", "packet-03.json"])
@@ -201,11 +182,17 @@ class PreparationTests(unittest.TestCase):
             result = json.loads(sent.stdout)
             self.assertEqual(result["summary"]["submitted"], 2)
             self.assertEqual(result["summary"]["reconciled"], attempt * 2)
-        sends = [args for name, args in self.calls()
-                 if name == "ntm" and "--robot-send=project" in args and "--dry-run" not in args]
-        self.assertEqual(len(sends), 2)
-        for slot, pane in ((1, "42"), (3, "43")):
-            self.assertEqual((self.root / (pane + ".prompt")).read_text(), self.packet(slot)["packet_markdown"])
+        self.assert_prompts({"w9:p42": 1, "w9:p43": 3})
+
+    def assert_prompts(self, slots):
+        """Each pane got exactly its slot's full packet, once, over herdr's socket."""
+        prompts = self.herdr.prompts()
+        self.assertEqual([p["target"] for p in prompts], list(slots))
+        for prompt in prompts:
+            text = self.packet(slots[prompt["target"]])["packet_markdown"]
+            self.assertEqual(prompt["text"], text)
+            self.assertIn("Acceptance criteria", text)
+            self.assertIn("Declared Write Scope", text)
 
     def test_overlapping_or_inferred_scopes_are_not_trusted(self):
         self.assignments["assignments"][1]["reservation_surfaces"] = ["src/api/routes.py"]
@@ -220,10 +207,12 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(self.calls(), [])
 
     def test_unusable_targets_do_not_create_bundle(self):
-        cases = [["1:RedFox:claude:%42"], ["1:RedFox:claude:%42", "3:BlueLake:codex:%42"],
-                 ["1:RedFox:claude:%42", "3:RedFox:codex:%43"],
-                 ["1:RedFox:bash:%42", "3:BlueLake:codex:%43"],
-                 ["1:RedFox:claude:1", "3:BlueLake:codex:%43"]]
+        cases = [["1:RedFox:claude:w9:p42"], ["1:RedFox:claude:w9:p42", "3:BlueLake:codex:w9:p42"],
+                 ["1:RedFox:claude:w9:p42", "3:RedFox:codex:w9:p43"],
+                 ["1:RedFox:bash:w9:p42", "3:BlueLake:codex:w9:p43"],
+                 ["1:RedFox:claude:1", "3:BlueLake:codex:w9:p43"],
+                 ["1:RedFox:claude:%42", "3:BlueLake:codex:%43"],
+                 ["1:RedFox:claude:w8:p42", "3:BlueLake:codex:w9:p43"]]
         for targets in cases:
             with self.subTest(targets=targets):
                 self.assertEqual(self.invoke(targets=targets)[0], 2)
@@ -329,10 +318,10 @@ class PreparationTests(unittest.TestCase):
         self.scopes_path.write_text(json.dumps(self.scopes))
         self.write_inputs()
         code, report = self.invoke_auto(roles="implementation:3", targets=[
-            "3:GreenHill:claude:%44", "2:BlueLake:codex:%43", "1:RedFox:claude:%42"])
+            "3:GreenHill:claude:w9:p44", "2:BlueLake:codex:w9:p43", "1:RedFox:claude:w9:p42"])
         self.assertEqual(code, 0, report)
         self.assertEqual([a["bead_id"] for a in report["assignments"]], ["bd-api", "bd-doc"])
-        self.assertEqual(report["idle_targets"][0]["target"]["pane"], "%44")
+        self.assertEqual(report["idle_targets"][0]["target"]["pane"], "w9:p44")
         self.assertEqual(report["idle_targets"][0]["reason"], "no-independent-ready-bead")
         self.assertFalse((self.output / "packet-03.json").exists())
         saved = json.loads((self.output / "assignments.json").read_text())
@@ -357,7 +346,7 @@ class PreparationTests(unittest.TestCase):
         code, report = self.invoke_auto(roles="implementation")
         self.assertEqual(code, 2)
         self.assertIn("role count", report["error"])
-        code, report = self.invoke_auto(offline=False, targets=["1:RedFox:claude:%42", "3:BlueLake:codex:%43"])
+        code, report = self.invoke_auto(offline=False, targets=["1:RedFox:claude:w9:p42", "3:BlueLake:codex:w9:p43"])
         self.assertEqual(code, 2)
         self.assertIn("consecutive", report["error"])
         self.assertEqual(self.calls(), [])
@@ -393,7 +382,7 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(code, 0, report)
         self.assertEqual(report["assignments"][0]["bead_id"], "bd-doc")
         self.assertEqual(report["assignments"][0]["role"], "documentation")
-        self.assertEqual(report["assignments"][0]["pane"], "%42")
+        self.assertEqual(report["assignments"][0]["pane"], "w9:p42")
         batch = json.loads((self.output / "batch.json").read_text())
         self.assertEqual(batch["deliveries"][0]["agent_type"], "claude")
 
@@ -413,10 +402,7 @@ class PreparationTests(unittest.TestCase):
             data = json.loads(result.stdout)
             self.assertEqual(data["summary"]["submitted"], 2)
             self.assertEqual(data["summary"]["reconciled"], attempt * 2)
-        for slot, pane in ((1, "42"), (2, "43")):
-            self.assertEqual((self.root / (pane + ".prompt")).read_text(), self.packet(slot)["packet_markdown"])
-        self.assertEqual(sum(name == "ntm" and "--robot-send=project" in argv and "--dry-run" not in argv
-                             for name, argv in self.calls()), 2)
+        self.assert_prompts({"w9:p42": 1, "w9:p43": 2})
 
 
 if __name__ == "__main__":

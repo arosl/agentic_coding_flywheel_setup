@@ -4,7 +4,7 @@
 #
 # Builds a bounded, read-only prompt packet for one Beads issue. The packet
 # packages current repo instructions, Beads metadata, bounded CASS/CM context,
-# and Agent Mail/RCH/UBS workflow commands for NTM prompt injection.
+# and Agent Mail/RCH/UBS workflow commands, for delivery to a herdr agent.
 # ============================================================
 
 set -euo pipefail
@@ -737,7 +737,13 @@ swarm_packet_main() {
 swarm_packet_deliver() {
     command -v python3 >/dev/null 2>&1 || { echo 'Error: python3 is required for packet delivery' >&2; return 2; }
     python3 -I - "${BASH_SOURCE[0]}" "$@" <<'PY_ACFS_PACKET_DELIVERY'
-"""Opt-in packet delivery through NTM's durable robot-send protocol."""
+"""Opt-in packet delivery to a herdr agent over herdr's socket API.
+
+The prompt travels only in the agent.prompt request on herdr's socket, never in
+argv or a log. herdr keeps no record of a prompt, so the create-only intent and
+result files beside the receipt are the only record: a receipt is never sent
+again, whatever it holds.
+"""
 import argparse
 import hashlib
 import json
@@ -747,6 +753,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -754,14 +761,27 @@ import tempfile
 import time
 
 LIMIT = 1024 * 1024
-SCHEMA = "acfs.packet-delivery.v1"
-BATCH_SCHEMA = "acfs.packet-delivery-batch.v1"
+SCHEMA = "acfs.packet-delivery.v2"
+BATCH_SCHEMA = "acfs.packet-delivery-batch.v2"
 MAX_DELIVERIES = 32
 RUNTIME = Path(sys.argv.pop(1)).resolve(strict=True)
+AGENT_TYPES = ("claude", "codex", "agy")
+# herdr identifiers: a workspace such as w9, a pane such as w9:p3, a terminal
+# such as term_65d6a6.
+WORKSPACE_ID = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,31}"
+PANE_ID = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,31}:p[0-9A-Za-z]{1,12}"
+TERMINAL_ID = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
+# Error codes herdr returns before it types anything into the pane. Any other
+# error, and any transport trouble, leaves the delivery unconfirmed.
+REFUSED_BEFORE_TYPING = frozenset({"agent_not_found", "agent_blocked"})
 
 
 class DeliveryError(Exception):
     pass
+
+
+class Unconfirmed(Exception):
+    """herdr's answer is missing, late, oversized or malformed."""
 
 
 def require(ok, message):
@@ -848,45 +868,145 @@ def binary(name):
     return os.path.abspath(value)
 
 
-def target_check(tmux, request):
-    code, output = run([tmux, "display-message", "-p", "-t", request["pane"],
-                        "#{session_name}\t#{pane_id}\t#{pane_current_path}\t#{pane_dead}\t#{pane_current_command}"], request["repo"])
+def socket_path(repo):
+    """herdr's socket: $HERDR_SOCKET_PATH inside herdr, else what the server reports."""
+    value = os.environ.get("HERDR_SOCKET_PATH")
+    if not value:
+        code, data = run([binary("herdr"), "status", "server"], repo)
+        text = data.decode("utf-8", "replace")
+        match = re.search(r"(?m)^\s*socket: (/[^\n]+)$", text)
+        require(code == 0 and re.search(r"(?m)^\s*status: running\s*$", text)
+                and re.search(r"(?m)^\s*endpoint_compatible: yes\s*$", text) and match,
+                "The herdr server is not running or not compatible; no prompt was sent.")
+        value = match[1].strip()
+    path = Path(value)
+    require(path.is_absolute(), "The herdr socket path is not absolute; no prompt was sent.")
+    info = os.lstat(path)
+    require(stat.S_ISSOCK(info.st_mode) and info.st_uid == os.geteuid(),
+            "The herdr socket is not this user's socket; no prompt was sent.")
+    return str(path)
+
+
+def herdr_call(path, method, params, timeout=10):
+    """One request on herdr's socket. The answer is bounded in size and time."""
+    request_id = "acfs-" + os.urandom(8).hex()
+    frame = json.dumps({"id": request_id, "method": method, "params": params}, ensure_ascii=True).encode() + b"\n"
+    deadline = time.monotonic() + timeout
+    data = b""
     try:
-        session, pane, cwd, dead, command = output.decode("utf-8").rstrip("\n").split("\t")
-        path = Path(cwd).resolve(strict=True)
-        root = Path(request["repo"])
-        require(code == 0 and session == request["session"] and pane == request["pane"]
-                and dead == "0" and command == request["agent_type"] and (path == root or root in path.parents),
-                "Target pane is not the requested native agent in this session/repository.")
-    except (ValueError, UnicodeError):
-        raise DeliveryError("Unable to verify the target pane.") from None
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(timeout)
+            client.connect(path)
+            client.sendall(frame)
+            while not data.endswith(b"\n"):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise Unconfirmed("herdr did not answer in time.")
+                client.settimeout(remaining)
+                chunk = client.recv(65536)
+                if not chunk:
+                    raise Unconfirmed("herdr closed the connection without an answer.")
+                data += chunk
+                if len(data) > LIMIT:
+                    raise Unconfirmed("herdr's answer exceeds 1 MiB.")
+    except OSError:
+        raise Unconfirmed("The herdr connection failed.") from None
+    try:
+        reply = parse(data)
+    except DeliveryError:
+        raise Unconfirmed("herdr's answer is not valid JSON.") from None
+    if not (isinstance(reply, dict) and reply.get("id") == request_id
+            and (isinstance(reply.get("result"), dict) or isinstance(reply.get("error"), dict))):
+        raise Unconfirmed("herdr's answer does not match the request.")
+    return reply
 
 
-def outcome(response, request, target, receipt_query=False):
-    require(isinstance(response, dict), "Unrecognized NTM response; inspect the receipt.")
-    operation = response.get("operation")
-    require(isinstance(operation, dict), "NTM did not return a durable operation; inspect the receipt.")
-    require(response.get("session") == request["session"]
-            and operation.get("operation_id") == request["operation_id"]
-            and operation.get("payload_sha256") == request["payload_sha256"]
-            and operation.get("payload_bytes") == request["payload_bytes"],
-            "NTM receipt does not match this packet and session; no automatic retry.")
-    result = response.get("outcome") if receipt_query else response
-    admissions = operation.get("admissions")
-    submitted = (response.get("success") is True and operation.get("status") == "completed"
-                 and isinstance(result, dict) and result.get("success") is True
-                 and result.get("targets") == [target] and result.get("successful") == [target]
-                 and result.get("failed") == []
-                 and admissions == [{"target": target, "state": "submitted"}])
-    return "submitted" if submitted else "unconfirmed"
+def herdr_result(path, method, params, message):
+    try:
+        reply = herdr_call(path, method, params)
+    except Unconfirmed:
+        raise DeliveryError(message) from None
+    require(isinstance(reply.get("result"), dict), message)
+    return reply["result"]
 
 
-def publish_intent(path, request, target):
+def runs_agent(process, agent_type):
+    # agy-locked runs agy-real under the name agy (acfs-zg0), so check argv[0] too.
+    if not isinstance(process, dict):
+        return False
+    argv = process.get("argv")
+    first = argv[0] if isinstance(argv, list) and argv and isinstance(argv[0], str) else ""
+    return process.get("name") == agent_type or Path(first).name == agent_type
+
+
+def agent_session(row):
+    # herdr's integrations report the agent's own session ID; a freshly started
+    # agent may not have reported one yet.
+    session = row.get("agent_session")
+    value = session.get("value") if isinstance(session, dict) else None
+    return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value) else None
+
+
+def target_check(path, request):
+    """The pane is the requested agent, in its workspace and repository, and
+    ready for input. Returns its terminal ID and agent session, which the send
+    must match: a different agent restarted in the same terminal changes the
+    session even though the terminal stays."""
+    message = "Unable to verify the target pane; no prompt was sent."
+    agents = herdr_result(path, "agent.list", {}, message).get("agents")
+    require(isinstance(agents, list), message)
+    rows = [row for row in agents if isinstance(row, dict) and row.get("pane_id") == request["pane_id"]]
+    require(len(rows) == 1, "The target pane is not a herdr agent; no prompt was sent.")
+    row = rows[0]
+    cwd = row.get("cwd")
+    require(row.get("workspace_id") == request["workspace"] and row.get("agent") == request["agent_type"]
+            and isinstance(row.get("terminal_id"), str) and re.fullmatch(TERMINAL_ID, row["terminal_id"])
+            and isinstance(cwd, str) and cwd.startswith("/"),
+            "Target pane is not the requested native agent in this workspace.")
+    current, root = Path(cwd).resolve(strict=True), Path(request["repo"])
+    require(current == root or root in current.parents, "Target agent is in a different repository.")
+    require(row.get("agent_status") != "blocked",
+            "The target agent is waiting at a dialog; answer it in its tab. No prompt was sent.")
+    info = herdr_result(path, "pane.process_info", {"pane_id": request["pane_id"]}, message).get("process_info")
+    require(isinstance(info, dict) and info.get("pane_id") == request["pane_id"]
+            and isinstance(info.get("foreground_processes"), list)
+            and any(runs_agent(p, request["agent_type"]) for p in info["foreground_processes"]),
+            "Target pane is not running the agent it reports; no prompt was sent.")
+    return {"terminal_id": row["terminal_id"], "agent_session": agent_session(row)}
+
+
+def submit(path, request, target, payload):
+    """Send the prompt once. Only an error herdr returns before typing is
+    'refused'; everything else that isn't a matching answer is 'unconfirmed'."""
+    try:
+        reply = herdr_call(path, "agent.prompt", {"target": request["pane_id"], "text": payload.decode("utf-8")},
+                           timeout=30)
+    except Unconfirmed as exc:
+        return "unconfirmed", {"reason": str(exc)}
+    error, result = reply.get("error"), reply.get("result")
+    if error is not None or not isinstance(result, dict):
+        code = error.get("code") if isinstance(error, dict) and result is None else None
+        code = code if isinstance(code, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code) else None
+        return ("refused" if code in REFUSED_BEFORE_TYPING else "unconfirmed"), {"error_code": code}
+    agent = result.get("agent")
+    if (result.get("type") == "agent_prompted" and isinstance(agent, dict)
+            and agent.get("pane_id") == request["pane_id"] and agent.get("terminal_id") == target["terminal_id"]
+            and agent.get("workspace_id") == request["workspace"]
+            and (target["agent_session"] is None or agent_session(agent) == target["agent_session"])):
+        return "submitted", {"pane_id": request["pane_id"], **target}
+    return "unconfirmed", {"reason": "herdr's answer does not name the target agent."}
+
+
+def result_path(receipt):
+    return receipt.with_name(receipt.name + ".result.json")
+
+
+def publish(path, value):
     # Create-only intent is the recovery boundary. Never delete/replace it on an
     # error: a killed client may already have submitted keystrokes to the agent.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "wb") as handle:
-        handle.write(encode({"schema": SCHEMA, "request": request, "target": target}))
+        handle.write(encode(value))
         handle.flush()
         os.fsync(handle.fileno())
     fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
@@ -898,13 +1018,13 @@ def publish_intent(path, request, target):
 
 def single_arguments(arguments=None):
     parser = argparse.ArgumentParser(prog="acfs swarm packet --deliver", allow_abbrev=False,
-        description="Preview a saved packet, then explicitly submit it to one existing NTM agent. "
-                    "This can start paid model work. Reusing a receipt only queries the outcome; it never resends.")
+        description="Preview a saved packet, then explicitly submit it to one existing herdr agent. "
+                    "This can start paid model work. Reusing a receipt only reads its recorded outcome; it never resends.")
     parser.add_argument("packet")
     parser.add_argument("--repo", default=os.getcwd())
-    parser.add_argument("--session", required=True)
-    parser.add_argument("--pane", required=True, help="Stable tmux pane ID, e.g. %%42 (not a pane index)")
-    parser.add_argument("--agent-type", choices=("claude", "codex"), required=True)
+    parser.add_argument("--workspace", required=True, help="herdr workspace ID of the agent, e.g. w9")
+    parser.add_argument("--pane-id", required=True, help="herdr pane ID of the agent, e.g. w9:p3")
+    parser.add_argument("--agent-type", choices=AGENT_TYPES, required=True)
     parser.add_argument("--operation-id", required=True)
     parser.add_argument("--receipt", required=True, help="New private intent file; reuse to reconcile without resending")
     parser.add_argument("--expect-sha256", help="Packet file hash from preview; required with --send")
@@ -913,8 +1033,10 @@ def single_arguments(arguments=None):
 
 
 def prepare(args):
-    require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", args.session), "Invalid session name.")
-    require(re.fullmatch(r"%[0-9]{1,10}", args.pane), "Use a stable tmux pane ID such as %42.")
+    require(re.fullmatch(WORKSPACE_ID, args.workspace), "Invalid herdr workspace ID.")
+    require(re.fullmatch(PANE_ID, args.pane_id) and args.pane_id.startswith(args.workspace + ":"),
+            "Use the agent's herdr pane ID in --workspace, such as w9:p3.")
+    require(args.agent_type in AGENT_TYPES, "Unsupported agent type.")
     require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", args.operation_id), "Invalid operation ID.")
     repo = directory(args.repo)
     packet_bytes = read_file(args.packet)
@@ -937,26 +1059,29 @@ def prepare(args):
     packet_hash = digest(packet_bytes)
     require(args.expect_sha256 is None or args.expect_sha256 == packet_hash,
             "Packet changed since review; preview it again.")
-    request = {"repo": str(repo), "session": args.session, "pane": args.pane,
+    request = {"repo": str(repo), "workspace": args.workspace, "pane_id": args.pane_id,
                "agent_type": args.agent_type, "operation_id": args.operation_id,
                "bead_id": bead["id"], "packet_sha256": packet_hash,
                "payload_sha256": digest(payload), "payload_bytes": len(payload)}
     receipt = Path(os.path.abspath(args.receipt))
-    directory(receipt.parent)
-    require(receipt != Path(os.path.abspath(args.packet)), "Receipt must not replace the packet.")
-    argv = ["ntm", "--robot-send=" + args.session, "--panes=" + args.pane,
-            "--type=" + args.agent_type, "--msg-file=-", "--op-id=" + args.operation_id,
-            "--robot-format=json", "--no-cass", "--with-memory=false"]
+    # A private receipt still dies with its directory entry: anyone who can write
+    # the parent could unlink the intent and turn the next run into a resend.
+    info = directory(receipt.parent).stat()
+    require(info.st_uid == os.geteuid() and info.st_mode & 0o022 == 0,
+            "Receipt directory must be owned by this user and not group/world writable; no prompt was sent.")
+    require(Path(os.path.abspath(args.packet)) not in (receipt, result_path(receipt)),
+            "Receipt and its result file must not replace the packet.")
     report = {"schema": SCHEMA, "status": "preview", "request": request,
-              "receipt": str(receipt), "ntm_argv": argv,
+              "receipt": str(receipt), "result_file": str(result_path(receipt)),
+              "herdr_request": {"method": "agent.prompt", "target": args.pane_id},
               "sends_prompt": False, "agent_execution_verified": False,
               "note": "Submission can start paid model work. No agent is spawned, interrupted, or trusted automatically. "
                       "Beads claims and Agent Mail registration/reservations remain the agent's responsibility."}
     report["send_command"] = shlex.join(["acfs", "swarm", "packet", "--deliver", os.path.abspath(args.packet),
-        "--repo", str(repo), "--session", args.session, "--pane", args.pane, "--agent-type", args.agent_type,
+        "--repo", str(repo), "--workspace", args.workspace, "--pane-id", args.pane_id, "--agent-type", args.agent_type,
         "--operation-id", args.operation_id, "--receipt", str(receipt), "--expect-sha256", packet_hash, "--send"])
     return {"args": args, "request": request, "receipt": receipt, "payload": payload,
-            "argv": argv, "report": report, "packet_path": Path(os.path.abspath(args.packet))}
+            "report": report, "packet_path": Path(os.path.abspath(args.packet))}
 
 
 def existing_intent(prepared):
@@ -969,58 +1094,64 @@ def existing_intent(prepared):
     return saved
 
 
+def saved_result(prepared, saved):
+    """The recorded outcome of an earlier send, or None if it never got one."""
+    path = result_path(prepared["receipt"])
+    if not os.path.lexists(path):
+        return None
+    value = parse(read_file(path, private=True))
+    require(isinstance(value, dict) and value.get("schema") == SCHEMA
+            and value.get("request") == prepared["request"] and value.get("target") == saved["target"]
+            and value.get("status") in ("submitted", "refused") and isinstance(value.get("evidence"), dict),
+            "Delivery result belongs to a different delivery; it was not changed.")
+    return value
+
+
 def deliver(prepared):
-    args, request, receipt = prepared["args"], prepared["request"], prepared["receipt"]
-    payload, argv, report = prepared["payload"], prepared["argv"], dict(prepared["report"])
+    request, receipt = prepared["request"], prepared["receipt"]
+    payload, report = prepared["payload"], dict(prepared["report"])
     repo = Path(request["repo"])
     report.pop("send_command", None)
     saved = existing_intent(prepared)
-    ntm = binary("ntm")
     if saved is not None:
-        report["status"] = "unconfirmed"
-        try:
-            code, data = run([ntm, "--robot-send-receipt=" + args.operation_id, "--robot-format=json"], repo)
-            if code == 0:
-                report["status"] = outcome(parse(data), request, saved["target"], receipt_query=True)
-        except (DeliveryError, OSError):
-            pass
+        # A known intent is only read back, never sent again: herdr cannot say
+        # whether an earlier prompt arrived, so nothing may guess that it didn't.
+        result = saved_result(prepared, saved)
+        report["status"] = result["status"] if result else "unconfirmed"
+        if result:
+            report["evidence"] = result["evidence"]
         report["reconciled_only"] = True
     else:
-        tmux, br = binary("tmux"), binary("br")
+        br = binary("br")
         code, data = run([br, "ready", "--json"], repo)
         ready = parse(data)
         require(code == 0 and isinstance(ready, list)
                 and sum(isinstance(b, dict) and b.get("id") == request["bead_id"]
                         and b.get("status", "open") == "open" for b in ready) == 1,
                 "Bead is not in the current ready queue; no prompt was sent.")
-        target_check(tmux, request)
-        code, data = run([ntm, *[a for a in argv[1:] if not a.startswith("--op-id=")], "--dry-run"], repo, payload)
-        preview = parse(data)
-        require(code == 0 and isinstance(preview, dict) and preview.get("success") is True
-                and preview.get("session") == args.session and preview.get("dry_run") is True
-                and preview.get("blocked") is False and preview.get("successful") == []
-                and preview.get("failed") == [] and isinstance(preview.get("would_send_to"), list)
-                and len(preview["would_send_to"]) == 1 and isinstance(preview["would_send_to"][0], str),
-                "NTM did not confirm exactly one matching agent target; no prompt was sent.")
-        # NTM can enable CM injection from its config even with a false CLI
-        # flag. Refuse that mode rather than silently adding unreviewed context.
-        for key in ("cm_injection", "memory_injection", "cass_injection"):
-            enrichment = preview.get(key)
-            require(enrichment is None or (isinstance(enrichment, dict) and enrichment.get("enabled") is False),
-                    "Disable NTM send-time context injection before delivering an already-reviewed packet.")
-        target = preview["would_send_to"][0]
-        target_check(tmux, request)
-        publish_intent(receipt, request, target)
+        # A result file is created only after the send; one that already exists
+        # would make the outcome unrecordable after paid work had started.
+        require(not os.path.lexists(result_path(receipt)),
+                "A delivery result file already exists for this receipt; it was not changed and no prompt was sent.")
+        path = socket_path(repo)
+        target = target_check(path, request)
+        require(target_check(path, request) == target, "The target agent changed; no prompt was sent.")
+        terminal = target["terminal_id"]
+        publish(receipt, {"schema": SCHEMA, "request": request, "target": terminal,
+                          "agent_session": target["agent_session"]})
         report["status"] = "unconfirmed"
         report["sends_prompt"] = True
-        try:
-            code, data = run([ntm, *argv[1:]], repo, payload)
-            if code == 0:
-                report["status"] = outcome(parse(data), request, target)
-        except (DeliveryError, OSError):
-            pass
         report["reconciled_only"] = False
-    report["recovery"] = "Run the identical --deliver command with the same receipt to query NTM; ACFS will not resend."
+        status, evidence = submit(path, request, target, payload)
+        report["evidence"] = evidence
+        if status != "unconfirmed":
+            publish(result_path(receipt), {"schema": SCHEMA, "request": request, "target": terminal,
+                                           "status": status, "evidence": evidence})
+            report["status"] = status
+            report["sends_prompt"] = status == "submitted"
+    report["recovery"] = ("Run the identical --deliver command with the same receipt to read its recorded outcome; "
+                          "ACFS will not resend. An unconfirmed delivery may have reached the agent: look with "
+                          "herdr agent read " + request["pane_id"] + " before preparing new work for it.")
     return report, 0 if report["status"] == "submitted" else 1
 
 
@@ -1057,8 +1188,8 @@ def batch_main(arguments):
     require(isinstance(spec, dict) and set(spec) == {"schema", "deliveries"}
             and spec["schema"] == BATCH_SCHEMA and isinstance(spec["deliveries"], list)
             and 1 <= len(spec["deliveries"]) <= MAX_DELIVERIES,
-            "Expected a packet-delivery-batch.v1 manifest containing 1 through 32 deliveries.")
-    keys = {"packet", "repo", "session", "pane", "agent_type", "operation_id", "receipt"}
+            "Expected a packet-delivery-batch.v2 manifest containing 1 through 32 deliveries.")
+    keys = {"packet", "repo", "workspace", "pane_id", "agent_type", "operation_id", "receipt"}
     prepared = []
     seen_panes, seen_ops, seen_receipts, seen_beads = set(), set(), set(), set()
     # Complete local validation first: a bad later packet must not leave an
@@ -1067,17 +1198,17 @@ def batch_main(arguments):
     for item in spec["deliveries"]:
         require(isinstance(item, dict) and set(item) == keys
                 and all(isinstance(value, str) and value and "\0" not in value for value in item.values()),
-                "Each delivery must provide exactly packet, repo, session, pane, agent_type, operation_id and receipt strings.")
-        require(item["agent_type"] in ("claude", "codex"), "Unsupported delivery agent type.")
+                "Each delivery must provide exactly packet, repo, workspace, pane_id, agent_type, operation_id and receipt strings.")
+        require(item["agent_type"] in AGENT_TYPES, "Unsupported delivery agent type.")
         values = dict(item)
         for key in ("packet", "repo", "receipt"):
             values[key] = os.path.abspath(batch_path.parent / values[key])
         single = argparse.Namespace(**values, expect_sha256=None, send=False)
         current = prepare(single)
         request = current["request"]
-        pane = int(request["pane"][1:])
+        pane = request["pane_id"]
         bead_key = (request["repo"], request["bead_id"])
-        require(pane not in seen_panes, "A batch may target each stable pane only once.")
+        require(pane not in seen_panes, "A batch may target each herdr pane only once.")
         require(request["operation_id"] not in seen_ops, "Each batch delivery needs a distinct operation ID.")
         require(current["receipt"] not in seen_receipts, "Each batch delivery needs a distinct receipt file.")
         require(bead_key not in seen_beads, "A batch cannot assign the same repository Bead more than once.")
@@ -1085,10 +1216,18 @@ def batch_main(arguments):
         seen_ops.add(request["operation_id"])
         seen_receipts.add(current["receipt"])
         seen_beads.add(bead_key)
-        existing_intent(current)  # validate prior intent without invoking NTM
+        saved = existing_intent(current)  # validate prior intent and result without contacting herdr
+        if saved is not None:
+            saved_result(current, saved)
+        else:
+            require(not os.path.lexists(result_path(current["receipt"])),
+                    "A delivery result file exists without its intent; it was not changed.")
         prepared.append(current)
     input_paths = {batch_path, *(entry["packet_path"] for entry in prepared)}
-    require(not input_paths.intersection(seen_receipts), "A receipt must not replace any batch or packet input.")
+    results = {result_path(receipt) for receipt in seen_receipts}
+    require(not input_paths.intersection(seen_receipts | results),
+            "A receipt or its result file must not replace any batch or packet input.")
+    require(not results.intersection(seen_receipts), "A receipt must not be another delivery's result file.")
     review = {"schema": BATCH_SCHEMA, "manifest_sha256": digest(batch_bytes),
               "deliveries": [{"request": entry["request"], "receipt": str(entry["receipt"]),
                               "packet": str(entry["packet_path"])} for entry in prepared]}
@@ -1120,7 +1259,7 @@ def batch_main(arguments):
             except (DeliveryError, OSError, UnicodeError, KeyboardInterrupt) as exc:
                 result = dict(entry["report"], status="error", error=error_message(exc))
                 result.pop("send_command", None)
-                # A signal can land just after NTM submission. Treat any intent
+                # A signal can land just after the herdr submission. Treat any intent
                 # file as possibly submitted, never as permission to start over.
                 result["submission_may_have_occurred"] = entry["receipt"].exists()
                 code = 2
@@ -1131,9 +1270,9 @@ def batch_main(arguments):
     report["sends_prompt"] = any(item.get("sends_prompt") for item in results)
     report["deliveries"] = results
     report["summary"] = {key: sum(item["status"] == key for item in results)
-                         for key in ("submitted", "unconfirmed", "error", "not_attempted")}
+                         for key in ("submitted", "refused", "unconfirmed", "error", "not_attempted")}
     report["summary"]["reconciled"] = sum(item.get("reconciled_only") is True for item in results)
-    report["recovery"] = "Keep the unchanged batch, packets and receipts. Repeat this command to query existing intents " \
+    report["recovery"] = "Keep the unchanged batch, packets and receipts. Repeat this command to read existing outcomes " \
                          "and continue only after earlier submissions are confirmed. Never delete receipts to force a resend."
     print(encode(report).decode(), end="")
     return exit_code
@@ -1183,18 +1322,20 @@ def scoped_assignments(data, allow_empty=False):
     return report, sorted(items, key=lambda item: item["slot"])
 
 
-def preparation_targets(values, items=None):
+def preparation_targets(values, workspace, items=None):
     require(1 <= len(values) <= MAX_DELIVERIES, "Provide 1 through 32 preparation targets.")
     targets, panes, names = {}, set(), set()
     for value in values:
-        parts = value.split(":")
-        require(len(parts) == 4, "Use --target SLOT:AGENT_NAME:claude|codex:%PANE.")
+        # The pane ID itself contains a colon (w9:p3).
+        parts = value.split(":", 3)
+        require(len(parts) == 4, "Use --target SLOT:AGENT_NAME:claude|codex|agy:PANE_ID.")
         slot, name, agent_type, pane = parts
         require(re.fullmatch(r"[0-9]{1,3}", slot) and 1 <= int(slot) <= 100
                 and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", name)
-                and agent_type in ("claude", "codex") and re.fullmatch(r"%[0-9]{1,10}", pane),
-                "Invalid target slot, agent name, native agent type or stable pane ID.")
-        slot, pane = int(slot), "%" + str(int(pane[1:]))
+                and agent_type in AGENT_TYPES and re.fullmatch(PANE_ID, pane)
+                and pane.startswith(workspace + ":"),
+                "Invalid target slot, agent name, native agent type or herdr pane ID in --workspace.")
+        slot = int(slot)
         require(slot not in targets and pane not in panes and name not in names,
                 "Targets must have distinct slots, panes and Agent Mail identities.")
         targets[slot] = {"name": name, "agent_type": agent_type, "pane": pane}
@@ -1308,15 +1449,15 @@ def preparation_main(arguments):
     parser.add_argument("--ready-file", help="Saved br ready JSON for automatic selection; otherwise probe br")
     parser.add_argument("--triage-file", help="Saved bv triage JSON for automatic selection; {} disables enrichment")
     parser.add_argument("--repo", required=True)
-    parser.add_argument("--session", required=True)
-    parser.add_argument("--target", action="append", required=True, help="SLOT:AGENT_NAME:claude|codex:%%PANE")
+    parser.add_argument("--workspace", required=True, help="herdr workspace ID of the target agents, e.g. w9")
+    parser.add_argument("--target", action="append", required=True, help="SLOT:AGENT_NAME:claude|codex|agy:PANE_ID")
     parser.add_argument("--beads-file", help="Saved full Beads objects; otherwise read br show for each assignment")
     parser.add_argument("--no-live-context", action="store_true", help="Do not query CM or CASS during preparation")
     args = parser.parse_args(arguments)
     require(args.scopes_file is not None or all(value is None for value in
             (args.roles, args.profile, args.ready_file, args.triage_file)),
             "Role profiles and ready/triage inputs require --scopes-file, not saved --assignments.")
-    require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", args.session), "Invalid session name.")
+    require(re.fullmatch(WORKSPACE_ID, args.workspace), "Invalid herdr workspace ID.")
     repo = directory(args.repo)
     output = Path(os.path.abspath(args.output))
     parent = directory(output.parent)
@@ -1325,7 +1466,7 @@ def preparation_main(arguments):
     parent_identity = (info.st_dev, info.st_ino)
     bash = binary("bash")
     binary("jq")
-    targets = preparation_targets(args.target)
+    targets = preparation_targets(args.target, args.workspace)
     source_artifacts = {}
     if args.scopes_file is not None:
         assignments_bytes, assignments, items, source_artifacts = allocate_preparation(args, repo, targets, bash)
@@ -1395,13 +1536,13 @@ def preparation_main(arguments):
             operation_id = namespace + "-" + str(slot)
             # Use the same packet and target validator as delivery before
             # publishing, with scratch-only receipt paths (no receipt is created).
-            prepare(argparse.Namespace(packet=str(packet_path), repo=str(repo), session=args.session,
-                pane=target["pane"], agent_type=target["agent_type"], operation_id=operation_id,
+            prepare(argparse.Namespace(packet=str(packet_path), repo=str(repo), workspace=args.workspace,
+                pane_id=target["pane"], agent_type=target["agent_type"], operation_id=operation_id,
                 receipt=str(scratch / (name + ".receipt.json")), expect_sha256=None, send=False))
             artifacts[name + ".json"] = packet_data
             artifacts[name + ".md"] = packet["packet_markdown"].encode("utf-8")
-            deliveries.append({"packet": name + ".json", "repo": str(repo), "session": args.session,
-                               "pane": target["pane"], "agent_type": target["agent_type"],
+            deliveries.append({"packet": name + ".json", "repo": str(repo), "workspace": args.workspace,
+                               "pane_id": target["pane"], "agent_type": target["agent_type"],
                                "operation_id": operation_id, "receipt": name + ".receipt.json"})
             mapping.append({"slot": slot, "agent": target["name"], "bead_id": bead["id"],
                             "pane": target["pane"], "role": item["role"], "packet": name + ".json",

@@ -36,7 +36,7 @@ class Peer:
             deliveries = []
             for target in targets:
                 slot = target["slot"]
-                delivery = {"repo": request["repo"], "session": request["session"], "pane": target["pane_id"],
+                delivery = {"repo": request["repo"], "workspace": target["workspace_id"], "pane_id": target["pane_id"],
                             "agent_type": target["agent_type"], "operation_id": f"op-{ident}-{slot}",
                             "bead_id": f"bd-{ident}-{slot}", "packet_sha256": "a" * 64,
                             "payload_sha256": "b" * 64, "payload_bytes": 120}
@@ -244,7 +244,8 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(result["errors"][0]["code"], "original_launch_or_batch_mismatch")
 
     def test_delivery_contract_rejects_wrong_target_type_boolean_slot_and_duplicates(self):
-        mutations = [lambda d: d.update(slot=True), lambda d: d["request"].update(pane="%999"),
+        mutations = [lambda d: d.update(slot=True), lambda d: d["request"].update(pane_id="w1:p999"),
+                     lambda d: d["request"].update(workspace="w8"),
                      lambda d: d["request"].update(agent_type="agy"), lambda d: d.update(action="reconcile_only"),
                      lambda d: d["request"].update(payload_bytes=True), lambda d: d["request"].update(payload_sha256="bad"),
                      lambda d: d.update(receipt="/tmp/../escape"), lambda d: d["request"].update(command="BAD")]

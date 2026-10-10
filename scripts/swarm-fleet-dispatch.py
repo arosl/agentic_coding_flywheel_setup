@@ -30,6 +30,7 @@ SCHEMA = "acfs.swarm-fleet-dispatch.v1"
 SPEC_SCHEMA = "acfs.swarm-fleet-batches.v1"
 STATE_SCHEMA = "acfs.swarm-fleet-dispatch-state.v1"
 NATIVE_SCHEMA = "acfs.swarm-dispatch.v1"
+PACKET_SCHEMA = "acfs.packet-delivery.v2"
 POLICY = "original-fleet-reviewed-native-batches-v1"
 SEND_ATTEMPTED = False
 
@@ -135,16 +136,14 @@ def select_batches(spec, launch, history):
 
 
 def remote_command(entry, mode):
-    require(mode in ("launch-status", "preview", "send", "read-receipt", "query-receipt"), "invalid_dispatch_operation")
-    if mode == "read-receipt":
+    require(mode in ("launch-status", "preview", "send", "read-receipt", "read-result"), "invalid_dispatch_operation")
+    if mode in ("read-receipt", "read-result"):
+        # herdr keeps no record of a prompt, so the delivery's own result file
+        # is the only evidence. Both reads are file reads that cannot send.
         path = fleet.absolute_path(entry["delivery"]["receipt"])
+        if mode == "read-result":
+            path += ".result.json"
         return "exec python3 -I -c " + shlex.quote(READ_RECEIPT) + " " + shlex.quote(path)
-    if mode == "query-receipt":
-        operation = entry["delivery"]["request"]["operation_id"]
-        require(fleet.matches(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", operation), "invalid_operation_id")
-        # This branch has no --robot-send, batch, packet payload or fallback.
-        return "exec /bin/bash --noprofile --norc -p -c " + shlex.quote('exec ntm "$@"') + " " + shlex.join([
-            "acfs-fleet-receipt", "--robot-send-receipt=" + operation, "--robot-format=json"])
     request = entry["host"]["request"]
     args = ["--reconcile", "--receipt", request["receipt"]] if mode == "launch-status" else [
         "--dispatch-batch", entry["batch"], "--receipt", request["receipt"]]
@@ -202,7 +201,7 @@ def validate_deliveries(entry, details):
     require(type(details) is list and 1 <= len(details) <= len(entry["targets"]), "invalid_delivery_count")
     by_slot = {target["slot"]: target for target in entry["targets"]}
     slots, operations, receipts, deliveries = set(), set(), set(), []
-    keys = {"repo", "session", "pane", "agent_type", "operation_id", "bead_id", "packet_sha256", "payload_sha256", "payload_bytes"}
+    keys = {"repo", "workspace", "pane_id", "agent_type", "operation_id", "bead_id", "packet_sha256", "payload_sha256", "payload_bytes"}
     for detail in details:
         require(type(detail) is dict and set(detail) == {"request", "receipt", "slot", "action"}
                 and detail["action"] == "submit" and type(detail["slot"]) is int
@@ -210,8 +209,8 @@ def validate_deliveries(entry, details):
         request, target = detail["request"], by_slot[detail["slot"]]
         require(type(request) is dict and set(request) == keys
                 and request["repo"] == entry["host"]["request"]["repo"]
-                and request["session"] == entry["host"]["request"]["session"]
-                and request["pane"] == target["pane_id"] and request["agent_type"] == target["agent_type"]
+                and request["workspace"] == target["workspace_id"]
+                and request["pane_id"] == target["pane_id"] and request["agent_type"] == target["agent_type"]
                 and all(fleet.matches(r"[0-9a-f]{64}", request[k]) for k in ("packet_sha256", "payload_sha256"))
                 and all(fleet.matches(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", request[k]) for k in ("operation_id", "bead_id"))
                 and type(request["payload_bytes"]) is int and 1 <= request["payload_bytes"] <= 65536,
@@ -354,31 +353,28 @@ def read_dispatch_history(fd, context, selected):
 
 
 def query_submission(entry, delivery, invoke):
-    """Snapshot the native intent, then query NTM's exact operation; never send."""
+    """Snapshot the native intent, then read the result its delivery recorded; never send.
+
+    herdr cannot be asked afterwards whether a prompt arrived, so a delivery
+    without a recorded `submitted` result stays unconfirmed for good."""
     query = {**entry, "delivery": delivery}
     code, raw = invoke(query, "read-receipt")
     require(type(code) is int and code == 0 and type(raw) is bytes, "native_receipt_unavailable")
     saved = decode(raw)
-    require(type(saved) is dict and set(saved) == {"schema", "request", "target"}
-            and saved["schema"] == "acfs.packet-delivery.v1"
+    require(type(saved) is dict and set(saved) == {"schema", "request", "target", "agent_session"}
+            and saved["schema"] == PACKET_SCHEMA
             and encoded(saved["request"]) == encoded(delivery["request"])
-            and type(saved["target"]) is str and 1 <= len(saved["target"]) <= 128
-            and all(32 <= ord(c) < 127 for c in saved["target"]), "native_receipt_mismatch")
-    code, raw = invoke(query, "query-receipt")
-    require(type(code) is int and code == 0 and type(raw) is bytes, "ntm_receipt_unavailable")
+            and fleet.matches(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", saved["target"])
+            and (saved["agent_session"] is None
+                 or fleet.matches(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", saved["agent_session"])),
+            "native_receipt_mismatch")
+    code, raw = invoke(query, "read-result")
+    require(type(code) is int and code == 0 and type(raw) is bytes, "delivery_result_unavailable")
     value = decode(raw)
-    require(type(value) is dict, "ntm_receipt_invalid")
-    operation, outcome = value.get("operation"), value.get("outcome")
-    request, target = delivery["request"], saved["target"]
-    require(value.get("success") is True and value.get("session") == request["session"]
-            and type(operation) is dict and operation.get("operation_id") == request["operation_id"]
-            and operation.get("payload_sha256") == request["payload_sha256"]
-            and type(operation.get("payload_bytes")) is int and operation["payload_bytes"] == request["payload_bytes"]
-            and operation.get("status") == "completed" and type(outcome) is dict
-            and outcome.get("success") is True and outcome.get("targets") == [target]
-            and outcome.get("successful") == [target] and outcome.get("failed") == []
-            and operation.get("admissions") == [{"target": target, "state": "submitted"}],
-            "submission_not_confirmed")
+    require(type(value) is dict and set(value) == {"schema", "request", "target", "status", "evidence"}
+            and value["schema"] == PACKET_SCHEMA and encoded(value["request"]) == encoded(delivery["request"])
+            and value["target"] == saved["target"] and type(value["evidence"]) is dict, "delivery_result_mismatch")
+    require(value["status"] == "submitted", "delivery_refused" if value["status"] == "refused" else "delivery_result_mismatch")
 
 
 def recover(context, selected, mode, approval, invoke, source_guard):

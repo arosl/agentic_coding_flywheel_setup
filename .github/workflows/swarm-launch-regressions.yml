@@ -17,6 +17,9 @@ on:
       - 'tests/unit/test_swarm_launch.py'
       - 'tests/unit/test_swarm_launch_handoff.py'
       - 'tests/unit/test_swarm_packet_preparation.py'
+      - 'tests/unit/test_swarm_packet_delivery*.py'
+      - 'tests/unit/herdr_socket_stub.py'
+      - 'tests/fixtures/herdr/**'
       - '.github/workflows/swarm-launch-regressions.yml'
   workflow_dispatch:
 
@@ -53,6 +56,8 @@ jobs:
           shellcheck scripts/lib/swarm_launch.sh
           python3 -B tests/unit/test_swarm_launch.py -v
           python3 -B tests/unit/test_swarm_packet_preparation.py -v
+          python3 -B tests/unit/test_swarm_packet_delivery.py -v
+          python3 -B tests/unit/test_swarm_packet_delivery_batch.py -v
           python3 -B tests/unit/test_swarm_launch_handoff.py -v
           TARGET_USER="$(id -un)" bash scripts/lib/doctor.sh swarm launch --help > /tmp/acfs-launch-help
           grep -F -- '--expect-sha256' /tmp/acfs-launch-help

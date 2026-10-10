@@ -82,7 +82,7 @@ Send rechecks every selected host before the first batch invocation. If any
 preview fails, no local dispatch journal is created and nothing is sent. Hosts
 then dispatch sequentially. Each native sender retains its live ready-queue,
 pane-identity, exact-payload and durable-receipt checks. Capacity is not reserved
-fleet-wide, and identity checks are not atomic with the eventual NTM send.
+fleet-wide, and identity checks are not atomic with the eventual herdr prompt.
 Do not restart agents or change packets/receipts during dispatch.
 
 ## Durable intent and partial failure
@@ -126,15 +126,18 @@ For each attempted host, a fixed read-only Python program snapshots the original
 private per-delivery intent over SSH. It checks ownership, permissions, regular
 file type, hardlinks, symlink-free directories and a 1 MiB bound; it creates no
 remote files. The controller validates that intent against the approved packet
-request, then calls only `ntm --robot-send-receipt=OPERATION --robot-format=json`.
-Successful proof must match the exact operation, payload hash and byte count,
-session, recorded native target and completed submission admission. Raw receipt
-and NTM diagnostics are never copied into reports.
+request, then reads the delivery's result file, `RECEIPT.result.json`, with the
+same fixed program. herdr keeps no record of a prompt that could be queried
+later, so that file is the only evidence. Successful proof is a `submitted`
+result for the exact request (operation, payload hash and byte count, workspace
+and pane) and the terminal the intent recorded. A `refused` result is reported
+as `delivery_refused`: nothing was typed, and the controller still never resends.
+Raw receipt contents are never copied into reports.
 
-This historical query does not need live panes or the original batch/packet
-files on the remote. It does need both the original native delivery intent and
-NTM's operation receipt. A missing, malformed, conflicting, partial or unavailable
-receipt remains `unconfirmed` even when a local result previously said submitted.
+This historical read does not need live panes, herdr or the original batch and
+packet files on the remote. It does need both the original native delivery
+intent and its result file. A missing, malformed, conflicting or unavailable
+result remains `unconfirmed` even when a local result previously said submitted.
 No queried host can enter a preview or send path in this invocation. All
 attempted hosts are checked, so one failed query does not hide its peers.
 
@@ -142,7 +145,7 @@ After reviewing the result, use `--resume --accept-plan ORIGINAL_DISPATCH_DIGEST
 instead. Resume first confirms every delivery on every attempted host. Only
 then can it reconstruct a missing local result from the remote evidence, preview
 all untouched hosts again, require byte-identical approved work/targets, and send
-to those untouched hosts. A fully submitted fleet's resume only queries receipts;
+to those untouched hosts. A fully submitted fleet's resume only reads receipts;
 it neither writes files nor starts model work. Earlier local results are never
 replaced, and an attempted host is never sent its batch again by this controller.
 
@@ -168,7 +171,7 @@ marked `not_attempted`; any unknown submission returns `unconfirmed`/exit 1.
 Resume requires the original digest; changing the batch or source evidence is
 not a recovery override. Local state errors return 2, without a send fallback.
 
-A native `submitted` result means matching NTM submission evidence, not task
+A native `submitted` result means herdr accepted the prompt for that agent, not task
 execution, task completion, or Agent Mail registration. Reports contain reviewed
 IDs and digests, never packet text or raw remote diagnostics. The private local
 journal does contain endpoints, paths and operation metadata; it is not a
@@ -199,10 +202,10 @@ Tests execute the actual controller with real private launch/dispatch journals,
 locks, file changes and protocol peers. They check all-host barriers, exact
 binding, argument quoting, transport restrictions, immutable results, and failure
 stops. Recovery tests kill an actual controller child after its durable attempt,
-then assert that its batch is queried rather than resent. The fixed remote
+then assert that its batch is read back rather than resent. The fixed remote
 receipt reader is exercised as an unprivileged user with real private files,
 symlinks, hardlinks, FIFOs, oversized input and literal shell arguments.
-These tests are not real SSH/VPS/NTM or authenticated-provider acceptance.
+These tests are not real SSH/VPS/herdr or authenticated-provider acceptance.
 The command requires Linux and system OpenSSH on the controller, a complete
 trusted ACFS checkout, and already installed native launchers on remote hosts.
 It is not a new installed `acfs` subcommand.

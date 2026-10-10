@@ -46,8 +46,9 @@ hosts, absent remote evidence, or failed validation; it does not prove the host
 has no agents. `verified_live_agents: 0` is zero confirmed, not a process census.
 Untouched launch hosts remain `not_attempted` and are not contacted.
 
-**Deliveries:** `submitted` comes from querying each attempted delivery's exact
-native intent and NTM operation receipt. A local success file is not used as a
+**Deliveries:** `submitted` comes from reading each attempted delivery's exact
+native intent and the result file its delivery recorded (`delivery_refused` when
+herdr refused it before typing). A local success file is not used as a
 substitute. Historical submission can still be confirmed after the original
 agents have exited. An interrupted host batch is inspected delivery by delivery,
 but missing receipts remain `unconfirmed`; no packet is resent. Untouched batches
@@ -119,4 +120,4 @@ The suite constructs launch and dispatch journals through the existing productio
 controllers with protocol fixtures, then exercises the observer and its original
 journal/receipt validators. The fixed remote export reader also runs as a real
 unprivileged Python process through literal shell argument transport against real
-files. These tests do not replace live OpenSSH/VPS/NTM/provider acceptance.
+files. These tests do not replace live OpenSSH/VPS/herdr/provider acceptance.
