@@ -24,6 +24,7 @@
 #   acfs agents recycle (<MailName> | --watch [--coordinator NAME] [--loop]) [--prompt TEXT] [--dry-run]
 #   acfs agents reap [--idle MIN] [--workspace ID] [--coordinator NAME [--project KEY]] [--loop [--interval SEC]] [--dry-run]
 #   acfs agents quota [--json] | quota check <kind> | quota record-claude   (agent_quota.sh)
+#   acfs agents sweep [--hours N] [--dir DIR] [--name-regex ERE] [--dry-run]   (temp_sweep.sh)
 # ============================================================
 
 set -euo pipefail
@@ -64,6 +65,7 @@ Usage:
   acfs agents reap  [--idle MIN] [--workspace ID] [--coordinator NAME [--project KEY]]
                     [--loop [--interval SEC]] [--prompt TEXT] [--timeout MS] [--dry-run]
   acfs agents quota [--json] | quota check KIND [--limit PERCENT] | quota record-claude
+  acfs agents sweep [--hours N] [--dir DIR] [--name-regex ERE] [--dry-run]
 
 spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        an Agent Mail identity first; its herdr name is that name lowercased and
@@ -218,6 +220,10 @@ reap   Retire, through retire and all its refusals, each agent of the herdr
 quota  Show how full each plan's 5-hour and weekly usage windows are, and how
        many live agents of each kind there are (agent_quota.sh; see
        'acfs agents quota --help'). Read-only.
+sweep  Remove the temp dirs tests and browsers left in /tmp and $TMPDIR:
+       only test-made names, owned by you, unchanged for --hours (6), holding
+       no git worktree and used by no process (temp_sweep.sh; see
+       'acfs agents sweep --help'). --dry-run lists them.
 
 The workspace is --workspace, else $HERDR_WORKSPACE_ID. --cwd defaults to the
 git top level of the current directory, which is also the Agent Mail project key.
@@ -2142,6 +2148,7 @@ herdr_agents_main() {
         recycle) herdr_agents_recycle "$@" ;;
         reap) herdr_agents_reap "$@" ;;
         quota) exec bash "$HERDR_AGENTS_SCRIPT_DIR/agent_quota.sh" "$@" ;;
+        sweep) exec bash "$HERDR_AGENTS_SCRIPT_DIR/temp_sweep.sh" "$@" ;;
         help|-h|--help) herdr_agents_usage ;;
         *) herdr_agents_usage >&2; return 1 ;;
     esac

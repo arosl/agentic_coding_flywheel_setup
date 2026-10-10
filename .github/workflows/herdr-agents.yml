@@ -3,7 +3,9 @@ name: herdr agents (stub herdr)
 # The fork's own workflow. It runs scripts/lib/herdr_agents.sh (acfs agents
 # spawn/send/list) against a stub herdr and a stub am, and the Agent Mail
 # Stop hook (scripts/lib/agent_mail_hook.sh) and the quota reader
-# (scripts/lib/agent_quota.sh) the same way. Upstream's
+# (scripts/lib/agent_quota.sh) the same way, the temp sweep
+# (scripts/lib/temp_sweep.sh) against a fixture temp dir, and the gate runner
+# (scripts/tests/run_gate.sh) against a stub checkout. Upstream's
 # installer.yml runs each tests/unit script by name, so a new one needs its
 # own job.
 
@@ -22,6 +24,10 @@ on:
       - 'tests/unit/test_agent_quota.sh'
       - 'tests/unit/test_doctor_agents_route.sh'
       - 'tests/unit/test_doctor_host_capacity.sh'
+      - 'scripts/lib/temp_sweep.sh'
+      - 'tests/unit/test_temp_sweep.sh'
+      - 'scripts/tests/run_gate.sh'
+      - 'tests/unit/test_run_gate.sh'
       - '.github/workflows/herdr-agents.yml'
   pull_request:
     branches: [main]
@@ -37,6 +43,10 @@ on:
       - 'tests/unit/test_agent_quota.sh'
       - 'tests/unit/test_doctor_agents_route.sh'
       - 'tests/unit/test_doctor_host_capacity.sh'
+      - 'scripts/lib/temp_sweep.sh'
+      - 'tests/unit/test_temp_sweep.sh'
+      - 'scripts/tests/run_gate.sh'
+      - 'tests/unit/test_run_gate.sh'
       - '.github/workflows/herdr-agents.yml'
 
 permissions:
@@ -68,3 +78,7 @@ jobs:
         run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_agents_route.sh
       - name: Doctor's host capacity checks against a stub capacity.sh
         run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_host_capacity.sh
+      - name: Temp sweep against a fixture temp dir
+        run: HOME="$(mktemp -d)" bash tests/unit/test_temp_sweep.sh
+      - name: Gate runner against a stub checkout
+        run: HOME="$(mktemp -d)" bash tests/unit/test_run_gate.sh

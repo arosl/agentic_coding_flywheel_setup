@@ -212,6 +212,7 @@ INTERNAL_CHECKSUM_REQUIRED_PATHS=(
     scripts/lib/swarm_plan.sh
     scripts/lib/swarm_simulation.sh
     scripts/lib/swarm_status.sh
+    scripts/lib/temp_sweep.sh
     scripts/services-setup.sh
     scripts/agent-readiness-audit.sh
     packages/manifest/src/agent-readiness-audit.ts

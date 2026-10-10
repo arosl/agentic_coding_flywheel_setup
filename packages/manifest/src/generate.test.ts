@@ -1424,6 +1424,7 @@ describe("Generated script headers", () => {
       "scripts/lib/swarm_plan.sh",
       "scripts/lib/swarm_simulation.sh",
       "scripts/lib/swarm_status.sh",
+      "scripts/lib/temp_sweep.sh",
       "scripts/services-setup.sh",
       // `acfs agent-readiness` ships the audit with its TypeScript sources.
       "scripts/agent-readiness-audit.sh",

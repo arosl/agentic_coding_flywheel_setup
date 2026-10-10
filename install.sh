@@ -3893,6 +3893,7 @@ acfs_load_internal_checksums_data() {
         scripts/lib/swarm_plan.sh
         scripts/lib/swarm_simulation.sh
         scripts/lib/swarm_status.sh
+        scripts/lib/temp_sweep.sh
         scripts/services-setup.sh
         scripts/agent-readiness-audit.sh
         packages/manifest/src/agent-readiness-audit.ts
@@ -10842,6 +10843,7 @@ finalize() {
     try_step "Installing herdr_agents.sh" install_asset "scripts/lib/herdr_agents.sh" "$ACFS_HOME/scripts/lib/herdr_agents.sh" || return 1
     try_step "Installing agent_mail_hook.sh" install_asset "scripts/lib/agent_mail_hook.sh" "$ACFS_HOME/scripts/lib/agent_mail_hook.sh" || return 1
     try_step "Installing agent_quota.sh" install_asset "scripts/lib/agent_quota.sh" "$ACFS_HOME/scripts/lib/agent_quota.sh" || return 1
+    try_step "Installing temp_sweep.sh" install_asset "scripts/lib/temp_sweep.sh" "$ACFS_HOME/scripts/lib/temp_sweep.sh" || return 1
     try_step "Installing support.sh" install_asset "scripts/lib/support.sh" "$ACFS_HOME/scripts/lib/support.sh" || return 1
     try_step "Installing acfs-nightly-update.service template" install_asset "scripts/templates/acfs-nightly-update.service" "$ACFS_HOME/scripts/templates/acfs-nightly-update.service" || return 1
     try_step "Installing acfs-nightly-update.timer template" install_asset "scripts/templates/acfs-nightly-update.timer" "$ACFS_HOME/scripts/templates/acfs-nightly-update.timer" || return 1
