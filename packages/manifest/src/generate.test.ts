@@ -1319,7 +1319,7 @@ describe("Generated script headers", () => {
     expect(countMatch).not.toBeNull();
     expect(rawEntries.length).toBe(checksums.size);
     expect(Number(countMatch?.[1])).toBe(checksums.size);
-    expect(checksums.size).toBe(123);
+    expect(checksums.size).toBe(124);
 
     const mandatoryPaths = [
       "install.sh",
