@@ -1363,6 +1363,7 @@ describe("Generated script headers", () => {
       "scripts/completions/_acfs",
       "scripts/completions/acfs.bash",
       "scripts/generate-root-agents-md.sh",
+      "scripts/lib/agent_mail_hook.sh",
       "scripts/lib/agy_e2e_harness.sh",
       "scripts/lib/agy_locked.py",
       "scripts/lib/agy_model_guard.sh",

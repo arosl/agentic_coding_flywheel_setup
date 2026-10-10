@@ -1,7 +1,8 @@
 name: herdr agents (stub herdr)
 
 # The fork's own workflow. It runs scripts/lib/herdr_agents.sh (acfs agents
-# spawn/send/list) against a stub herdr and a stub am. Upstream's
+# spawn/send/list) against a stub herdr and a stub am, and the Agent Mail
+# Stop hook (scripts/lib/agent_mail_hook.sh) the same way. Upstream's
 # installer.yml runs each tests/unit script by name, so a new one needs its
 # own job.
 
@@ -13,6 +14,9 @@ on:
       - 'scripts/lib/doctor.sh'
       - 'tests/unit/test_herdr_agents.sh'
       - 'tests/unit/test_doctor_codex_daemon.sh'
+      - 'scripts/lib/agent_mail_hook.sh'
+      - 'tests/unit/test_agent_mail_hook.sh'
+      - 'tests/unit/test_doctor_agent_mail_hook.sh'
       - '.github/workflows/herdr-agents.yml'
   pull_request:
     branches: [main]
@@ -21,6 +25,9 @@ on:
       - 'scripts/lib/doctor.sh'
       - 'tests/unit/test_herdr_agents.sh'
       - 'tests/unit/test_doctor_codex_daemon.sh'
+      - 'scripts/lib/agent_mail_hook.sh'
+      - 'tests/unit/test_agent_mail_hook.sh'
+      - 'tests/unit/test_doctor_agent_mail_hook.sh'
       - '.github/workflows/herdr-agents.yml'
 
 permissions:
@@ -42,3 +49,7 @@ jobs:
         run: HOME="$(mktemp -d)" bash tests/unit/test_herdr_agents.sh
       - name: Doctor's Codex daemon check against a stub helper
         run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_codex_daemon.sh
+      - name: Agent Mail Stop hook against a stub am and herdr
+        run: HOME="$(mktemp -d)" bash tests/unit/test_agent_mail_hook.sh
+      - name: Doctor's Agent Mail Stop hook check against fixture settings
+        run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_agent_mail_hook.sh

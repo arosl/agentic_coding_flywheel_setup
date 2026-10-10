@@ -2775,6 +2775,61 @@ check_dcg_hook_status() {
     fi
 }
 
+# The Agent Mail Stop hook (acfs-gen.4, scripts/lib/agent_mail_hook.sh)
+# sends an agent back to read unread mail before it goes idle. Read-only:
+# reports which installed agents lack it and how to register it.
+check_agent_mail_stop_hook() {
+    local label="Agent Mail Stop hook"
+    local pattern='(^|[[:space:]/])agent_mail_hook\.sh[[:space:]]+stop([[:space:]]|$)'
+    local home="" helper="" settings_file=""
+    local -a registered=() missing=() fixes=()
+
+    if ! doctor_binary_exists "am"; then
+        check "agent.mail_stop_hook" "$label" "skip" "Agent Mail not installed"
+        return
+    fi
+    home="$(doctor_runtime_home)"
+    helper="$home/.acfs/scripts/lib/agent_mail_hook.sh"
+
+    if doctor_binary_exists "claude"; then
+        settings_file="$home/.claude/settings.json"
+        if _acfs_doctor_claude_settings_has_command_hook "$settings_file" "$pattern"; then
+            registered+=("Claude Code")
+        else
+            missing+=("Claude Code")
+            fixes+=("bash $helper register claude")
+        fi
+    fi
+    if doctor_binary_exists "codex"; then
+        if _acfs_doctor_claude_settings_has_command_hook "$home/.codex/hooks.json" "$pattern"; then
+            registered+=("Codex (trust it once in Codex's /hooks)")
+        else
+            missing+=("Codex")
+            fixes+=("bash $helper register codex")
+        fi
+    fi
+
+    if (( ${#registered[@]} == 0 && ${#missing[@]} == 0 )); then
+        check "agent.mail_stop_hook" "$label" "skip" "neither Claude Code nor Codex is installed"
+    elif (( ${#missing[@]} == 0 )); then
+        check "agent.mail_stop_hook" "$label" "pass" "registered for $(_acfs_doctor_join_by ", " "${registered[@]}")"
+    else
+        check "agent.mail_stop_hook" "$label" "warn" "not registered for $(_acfs_doctor_join_by ", " "${missing[@]}")" \
+            "Run: $(_acfs_doctor_join_by " && " "${fixes[@]}")"
+    fi
+}
+
+_acfs_doctor_join_by() {
+    local separator="$1"
+    local joined="${2:-}"
+    shift 2 || return 0
+    local item
+    for item in "$@"; do
+        joined+="$separator$item"
+    done
+    printf '%s\n' "$joined"
+}
+
 # Check cloud tools
 check_cloud() {
     section "Cloud/DB"
@@ -3194,6 +3249,9 @@ check_stack() {
 
     # Check DCG (Destructive Command Guard)
     check_dcg_hook_status
+
+    # Agent Mail Stop hook for Claude Code and Codex
+    check_agent_mail_stop_hook
 
     # Check acfs-nightly-update timer (systemd user unit)
     # Gracefully handle missing systemd user session (curl|bash installs as

@@ -3844,6 +3844,7 @@ acfs_load_internal_checksums_data() {
         scripts/completions/_acfs
         scripts/completions/acfs.bash
         scripts/generate-root-agents-md.sh
+        scripts/lib/agent_mail_hook.sh
         scripts/lib/agy_e2e_harness.sh
         scripts/lib/agy_locked.py
         scripts/lib/agy_model_guard.sh
@@ -10825,6 +10826,7 @@ finalize() {
     try_step "Installing notifications.sh" install_asset "scripts/lib/notifications.sh" "$ACFS_HOME/scripts/lib/notifications.sh" || return 1
     try_step "Installing dashboard.sh" install_asset "scripts/lib/dashboard.sh" "$ACFS_HOME/scripts/lib/dashboard.sh" || return 1
     try_step "Installing herdr_agents.sh" install_asset "scripts/lib/herdr_agents.sh" "$ACFS_HOME/scripts/lib/herdr_agents.sh" || return 1
+    try_step "Installing agent_mail_hook.sh" install_asset "scripts/lib/agent_mail_hook.sh" "$ACFS_HOME/scripts/lib/agent_mail_hook.sh" || return 1
     try_step "Installing support.sh" install_asset "scripts/lib/support.sh" "$ACFS_HOME/scripts/lib/support.sh" || return 1
     try_step "Installing acfs-nightly-update.service template" install_asset "scripts/templates/acfs-nightly-update.service" "$ACFS_HOME/scripts/templates/acfs-nightly-update.service" || return 1
     try_step "Installing acfs-nightly-update.timer template" install_asset "scripts/templates/acfs-nightly-update.timer" "$ACFS_HOME/scripts/templates/acfs-nightly-update.timer" || return 1
@@ -10954,6 +10956,27 @@ finalize() {
         env "TARGET_USER=$TARGET_USER" "TARGET_HOME=$TARGET_HOME" \
         "$ACFS_HOME/scripts/services-setup.sh" --install-claude-guard --yes || \
         log_warn "DCG hook installation failed (optional)"
+
+    # Agent Mail Stop hook (acfs-gen.4): an agent whose turn ends with unread
+    # Agent Mail is sent back to read it before it goes idle. Registering is
+    # idempotent and keeps everything else in each file. Codex runs a new
+    # hook only after the user trusts it once in its /hooks screen.
+    local agent_mail_hook="$ACFS_HOME/scripts/lib/agent_mail_hook.sh"
+    if acfs_legacy_module_selected "stack.mcp_agent_mail" && [[ -f "$agent_mail_hook" ]]; then
+        if binary_installed "claude"; then
+            try_step "Registering the Agent Mail Stop hook for Claude Code" \
+                run_as_target bash "$agent_mail_hook" register claude "$TARGET_HOME/.claude/settings.json" || \
+                log_warn "Agent Mail Stop hook registration for Claude Code failed (optional)"
+        fi
+        if binary_installed "codex"; then
+            if try_step "Registering the Agent Mail Stop hook for Codex" \
+                    run_as_target bash "$agent_mail_hook" register codex "$TARGET_HOME/.codex/hooks.json"; then
+                log_detail "Codex asks to trust the Agent Mail Stop hook once: open /hooks in Codex"
+            else
+                log_warn "Agent Mail Stop hook registration for Codex failed (optional)"
+            fi
+        fi
+    fi
 
     # Configure workspace trust for coding agents (fixes #159)
     # In vibe/yolo mode, Claude Code requires explicit workspace trust to avoid

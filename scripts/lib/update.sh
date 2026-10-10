@@ -3482,6 +3482,7 @@ sync_acfs_deployed() {
         "scripts/lib/cheatsheet.sh:scripts/lib/cheatsheet.sh"
         "scripts/lib/dashboard.sh:scripts/lib/dashboard.sh"
         "scripts/lib/herdr_agents.sh:scripts/lib/herdr_agents.sh"
+        "scripts/lib/agent_mail_hook.sh:scripts/lib/agent_mail_hook.sh"
         "scripts/lib/support.sh:scripts/lib/support.sh"
         "scripts/lib/policy_lint.sh:scripts/lib/policy_lint.sh"
         "scripts/lib/credential_preflight.sh:scripts/lib/credential_preflight.sh"
