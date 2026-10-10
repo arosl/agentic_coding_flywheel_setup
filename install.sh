@@ -8332,6 +8332,17 @@ install_cli_tools() {
         record_skipped_tool "tools.docker" "pacman install failed"
     fi
 
+    # Lazydocker (tools.lazydocker) needs Docker, so it is opt-in with it. The
+    # manifest module downloads the release binary and checks its SHA-256.
+    if ! should_run_module "tools.lazydocker"; then
+        log_detail "Skipping lazydocker (tools.lazydocker is not selected)"
+    elif [[ "$ACFS_DISTRO_FAMILY" != "arch" ]]; then
+        acfs_legacy_run_manifest_module "tools.lazydocker" || log_warn "lazydocker installation failed (see summary)"
+    elif ! acfs_arch_pkg_install lazydocker; then
+        log_warn "lazydocker installation failed (optional)"
+        record_skipped_tool "tools.lazydocker" "pacman install failed"
+    fi
+
     # Incus (tools.incus) is the default container runtime. Ubuntu's package
     # sets up its groups, root's subordinate ids and incus.socket itself;
     # Arch's sets up only the groups.

@@ -152,6 +152,40 @@ $(sed -n "/^    # Docker (tools.docker) is opt-in/,/^    fi$/p" "$root/install.s
 # tools.lazydocker (acfs-fgd): upstream's module, opt-in here because it
 # needs tools.docker.
 
+# Runs install.sh's lazydocker block, as run_docker_block runs Docker's.
+run_lazydocker_block() {
+    local family="$1"
+    shift
+    run bash -c '
+        set -uo pipefail
+        root="$1"; calls="$2"; family="$3"; shift 3
+        log_detail() { :; }
+        log_warn() { :; }
+        log_info() { :; }
+        log_error() { :; }
+        source "$root/scripts/generated/manifest_index.sh"
+        ACFS_MANIFEST_INDEX_LOADED=true
+        source "$root/scripts/lib/install_helpers.sh"
+        ONLY_MODULES=("$@")
+        ONLY_PHASES=()
+        SKIP_MODULES=()
+        NO_DEPS=true
+        acfs_resolve_selection >/dev/null 2>&1 || { echo "selection failed"; exit 3; }
+
+        ACFS_DISTRO_FAMILY="$family"
+        acfs_arch_pkg_install() { printf "pacman %s\n" "$*" >> "$calls"; }
+        acfs_legacy_run_manifest_module() { printf "manifest %s\n" "$1" >> "$calls"; }
+        record_skipped_tool() { printf "skipped %s\n" "$1" >> "$calls"; }
+
+        block="$(sed -n "/^    # Lazydocker (tools.lazydocker) needs Docker/,/^    fi$/p" "$root/install.sh")"
+        [[ -n "$block" ]] || { echo "no lazydocker block in install.sh"; exit 4; }
+        eval "lazydocker_block() {
+$block
+}"
+        lazydocker_block
+    ' _ "$PROJECT_ROOT" "$CALLS" "$family" "$@"
+}
+
 # Runs the generated tools.lazydocker install script on a fake <arch> host,
 # where curl records its URL and downloads junk.
 run_generated_lazydocker() {
@@ -192,6 +226,28 @@ EOF
     resolve_selection tools.lazydocker --skip tools.docker
     [[ "$status" -eq 3 ]]
     [[ "$output" == *"depends on skipped tools.docker"* ]]
+}
+
+@test "a default install performs no lazydocker action on Arch or Ubuntu" {
+    run_lazydocker_block arch
+    [[ "$status" -eq 0 ]]
+    run_lazydocker_block debian
+    [[ "$status" -eq 0 ]]
+    [[ ! -e "$CALLS" ]]
+}
+
+@test "Arch with tools.lazydocker selected installs its package" {
+    run_lazydocker_block arch tools.lazydocker
+    [[ "$status" -eq 0 ]]
+    run cat "$CALLS"
+    [[ "$output" == "pacman lazydocker" ]]
+}
+
+@test "Ubuntu legacy path with tools.lazydocker selected runs the manifest module" {
+    run_lazydocker_block debian tools.lazydocker
+    [[ "$status" -eq 0 ]]
+    run cat "$CALLS"
+    [[ "$output" == "manifest tools.lazydocker" ]]
 }
 
 @test "the generated lazydocker installer refuses a download whose hash doesn't match" {
