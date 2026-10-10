@@ -112,7 +112,7 @@ export const manifestCommands: ManifestCommand[] = [
     cliAliases: [],
     description: "Destructive Command Guard - Claude Code hook blocking dangerous git/fs commands",
     commandExample: "dcg doctor",
-    docsUrl: "https://github.com/Dicklesworthstone/destructive_command_guard",
+    docsUrl: "https://github.com/arosl/destructive_command_guard",
   },
   {
     moduleId: "stack.doodlestein_self_releaser",
@@ -221,7 +221,7 @@ export const manifestCommands: ManifestCommand[] = [
     cliAliases: [],
     description: "Find and terminate stuck/zombie processes with intelligent scoring (pt)",
     commandExample: "pt scan --format json",
-    docsUrl: "https://github.com/Dicklesworthstone/process_triage",
+    docsUrl: "https://github.com/arosl/process_triage",
   },
   {
     moduleId: "stack.rch",

@@ -296,7 +296,7 @@ export const manifestTldrTools: ManifestTldrTool[] = [
     tldrSnippet: "Destructive Command Guard - Claude Code hook blocking dangerous git/fs commands",
     icon: "shield-alert",
     color: "#EF4444",
-    href: "https://github.com/Dicklesworthstone/destructive_command_guard",
+    href: "https://github.com/arosl/destructive_command_guard",
     features: [
       "Intercepts rm -rf, git reset --hard, etc.",
       "SIMD-accelerated pattern matching",
@@ -619,7 +619,7 @@ export const manifestTldrTools: ManifestTldrTool[] = [
     tldrSnippet: "Find and terminate stuck/zombie processes with intelligent scoring (pt)",
     icon: "activity",
     color: "#EF4444",
-    href: "https://github.com/Dicklesworthstone/process_triage",
+    href: "https://github.com/arosl/process_triage",
     features: [
       "Intelligent process scoring",
       "Interactive TUI selection",
