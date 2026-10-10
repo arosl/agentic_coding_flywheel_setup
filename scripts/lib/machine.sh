@@ -10,9 +10,11 @@
 # the launcher, which installs this checkout's committed HEAD in it; every
 # option it doesn't know goes to the launcher (--ssh-key, --jump, --vm,
 # --acl, the sizes). With --replace it rebuilds a machine on its own state
-# and data volumes: stop the old instance, take its volumes off it, rename
-# it <name>-old, launch <name> anew with the lease copied from the old one,
-# verify, and keep the old instance stopped as the rollback. The steps are
+# and data volumes: stop the old instance (the quiesce), snapshot both
+# volumes, export its root (--instance-only), take its volumes off it,
+# rename it <name>-old, launch <name> anew with the lease copied from the
+# old one, take the lease from the old one, verify, and keep the old
+# instance, the snapshots and the export as the rollback. The steps are
 # journalled, so a re-run continues where one stopped.
 #
 # `verify` is the authenticated login checklist: for each configured tool
@@ -61,11 +63,14 @@ up       Create the swarm machine <name> as an unprivileged Incus container
   --target incus   The default: an Incus container (or VM with --vm).
   --target vps     Not created here: a VPS comes from its provider. Prints
                    where the install one-liner and the provider guides are.
-  --replace        Rebuild <name> on its own volumes: stop it, detach the
-                   volumes, rename it <name>-old, launch <name> anew with the
-                   same lease, verify, and keep <name>-old stopped as the
-                   rollback. Journalled under ~/.local/state/acfs/machine;
-                   re-run to continue after a failure.
+  --replace        Rebuild <name> on its own volumes: stop it, snapshot its
+                   state and data volumes (acfs-replace-<stamp>), export its
+                   root, detach the volumes, rename it <name>-old, launch
+                   <name> anew with the same lease, take the lease from
+                   <name>-old, verify, and keep <name>-old stopped, the
+                   snapshots and the export as the rollback. Journalled
+                   under ~/.local/state/acfs/machine, with the export in its
+                   exports/; re-run to continue after a failure.
 
 verify   The authenticated login checklist: per configured tool its stored
          login (file, mode), then one small authenticated request with a
@@ -202,15 +207,84 @@ machine_replace_preflight() {
         || machine_die "$(machine_qualified "$MACHINE_NAME-old") exists already: an earlier replace's rollback. Delete it (incus delete $(machine_qualified "$MACHINE_NAME-old")) when you no longer need it, then re-run" 2
 }
 
+# The replace's UTC stamp, which names its snapshots and export: kept in the
+# journal (stamp=...), so a resumed run uses the same one.
+machine_replace_stamp() {
+    local file stamp
+    file="$(machine_journal_file)"
+    stamp="$(sed -n 's/^stamp=//p' "$file" 2>/dev/null | tail -n 1)"
+    if [[ ! "$stamp" =~ ^[0-9]{8}-[0-9]{6}$ ]]; then
+        stamp="$(date -u +%Y%m%d-%H%M%S)"
+        mkdir -p "$MACHINE_STATE_DIR"
+        chmod 0700 "$MACHINE_STATE_DIR"
+        printf 'stamp=%s\n' "$stamp" >>"$file"
+    fi
+    printf '%s\n' "$stamp"
+}
+
+# A clean shutdown is the quiesce: every agent, service and tailscaled
+# stops, so the snapshots and the export that follow are consistent.
 machine_replace_stop() {
     machine_journal_has stopped && return 0
     local json
     json="$(machine_instance_json "$MACHINE_NAME")"
     if [[ "$(jq -r '.status' <<<"$json")" == "Running" ]]; then
-        machine_note "replace: stopping $(machine_qualified "$MACHINE_NAME")"
+        machine_note "replace: stopping $(machine_qualified "$MACHINE_NAME") (a clean shutdown quiesces every writer)"
         machine_incus stop "$(machine_qualified "$MACHINE_NAME")" || machine_die "incus stop failed" 1
     fi
     machine_journal_mark stopped
+}
+
+# The pool and the two volumes, from the old instance's own devices (the
+# launcher's state-home and data), so nothing is guessed from the name.
+machine_replace_volumes() {
+    local devices
+    devices="$(machine_incus query "$(machine_qualified "/1.0/instances/$MACHINE_NAME")" | jq -c '.devices')"
+    MACHINE_POOL="$(jq -r '.["state-home"].pool // empty' <<<"$devices")"
+    MACHINE_STATE_VOLUME="$(jq -r '.["state-home"].source // empty | split("/")[0]' <<<"$devices")"
+    MACHINE_DATA_VOLUME="$(jq -r '.data.source // empty' <<<"$devices")"
+    [[ -n "$MACHINE_POOL" && -n "$MACHINE_STATE_VOLUME" && -n "$MACHINE_DATA_VOLUME" ]] \
+        || machine_die "$(machine_qualified "$MACHINE_NAME") has no state-home and data devices with a pool and a source (the launcher's); can't tell which volumes to snapshot" 2
+}
+
+# The volumes as they were at the stop: the logins' rollback point. A
+# snapshot an interrupted run already made is kept, not made again.
+machine_replace_snapshot() {
+    machine_journal_has snapshotted && return 0
+    local stamp volume snapshot
+    stamp="$(machine_replace_stamp)"
+    snapshot="acfs-replace-$stamp"
+    machine_replace_volumes
+    for volume in "$MACHINE_STATE_VOLUME" "$MACHINE_DATA_VOLUME"; do
+        if machine_incus storage volume snapshot show "$(machine_qualified "$MACHINE_POOL")" "$volume" "$snapshot" >/dev/null 2>&1; then
+            continue
+        fi
+        machine_note "replace: snapshotting $volume on pool $MACHINE_POOL as $snapshot"
+        machine_incus storage volume snapshot create "$(machine_qualified "$MACHINE_POOL")" "$volume" "$snapshot" >/dev/null \
+            || machine_die "could not snapshot $volume; re-run 'acfs machine up --replace $(machine_qualified "$MACHINE_NAME")' to continue" 1
+    done
+    machine_journal_mark snapshotted
+}
+
+# The old root alone (Incus leaves custom volumes out of an export), owner
+# only, written beside the journal and published by rename.
+machine_replace_export_file() {
+    printf '%s/exports/%s-%s.tar.gz\n' "$MACHINE_STATE_DIR" "${MACHINE_REMOTE:+$MACHINE_REMOTE--}$MACHINE_NAME" "$(machine_replace_stamp)"
+}
+
+machine_replace_export() {
+    machine_journal_has exported && return 0
+    local file
+    file="$(machine_replace_export_file)"
+    if [[ ! -f "$file" ]]; then
+        (umask 077; mkdir -p "$(dirname "$file")")
+        machine_note "replace: exporting the root of $(machine_qualified "$MACHINE_NAME") to $file"
+        rm -f -- "$file.part"
+        (umask 077; machine_incus export "$(machine_qualified "$MACHINE_NAME")" "$file.part" --instance-only >/dev/null) \
+            || machine_die "incus export failed; re-run 'acfs machine up --replace $(machine_qualified "$MACHINE_NAME")' to continue" 1
+        mv -f -- "$file.part" "$file"
+    fi
+    machine_journal_mark exported
 }
 
 # The volumes stay; only the old instance's devices for them go, so the new
@@ -247,11 +321,24 @@ machine_replace_launch() {
     machine_journal_mark launched
 }
 
+# The lease moves only now that the new instance holds it: without its key
+# the old root can't start its user manager against the volume again.
+machine_replace_lease() {
+    machine_journal_has lease-moved && return 0
+    machine_note "replace: taking the lease from $(machine_qualified "$MACHINE_NAME-old")"
+    machine_incus config unset "$(machine_qualified "$MACHINE_NAME-old")" user.acfs.lease \
+        || machine_die "could not unset user.acfs.lease on $(machine_qualified "$MACHINE_NAME-old"); re-run 'acfs machine up --replace $(machine_qualified "$MACHINE_NAME")' to continue" 1
+    machine_journal_mark lease-moved
+}
+
 machine_replace_verify() {
     machine_journal_has verified && return 0
-    machine_note "replace: verifying $(machine_qualified "$MACHINE_NAME")"
+    local old new
+    old="$(machine_qualified "$MACHINE_NAME-old")"
+    new="$(machine_qualified "$MACHINE_NAME")"
+    machine_note "replace: verifying $new"
     machine_verify_in_instance "$MACHINE_NAME" \
-        || machine_die "verify found a failure in the new $(machine_qualified "$MACHINE_NAME"); the old instance is still $(machine_qualified "$MACHINE_NAME-old"), stopped. Fix the cause and re-run to verify again, or roll back: incus delete $(machine_qualified "$MACHINE_NAME"); incus rename $(machine_qualified "$MACHINE_NAME-old") $(machine_qualified "$MACHINE_NAME"); re-attach the volumes with the launcher's device names; rm $(machine_journal_file)" 1
+        || machine_die "verify found a failure in the new $new; the old instance is still $old, stopped. Fix the cause and re-run to verify again, or roll back: incus stop $new; incus config set $old user.acfs.lease \"\$(incus config get $new user.acfs.lease)\"; incus rename $new $new-failed; incus rename $old $new; re-attach the volumes with the launcher's device names; rm $(machine_journal_file). The snapshots acfs-replace-$(machine_replace_stamp) and the export $(machine_replace_export_file) are kept" 1
     machine_journal_mark verified
 }
 
@@ -307,12 +394,18 @@ machine_up() {
     machine_replace_check_journal
     machine_replace_preflight
     machine_replace_stop
+    machine_replace_snapshot
+    machine_replace_export
     machine_replace_detach
     machine_replace_rename
     machine_replace_launch "${launcher_args[@]}"
+    machine_replace_lease
     machine_replace_verify
+    local stamp export_file
+    stamp="$(machine_replace_stamp)"
+    export_file="$(machine_replace_export_file)"
     rm -f -- "$(machine_journal_file)"
-    machine_note "replace: done. $(machine_qualified "$MACHINE_NAME-old") is kept stopped as the rollback; delete it when satisfied: incus delete $(machine_qualified "$MACHINE_NAME-old")"
+    machine_note "replace: done. Kept as the rollback: $(machine_qualified "$MACHINE_NAME-old"), stopped and without the lease; the volume snapshots acfs-replace-$stamp; the root's export $export_file. Delete them when satisfied: incus delete $(machine_qualified "$MACHINE_NAME-old")"
 }
 
 # ------------------------------------------------------------------

@@ -75,7 +75,29 @@ case "$1" in
                 name="${3#*:}"
                 [[ -f "$STUB_DIR/lease-$name" ]] && cat "$STUB_DIR/lease-$name" || echo
                 ;;
+            unset)
+                # config unset <inst> user.acfs.lease
+                name="${3#*:}"
+                [[ -z "${STUB_UNSET_EXIT:-}" ]] || exit "$STUB_UNSET_EXIT"
+                [[ "$4" != user.acfs.lease ]] || rm -f "$STUB_DIR/lease-$name"
+                ;;
         esac
+        ;;
+    storage)
+        # storage volume snapshot show|create <pool> <volume> <snapshot>
+        snap="$STUB_DIR/snap-${5#*:}-$6-$7"
+        case "$4" in
+            show) [[ -f "$snap" ]] ;;
+            create)
+                [[ -z "${STUB_SNAPSHOT_EXIT:-}" ]] || exit "$STUB_SNAPSHOT_EXIT"
+                touch "$snap"
+                ;;
+        esac
+        ;;
+    export)
+        # export <inst> <file> --instance-only
+        [[ -z "${STUB_EXPORT_EXIT:-}" ]] || exit "$STUB_EXPORT_EXIT"
+        echo "root of ${2#*:}" >"$3"
         ;;
     exec)
         # exec <inst> [--env X] -- <command...>
@@ -227,7 +249,19 @@ tool_called() { [[ -s "$CASE/calls-$1" ]]; }
 tool_not_called() { [[ ! -s "$CASE/calls-$1" ]]; }
 call_line() { grep -n -- "$1" "$CASE/calls-incus" | head -n 1 | cut -d: -f1; }
 called_before() { [[ -n "$(call_line "$1")" && -n "$(call_line "$2")" && "$(call_line "$1")" -lt "$(call_line "$2")" ]]; }
-replace_order() { called_before '^stop dev$' '^config device remove' && called_before '^config device remove' '^rename dev dev-old$'; }
+replace_order() {
+    called_before '^stop dev$' '^storage volume snapshot create' \
+        && called_before '^storage volume snapshot create' '^export dev ' \
+        && called_before '^export dev ' '^config device remove' \
+        && called_before '^config device remove' '^rename dev dev-old$'
+}
+# The lease leaves dev-old after the launch and before the verify.
+lease_moved_in_order() {
+    local unset_line exec_line
+    unset_line="$(call_line '^config unset dev-old user.acfs.lease$')"
+    exec_line="$(call_line '^exec dev ')"
+    [[ -n "$unset_line" && -n "$exec_line" && "$unset_line" -lt "$exec_line" && -s "$CASE/calls-launcher" ]]
+}
 # The launcher stub runs after incus rename when the rename is logged and the launcher was called at all.
 launched_after_rename() { [[ -n "$(call_line '^rename dev dev-old$')" && -s "$CASE/calls-launcher" ]]; }
 # No credential text may appear in either stream.
@@ -242,7 +276,7 @@ instance_json() { # <name> <status> <type> <installed: 1|"">
 # An installed, running container with the launcher's devices and a lease.
 installed_machine() {
     instance_json dev Running container 1 >"$CASE/inst-dev.json"
-    echo '{"devices":{"root":{"type":"disk"},"eth0":{"type":"nic"},"state-home":{"type":"disk","source":"acfs-state-dev/home"},"state-ssh-host":{"type":"disk"},"state-tailscale":{"type":"disk"},"state-acfs":{"type":"disk"},"data":{"type":"disk","source":"dev-data"}}}' >"$CASE/devices-dev.json"
+    echo '{"devices":{"root":{"type":"disk"},"eth0":{"type":"nic"},"state-home":{"type":"disk","pool":"acfs","source":"acfs-state-dev/home"},"state-ssh-host":{"type":"disk"},"state-tailscale":{"type":"disk"},"state-acfs":{"type":"disk"},"data":{"type":"disk","pool":"acfs","source":"dev-data"}}}' >"$CASE/devices-dev.json"
     printf '0123456789abcdef0123456789abcdef\n' >"$CASE/lease-dev"
     echo '[{"check":"claude","status":"ok","detail":"login stored, mode 0600; claude -p answered"},{"check":"lease","status":"ok","detail":"this instance holds its state volume"}]' >"$CASE/guest-report.json"
 }
@@ -291,12 +325,23 @@ check "--help: prints the usage" out_has 'acfs machine up'
 run_machine bogus
 check "unknown subcommand: exits 2" rc_is 2
 
-echo "== up --replace: stop, detach the launcher's devices, rename, launch with the lease, verify"
+echo "== up --replace: stop, snapshot, export, detach the launcher's devices, rename, launch with the lease, move the lease, verify"
 new_case replace
 installed_machine
 run_machine up --replace dev --ssh-key k
 check "exits 0" rc_is 0
 check "stops the old instance" incus_called '^stop dev$'
+check "snapshots the state volume on the device's pool" incus_called '^storage volume snapshot create acfs acfs-state-dev acfs-replace-[0-9]\{8\}-[0-9]\{6\}$'
+check "snapshots the data volume" incus_called '^storage volume snapshot create acfs dev-data acfs-replace-[0-9]\{8\}-[0-9]\{6\}$'
+check "both snapshots carry the same stamp" bash -c '[[ "$(grep "^storage volume snapshot create" "$1" | awk "{print \$NF}" | sort -u | wc -l)" -eq 1 ]]' _ "$CASE/calls-incus"
+check "exports the old root alone, through a .part file" incus_called "^export dev $CASE/state/exports/dev-[0-9]\{8\}-[0-9]\{6\}\.tar\.gz\.part --instance-only$"
+check "the export is published, owner only, in an owner-only directory" \
+    bash -c 'f="$(ls "$1"/exports/dev-*.tar.gz)" && [[ "$(stat -c %a "$f")" == 600 && "$(stat -c %a "$1/exports")" == 700 ]] && ! ls "$1"/exports/*.part >/dev/null 2>&1' _ "$CASE/state"
+check "stop, snapshot, export, detach and rename run in that order" replace_order
+check "takes the lease from dev-old after the launch, before the verify" lease_moved_in_order
+check "dev-old holds no lease afterwards" bash -c '[[ ! -e "$1/lease-dev-old" ]]' _ "$CASE"
+check "the done note names the snapshots and the export it keeps" \
+    bash -c 'grep -q "the volume snapshots acfs-replace-[0-9]\{8\}-[0-9]\{6\}; the root.s export $1/exports/dev-" "$2"' _ "$CASE/state" "$CASE/err"
 check "removes the state-home device" incus_called '^config device remove dev state-home$'
 check "removes the data device" incus_called '^config device remove dev data$'
 check "removes the other state devices" bash -c 'grep -c "^config device remove dev state-" "$1" | grep -qx 4' _ "$CASE/calls-incus"
@@ -308,7 +353,7 @@ check "launches after the rename" launched_after_rename
 check "verifies the new instance inside" incus_called '^exec dev --env HOME=/home/ubuntu -- runuser -u ubuntu -- bash -s -- verify --json --timeout 90$'
 check "reports the guest checks" both_ok claude lease
 check "reports the new instance's lease key" status_is instance-lease ok
-check "keeps the old instance as the rollback and says so" err_has 'dev-old is kept stopped as the rollback'
+check "keeps the old instance as the rollback and says so" err_has 'Kept as the rollback: dev-old, stopped and without the lease'
 check "removes the journal when done" bash -c '[[ ! -e "$1/dev.replace" ]]' _ "$CASE/state"
 check "the old instance still exists, stopped" bash -c 'jq -e ".status == \"Stopped\"" "$1/inst-dev-old.json" >/dev/null' _ "$CASE"
 check "prints no secret" no_secret_printed
@@ -329,6 +374,52 @@ check "the re-run exits 0" rc_is 0
 check "the re-run stops nothing and renames nothing" incus_not_called '^stop \|^rename '
 check "the re-run launches again with the lease" launcher_args_are "dev --lease-from dev-old --ssh-key k"
 check "the re-run removes the journal" bash -c '[[ ! -e "$1/dev.replace" ]]' _ "$CASE/state"
+
+echo "== up --replace: a failed export resumes with the same stamp, and no second snapshot"
+new_case replace-export-fails
+installed_machine
+export STUB_EXPORT_EXIT=1
+run_machine up --replace dev --ssh-key k
+unset STUB_EXPORT_EXIT
+check "exits 1, saying to re-run" bash -c '[[ "$1" -eq 1 ]] && grep -q "incus export failed; re-run" "$2"' _ "$RC" "$CASE/err"
+check "the journal has the stamp, stopped and snapshotted, not exported" \
+    bash -c 'grep -qx "stamp=[0-9]\{8\}-[0-9]\{6\}" "$1" && grep -qx stopped=1 "$1" && grep -qx snapshotted=1 "$1" && ! grep -q exported "$1"' _ "$CASE/state/dev.replace"
+check "nothing was detached or renamed yet" incus_not_called '^config device remove\|^rename '
+stamp_before="$(sed -n 's/^stamp=//p' "$CASE/state/dev.replace")"
+: >"$CASE/calls-incus"
+run_machine up --replace dev --ssh-key k
+check "the re-run exits 0" rc_is 0
+check "the re-run makes no snapshot again" incus_not_called '^storage volume snapshot create'
+check "the re-run exports under the same stamp" incus_called "^export dev $CASE/state/exports/dev-$stamp_before\.tar\.gz\.part --instance-only$"
+
+echo "== up --replace: a snapshot that exists already is kept"
+new_case replace-snapshot-exists
+installed_machine
+printf 'stamp=20261010-120000\n' >"$CASE/state/dev.replace"
+touch "$CASE/snap-acfs-acfs-state-dev-acfs-replace-20261010-120000"
+run_machine up --replace dev --ssh-key k
+check "exits 0" rc_is 0
+check "only the missing data snapshot is made" \
+    bash -c '[[ "$(grep -c "^storage volume snapshot create" "$1")" -eq 1 ]] && grep -q "^storage volume snapshot create acfs dev-data acfs-replace-20261010-120000$" "$1"' _ "$CASE/calls-incus"
+
+echo "== up --replace: an instance without the launcher's volume devices isn't snapshotted blindly"
+new_case replace-no-pool
+installed_machine
+echo '{"devices":{"root":{"type":"disk"},"eth0":{"type":"nic"}}}' >"$CASE/devices-dev.json"
+run_machine up --replace dev --ssh-key k
+check "exits 2, naming the devices it needs" bash -c '[[ "$1" -eq 2 ]] && grep -q "no state-home and data devices with a pool and a source" "$2"' _ "$RC" "$CASE/err"
+check "makes no snapshot, export or rename" incus_not_called '^storage volume snapshot create\|^export \|^rename '
+
+echo "== up --replace: a failed lease move resumes"
+new_case replace-unset-fails
+installed_machine
+export STUB_UNSET_EXIT=1
+run_machine up --replace dev --ssh-key k
+unset STUB_UNSET_EXIT
+check "exits 1 after the launch" bash -c '[[ "$1" -eq 1 ]] && grep -qx launched=1 "$2" && ! grep -q lease-moved "$2"' _ "$RC" "$CASE/state/dev.replace"
+rm -f "$CASE/calls-launcher"
+run_machine up --replace dev --ssh-key k
+check "the re-run moves the lease without launching again" bash -c '[[ "$1" -eq 0 && ! -e "$2/calls-launcher" && ! -e "$2/lease-dev-old" ]]' _ "$RC" "$CASE"
 
 echo "== up --replace: a journal that no longer matches the instances is refused, not resumed"
 new_case replace-stale-launched
@@ -362,7 +453,7 @@ new_case replace-journal-valid
 instance_json dev-old Stopped container 1 >"$CASE/inst-dev-old.json"
 printf '0123456789abcdef0123456789abcdef\n' >"$CASE/lease-dev-old"
 echo '[]' >"$CASE/guest-report.json"
-printf 'stopped=1\ndetached=1\nrenamed=1\n' >"$CASE/state/dev.replace"
+printf 'stamp=20261010-120000\nstopped=1\nsnapshotted=1\nexported=1\ndetached=1\nrenamed=1\n' >"$CASE/state/dev.replace"
 run_machine up --replace dev --ssh-key k
 check "a matching journal resumes: exits 0" rc_is 0
 check "a matching journal resumes: says it continues from the journal" err_has 'continuing from the journal'
@@ -376,6 +467,8 @@ run_machine up --replace dev --ssh-key k
 check "exits 1" rc_is 1
 check "names the old instance as the rollback" err_has 'the old instance is still dev-old, stopped'
 check "the rollback text names the journal to remove" err_has "rm $CASE/state/dev.replace"
+check "the rollback text gives the lease back to the old root" err_has 'incus config set dev-old user.acfs.lease "$(incus config get dev user.acfs.lease)"'
+check "the rollback text names the snapshots and the export it keeps" bash -c 'grep -q "The snapshots acfs-replace-[0-9]\{8\}-[0-9]\{6\} and the export .*/exports/dev-.*\.tar\.gz are kept" "$1"' _ "$CASE/err"
 check "the journal keeps launched, not verified" bash -c 'grep -qx launched=1 "$1" && ! grep -q verified "$1"' _ "$CASE/state/dev.replace"
 
 echo "== up --replace: preflight refusals touch nothing"
