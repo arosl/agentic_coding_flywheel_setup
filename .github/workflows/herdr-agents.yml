@@ -10,13 +10,17 @@ on:
     branches: [main]
     paths:
       - 'scripts/lib/herdr_agents.sh'
+      - 'scripts/lib/doctor.sh'
       - 'tests/unit/test_herdr_agents.sh'
+      - 'tests/unit/test_doctor_codex_daemon.sh'
       - '.github/workflows/herdr-agents.yml'
   pull_request:
     branches: [main]
     paths:
       - 'scripts/lib/herdr_agents.sh'
+      - 'scripts/lib/doctor.sh'
       - 'tests/unit/test_herdr_agents.sh'
+      - 'tests/unit/test_doctor_codex_daemon.sh'
       - '.github/workflows/herdr-agents.yml'
 
 permissions:
@@ -36,3 +40,5 @@ jobs:
           sudo apt-get install -y jq
       - name: Agent helper against a stub herdr
         run: HOME="$(mktemp -d)" bash tests/unit/test_herdr_agents.sh
+      - name: Doctor's Codex daemon check against a stub helper
+        run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_codex_daemon.sh

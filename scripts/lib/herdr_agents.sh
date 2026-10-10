@@ -14,6 +14,7 @@
 #   acfs agents spawn [--claude N] [--codex N] [--agy N] [--kind K [--count N]]...
 #   acfs agents send (--all | --kind K | --name N)... <prompt>
 #   acfs agents list [--workspace ID] [--kind K] [--json]
+#   acfs agents codex-daemon (status [--json] | start | restart)
 # ============================================================
 
 set -euo pipefail
@@ -31,6 +32,7 @@ Usage:
   acfs agents send  (--all | --kind KIND | --name NAME)... [--workspace ID]
                     [--wait [--timeout MS]] <prompt>
   acfs agents list  [--workspace ID] [--kind KIND] [--json]
+  acfs agents codex-daemon (status [--json] | start | restart)
 
 spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        an Agent Mail identity first; its herdr name is that name lowercased and
@@ -45,9 +47,22 @@ spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        An agent that stops at a dialog stops spawn. With --trust-folder, the
        first-run "trust this folder?" dialog of Claude Code or Codex is
        answered with "trust"; no other dialog ever is.
+       Before the first Codex agent, spawn makes sure Codex's app-server
+       daemon runs without any HERDR_* variable (see codex-daemon); it
+       refuses to start Codex agents while a daemon that inherited a pane's
+       variables is running.
 send   Prompt every matching agent. A blocked agent (waiting at an approval or
        question) is skipped and reported, never answered.
 list   Show the agents herdr knows about.
+codex-daemon
+       Codex runs its hooks through one shared app-server daemon. Started from
+       inside a herdr pane, the daemon keeps that pane's HERDR_* variables, and
+       herdr's Codex hook then reports every Codex session on the host as that
+       pane's occupant, which clears the pane's agent name again and again.
+       status shows the daemon and the HERDR_* variables it carries (exit 1
+       when it carries any); start and restart run it with every HERDR_*
+       variable removed. restart interrupts every running Codex agent's
+       connection to the daemon.
 
 The workspace is --workspace, else $HERDR_WORKSPACE_ID. --cwd defaults to the
 git top level of the current directory, which is also the Agent Mail project key.
@@ -213,6 +228,169 @@ herdr_agents_model_flag() {
     esac
 }
 
+# ------------------------------------------------------------
+# codex-daemon
+# ------------------------------------------------------------
+# Codex 0.162 runs its hooks through one shared app-server daemon, started
+# by the first Codex that needs it. Started from inside a herdr pane, the
+# daemon keeps that pane's HERDR_* environment, and herdr's Codex
+# SessionStart hook (which reads HERDR_PANE_ID from its environment) then
+# reports every Codex session on the host as that pane's occupant: herdr
+# "replaces" the agent there on each report and clears its name, and the
+# other Codex panes never get a session (acfs-gen.3). So the daemon has to
+# start with no HERDR_* variable at all.
+#
+# The daemon's pid file is $CODEX_HOME/app-server-daemon/daemon.pid, JSON
+# with a "pid". Its environment is read from /proc; HERDR_AGENTS_PROC_ROOT
+# points the tests at a fake one.
+
+herdr_agents_codex_home() {
+    printf '%s\n' "${CODEX_HOME:-$HOME/.codex}"
+}
+
+# The pid of the running Codex app-server daemon: the pid file's process,
+# when it is alive and is a codex app-server. Fails when none runs.
+herdr_agents_codex_daemon_pid() {
+    local pid_file pid cmdline proc_root="${HERDR_AGENTS_PROC_ROOT:-/proc}"
+    pid_file="$(herdr_agents_codex_home)/app-server-daemon/daemon.pid"
+    [[ -r "$pid_file" ]] || return 1
+    pid="$(jq -r '.pid // empty' "$pid_file" 2>/dev/null)" || return 1
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    cmdline="$(tr '\0' ' ' <"$proc_root/$pid/cmdline" 2>/dev/null)" || return 1
+    [[ "$cmdline" == *"app-server"* ]] || return 1
+    printf '%s\n' "$pid"
+}
+
+# The HERDR_* variables in process $1's environment, one NAME=VALUE per line.
+herdr_agents_codex_daemon_leaked_vars() {
+    tr '\0' '\n' <"${HERDR_AGENTS_PROC_ROOT:-/proc}/$1/environ" 2>/dev/null | grep '^HERDR_' || true
+}
+
+# Run codex with every HERDR_* variable removed from its environment: the
+# ones a pane's shell exports (HERDR_ENV, HERDR_PANE_ID, HERDR_TAB_ID,
+# HERDR_WORKSPACE_ID, HERDR_SOCKET_PATH, HERDR_BIN_PATH) and any herdr adds
+# later. This helper's own HERDR_AGENTS_* knobs are not herdr's and stay.
+herdr_agents_codex_outside_herdr() {
+    local var
+    local -a unset_args=()
+    for var in "${!HERDR_@}"; do
+        [[ "$var" == HERDR_AGENTS_* ]] || unset_args+=(-u "$var")
+    done
+    env "${unset_args[@]}" codex "$@"
+}
+
+# One JSON object describing the daemon: running, pid, leaked_herdr_vars
+# (names), clean (true when it carries none, or none runs).
+herdr_agents_codex_daemon_status_json() {
+    local pid leaked="[]"
+    if pid="$(herdr_agents_codex_daemon_pid)"; then
+        leaked="$(herdr_agents_codex_daemon_leaked_vars "$pid" | cut -d= -f1 | jq -Rc . | jq -sc .)"
+        jq -nc --argjson pid "$pid" --argjson leaked "$leaked" \
+            '{running: true, pid: $pid, leaked_herdr_vars: $leaked, clean: ($leaked | length == 0)}'
+    else
+        jq -nc '{running: false, pid: null, leaked_herdr_vars: [], clean: true}'
+    fi
+}
+
+# Wait until the pid file names a live daemon, HERDR_AGENTS_DAEMON_WAIT_TRIES
+# polls apart (default 25, 0.2s).
+herdr_agents_codex_daemon_wait() {
+    local tries="${HERDR_AGENTS_DAEMON_WAIT_TRIES:-25}" interval="${HERDR_AGENTS_DAEMON_WAIT_INTERVAL:-0.2}" i
+    for ((i = 0; i < tries; i++)); do
+        herdr_agents_codex_daemon_pid >/dev/null && return 0
+        sleep "$interval"
+    done
+    return 1
+}
+
+# Make sure a daemon without HERDR_* variables runs: start one when none
+# runs; fail, naming the variables and the fix, when the running one
+# carries any. The caller has checked that codex and jq are installed.
+herdr_agents_codex_daemon_ensure() {
+    local status pid
+    status="$(herdr_agents_codex_daemon_status_json)"
+    if [[ "$(jq -r '.running' <<<"$status")" == true ]]; then
+        pid="$(jq -r '.pid' <<<"$status")"
+        if [[ "$(jq -r '.clean' <<<"$status")" == true ]]; then
+            return 0
+        fi
+        herdr_agents_note "the Codex app-server daemon (pid $pid) carries $(jq -r '.leaked_herdr_vars | join(", ")' <<<"$status"): it was started inside a herdr pane, and every Codex session on this host reports as that pane's agent"
+        herdr_agents_note "  restart it with 'acfs agents codex-daemon restart' (running Codex agents lose their daemon connection until they reconnect), then spawn again"
+        return 1
+    fi
+    herdr_agents_note "starting the Codex app-server daemon without HERDR_* variables"
+    if ! herdr_agents_codex_outside_herdr app-server daemon start >/dev/null; then
+        herdr_agents_note "codex app-server daemon start failed"
+        return 1
+    fi
+    if ! herdr_agents_codex_daemon_wait; then
+        herdr_agents_note "the Codex app-server daemon did not come up: no live pid in $(herdr_agents_codex_home)/app-server-daemon/daemon.pid"
+        return 1
+    fi
+    status="$(herdr_agents_codex_daemon_status_json)"
+    [[ "$(jq -r '.clean' <<<"$status")" == true ]] && return 0
+    herdr_agents_note "the Codex app-server daemon came up carrying $(jq -r '.leaked_herdr_vars | join(", ")' <<<"$status")"
+    return 1
+}
+
+herdr_agents_codex_daemon_print_status() {
+    local status="$1" json="$2"
+    if [[ "$json" == true ]]; then
+        printf '%s\n' "$status"
+    elif [[ "$(jq -r '.running' <<<"$status")" != true ]]; then
+        printf 'codex app-server daemon: not running\n'
+    elif [[ "$(jq -r '.clean' <<<"$status")" == true ]]; then
+        printf 'codex app-server daemon: running (pid %s), no HERDR_* variables\n' "$(jq -r '.pid' <<<"$status")"
+    else
+        printf 'codex app-server daemon: running (pid %s) with %s; every Codex session on this host reports as that pane'"'"'s agent. Fix: acfs agents codex-daemon restart\n' \
+            "$(jq -r '.pid' <<<"$status")" "$(jq -r '.leaked_herdr_vars | join(", ")' <<<"$status")"
+    fi
+    [[ "$(jq -r '.clean' <<<"$status")" == true ]]
+}
+
+herdr_agents_codex_daemon() {
+    local action="${1:-}" json=false status
+    [[ -n "$action" ]] || herdr_agents_die "codex-daemon needs status, start or restart"
+    shift
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) json=true; shift ;;
+            -h|--help) herdr_agents_usage; return 0 ;;
+            *) herdr_agents_die "unknown codex-daemon option: $1" ;;
+        esac
+    done
+    herdr_agents_require jq
+    case "$action" in
+        status)
+            herdr_agents_codex_daemon_print_status "$(herdr_agents_codex_daemon_status_json)" "$json"
+            ;;
+        start)
+            herdr_agents_require codex
+            herdr_agents_codex_daemon_ensure || return 1
+            herdr_agents_codex_daemon_print_status "$(herdr_agents_codex_daemon_status_json)" "$json"
+            ;;
+        restart)
+            herdr_agents_require codex
+            herdr_agents_note "restarting the Codex app-server daemon without HERDR_* variables; running Codex agents lose their daemon connection until they reconnect"
+            herdr_agents_codex_outside_herdr app-server daemon restart >/dev/null \
+                || herdr_agents_die "codex app-server daemon restart failed"
+            herdr_agents_codex_daemon_wait \
+                || herdr_agents_die "the Codex app-server daemon did not come back: no live pid in $(herdr_agents_codex_home)/app-server-daemon/daemon.pid"
+            status="$(herdr_agents_codex_daemon_status_json)"
+            herdr_agents_codex_daemon_print_status "$status" "$json" \
+                || herdr_agents_die "the restarted daemon still carries HERDR_* variables; restart it from a shell outside herdr"
+            ;;
+        *) herdr_agents_die "unknown codex-daemon action: $action (status, start or restart)" ;;
+    esac
+}
+
+# True when one of the kinds in $@ is codex.
+herdr_agents_kinds_include_codex() {
+    local kind
+    for kind in "$@"; do [[ "$kind" == codex ]] && return 0; done
+    return 1
+}
+
 herdr_agents_spawn() {
     local workspace="" cwd="" model="unknown" model_given=false prompt="" prompt_mode="palette"
     local dry_run=false json=false trust_folder=false
@@ -288,6 +466,18 @@ herdr_agents_spawn() {
             ;;
         custom) base_prompt="$prompt" ;;
     esac
+
+    # Codex agents need the app-server daemon up, and free of HERDR_*
+    # variables, before the first one starts (acfs-gen.3). Checked before
+    # any identity or tab exists.
+    if herdr_agents_kinds_include_codex "${kinds[@]}"; then
+        if [[ "$dry_run" == true ]]; then
+            herdr_agents_note "would run: codex app-server daemon start (without HERDR_* variables) unless a daemon without them runs"
+        else
+            herdr_agents_require codex
+            herdr_agents_codex_daemon_ensure || herdr_agents_die "spawn stopped: Codex agents need an app-server daemon without HERDR_* variables"
+        fi
+    fi
 
     local results="[]" kind mail_name herdr_name tab_id pane_id kickoff status
     local failed=false
@@ -538,6 +728,7 @@ herdr_agents_main() {
         spawn) herdr_agents_spawn "$@" ;;
         send) herdr_agents_send "$@" ;;
         list|ls) herdr_agents_list "$@" ;;
+        codex-daemon) herdr_agents_codex_daemon "$@" ;;
         help|-h|--help) herdr_agents_usage ;;
         *) herdr_agents_usage >&2; return 1 ;;
     esac

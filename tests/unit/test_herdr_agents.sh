@@ -109,22 +109,62 @@ echo "$n" >"$STUB_DIR/am_count"
 name="$(sed -n "${n}p" "$STUB_DIR/am_names")"
 printf '{"id":%s,"name":"%s","program":"stub"}\n' "$n" "$name"
 STUB
-chmod +x "$WORK/bin/herdr" "$WORK/bin/am"
+# The stub codex records the HERDR_* variables it was run with. Its
+# `app-server daemon start|restart` writes the pid file of a fake daemon
+# (pid 4242) whose /proc entries carry no HERDR_* variable.
+cat >"$WORK/bin/codex" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'codex %s\n' "$*" >>"$STUB_DIR/calls"
+# herdr's variables only; the helper's own HERDR_AGENTS_* test knobs may stay.
+env | grep '^HERDR_' | grep -v '^HERDR_AGENTS_' | sort >>"$STUB_DIR/codex_env" || true
+case "$*" in
+    "app-server daemon start"|"app-server daemon restart")
+        [[ ! -e "$STUB_DIR/daemon_start_fail" ]] || { echo "daemon failed" >&2; exit 1; }
+        mkdir -p "$STUB_DIR/codex-home/app-server-daemon" "$STUB_DIR/proc/4242"
+        printf '{"pid":4242,"processStartTime":"stub"}\n' >"$STUB_DIR/codex-home/app-server-daemon/daemon.pid"
+        printf 'codex\0app-server\0--listen\0unix://\0--managed-daemon\0' >"$STUB_DIR/proc/4242/cmdline"
+        printf 'HOME=/home/stub\0PATH=/usr/bin\0' >"$STUB_DIR/proc/4242/environ"
+        ;;
+esac
+STUB
+chmod +x "$WORK/bin/herdr" "$WORK/bin/am" "$WORK/bin/codex"
 
 # A fresh stub state per case.
 reset_stub() {
     STUB_DIR="$WORK/stub.$1"
-    mkdir -p "$STUB_DIR"
+    mkdir -p "$STUB_DIR/proc" "$STUB_DIR/codex-home"
     printf '%s\n' AlphaFox BetaOwl GammaYak DeltaElk >"$STUB_DIR/am_names"
     : >"$STUB_DIR/calls"
     export STUB_DIR
 }
 
+# A fake running Codex daemon, pid 777, in this case's CODEX_HOME and proc
+# root: `clean` carries no HERDR_* variable, `leaked` the ones a pane's
+# shell exports, `dead` has a pid file but no process.
+fake_daemon() {
+    local how="$1"
+    mkdir -p "$STUB_DIR/codex-home/app-server-daemon"
+    printf '{"pid":777,"processStartTime":"stub"}\n' >"$STUB_DIR/codex-home/app-server-daemon/daemon.pid"
+    [[ "$how" != dead ]] || return 0
+    mkdir -p "$STUB_DIR/proc/777"
+    printf 'codex\0app-server\0--listen\0unix://\0--managed-daemon\0' >"$STUB_DIR/proc/777/cmdline"
+    if [[ "$how" == leaked ]]; then
+        printf 'HOME=/home/stub\0HERDR_ENV=1\0HERDR_PANE_ID=w1:pA\0HERDR_TAB_ID=w1:tA\0HERDR_WORKSPACE_ID=w1\0HERDR_SOCKET_PATH=/s\0HERDR_BIN_PATH=/b\0PATH=/usr/bin\0' >"$STUB_DIR/proc/777/environ"
+    else
+        printf 'HOME=/home/stub\0PATH=/usr/bin\0' >"$STUB_DIR/proc/777/environ"
+    fi
+}
+
 # Run the helper with the stubs first on PATH; stdout, stderr and the
-# exit code land in $OUT, $ERR and $RC.
+# exit code land in $OUT, $ERR and $RC. The environment is a herdr pane's:
+# every HERDR_* variable the pane's shell exports is set.
 run_helper() {
     RC=0
     PATH="$WORK/bin:$PATH" HOME="$WORK/home" ACFS_HOME="$WORK/acfs-home" \
+        CODEX_HOME="$STUB_DIR/codex-home" HERDR_AGENTS_PROC_ROOT="$STUB_DIR/proc" \
+        HERDR_AGENTS_DAEMON_WAIT_TRIES=3 HERDR_AGENTS_DAEMON_WAIT_INTERVAL=0 \
+        HERDR_ENV=1 HERDR_PANE_ID=w9:p9 HERDR_TAB_ID=w9:t9 HERDR_SOCKET_PATH=/stub.sock HERDR_BIN_PATH=/stub/herdr \
         bash "$HELPER" "$@" >"$STUB_DIR/out" 2>"$STUB_DIR/err" || RC=$?
     OUT="$(cat "$STUB_DIR/out")"
     ERR="$(cat "$STUB_DIR/err")"
@@ -173,7 +213,9 @@ check "--model reaches each agent CLI after --, and its Agent Mail identity" \
         && [[ $(grep -c -- "^am agents create .* --model opus " "$1") -eq 3 ]]' _ "$STUB_DIR/calls"
 check "--no-prompt sends no prompt" test "$(count_calls '^herdr agent prompt')" -eq 0
 check "identity, then tab, then start, per agent" \
-    test "$(cut -d' ' -f1-3 "$STUB_DIR/calls" | head -3 | tr '\n' '|')" = "am agents create|herdr tab create|herdr agent start|"
+    test "$(grep -v '^codex ' "$STUB_DIR/calls" | cut -d' ' -f1-3 | head -3 | tr '\n' '|')" = "am agents create|herdr tab create|herdr agent start|"
+check "the Codex daemon is seen to before the first identity" \
+    test "$(head -1 "$STUB_DIR/calls")" = "codex app-server daemon start"
 check "--json lists each agent as started" \
     test "$(jq -r '[.agents[].status] | unique | join(",")' <<<"$OUT")" = started
 
@@ -373,6 +415,90 @@ env -u HERDR_WORKSPACE_ID PATH="$WORK/bin:$PATH" bash "$HELPER" spawn --claude 1
     >/dev/null 2>"$STUB_DIR/err" || RC=$?
 check "without --workspace or HERDR_WORKSPACE_ID, spawn refuses" \
     bash -c '[[ "$1" -ne 0 ]] && grep -q "no workspace" "$2"' _ "$RC" "$STUB_DIR/err"
+
+# acfs-gen.3: Codex's shared app-server daemon must not inherit a pane's
+# HERDR_* variables, or every Codex session reports as that pane's agent.
+echo "codex daemon"
+
+reset_stub daemonstart
+run_helper spawn --codex 1 --cwd "$WORK/repo" --no-prompt --json
+check "spawn --codex with no daemon starts one before any identity or tab" \
+    test "$RC/$(cut -d' ' -f1-4 "$STUB_DIR/calls" | head -1)" = "0/codex app-server daemon start"
+check "the daemon is started with every HERDR_* variable removed" test ! -s "$STUB_DIR/codex_env"
+check "the Codex agent is then spawned as usual" \
+    test "$(count_calls '^am agents create')/$(count_calls '^herdr agent start alphafox --kind codex')" = "1/1"
+
+reset_stub daemonclaude
+run_helper spawn --claude 2 --cwd "$WORK/repo" --no-prompt
+check "a spawn without Codex agents never touches the daemon" test "$RC/$(count_calls '^codex')" = "0/0"
+
+reset_stub daemonclean
+fake_daemon clean
+run_helper spawn --codex 1 --cwd "$WORK/repo" --no-prompt
+check "a running daemon without HERDR_* variables is left alone" test "$RC/$(count_calls '^codex')" = "0/0"
+
+reset_stub daemonleaked
+fake_daemon leaked
+run_helper spawn --claude 1 --codex 1 --cwd "$WORK/repo" --no-prompt --json
+check "a daemon carrying a pane's variables stops spawn before any identity, tab or codex call" \
+    test "$RC/$(count_calls '^am')/$(count_calls '^herdr')/$(count_calls '^codex')" = "1/0/0/0"
+check "it names the variables and the fix" \
+    bash -c 'grep -q "pid 777" <<<"$1" && grep -q "HERDR_PANE_ID, HERDR_TAB_ID" <<<"$1" && grep -q "acfs agents codex-daemon restart" <<<"$1"' _ "$ERR"
+
+reset_stub daemondead
+fake_daemon dead
+run_helper spawn --codex 1 --cwd "$WORK/repo" --no-prompt
+check "a pid file without a live process counts as not running" \
+    test "$RC/$(count_calls '^codex app-server daemon start')" = "0/1"
+
+reset_stub daemonfail
+touch "$STUB_DIR/daemon_start_fail"
+run_helper spawn --codex 1 --cwd "$WORK/repo" --no-prompt
+check "a daemon that fails to start stops spawn before any identity" \
+    test "$RC/$(count_calls '^am')" = "1/0"
+
+reset_stub daemondry
+run_helper spawn --codex 1 --cwd "$WORK/repo" --dry-run
+check "--dry-run only says it would start the daemon" \
+    bash -c '[[ "$1" -eq 0 && "$2" -eq 0 ]] && grep -q "would run: codex app-server daemon start" <<<"$3"' _ "$RC" "$(count_calls '^codex')" "$ERR"
+
+reset_stub statusnone
+run_helper codex-daemon status --json
+check "codex-daemon status --json reports no daemon, exit 0" \
+    test "$RC/$(jq -c '[.running, .clean, .leaked_herdr_vars]' <<<"$OUT")" = "0/[false,true,[]]"
+
+reset_stub statusclean
+fake_daemon clean
+run_helper codex-daemon status
+check "status of a clean daemon prints its pid, exit 0" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "running (pid 777), no HERDR_\* variables" <<<"$2"' _ "$RC" "$OUT"
+
+reset_stub statusleaked
+fake_daemon leaked
+run_helper codex-daemon status --json
+check "status --json of a leaked daemon lists the variables and exits 1" \
+    test "$RC/$(jq -r '.leaked_herdr_vars | join(",")' <<<"$OUT")" = "1/HERDR_ENV,HERDR_PANE_ID,HERDR_TAB_ID,HERDR_WORKSPACE_ID,HERDR_SOCKET_PATH,HERDR_BIN_PATH"
+run_helper codex-daemon status
+check "the text status names the fix" \
+    bash -c '[[ "$1" -eq 1 ]] && grep -q "with HERDR_ENV, HERDR_PANE_ID" <<<"$2" && grep -q "Fix: acfs agents codex-daemon restart" <<<"$2"' _ "$RC" "$OUT"
+
+reset_stub restart
+fake_daemon leaked
+run_helper codex-daemon restart
+check "codex-daemon restart runs the restart without HERDR_* variables and reports the clean daemon" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qx "codex app-server daemon restart" "$2" && [[ ! -s "$3" ]] && grep -q "pid 4242" <<<"$4"' \
+    _ "$RC" "$STUB_DIR/calls" "$STUB_DIR/codex_env" "$OUT"
+
+reset_stub startcmd
+run_helper codex-daemon start
+check "codex-daemon start starts a missing daemon and reports it" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qx "codex app-server daemon start" "$2" && grep -q "pid 4242" <<<"$3"' _ "$RC" "$STUB_DIR/calls" "$OUT"
+
+reset_stub startleaked
+fake_daemon leaked
+run_helper codex-daemon start
+check "codex-daemon start refuses to leave a leaked daemon in place" \
+    test "$RC/$(count_calls '^codex')" = "1/0"
 
 echo "send and list"
 

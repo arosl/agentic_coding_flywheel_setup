@@ -2620,6 +2620,7 @@ check_agents() {
 
     check_command "agent.claude" "Claude Code" "claude" "$(fix_for_module "agents.claude")"
     check_command "agent.codex" "Codex CLI" "codex" "$(fix_for_module "agents.codex")"
+    check_codex_daemon_env
     check_command "agent.antigravity" "Antigravity CLI" "agy" "$(fix_for_module "agents.antigravity")"
 
     # Check aliases are defined in the zshrc
@@ -2660,6 +2661,42 @@ check_agents() {
     check_agent_path_conflicts
 
     blank_line
+}
+
+# Codex's shared app-server daemon must carry no HERDR_* variable
+# (acfs-gen.3): started inside a herdr pane it keeps that pane's variables,
+# and herdr's Codex hook then reports every Codex session on the host as that
+# pane's agent, clearing the pane's name over and over. Read-only: the
+# status comes from `acfs agents codex-daemon status` (herdr_agents.sh), and
+# the fix is named, never run.
+check_codex_daemon_env() {
+    doctor_binary_exists "codex" || return 0
+    local helper="" line="" rc=0
+    helper="$(_acfs_doctor_find_lib_script "herdr_agents.sh" 2>/dev/null || true)"
+    if [[ -z "$helper" ]]; then
+        check "agent.codex_daemon" "Codex app-server daemon" "skip" "herdr_agents.sh not found" \
+            "Run: acfs update"
+        return 0
+    fi
+    line="$(_acfs_doctor_exec_bash_script "$helper" codex-daemon status 2>/dev/null)" || rc=$?
+    line="${line%%$'\n'*}"
+    case "$rc/$line" in
+        0/*"not running"*)
+            check "agent.codex_daemon" "Codex app-server daemon" "pass" "not running (started clean by acfs agents spawn)"
+            ;;
+        0/*)
+            check "agent.codex_daemon" "Codex app-server daemon" "pass" "running without HERDR_* variables"
+            ;;
+        *"with HERDR_"*)
+            check "agent.codex_daemon" "Codex app-server daemon" "fail" \
+                "${line#codex app-server daemon: }" \
+                "Run: acfs agents codex-daemon restart (interrupts running Codex agents' daemon connection)"
+            ;;
+        *)
+            check "agent.codex_daemon" "Codex app-server daemon" "warn" "status unknown (acfs agents codex-daemon status exited $rc)" \
+                "Run: acfs agents codex-daemon status"
+            ;;
+    esac
 }
 
 # Check for agent PATH conflicts (bead hi7)
