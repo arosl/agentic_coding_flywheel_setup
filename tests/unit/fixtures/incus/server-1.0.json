@@ -3,13 +3,13 @@
     "storage",
     "projects",
     "network_acl",
+    "network_bridge_acl",
     "container_syscall_intercept_sysinfo",
     "projects_networks_restricted_access",
-    "instance_limits_oom",
-    "container_disk_tmpfs",
+    "storage_shifted",
     "disk_volume_subpath"
   ],
   "environment": {
-    "server_version": "6.0.6"
+    "server_version": "6.0.5"
   }
 }

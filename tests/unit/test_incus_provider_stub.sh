@@ -6,7 +6,8 @@
 # each state, with which arguments and stdin, and what it prints. The stub
 # replays `incus list`/`incus query` JSON captured from real Incus 6.0.5
 # (tests/unit/fixtures/incus/README.md), plus a hand-written `/1.0` for a
-# 6.0.6 server. Nothing here touches real Incus or an instance; that is
+# 6.0.5 server with the required extensions and without the optional ones.
+# Nothing here touches real Incus or an instance; that is
 # tests/vm/test_incus_provider.sh.
 #
 # Usage: bash tests/unit/test_incus_provider_stub.sh
@@ -147,7 +148,8 @@ RC=0
 
 # new_case <name> <list fixture state>: a fresh stub state for one run, on
 # a host where host-setup has run: the swarm profile and ACL exist, the
-# server is 6.0.6, the env file names the pool "acfs", and no volume exists.
+# server is 6.0.5 with the required extensions, the env file names the pool
+# "acfs", and no volume exists.
 new_case() {
     CASE="$WORK/case-$1"
     mkdir -p "$CASE/home/.config/acfs"
@@ -246,8 +248,10 @@ echo "== absent instance: an unprivileged container by default: check, create, a
 new_case create absent
 run_launcher dev --ssh-key "$WORK/laptop.pub" --jump box
 check "exits 0" rc_is 0
-check "queries the server's version and API extensions" called $'\tquery /1.0$'
-check "says the server has what a container needs" err_has 'Incus 6.0.6 has what a container needs'
+check "queries the server's API extensions" called $'\tquery /1.0$'
+check "says the server has what a container needs" err_has 'Incus 6.0.5 has what a container needs'
+check "notes the optional oom_priority extension is missing" err_has 'Incus 6.0.5 lacks the optional API extension instance_limits_oom'
+check "notes the optional tmpfs disk extension is missing" err_has 'Incus 6.0.5 lacks the optional API extension container_disk_tmpfs'
 check "checks that the swarm profile exists" called $'\tprofile show acfs-swarm$'
 check "uses the existing swarm ACL unchecked" err_has 'Using the existing network ACL acfs-swarm-egress'
 check "creates the state volume on the pool from incus.env, 20 GiB" volume_created 'acfs acfs-state-dev size=20GiB'
@@ -415,36 +419,42 @@ run_launcher dev --ssh-key "$WORK/laptop.pub" --acl nosuch
 check "--acl of an absent ACL: exits 1" rc_is 1
 check "--acl of an absent ACL: names it" err_has "network ACL nosuch doesn't exist"
 check "--acl of an absent ACL: inits nothing" no_init
-new_case old-server absent
-jq '.environment.server_version = "6.0.5"' "$FIXTURES/server-1.0.json" >"$CASE/server.json"
-run_launcher dev --ssh-key "$WORK/laptop.pub"
-check "Incus 6.0.5: exits 1" rc_is 1
-check "Incus 6.0.5: names the floor" err_has 'Incus 6.0.5 is too old for a container: the container target needs 6.0.6 or later'
-check "Incus 6.0.5: creates no volume" no_volume_calls
-check "Incus 6.0.5: inits nothing" no_init
-new_case newer-server absent
-jq '.environment.server_version = "6.20"' "$FIXTURES/server-1.0.json" >"$CASE/server.json"
-run_launcher dev --ssh-key "$WORK/laptop.pub"
-check "Incus 6.20 (two parts) passes the floor" rc_is 0
 new_case no-extension absent
 jq '.api_extensions -= ["disk_volume_subpath"]' "$FIXTURES/server-1.0.json" >"$CASE/server.json"
 run_launcher dev --ssh-key "$WORK/laptop.pub"
 check "a required extension missing: exits 1" rc_is 1
-check "a required extension missing: names it" err_has 'Incus 6.0.6 lacks the API extension disk_volume_subpath, which a container needs'
+check "a required extension missing: names it" err_has 'Incus 6.0.5 lacks the API extension disk_volume_subpath, which a container needs'
 check "a required extension missing: creates no volume" no_volume_calls
 check "a required extension missing: inits nothing" no_init
-new_case no-optional-extension absent
-jq '.api_extensions -= ["instance_limits_oom"]' "$FIXTURES/server-1.0.json" >"$CASE/server.json"
+# The version string decides nothing: an old-looking server with the
+# extensions passes, a new-looking one without them is refused.
+new_case old-version-with-extensions absent
+jq '.environment.server_version = "5.21.0"' "$FIXTURES/server-1.0.json" >"$CASE/server.json"
 run_launcher dev --ssh-key "$WORK/laptop.pub"
-check "an optional extension missing: exits 0" rc_is 0
-check "an optional extension missing: is noted" err_has 'Incus 6.0.6 lacks the optional API extension instance_limits_oom'
-check "an optional extension missing: still creates the container" called $'\tinit '
+check "an old version string with the extensions: exits 0" rc_is 0
+check "an old version string with the extensions: is named in the note" err_has 'Incus 5.21.0 has what a container needs'
+new_case new-version-without-extension absent
+jq '.environment.server_version = "6.20" | .api_extensions -= ["container_syscall_intercept_sysinfo"]' "$FIXTURES/server-1.0.json" >"$CASE/server.json"
+run_launcher dev --ssh-key "$WORK/laptop.pub"
+check "a new version string without an extension: exits 1" rc_is 1
+check "a new version string without an extension: names it" err_has 'Incus 6.20 lacks the API extension container_syscall_intercept_sysinfo'
+new_case optional-extensions-present absent
+jq '.api_extensions += ["instance_limits_oom", "container_disk_tmpfs"]' "$FIXTURES/server-1.0.json" >"$CASE/server.json"
+run_launcher dev --ssh-key "$WORK/laptop.pub"
+check "both optional extensions present: exits 0" rc_is 0
+check "both optional extensions present: nothing is noted as lacking" err_lacks 'lacks the optional API extension'
+new_case no-extensions-field absent
+jq 'del(.api_extensions)' "$FIXTURES/server-1.0.json" >"$CASE/server.json"
+run_launcher dev --ssh-key "$WORK/laptop.pub"
+check "no api_extensions in /1.0: exits 1" rc_is 1
+check "no api_extensions in /1.0: says so" err_has 'reports no api_extensions'
+check "no api_extensions in /1.0: inits nothing" no_init
 
-echo "== --vm needs no server check and no incus.env pool beyond the root disk"
-new_case vm-old-server absent
-jq '.environment.server_version = "6.0.5"' "$FIXTURES/server-1.0.json" >"$CASE/server.json"
+echo "== --vm needs no server check"
+new_case vm-no-extension absent
+jq '.api_extensions -= ["disk_volume_subpath"]' "$FIXTURES/server-1.0.json" >"$CASE/server.json"
 run_launcher dev --ssh-key "$WORK/laptop.pub" --vm
-check "a VM on Incus 6.0.5: exits 0" rc_is 0
+check "a VM on a server without the container's extensions: exits 0" rc_is 0
 
 # Synthetic: the captured fixtures are VMs, so these set .type the way
 # `incus list -f json` reports a container.

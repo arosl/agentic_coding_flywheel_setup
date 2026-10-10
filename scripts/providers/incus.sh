@@ -48,8 +48,9 @@ STATE_SIZE="20GiB"
 DATA_SIZE="60GiB"
 # The container target needs the state layer's sub-path mounts, the sysinfo
 # intercept and the restricted test project; the two optional extensions
-# only add knobs the profile may use.
-MIN_CONTAINER_SERVER_VERSION="6.0.6"
+# only add knobs the profile may use. The server is judged by the API
+# extensions it reports, never by its version string (the operator,
+# 2026-10-10: Ubuntu 26.04's 6.0.5 has what phase 1 needs).
 REQUIRED_API_EXTENSIONS=(disk_volume_subpath container_syscall_intercept_sysinfo projects_networks_restricted_access)
 OPTIONAL_API_EXTENSIONS=(instance_limits_oom container_disk_tmpfs)
 # Written by `host-setup`; every run reads it.
@@ -263,40 +264,22 @@ user_data() {
     jq -r '.[] | "  - " + (. | tojson)' <<<"$keys_json"
 }
 
-# True when $1 is at least version $2: dotted numbers, a missing part is 0,
-# and a part's suffix after its digits (6.0.6-1) is ignored.
-version_at_least() {
-    local -a have want
-    IFS=. read -r -a have <<<"$1"
-    IFS=. read -r -a want <<<"$2"
-    local i h w
-    for i in 0 1 2; do
-        h="${have[i]:-0}"
-        h="${h%%[^0-9]*}"
-        w="${want[i]:-0}"
-        [[ -n "$h" ]] || return 1
-        if ((h > w)); then return 0; fi
-        if ((h < w)); then return 1; fi
-    done
-    return 0
-}
-
 # A container needs what the state layer and the swarm profile use; a
-# server that lacks it is refused by name, before anything is created.
+# server that lacks an extension is refused by its name, before anything
+# is created. The version is only named in the messages.
 check_server() {
     local server_json version ext
     server_json="$(incus_run query "$(qualified /1.0)")" || die "could not query the Incus server" 1
-    version="$(jq -r '.environment.server_version // empty' <<<"$server_json")"
-    [[ -n "$version" ]] || die "the Incus server reports no version (incus query /1.0)" 1
-    version_at_least "$version" "$MIN_CONTAINER_SERVER_VERSION" \
-        || die "Incus $version is too old for a container: the container target needs $MIN_CONTAINER_SERVER_VERSION or later (sub-path volume mounts and the CVE-2025-64507 fix); see scripts/providers/incus.md" 1
+    version="$(jq -r '.environment.server_version // "unknown"' <<<"$server_json")"
+    jq -e '.api_extensions | type == "array"' <<<"$server_json" >/dev/null \
+        || die "the Incus server reports no api_extensions (incus query /1.0)" 1
     for ext in "${REQUIRED_API_EXTENSIONS[@]}"; do
         jq -e --arg ext "$ext" '.api_extensions | index($ext) != null' <<<"$server_json" >/dev/null \
             || die "Incus $version lacks the API extension $ext, which a container needs; see scripts/providers/incus.md" 1
     done
     for ext in "${OPTIONAL_API_EXTENSIONS[@]}"; do
         jq -e --arg ext "$ext" '.api_extensions | index($ext) != null' <<<"$server_json" >/dev/null \
-            || log_info "Incus $version lacks the optional API extension $ext; the profile's keys that need it have no effect"
+            || log_info "Incus $version lacks the optional API extension $ext; the profile keys that need it stay unset"
     done
     log_info "Incus $version has what a container needs"
 }

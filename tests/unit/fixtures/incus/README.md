@@ -29,7 +29,7 @@ All of them were captured on 2026-10-09 from Incus 6.0.5 (client and server), fr
 - `profile-default.json`: kept `name` and `devices`.
 - `network-incusbr0.json`: kept `name`, `managed` and `type`, and dropped `config` (the bridge's addresses).
 
-**Synthetic, stored here:** `server-1.0.json` has the shape of `incus query /1.0` trimmed to `api_extensions` and `environment.server_version`, written by hand for a 6.0.6 server on 2026-10-10 on a machine without Incus. It lists the five extensions the launcher checks and three others, not the real list of about two hundred. To recapture it from a real server: `incus query /1.0 | jq '{api_extensions, environment: {server_version: .environment.server_version}}'`.
+**Synthetic, stored here:** `server-1.0.json` has the shape of `incus query /1.0` trimmed to `api_extensions` and `environment.server_version`, written by hand on 2026-10-10 on a machine without Incus, after the operator's report of the hypervisor's Incus 6.0.5 (Ubuntu 26.04's package): it has the three extensions the launcher requires and lacks the two optional ones (`instance_limits_oom`, `container_disk_tmpfs`). It lists eight names, not the real list of several hundred. To recapture it from a real server: `incus query /1.0 | jq '{api_extensions, environment: {server_version: .environment.server_version}}'`.
 
 **Synthetic, made by the test at run time and not stored here:** the VM's SSH host key (generated with `ssh-keygen`), the `herdr --version` line, the `ssh-keygen -l` line for `authorized_keys`, and the installer's output.
 

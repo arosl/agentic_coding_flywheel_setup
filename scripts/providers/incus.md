@@ -8,7 +8,7 @@ The installer runs **inside the container**, never on the machine that runs Incu
 
 ## What you need
 
-- **A Linux host with Incus 6.0.6 or newer.** The container target needs the sub-path volume mounts (`disk_volume_subpath`), the `sysinfo` intercept and restricted project networks; the launcher checks the server's version and API extensions before it creates anything, and names what is missing. Check that `incus info` works for you; on many hosts that means being in `incus-admin`. A VM (`--vm`) needs `/dev/kvm` as well.
+- **A Linux host with Incus whose API has what a container needs:** the sub-path volume mounts (`disk_volume_subpath`), the `sysinfo` intercept (`container_syscall_intercept_sysinfo`) and restricted project networks (`projects_networks_restricted_access`). The launcher reads the server's `api_extensions` before it creates anything and names the missing one; it never judges by the version string. Ubuntu 26.04's own Incus 6.0.5 qualifies (checked on the operator's host, 2026-10-10); it lacks the optional `instance_limits_oom` and `container_disk_tmpfs`, which the launcher notes and the profile then leaves unused. Check that `incus info` works for you; on many hosts that means being in `incus-admin`. A VM (`--vm`) needs `/dev/kvm` as well.
 - **Host setup, once:** `scripts/providers/incus.sh host-setup --storage <path|pool>`. It makes the storage pool from the location you give, the policy profile `acfs-swarm`, the egress ACLs, the test project, and writes the pool's name to `~/.config/acfs/incus.env` (`$XDG_CONFIG_HOME/acfs/incus.env`). Every launcher run reads that file and stops without it. The launcher uses the default profile's managed bridge (`incusbr0`) for the NIC.
 - **A clone of this repository on that host.** The launcher installs the clone's committed `HEAD`.
 - **`git`, `jq` and `ssh-keygen` on that host.**
@@ -187,7 +187,7 @@ Untested, because there was no Mac. What should apply:
 - **The home share:** Colima mounts your home directory into its own VM by default, so start it with a narrower `--mount`. The launcher's disk devices are Incus volumes on the pool, never host paths, so that share never reaches the ACFS instance, but it does reach Colima's VM.
 - **The jump host:** reach the Colima VM with `colima ssh-config >> ~/.ssh/config`, then pass `--jump colima`.
 - **The launcher needs bash 4 or newer** (macOS ships 3.2), plus `jq`.
-- Whether Colima's Incus network is a managed bridge, which the ACL needs, and whether its Incus is 6.0.6 or newer, is unverified.
+- Whether Colima's Incus network is a managed bridge, which the ACL needs, and whether its Incus has the API extensions a container needs, is unverified.
 
 ## Known limits
 
