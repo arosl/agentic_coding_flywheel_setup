@@ -193,7 +193,9 @@ make_machine() {
 }
 
 SOCK="$WORK/s.sock"
-python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$SOCK"
+# Bound by a relative name, so a deep temp root can't exceed the
+# 108-byte socket path limit (nothing ever connects to it).
+(cd "$WORK" && python3 -I -c 'import socket; socket.socket(socket.AF_UNIX).bind("s.sock")')
 
 # A cgroup outside the user manager, and an SSH client off Tailscale, so
 # the quiesce preflight passes unless a test says otherwise (this test
