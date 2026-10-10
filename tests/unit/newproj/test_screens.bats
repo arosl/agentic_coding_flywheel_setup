@@ -252,8 +252,8 @@ teardown() {
     local default_dir
     default_dir=$(get_default_projects_dir)
 
-    # Should return a valid directory
-    [[ -d "$default_dir" ]] || [[ "$default_dir" == "$HOME" ]]
+    # An existing directory, or /data/projects, the fallback the installer creates
+    [[ -d "$default_dir" ]] || [[ "$default_dir" == "/data/projects" ]]
 }
 
 @test "check_directory_status returns OK for new path" {
