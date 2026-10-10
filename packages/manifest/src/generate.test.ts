@@ -674,20 +674,20 @@ describe("Generated verified installer args", () => {
     expect(agentsContent).toContain("acfs_link_primary_bin_command() {");
   });
 
-  test("stack.meta_skill fails closed on Linux ARM64 without anchored source", () => {
+  test("stack.meta_skill uses only its verified installer on every architecture", () => {
+    // meta_skill v0.2.3 publishes checksummed aarch64 Linux archives and its
+    // pinned installer fails closed without one, so ARM64 is not refused
+    // up front (the 2026-10-09 arm64 install got ms through install.sh).
     const stackPath = resolve(GENERATED_DIR, "install_stack.sh");
     expect(existsSync(stackPath)).toBe(true);
     const stackContent = readFileSync(stackPath, "utf-8");
+    const start = stackContent.indexOf("acfs_generated_install_stack_meta_skill() {");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const body = stackContent.slice(start, stackContent.indexOf("\n}\n", start));
 
-    expect(stackContent).toContain(
-      "meta_skill has no checksum-anchored Linux ARM64 install source yet",
-    );
-    expect(stackContent).toContain('[[ "$(uname -s 2>/dev/null)" == "Linux" ]]');
-    expect(stackContent).toContain('[[ "$(uname -m 2>/dev/null)" == "aarch64" ]]');
-    expect(stackContent).toContain('[[ "$(uname -m 2>/dev/null)" == "arm64" ]]');
-    expect(stackContent).toContain(
-      "Linux ARM64 is unsupported until a checksum-anchored artifact or source revision is available",
-    );
+    expect(body).toContain('KNOWN_INSTALLERS[$tool]');
+    expect(body).not.toContain("uname -m");
+    expect(body).not.toContain("unsupported architecture");
     expect(stackContent).not.toContain(
       "cargo install --git https://github.com/Dicklesworthstone/meta_skill",
     );
@@ -1307,7 +1307,7 @@ describe("Generated script headers", () => {
     expect(countMatch).not.toBeNull();
     expect(rawEntries.length).toBe(checksums.size);
     expect(Number(countMatch?.[1])).toBe(checksums.size);
-    expect(checksums.size).toBe(117);
+    expect(checksums.size).toBe(121);
 
     const mandatoryPaths = [
       "install.sh",
@@ -1411,6 +1411,11 @@ describe("Generated script headers", () => {
       "scripts/lib/swarm_simulation.sh",
       "scripts/lib/swarm_status.sh",
       "scripts/services-setup.sh",
+      // `acfs agent-readiness` ships the audit with its TypeScript sources.
+      "scripts/agent-readiness-audit.sh",
+      "packages/manifest/src/agent-readiness-audit.ts",
+      "packages/manifest/src/agent-profile-rehearsal.ts",
+      "packages/manifest/src/binary-architecture.ts",
       "scripts/generated/manifest_index.sh",
       "scripts/generated/doctor_checks.sh",
       "scripts/generated/install_all.sh",

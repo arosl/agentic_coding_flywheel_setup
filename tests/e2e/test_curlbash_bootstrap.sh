@@ -117,6 +117,25 @@ assert_source_contains \
 assert_source_contains \
     "Non-prompting handoff uses setsid supervision" \
     "\"\$setsid_bin\" --wait \\"
+
+# Stock Ubuntu 25.10's uutils env 0.2 lacks --default-signal; the handoff must
+# fall back to GNU gnuenv there, and fail closed when neither supports it.
+eval "$(sed -n '/^acfs_signal_capable_env() {$/,/^}$/p' "$REPO_ROOT/install.sh")"
+ENV_FIXTURES="$(mktemp -d)"
+printf '#!/bin/sh\necho "Usage: env [OPTION]... -i, --ignore-signal[=SIG]"\n' > "$ENV_FIXTURES/uutils-env"
+printf '#!/bin/sh\necho "Usage: env [OPTION]... --default-signal[=SIG]"\n' > "$ENV_FIXTURES/gnuenv"
+chmod +x "$ENV_FIXTURES/uutils-env" "$ENV_FIXTURES/gnuenv"
+assert_ok "uutils env without --default-signal falls back to gnuenv" \
+    test "$(acfs_signal_capable_env "$ENV_FIXTURES/uutils-env" "$ENV_FIXTURES/gnuenv")" = "$ENV_FIXTURES/gnuenv"
+assert_ok "A capable env is kept when it comes first" \
+    test "$(acfs_signal_capable_env "$ENV_FIXTURES/gnuenv" "$ENV_FIXTURES/uutils-env")" = "$ENV_FIXTURES/gnuenv"
+assert_ok "Missing gnuenv candidate is skipped" \
+    test "$(acfs_signal_capable_env "" "$ENV_FIXTURES/gnuenv")" = "$ENV_FIXTURES/gnuenv"
+assert_ok "No capable env fails closed" \
+    bash -c "$(declare -f acfs_signal_capable_env); ! acfs_signal_capable_env '$ENV_FIXTURES/uutils-env' ''"
+assert_source_contains \
+    "Handoff offers GNU gnuenv after the default env" \
+    'acfs_early_system_binary_path gnuenv'
 echo ""
 
 # ────────────────────────────────────────
@@ -135,8 +154,11 @@ mkdir -p "$STAGING"
 # Copy the files that bootstrap_repo_archive extracts
 cp "$REPO_ROOT/install.sh" "$STAGING/"
 cp -r "$REPO_ROOT/scripts" "$STAGING/"
-mkdir -p "$STAGING/packages"
+mkdir -p "$STAGING/packages/manifest/src"
 cp -r "$REPO_ROOT/packages/onboard" "$STAGING/packages/onboard"
+for readiness_source in agent-readiness-audit.ts agent-profile-rehearsal.ts binary-architecture.ts; do
+    cp "$REPO_ROOT/packages/manifest/src/$readiness_source" "$STAGING/packages/manifest/src/"
+done
 cp -r "$REPO_ROOT/acfs" "$STAGING/" 2>/dev/null || mkdir -p "$STAGING/acfs"
 cp "$REPO_ROOT/checksums.yaml" "$STAGING/" 2>/dev/null || echo "{}" > "$STAGING/checksums.yaml"
 cp "$REPO_ROOT/acfs.manifest.yaml" "$STAGING/" 2>/dev/null || echo "{}" > "$STAGING/acfs.manifest.yaml"

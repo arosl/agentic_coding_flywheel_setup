@@ -3364,7 +3364,7 @@ sync_acfs_deployed() {
         local deployed_rel="$1"
 
         case "$deployed_rel" in
-            bin/acfs|bin/acfs-update|bin/flywheel-update-agents-md|onboard/onboard.sh|scripts/generated/*.sh|scripts/lib/*.sh|scripts/nightly-update.sh|scripts/services-setup.sh)
+            bin/acfs|bin/acfs-update|bin/flywheel-update-agents-md|onboard/onboard.sh|scripts/generated/*.sh|scripts/lib/*.sh|scripts/nightly-update.sh|scripts/services-setup.sh|scripts/agent-readiness-audit.sh)
                 printf '%s\n' "755"
                 ;;
         esac
@@ -3467,6 +3467,10 @@ sync_acfs_deployed() {
         "scripts/lib/agy_locked.py:scripts/lib/agy_locked.py"
         "scripts/lib/agy_locked.py:bin/agy-locked"
         "scripts/services-setup.sh:scripts/services-setup.sh"
+        "scripts/agent-readiness-audit.sh:scripts/agent-readiness-audit.sh"
+        "packages/manifest/src/agent-readiness-audit.ts:packages/manifest/src/agent-readiness-audit.ts"
+        "packages/manifest/src/agent-profile-rehearsal.ts:packages/manifest/src/agent-profile-rehearsal.ts"
+        "packages/manifest/src/binary-architecture.ts:packages/manifest/src/binary-architecture.ts"
         "scripts/lib/info.sh:scripts/lib/info.sh"
         "scripts/lib/status.sh:scripts/lib/status.sh"
         "scripts/lib/rescue.sh:scripts/lib/rescue.sh"
@@ -3645,6 +3649,74 @@ sync_acfs_deployed() {
         else
             log_to_file "Synced $synced file(s) from repo to $acfs_home"
         fi
+    fi
+
+    update_normalize_runtime_modes "$acfs_home"
+}
+
+# The fleet tools refuse group/other-writable runtime files and directories,
+# since another writer could swap reviewed code. Under a per-user-group umask
+# (0002, Ubuntu's default for login users) installer copies, git pulls of a
+# self-managed ~/.acfs and the syncs above all leave 664/775 modes, so
+# `acfs swarm inventory probe-fleet` refused ACFS's own runtime as
+# unsafe_input_file. Strip group/other write from what this user owns there.
+update_normalize_runtime_modes() {
+    local acfs_home="${1:-}"
+    local find_bin=""
+    local chmod_bin=""
+    local stat_bin=""
+    local runtime_owner=""
+    local path=""
+    local i=0
+    local failed=false
+    local -a owner_test=()
+    local -a writable=()
+
+    acfs_home="${acfs_home%/}"
+    [[ -n "$acfs_home" && "$acfs_home" == /* ]] || return 0
+    [[ "$acfs_home" != "${HOME%/}" ]] || return 0
+    [[ -d "$acfs_home" && ! -L "$acfs_home" ]] || return 0
+    find_bin="$(update_system_binary_path find 2>/dev/null || true)"
+    chmod_bin="$(update_system_binary_path chmod 2>/dev/null || true)"
+    [[ -n "$find_bin" && -n "$chmod_bin" ]] || return 0
+
+    # Root never changes modes inside a tree another user can write: between
+    # find and chmod that user could swap an entry for a symlink, and root's
+    # chmod would follow it (e.g. to /tmp). A user-owned runtime is repaired by
+    # its owner's own update (the nightly runs as that user); root repairs
+    # only a runtime that root owns.
+    if [[ "$EUID" == 0 ]]; then
+        stat_bin="$(update_system_binary_path stat 2>/dev/null || true)"
+        if [[ -n "$stat_bin" ]]; then
+            runtime_owner="$("$stat_bin" -c '%u' "$acfs_home" 2>/dev/null || "$stat_bin" -f '%u' "$acfs_home" 2>/dev/null || true)"
+        fi
+        if [[ "$runtime_owner" != 0 ]]; then
+            log_to_file "Skipped runtime mode repair under $acfs_home as root (owner uid ${runtime_owner:-unknown}); the owner's own acfs update repairs it"
+            return 0
+        fi
+    fi
+    owner_test=(-user "$EUID")
+
+    while IFS= read -r -d '' path; do
+        writable+=("$path")
+    done < <("$find_bin" "$acfs_home" -xdev -path "$acfs_home/.git" -prune -o \
+        \( -type f -o -type d \) "${owner_test[@]}" \( -perm -020 -o -perm -002 \) -print0 2>/dev/null)
+    [[ ${#writable[@]} -gt 0 ]] || return 0
+
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_to_file "Would remove group/other write from ${#writable[@]} path(s) under $acfs_home"
+        return 0
+    fi
+    # Batches keep a large runtime (caches, node_modules) under ARG_MAX. Paths
+    # are absolute (find starts from one), so no option terminator is needed;
+    # BSD chmod would read a "--" after the mode as a file name.
+    for ((i = 0; i < ${#writable[@]}; i += 500)); do
+        "$chmod_bin" go-w "${writable[@]:i:500}" 2>/dev/null || failed=true
+    done
+    if [[ "$failed" == false ]]; then
+        log_to_file "Removed group/other write from ${#writable[@]} path(s) under $acfs_home"
+    else
+        log_to_file "Unable to remove group/other write from every path under $acfs_home"
     fi
 }
 
@@ -4224,12 +4296,6 @@ update_require_security() {
 
     UPDATE_SECURITY_READY=true
     return 0
-}
-
-update_is_linux_arm64() {
-    local arch=""
-    arch="$(uname -m 2>/dev/null || true)"
-    [[ "$(uname -s 2>/dev/null)" == "Linux" ]] && [[ "$arch" == "aarch64" || "$arch" == "arm64" ]]
 }
 
 update_fsfs_linux_target_triple() {
@@ -5151,11 +5217,6 @@ update_run_verified_installer_with_env() {
         shift 2
     else
         shift
-    fi
-
-    if [[ "$tool" == "ms" ]] && update_is_linux_arm64; then
-        echo "meta_skill has no checksum-anchored Linux ARM64 install source; refusing an unpinned source checkout" >&2
-        return 1
     fi
 
     # Per-tool version hold (issue #357): a held tool is skipped before any

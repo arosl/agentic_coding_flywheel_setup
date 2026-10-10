@@ -406,8 +406,16 @@ autofix_refresh_state_paths() {
 autofix_refresh_state_paths
 
 # In-memory change records
-declare -gA ACFS_CHANGE_RECORDS=()
-declare -ga ACFS_CHANGE_ORDER=()
+if declare -gA _acfs_test_assoc &>/dev/null; then
+    unset _acfs_test_assoc 2>/dev/null || true
+    declare -gA ACFS_CHANGE_RECORDS=()
+    declare -ga ACFS_CHANGE_ORDER=()
+else
+    # bash without declare -g (macOS 3.2) has no associative arrays either; a
+    # plain assignment stays global even when this file is sourced in a function.
+    ACFS_CHANGE_RECORDS=()
+    ACFS_CHANGE_ORDER=()
+fi
 
 # Session management
 ACFS_SESSION_ID=""

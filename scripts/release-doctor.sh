@@ -212,6 +212,8 @@ check_version_consistency() {
 
     local version_file installer_version
     version_file="$(head -n1 "$REPO_ROOT/VERSION" 2>/dev/null | tr -d '[:space:]' || true)"
+    # A missing install.sh must reach the failing check below, not abort the
+    # whole doctor through set -e/pipefail.
     installer_version="$(sed -n 's/^ACFS_VERSION="\([^"]*\)".*/\1/p' "$REPO_ROOT/install.sh" 2>/dev/null | head -n1 || true)"
 
     if [[ -z "$version_file" ]]; then

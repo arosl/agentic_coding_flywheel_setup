@@ -96,6 +96,9 @@ def response(ident="alpha", when=None):
 class FleetTests(unittest.TestCase):
     def setUp(self):
         m.STOP.clear()
+        # Fixture runtimes are written with plain write_text; under a login
+        # user's 0002 umask they would be 664, which the probe rightly refuses.
+        self.addCleanup(os.umask, os.umask(0o022))
         self.directory = Path(tempfile.mkdtemp(prefix="acfs-fleet-test-"))
 
     def file(self, name, data, mode=0o600):
@@ -511,21 +514,28 @@ class FleetTests(unittest.TestCase):
         base = self.file("inventory.json", m.encoded(inventory()))
         targets = self.file("targets.json", m.encoded({"schema": "acfs.swarm-probe-targets.v1", "targets": [target()]}))
         known = self.file("known_hosts", "operator-known-key\n")
-        # A checkout made under umask 0002 has group-writable files, which
-        # read_snapshot refuses, so the canonical scripts are read from a copy.
+        # Byte-identical canonical runtime with installed modes; the checkout's
+        # own modes follow the developer's umask (664 under Ubuntu's 0002).
         library = Path(tempfile.mkdtemp(prefix="acfs-fleet-lib-"))
-        for name in ("swarm_inventory.sh", "swarm_fleet_probe.sh"):
-            shutil.copyfile(ROOT / "scripts/lib" / name, library / name)
+        self.addCleanup(shutil.rmtree, library, True)
+        for name in ("swarm_fleet_probe.sh", "swarm_inventory.sh"):
+            (library / name).write_bytes((ROOT / "scripts/lib" / name).read_bytes())
             (library / name).chmod(0o644)
+        args = ["--inventory", str(base), "--targets", str(targets), "--known-hosts", str(known)]
         before = {p.name: p.read_bytes() for p in self.directory.iterdir()}
-        report, code = m.main(["--inventory", str(base), "--targets", str(targets), "--known-hosts", str(known)], library)
+        report, code = m.main(args, library)
         self.assertEqual(code, 0)
         self.assertEqual(report["status"], "planned")
         self.assertNotIn(b"alpha.example", m.encoded(report))
         self.assertEqual({p.name: p.read_bytes() for p in self.directory.iterdir()}, before)
         bad = inventory()
         bad["hosts"][0]["notes"] = "IP is 192.0.2.3"
-        self.rejects("inventory_validation_failed", m.validate_inventory, bad, ROOT / "scripts/lib")
+        self.rejects("inventory_validation_failed", m.validate_inventory, bad, library)
+        # A writable runtime is the installation's fault, named as such.
+        # World write, since group write by the owner's private group is
+        # accepted (acfs-pkh).
+        (library / "swarm_inventory.sh").chmod(0o666)
+        self.rejects("unsafe_runtime_file", m.main, args, library)
 
 
 def live_ssh():

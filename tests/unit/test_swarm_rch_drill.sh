@@ -22,8 +22,9 @@ pass() {
 fail() {
     TESTS_FAILED=$((TESTS_FAILED + 1))
     echo "FAIL: $1"
-    [[ -n "${2:-}" ]] && echo "  Reason: $2"
-    return 0
+    if [[ -n "${2:-}" ]]; then
+        echo "  Reason: $2"
+    fi
 }
 
 write_fixture() {

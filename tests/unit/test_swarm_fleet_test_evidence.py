@@ -18,6 +18,8 @@ runner, Fixture, SCRIPT = base.runner, base.Fixture, base.SCRIPT
 
 class EvidenceTests(unittest.TestCase):
     def setUp(self):
+        # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
+        self.addCleanup(os.umask, os.umask(0o022))
         self.assertNotEqual(os.geteuid(), 0)
 
     def inspect(self, fx, result, **kw):
@@ -265,6 +267,8 @@ r.execute({str(fx.repo)!r}, {fx.commit!r}, {fx.spec!r}, {str(fx.output)!r}, 30, 
 
 class PromotionTests(unittest.TestCase):
     def setUp(self):
+        # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
+        self.addCleanup(os.umask, os.umask(0o022))
         self.assertNotEqual(os.geteuid(), 0)
 
     def fixture(self, fmt="sha1", program="print('candidate passed')\n"):
@@ -442,6 +446,42 @@ class PromotionTests(unittest.TestCase):
                 self.promote(fx, approval=preview["plan_sha256"])
         finally:
             runner.promote_ref = original
+        self.assertEqual(self.value(fx), other)
+        self.assertFalse((fx.repo / ".git/refs/heads/release.lock").exists())
+
+    def test_refusal_survives_git_exiting_before_cleanup_writes_abort(self):
+        # Deterministic form of the competing-writer race: git refuses the
+        # transaction and exits, but is not yet reaped when promote_ref's cleanup
+        # runs, so the "abort" write meets a closed pipe. The refusal must still
+        # surface as promotion_transaction_refused, never as BrokenPipeError, and
+        # the competitor's ref must survive.
+        fx = self.fixture()
+        preview = self.promote(fx)
+        other = fx.git("commit-tree", fx.tree, "-p", fx.old, data=b"competitor\n").decode().strip()
+        original_ref, original_popen = runner.promote_ref, runner.subprocess.Popen
+        def compete(git, reference, old, candidate, guard):
+            fx.git("update-ref", reference, other, old)
+            return original_ref(git, reference, old, candidate, guard)
+        def late_reaped_popen(argv, *args, **kwargs):
+            process = original_popen(argv, *args, **kwargs)
+            if "update-ref" in argv and "--stdin" in argv:
+                real_poll, real_wait, waited = process.poll, process.wait, []
+                def poll():
+                    if waited:
+                        return real_poll()
+                    real_wait(timeout=30)  # git refuses and exits on its own...
+                    return None            # ...but is reported as not yet reaped
+                def wait(timeout=None):
+                    waited.append(True)
+                    return real_wait(timeout=timeout)
+                process.poll, process.wait = poll, wait
+            return process
+        runner.promote_ref, runner.subprocess.Popen = compete, late_reaped_popen
+        try:
+            with self.assertRaisesRegex(runner.fleet.Refused, "transaction_refused"):
+                self.promote(fx, approval=preview["plan_sha256"])
+        finally:
+            runner.promote_ref, runner.subprocess.Popen = original_ref, original_popen
         self.assertEqual(self.value(fx), other)
         self.assertFalse((fx.repo / ".git/refs/heads/release.lock").exists())
 

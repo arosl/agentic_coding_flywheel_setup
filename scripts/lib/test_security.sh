@@ -4,8 +4,8 @@
 # Test script for security.sh
 # Run: bash scripts/lib/test_security.sh
 #
-# Tests non-network functions locally. Network functions tested
-# with local file:// URLs where possible.
+# Tests policy functions locally and executable downloads with a local HTTPS
+# server. The transport test uses the real curl binary and TLS verification.
 # ============================================================
 
 set -euo pipefail
@@ -37,7 +37,9 @@ test_fail() {
 # Create temp directory for test fixtures
 setup_fixtures() {
     TEST_TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/acfs_test_security.XXXXXX")
-    trap 'rm -rf "$TEST_TMP_DIR"' EXIT
+    if [[ "${ACFS_SECURITY_RETAIN_TEMP_FILES:-false}" != "true" ]]; then
+        trap 'rm -rf "$TEST_TMP_DIR"' EXIT
+    fi
 
     # Create a simple test script
     echo '#!/bin/bash
@@ -437,6 +439,8 @@ test_versioned_checksum_report_binds_urls_hashes_and_exit_status() {
     local status=0
     local passed=false
 
+    # Invoked indirectly by verify_all_installers_json in security.sh.
+    # shellcheck disable=SC2329
     fetch_checksum() {
         case "$1" in
             https://example.com/alpha.sh) printf '%s\n' "$STRICT_HASH_A" ;;
@@ -731,113 +735,6 @@ test_non_retryable_exit_code_success() {
 }
 
 # ============================================================
-# Test Cases: Content-Encoding decoding (acfs-b0u)
-# ============================================================
-
-test_configure_curl_decodes_when_curl_has_zlib() {
-    local name="acfs_security_configure_curl: --compressed exactly when curl has zlib"
-    local curl_version="" expected=""
-
-    acfs_security_configure_curl
-    curl_version="$("$ACFS_CURL_BIN" -V 2>/dev/null || true)"
-    [[ "$curl_version" == *" libz"* ]] && expected="--compressed"
-
-    if [[ "${ACFS_CURL_DECODE_ARGS[*]}" == "$expected" ]]; then
-        test_pass "$name"
-    else
-        test_fail "$name" "expected '${expected}', got '${ACFS_CURL_DECODE_ARGS[*]}'"
-    fi
-}
-
-test_download_to_file_passes_decode_args() {
-    local name="acfs_download_to_file: passes the decode args to curl"
-    local recorded=""
-
-    recorded="$(
-        ACFS_CURL_DECODE_ARGS=(--compressed)
-        acfs_curl() { printf '%s\n' "$*"; }
-        acfs_download_to_file "https://example.com/install.sh" "$TEST_TMP_DIR/decode-args.out" "decode-args"
-    )"
-
-    if [[ "$recorded" == "--compressed https://example.com/install.sh "* ]]; then
-        test_pass "$name"
-    else
-        test_fail "$name" "curl got: $recorded"
-    fi
-}
-
-# A server that, like the Google Frontend cache behind antigravity.google,
-# answers with a gzip body and "Content-Encoding: gzip" whatever the request
-# asked for. The download must hash to the uncompressed script.
-test_download_to_file_decodes_unrequested_gzip() {
-    local name="acfs_download_to_file: unrequested gzip encoding hashes as the plain script"
-    local python_bin="" server_py="$TEST_TMP_DIR/gzip_server.py" port_file="$TEST_TMP_DIR/gzip_server.port"
-    local body_file="$TEST_TMP_DIR/gzip_server_body.sh" out_file="$TEST_TMP_DIR/gzip_download.sh"
-    local server_pid="" port="" i=0 status=0
-
-    python_bin="$(command -v python3 || true)"
-    if [[ -z "$python_bin" ]]; then
-        echo "  [SKIP] $name (python3 not found)"
-        return 0
-    fi
-    acfs_security_configure_curl
-    if [[ ${#ACFS_CURL_DECODE_ARGS[@]} -eq 0 ]]; then
-        echo "  [SKIP] $name (curl lacks zlib)"
-        return 0
-    fi
-
-    printf '#!/bin/sh\necho "installer body"\n' > "$body_file"
-    cat > "$server_py" << 'EOF'
-import gzip, http.server, sys
-body = gzip.compress(open(sys.argv[1], "rb").read())
-class Handler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/x-sh")
-        self.send_header("Content-Encoding", "gzip")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-    def log_message(self, *args):
-        pass
-server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
-with open(sys.argv[2], "w") as f:
-    f.write(str(server.server_address[1]))
-server.serve_forever()
-EOF
-    "$python_bin" -I "$server_py" "$body_file" "$port_file" &
-    server_pid=$!
-    for ((i = 0; i < 50; i++)); do
-        [[ -s "$port_file" ]] && break
-        sleep 0.1
-    done
-    port="$(cat "$port_file" 2>/dev/null || true)"
-
-    if [[ -z "$port" ]]; then
-        test_fail "$name" "local gzip server did not start"
-    else
-        # The fixture is plain http on loopback, so drop only the https-only
-        # protocol restriction; everything else is the real download path.
-        (
-            ACFS_CURL_BASE_ARGS=(-q --connect-timeout 5 --max-time 10 -fsSL)
-            ACFS_CURL_RETRY_DELAYS=(0)
-            acfs_download_to_file "http://127.0.0.1:${port}/install.sh" "$out_file" "gzip-fixture"
-        ) || status=$?
-
-        if (( status != 0 )); then
-            test_fail "$name" "download failed with status $status"
-        elif [[ "$(calculate_sha256 < "$out_file")" == "$(calculate_sha256 < "$body_file")" ]]; then
-            test_pass "$name"
-        else
-            test_fail "$name" "downloaded bytes differ from the plain script (still gzip-encoded?)"
-        fi
-    fi
-
-    kill "$server_pid" 2>/dev/null || true
-    wait "$server_pid" 2>/dev/null || true
-}
-
-# ============================================================
 # Test Cases: KNOWN_INSTALLERS Array
 # ============================================================
 
@@ -872,6 +769,89 @@ test_known_installers_all_https() {
         test_pass "$name"
     else
         test_fail "$name" "Found non-HTTPS URL"
+    fi
+}
+
+test_https_download_preserves_executable_bytes() {
+    local name="HTTPS download preserves executable bytes across content negotiation"
+    if python3 - "$SCRIPT_DIR/security.sh" "$(command -v bash)" <<'PY'
+import gzip
+import hashlib
+import http.server
+import os
+from pathlib import Path
+import ssl
+import subprocess
+import sys
+import tempfile
+import threading
+
+library, bash = sys.argv[1:]
+root = Path(tempfile.mkdtemp(prefix="acfs-https-security-"))
+script = b"#!/bin/bash\nprintf 'verified executable bytes\\n'\n"
+cert, key = root / "cert.pem", root / "key.pem"
+subprocess.run([
+    "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+    "-keyout", str(key), "-out", str(cert), "-days", "1",
+    "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
+], check=True, timeout=30)
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path != "/install.sh":
+            self.send_error(404)
+            return
+        identity = self.headers.get("Accept-Encoding") == "identity"
+        body = script if identity else gzip.compress(script, mtime=0)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/x-sh")
+        self.send_header("Content-Length", str(len(body)))
+        if not identity:
+            self.send_header("Content-Encoding", "gzip")
+        self.end_headers()
+        self.wfile.write(body)
+
+server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain(cert, key)
+server.socket = context.wrap_socket(server.socket, server_side=True)
+thread = threading.Thread(target=server.serve_forever)
+thread.start()
+try:
+    env = dict(os.environ, CURL_CA_BUNDLE=str(cert), NO_PROXY="localhost",
+               no_proxy="localhost", ACFS_SECURITY_RETAIN_TEMP_FILES="true")
+    url = f"https://localhost:{server.server_port}/install.sh"
+    output = root / "downloaded.sh"
+    # The certificate covers localhost, not the IP address. Keep TLS name
+    # verification active and require a real rejection before the happy path.
+    bad_output = root / "wrong-host.sh"
+    bad_env = dict(env, NO_PROXY="127.0.0.1", no_proxy="127.0.0.1")
+    rejected = subprocess.run([
+        bash, "-c", 'source "$1"; acfs_download_to_file "$2" "$3" wrong-host',
+        "transport-test", library, f"https://127.0.0.1:{server.server_port}/install.sh",
+        str(bad_output),
+    ], env=bad_env, timeout=60)
+    if rejected.returncode == 0 or (bad_output.exists() and bad_output.stat().st_size):
+        raise AssertionError("HTTPS accepted a certificate for the wrong hostname")
+    completed = subprocess.run([
+        bash, "-c", 'source "$1"; acfs_download_to_file "$2" "$3" transport',
+        "transport-test", library, url, str(output),
+    ], env=env, timeout=60)
+    if completed.returncode != 0:
+        raise RuntimeError(f"real HTTPS download failed: {completed.returncode}")
+    actual = output.read_bytes()
+    if actual != script or hashlib.sha256(actual).digest() != hashlib.sha256(script).digest():
+        raise AssertionError("downloaded compression envelope instead of executable bytes")
+    print(f"Verified {len(actual)} executable bytes over TLS; evidence retained at {root}")
+finally:
+    server.shutdown()
+    thread.join()
+    server.server_close()
+PY
+    then
+        test_pass "$name"
+    else
+        test_fail "$name" "Real TLS download did not match the pinned executable bytes"
     fi
 }
 
@@ -920,6 +900,7 @@ test_non_retryable_exit_code_success
 # KNOWN_INSTALLERS tests
 test_known_installers_has_entries
 test_known_installers_all_https
+test_https_download_preserves_executable_bytes
 
 # Strict policy/report/candidate boundary tests.  Use one fixture directory so
 # all mutation cases operate on explicitly named, isolated evidence files.
@@ -934,10 +915,11 @@ test_checksum_candidate_validation_rejects_cross_wired_hashes
 test_checksum_candidate_validation_rejects_url_drift_and_incomplete_evidence
 test_checksum_report_rejects_duplicate_keys_and_policy_digest_drift
 
-# Content-Encoding decoding tests (use the fixture directory above)
-test_configure_curl_decodes_when_curl_has_zlib
-test_download_to_file_passes_decode_args
-test_download_to_file_decodes_unrequested_gzip
+if bash "$PROJECT_ROOT/tests/unit/test_security_fd_identity.sh"; then
+    test_pass "retained descriptor identity and diagnostic stream regression"
+else
+    test_fail "retained descriptor identity and diagnostic stream regression"
+fi
 
 echo ""
 echo "==================="

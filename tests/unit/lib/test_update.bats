@@ -1388,8 +1388,10 @@ EOF
     run grep -F 'if ! update_binary_exists "$binary_name"; then' "$update"
     assert_success
 
-    run grep -F 'meta_skill has no checksum-anchored Linux ARM64 install source; refusing an unpinned source checkout' "$update"
-    assert_success
+    # meta_skill's pinned installer verifies a release archive and never builds
+    # from source, so Linux ARM64 is not refused up front (v0.2.3 ships one).
+    run grep -F 'meta_skill has no checksum-anchored Linux ARM64 install source' "$update"
+    assert_failure
 
     run grep -F 'cargo install --git https://github.com/Dicklesworthstone/meta_skill' "$update"
     assert_failure
@@ -8777,6 +8779,10 @@ EOF
         'install_asset "scripts/lib/support.sh" "$ACFS_HOME/scripts/lib/support.sh"'
         'install_asset "scripts/generate-root-agents-md.sh" "$ACFS_HOME/bin/flywheel-update-agents-md"'
         'install_asset "scripts/services-setup.sh" "$ACFS_HOME/scripts/services-setup.sh"'
+        'install_asset "scripts/agent-readiness-audit.sh" "$ACFS_HOME/scripts/agent-readiness-audit.sh"'
+        'install_asset "packages/manifest/src/agent-readiness-audit.ts" "$ACFS_HOME/packages/manifest/src/agent-readiness-audit.ts"'
+        'install_asset "packages/manifest/src/agent-profile-rehearsal.ts" "$ACFS_HOME/packages/manifest/src/agent-profile-rehearsal.ts"'
+        'install_asset "packages/manifest/src/binary-architecture.ts" "$ACFS_HOME/packages/manifest/src/binary-architecture.ts"'
         'install_asset "scripts/lib/newproj.sh" "$ACFS_HOME/scripts/lib/newproj.sh"'
         'install_asset "scripts/lib/newproj_agents.sh" "$ACFS_HOME/scripts/lib/newproj_agents.sh"'
         'install_asset "scripts/lib/newproj_detect.sh" "$ACFS_HOME/scripts/lib/newproj_detect.sh"'
@@ -8825,6 +8831,10 @@ EOF
         '"scripts/lib/dashboard.sh:scripts/lib/dashboard.sh"'
         '"scripts/lib/support.sh:scripts/lib/support.sh"'
         '"scripts/services-setup.sh:scripts/services-setup.sh"'
+        '"scripts/agent-readiness-audit.sh:scripts/agent-readiness-audit.sh"'
+        '"packages/manifest/src/agent-readiness-audit.ts:packages/manifest/src/agent-readiness-audit.ts"'
+        '"packages/manifest/src/agent-profile-rehearsal.ts:packages/manifest/src/agent-profile-rehearsal.ts"'
+        '"packages/manifest/src/binary-architecture.ts:packages/manifest/src/binary-architecture.ts"'
         '"scripts/lib/newproj.sh:scripts/lib/newproj.sh"'
         '"scripts/lib/newproj_agents.sh:scripts/lib/newproj_agents.sh"'
         '"scripts/lib/newproj_detect.sh:scripts/lib/newproj_detect.sh"'
@@ -8855,7 +8865,7 @@ EOF
 
     run grep -F '"/data/projects/agentic_coding_flywheel_setup/scripts/lib/stack.sh"' "$update"
     assert_success
-    run grep -F 'bin/acfs|bin/acfs-update|bin/flywheel-update-agents-md|onboard/onboard.sh|scripts/generated/*.sh|scripts/lib/*.sh|scripts/nightly-update.sh|scripts/services-setup.sh)' "$update"
+    run grep -F 'bin/acfs|bin/acfs-update|bin/flywheel-update-agents-md|onboard/onboard.sh|scripts/generated/*.sh|scripts/lib/*.sh|scripts/nightly-update.sh|scripts/services-setup.sh|scripts/agent-readiness-audit.sh)' "$update"
     assert_success
     run grep -F 'for generated_script in "$ACFS_REPO_ROOT/scripts/generated/"*.sh; do' "$update"
     assert_success
@@ -9476,6 +9486,130 @@ EOF
 
     run grep -F "Synced acfs/onboard/lessons/00_welcome.md -> $deployed_home/onboard/lessons/00_welcome.md" "$log_file"
     assert_success
+}
+
+@test "sync_acfs_deployed strips group/other write from the runtime it owns" {
+    local temp_root repo_root deployed_home
+    mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+
+    temp_root="$(create_temp_dir)"
+    repo_root="$temp_root/repo"
+    deployed_home="$temp_root/deployed-acfs"
+    mkdir -p "$repo_root/scripts/lib" "$deployed_home/scripts/lib" "$deployed_home/.git/objects"
+
+    # What a self-managed checkout looks like after `git pull` under a
+    # per-user-group umask of 0002.
+    umask 002
+    printf "inventory-runtime\n" > "$repo_root/scripts/lib/swarm_inventory.sh"
+    printf "probe-runtime\n" > "$deployed_home/scripts/lib/swarm_fleet_probe.sh"
+    printf "#!/usr/bin/env bash\n" > "$deployed_home/install.sh"
+    printf "ref: refs/heads/main\n" > "$deployed_home/.git/HEAD"
+    chmod 664 "$deployed_home/scripts/lib/swarm_fleet_probe.sh" "$deployed_home/.git/HEAD"
+    chmod 666 "$deployed_home/install.sh"
+    chmod 775 "$deployed_home" "$deployed_home/scripts" "$deployed_home/scripts/lib" \
+        "$deployed_home/.git" "$deployed_home/.git/objects"
+
+    ACFS_REPO_ROOT="$repo_root"
+    UPDATE_LOG_FILE="$temp_root/update.log"
+    DRY_RUN=false
+    update_runtime_acfs_home() { printf '%s\n' "$deployed_home"; }
+
+    run sync_acfs_deployed
+    assert_success
+
+    [[ "$(mode_of "$deployed_home/scripts/lib/swarm_fleet_probe.sh")" == "644" ]]
+    [[ "$(mode_of "$deployed_home/scripts/lib/swarm_inventory.sh")" == "755" ]]
+    [[ "$(mode_of "$deployed_home/install.sh")" == "644" ]]
+    [[ "$(mode_of "$deployed_home")" == "755" ]]
+    [[ "$(mode_of "$deployed_home/scripts")" == "755" ]]
+    [[ "$(mode_of "$deployed_home/scripts/lib")" == "755" ]]
+    # git owns its own metadata; it is left exactly as it was.
+    [[ "$(mode_of "$deployed_home/.git")" == "775" ]]
+    [[ "$(mode_of "$deployed_home/.git/HEAD")" == "664" ]]
+    run grep -F "Removed group/other write from" "$temp_root/update.log"
+    assert_success
+}
+
+@test "update_normalize_runtime_modes leaves modes alone in dry-run and outside a runtime home" {
+    local temp_root runtime
+    mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+
+    temp_root="$(create_temp_dir)"
+    runtime="$temp_root/acfs"
+    # Only the file below is writable by others, whatever the caller's umask.
+    umask 022
+    mkdir -p "$runtime/scripts"
+    printf "x\n" > "$runtime/scripts/a.sh"
+    chmod 664 "$runtime/scripts/a.sh"
+    UPDATE_LOG_FILE="$temp_root/update.log"
+
+    DRY_RUN=true
+    update_normalize_runtime_modes "$runtime"
+    [[ "$(mode_of "$runtime/scripts/a.sh")" == "664" ]]
+    run grep -F "Would remove group/other write from 1 path(s) under $runtime" "$UPDATE_LOG_FILE"
+    assert_success
+
+    DRY_RUN=false
+    HOME="$runtime" update_normalize_runtime_modes "$runtime"
+    [[ "$(mode_of "$runtime/scripts/a.sh")" == "664" ]]
+    ln -s "$runtime" "$temp_root/acfs-link"
+    update_normalize_runtime_modes "$temp_root/acfs-link"
+    [[ "$(mode_of "$runtime/scripts/a.sh")" == "664" ]]
+
+    update_normalize_runtime_modes "$runtime"
+    [[ "$(mode_of "$runtime/scripts/a.sh")" == "644" ]]
+}
+
+@test "update_normalize_runtime_modes as root repairs only a root-owned runtime" {
+    [[ "$EUID" -eq 0 ]] || skip "needs root (root must not chmod inside a user-writable tree)"
+    local temp_root user_runtime root_runtime other_uid
+    mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+
+    temp_root="$(create_temp_dir)"
+    user_runtime="$temp_root/user-acfs"
+    root_runtime="$temp_root/root-acfs"
+    umask 022
+    mkdir -p "$user_runtime/scripts" "$root_runtime/scripts"
+    : > "$user_runtime/scripts/a.sh"
+    : > "$root_runtime/scripts/a.sh"
+    chmod 664 "$user_runtime/scripts/a.sh" "$root_runtime/scripts/a.sh"
+    other_uid=65534
+    chown -R "$other_uid" "$user_runtime"
+    UPDATE_LOG_FILE="$temp_root/update.log"
+    DRY_RUN=false
+
+    update_normalize_runtime_modes "$user_runtime"
+    [[ "$(mode_of "$user_runtime/scripts/a.sh")" == "664" ]]
+    run grep -F "Skipped runtime mode repair under $user_runtime as root (owner uid $other_uid)" "$UPDATE_LOG_FILE"
+    assert_success
+
+    update_normalize_runtime_modes "$root_runtime"
+    [[ "$(mode_of "$root_runtime/scripts/a.sh")" == "644" ]]
+}
+
+@test "update_normalize_runtime_modes fixes more paths than one chmod batch and keeps .git with a trailing slash" {
+    local temp_root runtime i
+    mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+
+    temp_root="$(create_temp_dir)"
+    runtime="$temp_root/acfs"
+    umask 022
+    mkdir -p "$runtime/cache" "$runtime/.git"
+    for ((i = 0; i < 1200; i++)); do
+        : > "$runtime/cache/f$i"
+    done
+    printf 'ref: refs/heads/main\n' > "$runtime/.git/HEAD"
+    chmod 664 "$runtime"/cache/* "$runtime/.git/HEAD"
+    UPDATE_LOG_FILE="$temp_root/update.log"
+    DRY_RUN=false
+
+    update_normalize_runtime_modes "$runtime/"
+
+    run grep -F "Removed group/other write from 1200 path(s) under $runtime" "$UPDATE_LOG_FILE"
+    assert_success
+    [[ "$(mode_of "$runtime/cache/f0")" == "644" ]]
+    [[ "$(mode_of "$runtime/cache/f1199")" == "644" ]]
+    [[ "$(mode_of "$runtime/.git/HEAD")" == "664" ]]
 }
 
 @test "self-update syncs deployed scripts when repo is already current" {
@@ -10698,14 +10832,16 @@ EOF
     run grep -F 'command_exists go || missing_lang+=("go")' "$installer"
     assert_failure
 
-    run grep -F "$(gh --version 2>/dev/null | head -1 || echo 'gh')" "$installer"
-    assert_failure
-
-    run grep -F "$(psql --version 2>/dev/null | head -1 || echo 'psql')" "$installer"
-    assert_failure
-
-    run grep -F "$(vault --version 2>/dev/null | head -1 || echo 'vault')" "$installer"
-    assert_failure
+    # install.sh must not embed this machine's tool version output. When a
+    # tool is absent the old `|| echo gh` fallback grepped for the bare name,
+    # which matches ordinary words ("preflight"), so skip absent tools.
+    local version_tool version_line
+    for version_tool in gh psql vault; do
+        version_line="$("$version_tool" --version 2>/dev/null | head -1 || true)"
+        [[ -n "$version_line" ]] || continue
+        run grep -F "$version_line" "$installer"
+        assert_failure
+    done
 
     run grep -F 'command -v uv &>/dev/null' "$installer"
     assert_failure
@@ -14216,7 +14352,10 @@ setup_opencode_update_fixture() {
     FAIL_COUNT=0
     SKIP_COUNT=0
 
-    cat > "$STUB_DIR/zoxide" <<'EOF'
+    # update_tool_binary_path never consults PATH; it looks in the target
+    # home's bin dirs, so the stub must live there rather than on PATH.
+    mkdir -p "$HOME/.local/bin"
+    cat > "$HOME/.local/bin/zoxide" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "--version" ]]; then
   echo "zoxide 0.9.9"
@@ -14224,7 +14363,7 @@ else
   echo "zoxide 0.9.9"
 fi
 EOF
-    chmod +x "$STUB_DIR/zoxide"
+    chmod +x "$HOME/.local/bin/zoxide"
 
     update_require_security() {
         return 0
@@ -14267,7 +14406,10 @@ EOF
     FAIL_COUNT=0
     SKIP_COUNT=0
 
-    cat > "$STUB_DIR/zoxide" <<'EOF'
+    # update_tool_binary_path never consults PATH; it looks in the target
+    # home's bin dirs, so the stub must live there rather than on PATH.
+    mkdir -p "$HOME/.local/bin"
+    cat > "$HOME/.local/bin/zoxide" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "--version" ]]; then
   echo "zoxide 0.9.9"
@@ -14275,19 +14417,23 @@ else
   echo "zoxide 0.9.9"
 fi
 EOF
-    chmod +x "$STUB_DIR/zoxide"
+    chmod +x "$HOME/.local/bin/zoxide"
 
     update_require_security() {
         return 0
     }
 
     update_run_verified_installer() {
+        : > "$HOME/zoxide-installer-ran"
         echo "Error: you have exceeded GitHub's API rate limit. Please try again later." >&2
         return 1
     }
 
     update_zoxide
 
+    # A "not installed" skip would satisfy the counts below without ever
+    # attempting the reinstall.
+    [[ -f "$HOME/zoxide-installer-ran" ]]
     [[ "$SUCCESS_COUNT" -eq 0 ]]
     [[ "$SKIP_COUNT" -eq 1 ]]
     [[ "$FAIL_COUNT" -eq 0 ]]

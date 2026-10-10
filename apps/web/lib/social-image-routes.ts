@@ -91,6 +91,15 @@ const STATIC_ROUTE_SOCIAL_DATA: Record<string, SocialImageData> = {
     theme: "omarchy",
     tags: ["pacman", "starship", "Hyprland", "Flywheel"],
   },
+  "/cloud-agents": {
+    badge: "Cloud Agent Setup",
+    title: "Give Your Cloud Agent a Flywheel",
+    description:
+      "Real screenshots, exact steps and copy-ready scripts. Prebuilt Flywheel tools for Claude Code, ChatGPT / Codex and more Linux agents.",
+    path: "/cloud-agents",
+    theme: "tools",
+    tags: ["Cloud Sessions", "Beads", "Agent Mail", "Setup Script"],
+  },
   "/troubleshooting": {
     badge: "Fix Common Failures",
     title: "Troubleshooting Guide",

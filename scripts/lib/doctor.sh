@@ -1061,6 +1061,8 @@ print_acfs_help() {
     echo "  capacity [options]  Estimate safe/recommended agent counts"
     echo "  policy-lint         Lint AGENTS/templates/docs for policy drift"
     echo "  credential-preflight Read-only credential exposure preflight"
+    echo "  agent-readiness     Agent CLI, auth file and CAAM profile readiness (--json;"
+    echo "                      --rehearse plans isolated profile checks, --run executes)"
     echo "  swarm plan          Queue-aware launch advisor"
     echo "  swarm launch        Explicit admission-checked native agent startup"
     echo "  swarm status        Local swarm/coordination JSON snapshot"
@@ -3097,18 +3099,11 @@ check_stack() {
         _ms_os="$(uname -s 2>/dev/null || echo unknown)"
         _ms_fix="Re-run: $(fix_for_module stack.meta_skill)"
 
-        # Pre-built binaries exist for: x86_64-linux, aarch64-darwin, x86_64-darwin
-        # ARM64 Linux (aarch64-Linux) does NOT have a pre-built binary yet:
-        # https://github.com/Dicklesworthstone/meta_skill/issues/1
+        # Releases publish checksummed x86_64/aarch64 Linux and macOS archives.
+        # aarch64 Linux has been per-release (v0.2.0 and v0.2.3, not v0.2.1-0.2.2);
+        # the pinned installer fails closed when the current release lacks it.
         case "${_ms_arch}-${_ms_os}" in
-            aarch64-Linux|arm64-Linux)
-                # ARM64 Linux binary is not yet published; the install script will 404
-                check "stack.meta_skill" "meta_skill (ms)" "warn" \
-                    "ARM64 Linux binary not yet available (see https://github.com/Dicklesworthstone/meta_skill/issues/1)" \
-                    "No checksum-anchored Linux ARM64 installer is available; wait for a verified release artifact"
-                ;;
-            x86_64-Linux|x86_64-Darwin|arm64-Darwin|aarch64-Darwin)
-                # These platforms have pre-built binaries
+            x86_64-Linux|aarch64-Linux|arm64-Linux|x86_64-Darwin|arm64-Darwin|aarch64-Darwin)
                 check "stack.meta_skill" "meta_skill (ms)" "warn" "not installed" \
                     "$_ms_fix"
                 ;;
@@ -5656,6 +5651,18 @@ main() {
             fi
 
             echo "Error: services-setup.sh not found" >&2
+            return 1
+            ;;
+        agent-readiness|agent_readiness|readiness)
+            shift
+            local readiness_script=""
+            readiness_script="$(_acfs_doctor_find_scripts_script "agent-readiness-audit.sh" 2>/dev/null || true)"
+
+            if [[ -n "$readiness_script" ]]; then
+                _acfs_doctor_exec_bash_script "$readiness_script" "$@"
+            fi
+
+            echo "Error: agent-readiness-audit.sh not found; re-run the ACFS installer (or: acfs update --bootstrap-self-update)" >&2
             return 1
             ;;
         support-bundle|bundle)
