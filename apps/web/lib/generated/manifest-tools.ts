@@ -941,7 +941,6 @@ export const manifestTools: ManifestWebTool[] = [
     cliName: "herdr",
     cliAliases: [],
     commandExample: "herdr agent list",
-    lessonSlug: "herdr",
   },
   {
     id: "utils-aadc",

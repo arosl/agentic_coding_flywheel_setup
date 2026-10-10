@@ -1854,7 +1854,6 @@ modules:
       language: "Rust"
       cli_name: "herdr"
       command_example: "herdr agent list"
-      lesson_slug: "herdr"
     # The integrations below are added only for agent CLIs already on PATH.
     # On the generated path, phase 9 runs after the phase-7 agents. install.sh
     # installs Grok, oh-my-pi and OpenCode in its stack phase instead, and

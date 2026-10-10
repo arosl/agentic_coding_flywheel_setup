@@ -10,20 +10,33 @@
 
 import { describe, expect, test } from "bun:test";
 import { TOOL_IDS, TOOLS } from "../app/learn/tools/[tool]/tool-data";
-import { COMMANDS, getManifestCommandByCliName, getManifestCommandDocsUrl } from "./commands";
+import { readdirSync } from "node:fs";
+import { COMMANDS, getManifestCommandByCliName } from "./commands";
 import { manifestTools } from "./generated/manifest-tools";
 
 describe("herdr comes from the manifest (acfs-3qu)", () => {
   test("tools.herdr has generated web metadata, found by its CLI name", () => {
     const tool = manifestTools.find((entry) => entry.cliName === "herdr");
     expect(tool?.moduleId).toBe("tools.herdr");
-    expect(tool?.lessonSlug).toBe("herdr");
   });
 
-  test("the herdr command takes its example and docs link from the manifest", () => {
+  test("the herdr command takes its example from the manifest and keeps its tool page", () => {
     expect(getManifestCommandByCliName("herdr")?.commandExample).toBe("herdr agent list");
-    expect(getManifestCommandDocsUrl("tools.herdr")).toBe("/learn/tools/herdr");
-    expect(COMMANDS.find((c) => c.name === "herdr")?.example).toBe("herdr agent list");
+    const herdr = COMMANDS.find((c) => c.name === "herdr");
+    expect(herdr?.example).toBe("herdr agent list");
+    expect(herdr?.docsUrl).toBe("/learn/tools/herdr");
+  });
+
+  test("every lesson slug names an onboarding lesson, as the manifest drift contract requires", () => {
+    // scripts/check-manifest-drift.sh refuses a web.lesson_slug without an
+    // acfs/onboard/lessons/*_<slug>.md; generate and its tests don't check it.
+    const lessons = readdirSync(new URL("../../../acfs/onboard/lessons", import.meta.url));
+    for (const tool of manifestTools) {
+      if (!tool.lessonSlug) continue;
+      const slug = tool.lessonSlug;
+      expect({ moduleId: tool.moduleId, slug, lesson: lessons.some((file) => file.endsWith(`_${slug}.md`)) })
+        .toEqual({ moduleId: tool.moduleId, slug, lesson: true });
+    }
   });
 });
 
