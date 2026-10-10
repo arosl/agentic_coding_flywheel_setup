@@ -163,9 +163,9 @@ test.describe("Production Smoke Tests", () => {
         return element.complete && element.naturalWidth > 0;
       })).toBe(true);
     }
-    await expect(
-      page.getByRole("region", { name: "Setup script for a Claude Code cloud environment" }),
-    ).toContainText("scripts/claude-code-web-setup.sh | bash");
+    const claudeSetup = page.getByRole("region", { name: "Setup script for a Claude Code cloud environment" });
+    await expect(claudeSetup).toContainText("scripts/claude-code-web-setup.sh)");
+    await expect(claudeSetup).toContainText(`printf '%s\\n' "$acfs_cloud_setup" | bash`);
 
     await page.getByRole("button", { name: "Copy setup script" }).click();
     await expect(page.getByText("Copied").first()).toBeVisible();
