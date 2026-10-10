@@ -36,6 +36,9 @@ spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        an Agent Mail identity first; its herdr name is that name lowercased and
        its tab is labelled with it. By default each agent is then sent its
        identity and the command palette's default_new_agent prompt.
+       A start herdr refuses because the new tab's shell is still starting is
+       retried once, when that shell is idle; if it fails again, the tab is
+       closed (only while it holds an idle shell) and spawn stops.
        An agent that stops at a dialog stops spawn. With --trust-folder, the
        first-run "trust this folder?" dialog of Claude Code or Codex is
        answered with "trust"; no other dialog ever is.
@@ -174,6 +177,30 @@ herdr_agents_trust_folder() {
     herdr_agents_note "trusted the folder for $name ($kind)"
 }
 
+# Wait until the shell in pane $1 holds the foreground with no command
+# running, which `agent start` requires. A new tab's shell can still be
+# running its startup files when spawn reaches it (acfs-zsz). Fails when it
+# never does within HERDR_AGENTS_SHELL_WAIT_TRIES polls (default 50, 0.2s
+# apart).
+herdr_agents_wait_shell() {
+    local pane="$1" tries="${HERDR_AGENTS_SHELL_WAIT_TRIES:-50}"
+    local interval="${HERDR_AGENTS_SHELL_WAIT_INTERVAL:-0.2}" i
+    for ((i = 0; i < tries; i++)); do
+        herdr_agents_shell_idle "$pane" && return 0
+        sleep "$interval"
+    done
+    return 1
+}
+
+# True when herdr reports pane $1's own shell in the foreground: no command,
+# editor or agent is running there.
+herdr_agents_shell_idle() {
+    herdr_agents_herdr pane process-info --pane "$1" \
+        && jq -e --arg pane "$1" '.result.process_info
+            | .pane_id == $pane and .foreground_process_group_id == .shell_pid' \
+            <<<"$HERDR_AGENTS_OUT" >/dev/null 2>&1
+}
+
 herdr_agents_spawn() {
     local workspace="" cwd="" model="unknown" prompt="" prompt_mode="palette"
     local dry_run=false json=false trust_folder=false
@@ -264,6 +291,9 @@ herdr_agents_spawn() {
         if ! herdr_agents_herdr tab create --workspace "$workspace" --cwd "$cwd" --label "$mail_name" --no-focus; then
             herdr_agents_note "spawn stopped: herdr tab create failed for $mail_name: $HERDR_AGENTS_ERR_MESSAGE"
             herdr_agents_note "  the Agent Mail identity $mail_name exists but has no agent"
+            results="$(jq -c --arg kind "$kind" --arg name "$mail_name" --arg herdr "$herdr_name" \
+                --arg status "$HERDR_AGENTS_ERR_CODE" \
+                '. + [{kind: $kind, agent_mail_name: $name, herdr_name: $herdr, status: $status, unused_identity: true}]' <<<"$results")"
             failed=true
             break
         fi
@@ -271,18 +301,45 @@ herdr_agents_spawn() {
         pane_id="$(jq -r '.result.root_pane.pane_id // empty' <<<"$HERDR_AGENTS_OUT")"
         [[ -n "$pane_id" ]] || herdr_agents_die "herdr tab create returned no root pane for $mail_name"
 
-        local started=true
+        local started=true start_error="" unused_identity=false tab_closed=false
         if ! herdr_agents_herdr agent start "$herdr_name" --kind "$kind" --pane "$pane_id"; then
             started=false
             # Kept apart: the calls below reset HERDR_AGENTS_ERR_CODE.
             status="$HERDR_AGENTS_ERR_CODE"
-            if [[ "$status" == agent_not_ready && "$trust_folder" == true ]] \
+            start_error="$HERDR_AGENTS_ERR_MESSAGE"
+            # herdr refused before typing anything: the shell was still
+            # starting. Wait for it, then retry once in the same pane.
+            if [[ "$status" == agent_pane_busy ]] && herdr_agents_wait_shell "$pane_id"; then
+                herdr_agents_note "retrying $herdr_name: the shell in $pane_id was not ready yet"
+                if herdr_agents_herdr agent start "$herdr_name" --kind "$kind" --pane "$pane_id"; then
+                    started=true
+                else
+                    status="$HERDR_AGENTS_ERR_CODE"
+                    start_error="$HERDR_AGENTS_ERR_MESSAGE"
+                fi
+            fi
+            if [[ "$started" == false && "$status" == agent_not_ready && "$trust_folder" == true ]] \
                 && herdr_agents_trust_folder "$herdr_name" "$kind"; then
                 started=true
             fi
         fi
         if [[ "$started" == false ]]; then
-            herdr_agents_note "spawn stopped: $kind agent $herdr_name in $pane_id did not start ($status): $HERDR_AGENTS_ERR_MESSAGE"
+            herdr_agents_note "spawn stopped: $kind agent $herdr_name in $pane_id did not start ($status): $start_error"
+            # agent_pane_busy means herdr started nothing. Close the tab spawn
+            # created only when its shell is seen idle, so nothing runs there;
+            # otherwise leave it for the caller.
+            if [[ "$status" == agent_pane_busy ]]; then
+                unused_identity=true
+                if ! herdr_agents_shell_idle "$pane_id"; then
+                    herdr_agents_note "  left its tab $tab_id: something runs in $pane_id; close it with 'herdr tab close $tab_id' once it is free"
+                elif herdr_agents_herdr tab close "$tab_id"; then
+                    tab_closed=true
+                    herdr_agents_note "  closed its tab $tab_id, which held only an idle shell"
+                else
+                    herdr_agents_note "  could not close its tab $tab_id ($HERDR_AGENTS_ERR_CODE): close it with 'herdr tab close $tab_id'"
+                fi
+                herdr_agents_note "  the Agent Mail identity $mail_name exists but has no agent"
+            fi
             if [[ "$status" == agent_not_ready ]]; then
                 herdr_agents_note "  it is waiting at a dialog (a first-run question such as 'Trust this folder?'). Its screen:"
                 # agent read prints the terminal text itself, not JSON.
@@ -295,7 +352,9 @@ herdr_agents_spawn() {
             fi
             results="$(jq -c --arg kind "$kind" --arg name "$mail_name" --arg herdr "$herdr_name" \
                 --arg tab "$tab_id" --arg pane "$pane_id" --arg status "$status" \
-                '. + [{kind: $kind, agent_mail_name: $name, herdr_name: $herdr, tab_id: $tab, pane_id: $pane, status: $status}]' <<<"$results")"
+                --argjson unused "$unused_identity" --argjson closed "$tab_closed" \
+                '. + [{kind: $kind, agent_mail_name: $name, herdr_name: $herdr, tab_id: $tab, pane_id: $pane, status: $status}
+                      + (if $unused then {unused_identity: true, tab_closed: $closed} else {} end)]' <<<"$results")"
             failed=true
             break
         fi

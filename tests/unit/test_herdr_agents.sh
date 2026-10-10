@@ -48,7 +48,34 @@ case "$1 $2" in
         echo "$n" >"$STUB_DIR/tabs"
         printf '{"id":"cli:tab:create","result":{"tab":{"tab_id":"w9:t%s"},"root_pane":{"pane_id":"w9:p%s"}}}\n' "$n" "$n"
         ;;
+    "tab close")
+        [[ ! -e "$STUB_DIR/tab_close_fail" ]] || fail_with tab_not_found "tab $3 not found"
+        printf '{"id":"cli:tab:close","result":{"type":"ok"}}\n'
+        ;;
+    "pane process-info")
+        # shell_starting_<pane> holds how many more polls see a startup
+        # command in the foreground; shell_stuck makes every poll see one.
+        starting="$STUB_DIR/shell_starting_$4"
+        busy=false
+        if [[ -e "$STUB_DIR/shell_stuck" ]]; then
+            busy=true
+        elif [[ -s "$starting" ]] && (( $(cat "$starting") > 0 )); then
+            echo $(( $(cat "$starting") - 1 )) >"$starting"
+            busy=true
+        fi
+        if [[ "$busy" == true ]]; then
+            printf '{"id":"cli:pane:process_info","result":{"process_info":{"foreground_process_group_id":200,"foreground_processes":[{"name":"compinit","pid":200}],"pane_id":"%s","shell_pid":100}}}\n' "$4"
+        else
+            printf '{"id":"cli:pane:process_info","result":{"process_info":{"foreground_process_group_id":100,"foreground_processes":[],"pane_id":"%s","shell_pid":100}}}\n' "$4"
+        fi
+        ;;
     "agent start")
+        # busy_<name> holds how many more starts herdr refuses as agent_pane_busy.
+        busy="$STUB_DIR/busy_$3"
+        if [[ -s "$busy" ]] && (( $(cat "$busy") > 0 )); then
+            echo $(( $(cat "$busy") - 1 )) >"$busy"
+            fail_with agent_pane_busy "agent target pane $5 is not an available shell"
+        fi
         [[ ! -e "$STUB_DIR/not_ready_$3" ]] || fail_with agent_not_ready "agent $3 is not ready"
         printf '{"id":"cli:agent:start","result":{"agent":{"name":"%s"}}}\n' "$3"
         ;;
@@ -118,6 +145,7 @@ Not part of the kickoff.
 EOF
 
 export HERDR_WORKSPACE_ID=w9
+export HERDR_AGENTS_SHELL_WAIT_TRIES=3 HERDR_AGENTS_SHELL_WAIT_INTERVAL=0
 unset HERDR_PANE_ID
 
 echo "spawn"
@@ -250,6 +278,51 @@ codex_trust_screen >"$STUB_DIR/screen_alphafox"
 run_helper spawn --codex 2 --cwd "$WORK/repo" --no-prompt --trust-folder --json
 check "a second dialog after the trust answer stops spawn as agent_not_ready" \
     test "$RC/$(jq -r '.agents[0].status' <<<"$OUT")/$(count_calls '^am agents create')" = "1/agent_not_ready/1"
+
+# acfs-zsz: herdr refuses agent start while a new tab's shell is still
+# running its startup files (agent_pane_busy).
+reset_stub busyonce
+echo 1 >"$STUB_DIR/busy_alphafox"
+echo 2 >"$STUB_DIR/shell_starting_w9:p1"
+run_helper spawn --claude 2 --cwd "$WORK/repo" --no-prompt --json
+check "agent_pane_busy: spawn waits for the shell, retries once in the same pane and goes on" \
+    test "$RC/$(count_calls '^herdr agent start alphafox --kind claude --pane w9:p1')/$(jq '.agents | length' <<<"$OUT")" = "0/2/2"
+check "it polls the pane until its shell holds the foreground" \
+    test "$(count_calls '^herdr pane process-info --pane w9:p1')" -eq 3
+check "a retried start closes no tab" test "$(count_calls '^herdr tab close')" -eq 0
+
+reset_stub busytwice
+echo 2 >"$STUB_DIR/busy_alphafox"
+run_helper spawn --claude 2 --cwd "$WORK/repo" --no-prompt --json
+check "a second agent_pane_busy stops spawn, after exactly one retry" \
+    test "$RC/$(count_calls '^herdr agent start alphafox')/$(count_calls '^am agents create')" = "1/2/1"
+check "the tab it created, holding only a shell, is closed" grep -qx -- "herdr tab close w9:t1" "$STUB_DIR/calls"
+check "the result keeps the closed tab and pane and flags the unused identity" \
+    test "$(jq -r '.agents[0] | "\(.status) \(.tab_id) \(.pane_id) \(.tab_closed) \(.unused_identity)"' <<<"$OUT")" \
+        = "agent_pane_busy w9:t1 w9:p1 true true"
+check "the unused Agent Mail identity is named on stderr" grep -q "identity AlphaFox exists but has no agent" <<<"$ERR"
+
+reset_stub busystuck
+echo 1 >"$STUB_DIR/busy_alphafox"
+touch "$STUB_DIR/shell_stuck"
+run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt --json
+check "a shell that never becomes available gets no retry, and its busy tab is left open" \
+    test "$RC/$(count_calls '^herdr agent start')/$(count_calls '^herdr pane process-info')/$(count_calls '^herdr tab close')" = "1/1/4/0"
+check "the left tab is named for the caller, with tab_closed false" \
+    bash -c '[[ "$(jq -r ".agents[0] | \"\(.tab_id) \(.tab_closed)\"" <<<"$1")" == "w9:t1 false" ]] && grep -q "left its tab w9:t1" <<<"$2"' _ "$OUT" "$ERR"
+
+reset_stub busycloses
+echo 2 >"$STUB_DIR/busy_alphafox"
+touch "$STUB_DIR/tab_close_fail"
+run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt --json
+check "a tab that cannot be closed is named in the result and on stderr" \
+    bash -c '[[ "$(jq -r ".agents[0].tab_id" <<<"$1")" == w9:t1 ]] && grep -q "herdr tab close w9:t1" <<<"$2"' _ "$OUT" "$ERR"
+
+reset_stub notreadytab
+touch "$STUB_DIR/not_ready_alphafox"
+run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt --json
+check "an agent stuck at a dialog keeps its tab: it is running there" \
+    test "$(count_calls '^herdr tab close')/$(jq -r '.agents[0].tab_id' <<<"$OUT")" = "0/w9:t1"
 
 reset_stub badname
 printf '%s\n' 'Not A Name' >"$STUB_DIR/am_names"
