@@ -37,8 +37,8 @@ check() {
 # ------------------------------------------------------------
 # The stubs. incus logs "<stdin>\t<argv>" per call ("null" when stdin is
 # /dev/null) and keeps each API object as $STUB_DIR/api/<path>.json, with
-# "/" as "_" and "?" as "@". findmnt answers from $STUB_FS, lsblk from
-# $STUB_MOUNTED.
+# "/" as "_" and "?" as "@". findmnt answers from $STUB_FS, swapon from
+# $STUB_SWAP.
 # ------------------------------------------------------------
 mkdir -p "$WORK/bin"
 cat >"$WORK/bin/incus" <<'STUB'
@@ -133,12 +133,12 @@ cat >"$WORK/bin/findmnt" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "${STUB_FS:-ext4 rw,relatime}"
 STUB
-# lsblk -nr -o MOUNTPOINT <device>: one line per partition, empty when unmounted.
-cat >"$WORK/bin/lsblk" <<'STUB'
+# swapon --show=NAME --noheadings: the hypervisor's swap, one line per area.
+cat >"$WORK/bin/swapon" <<'STUB'
 #!/usr/bin/env bash
-printf '\n%s\n' "${STUB_MOUNTED:+/mnt}"
+[[ -z "${STUB_SWAP:-}" ]] || printf '%s\n' "$STUB_SWAP"
 STUB
-chmod +x "$WORK/bin/incus" "$WORK/bin/findmnt" "$WORK/bin/lsblk"
+chmod +x "$WORK/bin/incus" "$WORK/bin/findmnt" "$WORK/bin/swapon"
 
 GATEWAY_NET='{"managed": true, "type": "bridge", "config": {"ipv4.address": "10.20.30.1/24"}}'
 DEFAULT_PROFILE='{"config": {}, "devices": {"eth0": {"type": "nic", "network": "incusbr0"}, "root": {"type": "disk", "path": "/", "pool": "default"}}}'
@@ -253,13 +253,16 @@ run_setup --storage "$STORAGE_DIR"
 check "exits 0" rc_is 0
 check "stdout stays empty" stdout_empty
 check "creates a dir pool acfs on the directory" pool_is acfs "[\"dir\",\"$STORAGE_DIR\"]"
-check "warns that quotas are advisory" err_has 'advisory'
+check "warns that sizes aren't enforced" err_has 'not enforced'
 check "profile: unprivileged" config_is /1.0/profiles/acfs-swarm security.privileged false
 check "profile: no nesting" config_is /1.0/profiles/acfs-swarm security.nesting false
 check "profile: isolated idmap" config_is /1.0/profiles/acfs-swarm security.idmap.isolated true
 check "profile: sysinfo intercept" config_is /1.0/profiles/acfs-swarm security.syscalls.intercept.sysinfo true
-check "profile: soft memory limit" config_is /1.0/profiles/acfs-swarm limits.memory.enforce soft
-check "profile: no host-specific memory size" config_is /1.0/profiles/acfs-swarm limits.memory '<unset>'
+check "profile: every thread, no CPU count" config_is /1.0/profiles/acfs-swarm limits.cpu '<unset>'
+check "profile: lowest CPU priority" config_is /1.0/profiles/acfs-swarm limits.cpu.priority 0
+check "profile: a CPU share, not a time cap" config_is /1.0/profiles/acfs-swarm limits.cpu.allowance 30%
+check "profile: no memory limit without --memory" config_is /1.0/profiles/acfs-swarm limits.memory '<unset>'
+check "profile: no memory enforcement without --memory" config_is /1.0/profiles/acfs-swarm limits.memory.enforce '<unset>'
 check "profile: no devices" jq_is /1.0/profiles/acfs-swarm .devices '{}'
 for kv in features.images=true features.profiles=true features.storage.volumes=true features.networks=false \
     restricted=true restricted.containers.nesting=block restricted.containers.privilege=isolated \
@@ -291,7 +294,7 @@ check "swarm ACL: rejects acfstest0's gateway (the host)" acl_rejects acfs-swarm
 check "swarm ACL: rejects another instance on the swarm bridge" acl_rejects acfs-swarm-egress 10.20.30.2 tcp 22
 check "swarm ACL: rejects the rest of 10/8" acl_rejects acfs-swarm-egress 10.98.255.255 tcp 22
 check "swarm ACL: rejects the LAN" acl_rejects acfs-swarm-egress 192.168.1.1 tcp 443
-check "swarm ACL: rejects the tailnet without --tailscale" acl_rejects acfs-swarm-egress 100.100.1.1 tcp 443
+check "swarm ACL: rejects the tailnet" acl_rejects acfs-swarm-egress 100.100.1.1 tcp 443
 check "swarm ACL: rejects IPv6 ULA" acl_rejects acfs-swarm-egress fd00::1 tcp 443
 check "swarm ACL: allows the internet" acl_allows acfs-swarm-egress 1.1.1.1 tcp 443
 check "creates no certificate without --client-cert" not_called 'config trust'
@@ -306,58 +309,81 @@ check "exits 0" rc_is 0
 check "creates and changes nothing" no_creates
 check "incus.env is unchanged" env_is acfs "$STORAGE_DIR"
 
-echo "== re-run with --tailscale: the swarm ACL would differ"
+echo "== re-run with an rch worker: the swarm ACL would differ"
 : >"$CASE/calls"
-run_setup --storage "$STORAGE_DIR" --tailscale
+run_setup --storage "$STORAGE_DIR" --rch-worker 192.168.5.20
 check "exits 1" rc_is 1
 check "names the ACL" err_has 'acfs-swarm-egress exists with other egress rules'
 check "changes nothing" no_creates
 
-echo "== --tailscale and --sibling on a fresh host"
-new_case tailnet
-run_setup --storage "$STORAGE_DIR" --tailscale --sibling 10.20.30.40
+echo "== rch workers on a fresh hypervisor"
+new_case rch
+run_setup --storage "$STORAGE_DIR" --rch-worker 192.168.5.20 --rch-worker 10.20.30.40
 check "exits 0" rc_is 0
-check "allows the tailnet" acl_allows acfs-swarm-egress 100.100.1.1 tcp 443
-check "allows the sibling on any port" acl_allows acfs-swarm-egress 10.20.30.40 tcp 5432
-check "still rejects its neighbour" acl_rejects acfs-swarm-egress 10.20.30.41 tcp 5432
+check "allows SSH to a worker on the LAN" acl_allows acfs-swarm-egress 192.168.5.20 tcp 22
+check "allows SSH to a worker on the containers' bridge" acl_allows acfs-swarm-egress 10.20.30.40 tcp 22
+check "rejects other ports on a worker" acl_rejects acfs-swarm-egress 192.168.5.20 tcp 5432
+check "rejects UDP to a worker" acl_rejects acfs-swarm-egress 192.168.5.20 udp 53
+check "still rejects the worker's neighbour" acl_rejects acfs-swarm-egress 192.168.5.21 tcp 22
+check "still rejects the tailnet" acl_rejects acfs-swarm-egress 100.100.1.1 tcp 443
 
-echo "== a bad --sibling"
-new_case badsibling
-run_setup --storage "$STORAGE_DIR" --sibling 10.20.30.400
+echo "== a bad --rch-worker"
+new_case badworker
+run_setup --storage "$STORAGE_DIR" --rch-worker 10.20.30.400
 check "exits 2" rc_is 2
 check "makes no incus call" no_calls
 
-echo "== --memory and --cpus go into the profile"
-new_case sized
-run_setup --storage "$STORAGE_DIR" --memory 96GiB --cpus 24
+echo "== --memory: soft with the hypervisor's swap, hard without"
+new_case swap
+STUB_SWAP=/swapfile run_setup --storage "$STORAGE_DIR" --memory 96GiB
 check "exits 0" rc_is 0
 check "limits.memory" config_is /1.0/profiles/acfs-swarm limits.memory 96GiB
-check "limits.cpu" config_is /1.0/profiles/acfs-swarm limits.cpu 24
-run_setup --storage "$STORAGE_DIR" --memory 64GiB
+check "with swap: soft" config_is /1.0/profiles/acfs-swarm limits.memory.enforce soft
+check "with swap: the container may swap" config_is /1.0/profiles/acfs-swarm limits.memory.swap true
+STUB_SWAP=/swapfile run_setup --storage "$STORAGE_DIR" --memory 64GiB
 check "a different --memory later is refused" rc_is 1
 check "naming the key" err_has 'limits.memory is 96GiB, not 64GiB'
+new_case noswap
+run_setup --storage "$STORAGE_DIR" --memory 96GiB
+check "without swap: exits 0" rc_is 0
+check "without swap: hard" config_is /1.0/profiles/acfs-swarm limits.memory.enforce hard
+check "without swap: no swap" config_is /1.0/profiles/acfs-swarm limits.memory.swap false
+new_case override
+run_setup --storage "$STORAGE_DIR" --memory 96GiB --memory-enforce soft
+check "--memory-enforce overrides: exits 0" rc_is 0
+check "--memory-enforce overrides: soft" config_is /1.0/profiles/acfs-swarm limits.memory.enforce soft
+check "--memory-enforce soft without swap warns" err_has 'stalls'
+new_case badmemory
 run_setup --storage "$STORAGE_DIR" --memory 96G
 check "a size without a unit is refused" rc_is 2
+run_setup --storage "$STORAGE_DIR" --memory-enforce soft
+check "--memory-enforce without --memory is refused" rc_is 2
+run_setup --storage "$STORAGE_DIR" --cpus 24
+check "--cpus is gone (no CPU count)" rc_is 2
+check "makes no incus call" no_calls
 
-echo "== btrfs, a ZFS dataset, a ZFS mountpoint"
+echo "== btrfs, XFS with quotas, a ZFS mountpoint, not a directory"
 new_case btrfs
 STUB_FS="btrfs rw,relatime" run_setup --storage "$STORAGE_DIR"
 check "btrfs: exits 0" rc_is 0
 check "btrfs: a btrfs pool on the directory" pool_is acfs "[\"btrfs\",\"$STORAGE_DIR\"]"
-check "btrfs: no quota warning" err_lacks advisory
+check "btrfs: no quota warning" err_lacks 'not enforced'
 new_case xfsquota
 STUB_FS="xfs rw,relatime,prjquota" run_setup --storage "$STORAGE_DIR"
-check "xfs with prjquota: no quota warning" err_lacks advisory
-new_case dataset
-run_setup --storage tank/incus --pool-name swarm
-check "dataset: exits 0" rc_is 0
-check "dataset: a zfs pool named by --pool-name" pool_is swarm '["zfs","tank/incus"]'
-check "dataset: incus.env records it" env_is swarm tank/incus
+check "xfs with prjquota: no quota warning" err_lacks 'not enforced'
 new_case zfsdir
 STUB_FS="zfs rw" run_setup --storage "$STORAGE_DIR"
-check "zfs mountpoint: refused" rc_is 2
-check "zfs mountpoint: asks for the dataset" err_has 'give the dataset'
-check "zfs mountpoint: creates nothing" no_creates
+check "zfs mountpoint: exits 0" rc_is 0
+check "zfs mountpoint: a dir pool" pool_is acfs "[\"dir\",\"$STORAGE_DIR\"]"
+check "zfs mountpoint: warns" err_has 'not enforced'
+new_case relative
+run_setup --storage tank/incus
+check "a relative path: exits 2" rc_is 2
+check "a relative path: creates nothing" no_creates
+new_case missing
+run_setup --storage "$WORK/no-such-dir"
+check "a missing directory: exits 2" rc_is 2
+check "a missing directory: creates nothing" no_creates
 
 echo "== an existing pool by name"
 new_case existing
@@ -466,33 +492,18 @@ run_setup --storage "$STORAGE_DIR" --client-cert "$CASE/client.crt" --client-nam
 check "trusted unrestricted: exits 1" rc_is 1
 check "trusted unrestricted: says so" err_has 'not restricted to acfs-tests'
 
-echo "== a block device"
+echo "== a block device: ACFS formats no disks"
 DEVICE="$(find /dev -maxdepth 1 -type b -print -quit 2>/dev/null || true)"
-if [[ -z "$DEVICE" ]] || ! command -v script >/dev/null 2>&1; then
-    echo "  skip (no block device under /dev, or no script(1))"
+if [[ -z "$DEVICE" ]]; then
+    echo "  skip (no block device under /dev)"
 else
     new_case device
     run_setup --storage "$DEVICE"
-    check "without --format-device: exits 2" rc_is 2
-    check "without --format-device: says it destroys" err_has 'formatting destroys'
-    check "without --format-device: creates nothing" no_creates
+    check "exits 2" rc_is 2
+    check "says it formats no disks" err_has 'formats no disks'
+    check "creates nothing" no_creates
     run_setup --storage "$DEVICE" --format-device
-    check "not on a terminal: exits 2" rc_is 2
-    check "not on a terminal: creates nothing" no_creates
-    run_tty "wrong" --storage "$DEVICE" --format-device
-    check "a wrong confirmation: exits 2" rc_is 2
-    check "a wrong confirmation: creates nothing" no_creates
-    STUB_MOUNTED=1 run_tty "$DEVICE" --storage "$DEVICE" --format-device
-    check "a mounted device: exits 2" rc_is 2
-    check "a mounted device: creates nothing" no_creates
-    run_tty "$DEVICE" --storage "$DEVICE" --format-device
-    check "the typed path: exits 0" rc_is 0
-    check "the typed path: a zfs pool on the device" pool_is acfs "[\"zfs\",\"$DEVICE\"]"
-    seed /1.0/storage-pools/acfs '{"driver": "zfs", "config": {"source": "acfs"}}'
-    : >"$CASE/calls"
-    run_setup --storage "$DEVICE" --format-device
-    check "re-run: the device's pool is found, no confirmation asked" rc_is 0
-    check "re-run: creates nothing" no_creates
+    check "--format-device is gone" rc_is 2
 fi
 
 echo "== the storage location prompted for on a terminal"

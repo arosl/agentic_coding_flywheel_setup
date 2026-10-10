@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
 # ============================================================
-# ACFS swarm host setup for Incus (incus.sh host-setup)
+# ACFS swarm setup on the hypervisor (incus.sh host-setup)
 #
-# Prepares the Incus host once, as an Incus admin on that host: the storage
-# pool at the location you give, the policy-only profile acfs-swarm, the
-# restricted project acfs-tests on its own bridge acfstest0, the egress ACLs
-# acfs-swarm-egress and acfs-vm-egress, and optionally a client certificate
-# restricted to acfs-tests. It records the result in
+# Prepares the hypervisor (the physical machine that runs Incus) once, as an
+# Incus admin there: the storage pool at the location you give, the
+# policy-only profile acfs-swarm for ACFS containers, the restricted project
+# acfs-tests on its own bridge acfstest0, the egress ACLs acfs-swarm-egress
+# and acfs-vm-egress, and optionally a client certificate restricted to
+# acfs-tests. It records the result in
 # ${XDG_CONFIG_HOME:-~/.config}/acfs/incus.env, which incus.sh reads.
 #
 # The storage location is required and has no default: it is prompted for
-# on a terminal and refused when missing otherwise.
+# on a terminal and refused when missing otherwise. It is an existing Incus
+# pool or a directory; ACFS formats no disks and adds no swap, because the
+# hypervisor's disks and swap are a hosting decision.
 #
 # Re-running it is safe: what is absent is created, and what exists is
 # checked against what these options would create and never changed; a
-# difference stops the run and names the object. It never deletes anything,
-# and it formats a block device only with --format-device and the device
-# path typed back on a terminal.
+# difference stops the run and names the object. It never deletes anything.
 #
 # Progress goes to stderr; stdout stays empty.
 # ============================================================
@@ -37,20 +38,22 @@ VM_ACL="acfs-vm-egress"
 # The same ranges, rule and description as incus.sh's acfs-vm-egress, so that
 # the launcher finds this ACL as its own.
 VM_ACL_DESCRIPTION="ACFS instances: no egress to private, CGNAT or link-local ranges"
+SWARM_ACL_DESCRIPTION="ACFS containers: the hypervisor's Incus API, SSH to the test instances and the rch workers; no other private ranges"
 PRIVATE_V4=(10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16)
 PRIVATE_V6=(fc00::/7 fe80::/10)
-TAILNET_V4="100.64.0.0/10"
 SWARM_API_PORT=8443
 
-# Plan 3.1: the policy the swarm profile pins, and the test project's
-# features and restrictions, every one explicit.
+# Plan 3.1's pins and the operator's CPU ruling (2026-10-10): an ACFS
+# container sees every hypervisor thread (no limits.cpu) and yields under
+# contention. Incus writes cpu.weight = allowance% - (10 - priority), here
+# 30 - 10 = 20, against the default 100 of the hypervisor's own services.
 SWARM_PROFILE_CONFIG=(
     security.privileged=false
     security.nesting=false
     security.idmap.isolated=true
     security.syscalls.intercept.sysinfo=true
-    limits.memory.enforce=soft
-    limits.memory.swap=true
+    limits.cpu.priority=0
+    limits.cpu.allowance=30%
     limits.processes=30000
     limits.kernel.nofile=1048576
     boot.autostart=true
@@ -90,30 +93,33 @@ REQUIRED_API_EXTENSIONS=(projects_networks_restricted_access container_syscall_i
 
 usage() {
     cat <<'EOF'
-Usage: scripts/providers/incus.sh host-setup --storage <pool|path|dataset|device> [options]
+Usage: scripts/providers/incus.sh host-setup --storage <pool|directory> [options]
 
-Prepares this Incus host for ACFS machines, as an Incus admin on the host,
-and records the result in ${XDG_CONFIG_HOME:-~/.config}/acfs/incus.env.
+Prepares the hypervisor (the machine running Incus) for ACFS containers, as
+an Incus admin there, and records the result in
+${XDG_CONFIG_HOME:-~/.config}/acfs/incus.env.
 
-  --storage WHERE      Required, no default. One of:
-                         an existing Incus storage pool's name;
-                         a directory on btrfs (a btrfs pool there);
-                         a ZFS dataset, pool/dataset (a zfs pool);
-                         a directory on ext4 or XFS (a dir pool; quotas are
-                           enforced only with project quotas on);
-                         a block device, which is FORMATTED: only with
-                           --format-device, typed confirmation on a terminal.
-  --pool-name NAME     The pool to create (default: acfs).
-  --driver zfs|btrfs   The filesystem for a block device (default: zfs).
-  --format-device      Allow formatting the block device given to --storage.
-  --memory SIZE        The swarm profile's soft memory limit (e.g. 96GiB); unset
-                       without it. Size it for this host's other workloads.
-  --cpus N|A-B         The swarm profile's CPU count or range; unset without it.
-  --tailscale          Let the swarm reach the tailnet (100.64.0.0/10).
-  --sibling ADDR       An IPv4 address on the swarm's bridge that the swarm may
-                       reach on any port (repeatable): a service container.
-  --client-cert FILE   Trust this client certificate, restricted to acfs-tests.
-  --client-name NAME   The name it is trusted under (required with --client-cert).
+  --storage WHERE        Required, no default. An existing Incus storage pool's
+                         name, or a directory: on btrfs it becomes a btrfs pool,
+                         elsewhere a dir pool, whose size limits are enforced
+                         only on ext4 or XFS with project quotas on. Every
+                         container's root, data and state volumes go there.
+                         ACFS formats no disks.
+  --pool-name NAME       The pool made from a directory (default: acfs).
+  --memory SIZE          The containers' memory limit (e.g. 96GiB); none without
+                         it. Soft (the container is throttled, nothing is killed)
+                         when the hypervisor has swap, hard (killed inside the
+                         container at the limit) when it has none.
+  --memory-enforce soft|hard
+                         Overrides that choice.
+  --rch-worker ADDR      An IPv4 address of an rch build worker that the
+                         containers may reach over SSH (repeatable).
+  --client-cert FILE     Trust this client certificate, restricted to acfs-tests.
+  --client-name NAME     The name it is trusted under (required with --client-cert).
+
+ACFS containers reach the internet, and of private addresses only the
+hypervisor's Incus API (8443 on their bridge's gateway), SSH and ping to the
+test instances on acfstest0, and SSH to the rch workers.
 
 Re-running is safe: absent objects are created, and existing ones are checked
 and never changed. See scripts/providers/incus.md.
@@ -143,52 +149,41 @@ incus_get() {
 
 storage=""
 pool_name="acfs"
-device_driver="zfs"
-format_device=""
-tailscale=""
-siblings=()
+memory=""
+memory_enforce=""
+rch_workers=()
 client_cert=""
 client_name=""
-memory=""
-cpus=""
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --storage|--pool-name|--driver|--sibling|--client-cert|--client-name|--memory|--cpus)
+            --storage|--pool-name|--memory|--memory-enforce|--rch-worker|--client-cert|--client-name)
                 [[ -n "${2:-}" ]] || die "$1 needs a value" 2
                 case "$1" in
                     --storage) storage="$2" ;;
-                    --memory) memory="$2" ;;
-                    --cpus) cpus="$2" ;;
                     --pool-name) pool_name="$2" ;;
-                    --driver) device_driver="$2" ;;
-                    --sibling) siblings+=("$2") ;;
+                    --memory) memory="$2" ;;
+                    --memory-enforce) memory_enforce="$2" ;;
+                    --rch-worker) rch_workers+=("$2") ;;
                     --client-cert) client_cert="$2" ;;
                     --client-name) client_name="$2" ;;
                 esac
                 shift 2
                 ;;
-            --format-device) format_device=1; shift ;;
-            --tailscale) tailscale=1; shift ;;
             -h|--help) usage; exit 0 ;;
             *) usage >&2; die "unknown argument: $1" 2 ;;
         esac
     done
 
     [[ "$pool_name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || die "invalid --pool-name '$pool_name'" 2
-    [[ "$device_driver" == zfs || "$device_driver" == btrfs ]] || die "--driver is zfs or btrfs, not '$device_driver'" 2
-    if [[ -n "$memory" ]]; then
-        [[ "$memory" =~ ^[1-9][0-9]*(MiB|GiB|TiB)$ ]] || die "--memory is a size such as 96GiB, not '$memory'" 2
-        SWARM_PROFILE_CONFIG+=("limits.memory=$memory")
-    fi
-    if [[ -n "$cpus" ]]; then
-        [[ "$cpus" =~ ^[1-9][0-9]*$ || "$cpus" =~ ^[0-9]+-[0-9]+$ ]] || die "--cpus is a count such as 24 or a range such as 8-31, not '$cpus'" 2
-        SWARM_PROFILE_CONFIG+=("limits.cpu=$cpus")
-    fi
+    [[ -z "$memory" || "$memory" =~ ^[1-9][0-9]*(MiB|GiB|TiB)$ ]] || die "--memory is a size such as 96GiB, not '$memory'" 2
+    [[ -z "$memory_enforce" || "$memory_enforce" == soft || "$memory_enforce" == hard ]] \
+        || die "--memory-enforce is soft or hard, not '$memory_enforce'" 2
+    [[ -z "$memory_enforce" || -n "$memory" ]] || die "--memory-enforce needs --memory" 2
     local addr
-    for addr in "${siblings[@]}"; do
-        ipv4_to_int "$addr" >/dev/null || die "--sibling $addr: not an IPv4 address" 2
+    for addr in "${rch_workers[@]}"; do
+        ipv4_to_int "$addr" >/dev/null || die "--rch-worker $addr: not an IPv4 address" 2
     done
     if [[ -n "$client_cert" || -n "$client_name" ]]; then
         [[ -n "$client_cert" && -n "$client_name" ]] || die "--client-cert and --client-name go together" 2
@@ -200,35 +195,57 @@ parse_args() {
 # The storage location: required, prompted for on a terminal only.
 require_storage() {
     [[ -z "$storage" ]] || return 0
-    [[ -t 0 ]] || die "--storage is required: the storage location has no default (an Incus pool, a directory, a ZFS dataset or a block device)" 2
-    printf 'Storage location for ACFS machines (an Incus pool, a directory, a ZFS dataset or a block device): ' >&2
+    [[ -t 0 ]] || die "--storage is required: the storage location has no default (an Incus pool or a directory)" 2
+    printf 'Storage location for ACFS containers (an Incus pool or a directory): ' >&2
     IFS= read -r storage || true
     [[ -n "$storage" ]] || die "no storage location given" 2
 }
 
 require_commands() {
     local cmd
-    for cmd in incus jq findmnt lsblk; do
-        command -v "$cmd" >/dev/null 2>&1 || die "$cmd is required on this host" 2
+    for cmd in incus jq findmnt; do
+        command -v "$cmd" >/dev/null 2>&1 || die "$cmd is required on the hypervisor" 2
     done
+    [[ -z "$memory" ]] || command -v swapon >/dev/null 2>&1 || die "swapon is required for --memory" 2
     [[ -z "$client_cert" ]] || command -v openssl >/dev/null 2>&1 || die "openssl is required for --client-cert" 2
 }
 
 server_json=""
 
 check_server() {
-    server_json="$(incus_get /1.0)" || die "cannot reach the local Incus daemon; run this on the Incus host as a member of incus-admin" 1
+    server_json="$(incus_get /1.0)" || die "cannot reach the local Incus daemon; run this on the hypervisor as a member of incus-admin" 1
     jq -e '.auth == "trusted"' <<<"$server_json" >/dev/null \
         || die "the local Incus daemon doesn't trust this user; host setup needs an Incus admin (the incus-admin group)" 1
     local ext
     for ext in "${REQUIRED_API_EXTENSIONS[@]}"; do
         jq -e --arg ext "$ext" '.api_extensions | index($ext) != null' <<<"$server_json" >/dev/null \
-            || die "this Incus lacks the API extension $ext; ACFS machines need Incus 6.0.6 or later" 1
+            || die "this Incus lacks the API extension $ext; ACFS containers need Incus 6.0.6 or later" 1
     done
 }
 
 driver_supported() {
     jq -e --arg d "$1" '[.environment.storage_supported_drivers[]?.Name] | index($d) != null' <<<"$server_json" >/dev/null
+}
+
+# The memory keys for --memory. Without swap on the hypervisor a soft limit
+# stalls a container that overruns it with nothing to reclaim, so the limit
+# is hard there unless --memory-enforce says otherwise.
+add_memory_config() {
+    [[ -n "$memory" ]] || return 0
+    local swap="false" enforce
+    [[ -z "$(swapon --show=NAME --noheadings 2>/dev/null)" ]] || swap="true"
+    if [[ -n "$memory_enforce" ]]; then
+        enforce="$memory_enforce"
+    elif [[ "$swap" == true ]]; then
+        enforce=soft
+    else
+        enforce=hard
+    fi
+    if [[ "$enforce" == soft && "$swap" == false ]]; then
+        log_warn "The hypervisor has no swap: a container over its soft limit stalls instead of reclaiming"
+    fi
+    log_info "Memory: $memory, $enforce (the hypervisor has $([[ "$swap" == true ]] && echo swap || echo "no swap"))"
+    SWARM_PROFILE_CONFIG+=("limits.memory=$memory" "limits.memory.enforce=$enforce" "limits.memory.swap=$swap")
 }
 
 # ------------------------------------------------------------
@@ -298,7 +315,8 @@ join_by() {
 }
 
 # ------------------------------------------------------------
-# The storage pool (plan 3.3's table).
+# The storage pool: an existing pool, or one made from a directory with the
+# driver its filesystem supports (the operator, 2026-10-10).
 # ------------------------------------------------------------
 
 pool_source=""
@@ -307,79 +325,45 @@ existing_pool_source() {
     jq -r '.config.source // ""' <<<"$1"
 }
 
-# The filesystem type and mount options of the filesystem holding $1.
-fs_of() {
-    findmnt -n -o FSTYPE,OPTIONS --target "$1" 2>/dev/null | head -n 1
-}
-
-confirm_format() {
-    local device="$1" typed=""
-    [[ -n "$format_device" ]] \
-        || die "--storage $device is a block device; formatting destroys everything on it. Pass --format-device to allow it" 2
-    [[ -t 0 ]] || die "formatting $device needs its path typed back on a terminal; run host setup interactively" 2
-    # The device or any partition on it.
-    if lsblk -nr -o MOUNTPOINT -- "$device" 2>/dev/null | grep -q .; then
-        die "$device, or a partition on it, is mounted or in use as swap; refusing to format it" 2
-    fi
-    log_warn "Incus will create a $device_driver pool on $device and DESTROY everything on it."
-    printf 'Type the device path (%s) to confirm: ' "$device" >&2
-    IFS= read -r typed || true
-    [[ "$typed" == "$device" ]] || die "confirmation didn't match; $device is untouched" 2
-}
-
-create_pool() {
-    local driver="$1" source="$2"
-    driver_supported "$driver" || die "this Incus has no $driver storage driver (for zfs: zfsutils-linux on the host)" 1
-    log_step "Creating storage pool $pool_name ($driver, source=$source)"
-    incus_run storage create "$pool_name" "$driver" "source=$source" >/dev/null \
-        || die "could not create storage pool $pool_name" 1
-}
-
 ensure_pool() {
-    local json fs fstype options driver=""
+    local json fs fstype options driver
 
     # An existing pool named by --storage is used as it is.
     if [[ "$storage" != */* ]]; then
         json="$(incus_get "/1.0/storage-pools/$storage")" \
-            || die "--storage $storage: no Incus storage pool by that name; give a pool, a directory, a ZFS dataset (pool/dataset) or a block device" 2
+            || die "--storage $storage: no Incus storage pool by that name; give a pool or an absolute directory path" 2
         pool_name="$storage"
         pool_source="$(existing_pool_source "$json")"
         log_info "Using the existing storage pool $pool_name ($(jq -r '.driver' <<<"$json"))"
         return 0
     fi
 
-    if [[ "$storage" != /* ]]; then
-        driver=zfs                                 # pool/dataset
-    elif [[ -b "$storage" ]]; then
-        driver="$device_driver"
-    elif [[ -d "$storage" ]]; then
-        fs="$(fs_of "$storage")"
-        fstype="${fs%% *}"
-        options="${fs#* }"
-        case "$fstype" in
-            btrfs) driver=btrfs ;;
-            ext4|xfs)
-                driver=dir
-                [[ ",$options," == *,prjquota,* || ",$options," == *,pquota,* ]] \
-                    || log_warn "$storage is on $fstype without project quotas: a dir pool's size limits are advisory there (ext4: tune2fs -O project and prjquota; XFS: pquota)"
-                ;;
-            zfs) die "$storage is on ZFS; give the dataset (pool/dataset) instead of its mountpoint" 2 ;;
-            *) die "$storage is on ${fstype:-an unknown filesystem}; a directory location must be on btrfs, ext4 or XFS" 2 ;;
-        esac
+    [[ "$storage" == /* ]] || die "--storage $storage: give a pool name or an absolute directory path" 2
+    [[ ! -b "$storage" ]] || die "--storage $storage is a block device; ACFS formats no disks. Make a filesystem or an Incus pool on it yourself, and pass that" 2
+    [[ -d "$storage" ]] || die "--storage $storage: not a directory" 2
+
+    fs="$(findmnt -n -o FSTYPE,OPTIONS --target "$storage" 2>/dev/null | head -n 1)"
+    fstype="${fs%% *}"
+    options="${fs#* }"
+    if [[ "$fstype" == btrfs ]]; then
+        driver=btrfs
     else
-        die "--storage $storage: not a directory or a block device" 2
+        driver=dir
+        if [[ ! ( "$fstype" == ext4 || "$fstype" == xfs ) \
+                || ! ( ",$options," == *,prjquota,* || ",$options," == *,pquota,* ) ]]; then
+            log_warn "$storage is on ${fstype:-an unknown filesystem} without project quotas: the containers' volume sizes there are not enforced (ext4: tune2fs -O project and prjquota; XFS: pquota)"
+        fi
     fi
 
     if json="$(incus_get "/1.0/storage-pools/$pool_name")"; then
-        # Incus records a device-backed pool's source as its own name or UUID,
-        # so for a device only the driver can be compared. It is never formatted.
-        [[ "$(jq -r '.driver' <<<"$json")" == "$driver" \
-            && ( -b "$storage" || "$(existing_pool_source "$json")" == "$storage" ) ]] \
+        [[ "$(jq -r '.driver' <<<"$json")" == "$driver" && "$(existing_pool_source "$json")" == "$storage" ]] \
             || die "storage pool $pool_name exists with driver $(jq -r '.driver' <<<"$json") and source '$(existing_pool_source "$json")', not $driver on $storage; pass that pool's name to --storage, or choose another --pool-name" 1
         log_info "Using the existing storage pool $pool_name ($driver on $storage)"
     else
-        [[ ! -b "$storage" ]] || confirm_format "$storage"
-        create_pool "$driver" "$storage"
+        driver_supported "$driver" || die "this Incus has no $driver storage driver" 1
+        log_step "Creating storage pool $pool_name ($driver, source=$storage)"
+        incus_run storage create "$pool_name" "$driver" "source=$storage" >/dev/null \
+            || die "could not create storage pool $pool_name" 1
     fi
     pool_source="$storage"
 }
@@ -427,12 +411,12 @@ set_unset() {
 ensure_swarm_profile() {
     local json
     if ! json="$(incus_get "/1.0/profiles/$SWARM_PROFILE")"; then
-        log_step "Creating profile $SWARM_PROFILE (policy only: unprivileged, isolated idmap, no nesting, soft memory limit, sysinfo intercept)"
+        log_step "Creating profile $SWARM_PROFILE (policy only: unprivileged, isolated idmap, no nesting, low CPU priority, sysinfo intercept)"
         incus_run profile create "$SWARM_PROFILE" >/dev/null || die "could not create profile $SWARM_PROFILE" 1
         json="$(incus_get "/1.0/profiles/$SWARM_PROFILE")" || die "could not read profile $SWARM_PROFILE" 1
     fi
     jq -e '(.devices // {}) == {}' <<<"$json" >/dev/null \
-        || die "profile $SWARM_PROFILE has devices; it holds policy only, and each machine's devices are its own" 1
+        || die "profile $SWARM_PROFILE has devices; it holds policy only, and each container's devices are its own" 1
     set_unset "profile $SWARM_PROFILE" "$json" profile set "$SWARM_PROFILE" -- "${SWARM_PROFILE_CONFIG[@]}"
     log_info "Profile $SWARM_PROFILE is in place"
 }
@@ -503,12 +487,13 @@ ensure_test_project() {
 
 # ------------------------------------------------------------
 # The egress ACLs. Incus applies every reject before any allow, so the swarm
-# ACL's reject ranges leave out what the swarm may reach, and the narrower
-# rejects then close the ports it may not. The bridge's DHCP and DNS on the
-# gateway still work: Incus puts those baseline rules before any ACL's.
+# ACL's reject ranges leave out what the containers may reach, and the
+# narrower rejects then close the ports they may not. The bridge's DHCP and
+# DNS on the gateway still work: Incus puts those baseline rules before any
+# ACL's.
 # ------------------------------------------------------------
 
-# The bridge the swarm machines' NIC uses: the default profile's.
+# The bridge the containers' NIC uses: the default profile's.
 swarm_gateway() {
     local profile network json address
     profile="$(incus_get /1.0/profiles/default)" || die "could not read the default profile" 1
@@ -531,12 +516,14 @@ rule() {
 }
 
 swarm_acl_rules() {
-    local gateway="$1" test_net test_gateway sibling excluded=() reject=() cidr
+    local gateway="$1" test_net test_gateway worker excluded=() reject=() workers=() cidr
     test_net="$(cidr_network "$test_bridge_cidr")"
     test_gateway="${test_bridge_cidr%/*}"
     excluded=("$gateway/32" "$test_net")
-    for sibling in "${siblings[@]}"; do excluded+=("$sibling/32"); done
-    [[ -z "$tailscale" ]] || excluded+=("$TAILNET_V4")
+    for worker in "${rch_workers[@]}"; do
+        excluded+=("$worker/32")
+        workers+=("$worker/32")
+    done
     for cidr in "${PRIVATE_V4[@]}"; do
         while IFS= read -r cidr; do reject+=("$cidr"); done < <(cidr_subtract "$cidr" "${excluded[@]}")
     done
@@ -552,8 +539,11 @@ swarm_acl_rules() {
         rule allow "$gateway/32" tcp "$SWARM_API_PORT"
         rule allow "$test_net" tcp 22
         rule allow "$test_net" icmp4
-        ((${#siblings[@]} == 0)) || rule allow "$(printf '%s/32\n' "${siblings[@]}" | paste -sd, -)"
-        [[ -z "$tailscale" ]] || rule allow "$TAILNET_V4"
+        if ((${#workers[@]} > 0)); then
+            rule reject "$(join_by , "${workers[@]}")" tcp 1-21,23-65535
+            rule reject "$(join_by , "${workers[@]}")" udp
+            rule allow "$(join_by , "${workers[@]}")" tcp 22
+        fi
     } | jq -sc .
 }
 
@@ -620,7 +610,7 @@ check_env_file() {
     [[ -f "$file" ]] || return 0
     recorded="$(sed -n 's/^ACFS_INCUS_POOL=//p' "$file")"
     [[ -z "$recorded" || "$recorded" == "$(printf '%q' "$pool_name")" ]] \
-        || die "$file records pool $recorded, not $pool_name; this host is set up already. Move that file aside to set it up again" 1
+        || die "$file records pool $recorded, not $pool_name; this hypervisor is set up already. Move that file aside to set it up again" 1
 }
 
 write_env_file() {
@@ -648,19 +638,19 @@ main() {
     require_storage
     require_commands
     check_server
+    add_memory_config
 
     local gateway
     gateway="$(swarm_gateway)"
-    # The pool is named before anything is created, so that a host already
-    # set up with another pool is refused untouched.
+    # The pool is named before anything is created, so that a hypervisor
+    # already set up with another pool is refused untouched.
     [[ "$storage" == */* ]] || pool_name="$storage"
     check_env_file
     ensure_pool
     ensure_swarm_profile
     ensure_test_bridge
     ensure_acl "$VM_ACL" "$VM_ACL_DESCRIPTION" "$(vm_acl_rules)"
-    ensure_acl "$SWARM_ACL" "ACFS swarm machines: the host API, the test bridge's SSH, named siblings; no other private ranges" \
-        "$(swarm_acl_rules "$gateway")"
+    ensure_acl "$SWARM_ACL" "$SWARM_ACL_DESCRIPTION" "$(swarm_acl_rules "$gateway")"
     ensure_test_project
     ensure_client_cert
     write_env_file
