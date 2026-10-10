@@ -150,6 +150,25 @@ class SwarmSnapshotTests(unittest.TestCase):
         self.status["schema_version"] = 2
         self.assert_blocked(self.run_plan())
 
+    def test_pre_herdr_snapshot_is_refused_as_old(self):
+        # acfs-t04: a snapshot from before herdr has probes.ntm and no
+        # probes.herdr. It must be refused as an old snapshot, not planned
+        # as if herdr were down.
+        old = dict(self.status["probes"])
+        del old["herdr"]
+        old["ntm"] = {"status": "pass", "available": True, "warnings": []}
+        self.status["probes"] = old
+        report = self.assert_blocked(self.run_plan())
+        self.assertEqual([check["id"] for check in report["checks"]], ["planner_input"])
+        self.assertIn("predates herdr", report["recommended_action"])
+        self.assertIn("acfs swarm status --json", report["recommended_action"])
+        self.assertNotIn("herdr is unavailable", json.dumps(report))
+        for herdr in (None, "pass", []):
+            with self.subTest(herdr=herdr):
+                self.status["probes"]["herdr"] = herdr
+                report = self.assert_blocked(self.run_plan())
+                self.assertNotIn("herdr is unavailable", json.dumps(report))
+
     def test_invalid_numeric_and_boolean_fields_are_blocked(self):
         for invalid in (True, -1, 1.5, "oops", 1e30, {}, []):
             with self.subTest(invalid=invalid):

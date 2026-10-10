@@ -256,6 +256,7 @@ swarm_plan_validate_snapshot() {
             and counts(["cpu_count", "mem_available_kb"])
             and (.load_1m == null or (.load_1m | nonnegative)))
           and (.probes | type == "object"
+            and (.herdr | type == "object")
             and all(.agent_mail, .beads, .bv, .rch, .herdr; probe))
           and (.stale_work == null or (.stale_work | type == "object"
             and counts(["total_stale_count", "stale_count"])))
@@ -274,6 +275,16 @@ swarm_plan_validate_snapshot() {
           and (.recommendations == null or (.recommendations | type == "array"
             and all(.[]; type == "string")))
         end)
+    ' >/dev/null 2>&1
+}
+
+# Whether status snapshot $2 predates herdr: a status report that has probes
+# but no probes.herdr (such as one with the old probes.ntm). The validator
+# refuses it too; this only names why.
+swarm_plan_status_predates_herdr() {
+    local jq_bin="$1" input="$2"
+    printf '%s' "$input" | "$jq_bin" -e '
+        type == "object" and (.probes | type == "object") and (.probes.herdr == null)
     ' >/dev/null 2>&1
 }
 
@@ -653,6 +664,10 @@ swarm_plan_build_report() {
     capacity_json="${capacity_json%.}"
 
     if ! swarm_plan_validate_snapshot "$jq_bin" status "$status_json"; then
+        if swarm_plan_status_predates_herdr "$jq_bin" "$status_json"; then
+            swarm_plan_jq_error_report "swarm status JSON predates herdr: it has no probes.herdr (an old snapshot); take a new one with 'acfs swarm status --json'" "$jq_bin"
+            return 0
+        fi
         swarm_plan_jq_error_report "swarm status JSON is malformed, ambiguous, unsupported or exceeds input limits" "$jq_bin"
         return 0
     fi
