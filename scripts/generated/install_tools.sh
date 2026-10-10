@@ -607,6 +607,94 @@ INSTALL_TOOLS_INCUS
             return 0
         fi
     fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: install: install Zabbly's lts-6.0 Incus when the archive's lacks an API extension (root)"
+    else
+        if ! run_as_root_shell <<'INSTALL_TOOLS_INCUS'
+# acfs-summary: install Zabbly's lts-6.0 Incus when the archive's lacks an API extension
+# The server is judged by the API extensions it reports, never by its
+# version: Ubuntu 24.04's 6.0.0 lacks disk_volume_subpath, while
+# 26.04's 6.0.5 has all three. The list is the launcher's
+# (REQUIRED_API_EXTENSIONS in scripts/providers/incus.sh). Zabbly's
+# packages take over from the archive's in place (epoch 1:, with
+# Replaces for incus-tools and incus-migrate). The key is pinned by
+# its fingerprint, from https://github.com/zabbly/incus. The module
+# installs only where incus is missing, so no instance exists yet.
+# ACFS_INCUS_ETC moves /etc for the tests.
+etc="${ACFS_INCUS_ETC:-/etc}"
+zabbly_fpr=4EFC590696CB15B87C73A3AD82CC8797C838DCFD
+required=(disk_volume_subpath container_syscall_intercept_sysinfo projects_networks_restricted_access)
+# Prints the required extensions the server lacks (none: empty);
+# fails when no daemon answers with an api_extensions list.
+missing_extensions() {
+  local server
+  server="$(timeout 60 incus query /1.0 2>/dev/null </dev/null)" || return 1
+  jq -er '.api_extensions as $have | ($have | type) == "array"
+    | if . then ($ARGS.positional - $have | join(" ")) else empty end' \
+    <<<"$server" --args "${required[@]}" 2>/dev/null
+}
+if ! missing="$(missing_extensions)"; then
+  echo "tools.incus: the Incus daemon didn't answer (none runs here, as in a container without nesting); acfs doctor and the launcher check its API extensions" >&2
+  exit 0
+fi
+if [[ -z "$missing" ]]; then
+  echo "tools.incus: the archive's Incus has the API extensions a swarm container needs" >&2
+  exit 0
+fi
+# shellcheck disable=SC1091
+codename="$(. "$etc/os-release" && [[ "${ID:-}" == ubuntu ]] && printf '%s' "${VERSION_CODENAME:-}")" || codename=""
+case "$codename" in
+  noble|resolute) ;;
+  *)
+    echo "tools.incus: Incus lacks $missing, and ACFS sets up Zabbly's packages only on Ubuntu 24.04 and 26.04" >&2
+    exit 0
+    ;;
+esac
+echo "tools.incus: the archive's Incus lacks $missing; installing Zabbly's lts-6.0 packages" >&2
+work="$(mktemp -d)"
+trap 'rm -rf -- "$work"' EXIT
+curl -q --proto '=https' --proto-redir '=https' -fsSL https://pkgs.zabbly.com/key.asc -o "$work/key.asc"
+# Exactly one primary key, with the pinned fingerprint.
+fprs="$(GNUPGHOME="$work" gpg --batch --show-keys --with-colons "$work/key.asc" 2>/dev/null \
+  | awk -F: '$1 == "pub" { want = 1; next } $1 == "fpr" && want { print $10; want = 0 }')" || fprs=""
+if [[ "$fprs" != "$zabbly_fpr" ]]; then
+  echo "tools.incus: pkgs.zabbly.com/key.asc is not the key with fingerprint $zabbly_fpr; not adding Zabbly's repository" >&2
+  exit 1
+fi
+install -d -m 0755 "$etc/apt/keyrings"
+install -m 0644 "$work/key.asc" "$etc/apt/keyrings/zabbly.asc"
+printf 'Enabled: yes\nTypes: deb\nURIs: https://pkgs.zabbly.com/incus/lts-6.0\nSuites: %s\nComponents: main\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/zabbly.asc\n' \
+  "$codename" "$(dpkg --print-architecture)" > "$etc/apt/sources.list.d/zabbly-incus-lts-6.0.sources"
+# The step itself is the shell's stdin, so apt reads /dev/null.
+apt_opts=(-o DPkg::Lock::Timeout=120 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" update </dev/null
+DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" install -y incus </dev/null
+if ! missing="$(missing_extensions)"; then
+  echo "tools.incus: Zabbly's Incus is installed, but its daemon didn't answer; acfs doctor checks its API extensions" >&2
+elif [[ -n "$missing" ]]; then
+  echo "tools.incus: Zabbly's Incus still lacks $missing; the launcher refuses a container on it" >&2
+else
+  echo "tools.incus: Zabbly's Incus has the API extensions a swarm container needs" >&2
+fi
+INSTALL_TOOLS_INCUS
+        then
+            log_warn "tools.incus: install command failed: install Zabbly's lts-6.0 Incus when the archive's lacks an API extension"
+            # Optional-module failures are warnings on a default install, but a
+            # module the user explicitly named with --only had exactly one job:
+            # propagate the failure instead of reporting phase success (#373).
+            if declare -f acfs_module_explicitly_selected >/dev/null 2>&1 \
+                && acfs_module_explicitly_selected "tools.incus"; then
+              log_error "tools.incus: explicitly requested via --only; treating optional-module failure as fatal"
+              return 1
+            fi
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "tools.incus" "install command failed: install Zabbly's lts-6.0 Incus when the archive's lacks an API extension"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "tools.incus"
+            fi
+            return 0
+        fi
+    fi
 
     # Verify
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
