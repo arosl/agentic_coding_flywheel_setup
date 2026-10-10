@@ -117,6 +117,14 @@ case "$1 $2" in
         printf '{"id":"cli:agent:wait","result":{"agent":{"name":"%s","agent_status":"idle"}}}\n' "$3"
         ;;
     "agent list") cat "$STUB_DIR/list.json" ;;
+    "agent rename")
+        # Names pane $3's agent $4 in list.json, as herdr would.
+        [[ ! -e "$STUB_DIR/rename_fail" ]] || fail_with failed "agent rename refused"
+        jq --arg p "$3" --arg n "$4" '(.result.agents[] | select(.pane_id == $p)).name = $n' \
+            "$STUB_DIR/list.json" >"$STUB_DIR/list.json.new"
+        mv "$STUB_DIR/list.json.new" "$STUB_DIR/list.json"
+        printf '{"id":"cli:agent:rename","result":{"type":"ok"}}\n'
+        ;;
     "notification show")
         [[ ! -e "$STUB_DIR/notify_fail" ]] || fail_with failed "no client attached"
         printf '{"id":"cli:notification:show","result":{"type":"ok"}}\n'
@@ -862,6 +870,57 @@ write_list
 run_helper send --name ghost ping
 check "send to only a missing name exits nonzero and prompts nobody" \
     bash -c '[[ "$1" -ne 0 && "$2" -eq 0 ]] && grep -q "skipped ghost (agent_not_found)" <<<"$3"' _ "$RC" "$(count_calls '^herdr agent prompt')" "$ERR"
+
+# acfs-i7p: an agent whose herdr name dropped is found again by its tab
+# label (spawn labels the tab with the Agent Mail name), renamed, and sent.
+write_send_tabs() {
+    cat >"$STUB_DIR/tabs.json" <<EOF
+{"id":"cli:tab:list","result":{"tabs":[
+ {"tab_id":"w2:t1","label":"${1:-SwiftBasin} Codex","pane_count":1},
+ {"tab_id":"w2:t2","label":"${2:-Elsewhere}","pane_count":1}
+]}}
+EOF
+}
+reset_stub sendrecover
+write_list
+write_send_tabs
+run_helper send --name SwiftBasin ping
+check "a dropped name is re-applied to the agent in the tab labelled with it" \
+    grep -qx "herdr agent rename w2:p1 swiftbasin" "$STUB_DIR/calls"
+check "and that agent is sent the prompt under its name" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "^herdr agent prompt swiftbasin ping" "$2" && grep -q "re-applied it to pane w2:p1" "$3" && grep -q "sent 1, skipped 0" "$3"' _ "$RC" "$STUB_DIR/calls" "$STUB_DIR/err"
+check "the tab lookup reads each workspace once" test "$(count_calls '^herdr tab list')" -eq 1
+
+reset_stub sendrecoverlabel
+write_list
+write_send_tabs Elsewhere
+run_helper send --name SwiftBasin ping
+check "no tab labelled with the name: agent_not_found, nothing renamed" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "skipped swiftbasin (agent_not_found)" "$2" && ! grep -q "agent rename" "$3"' _ "$RC" "$STUB_DIR/err" "$STUB_DIR/calls"
+
+reset_stub sendrecovertwo
+write_list
+jq '.result.agents += [{"agent":"codex","agent_status":"idle","pane_id":"w2:p2","tab_id":"w2:t2","workspace_id":"w2"}]' \
+    "$STUB_DIR/list.json" >"$STUB_DIR/list.json.new" && mv "$STUB_DIR/list.json.new" "$STUB_DIR/list.json"
+write_send_tabs SwiftBasin SwiftBasin
+run_helper send --name SwiftBasin ping
+check "two unnamed agents in tabs with that name: no guess, agent_not_found" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "not guessing" "$2" && grep -q "skipped swiftbasin (agent_not_found)" "$2" && ! grep -q "agent rename" "$3"' _ "$RC" "$STUB_DIR/err" "$STUB_DIR/calls"
+
+reset_stub sendrecoverfail
+write_list
+write_send_tabs
+touch "$STUB_DIR/rename_fail"
+run_helper send --name SwiftBasin ping
+check "a failed rename is reported, and nothing is sent" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "herdr agent rename failed" "$2" && ! grep -q "agent prompt" "$3"' _ "$RC" "$STUB_DIR/err" "$STUB_DIR/calls"
+
+reset_stub sendrecoverkind
+write_list
+write_send_tabs
+run_helper send --kind codex --name SwiftBasin ping
+check "the fallback keeps send's --kind filter (the unnamed agent is claude)" \
+    bash -c '! grep -q "agent rename" "$1"' _ "$STUB_DIR/calls"
 
 reset_stub sendnotfound
 write_list

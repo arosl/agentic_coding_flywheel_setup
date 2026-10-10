@@ -102,7 +102,10 @@ spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
 send   Prompt every matching agent, and wait until each is seen working, which
        proves the prompt was submitted (with --wait: until its turn ends), for
        at most --timeout ms (default 15000). Exits non-zero when any agent
-       did not take the prompt: a --name no agent has, an agent blocked at an
+       did not take the prompt: a --name no agent has (herdr can drop a
+       running agent's name; send then finds the one unnamed agent whose
+       tab label starts with that name, re-applies the name with herdr
+       agent rename, and prompts it), an agent blocked at an
        approval or question (skipped, never answered), or a prompt that
        stalled because nothing started working. For a stall, send reads the
        agent's screen and says whether a dialog or undimmed typed text is on
@@ -1037,6 +1040,54 @@ herdr_agents_fill_template() {
     printf '%s\n' "$text"
 }
 
+# Fill the caller's tab_labels cache (tab id -> label, as JSON) for
+# workspace $1, once per workspace. A failed lookup caches {}.
+herdr_agents_cache_tab_labels() {
+    [[ -z "${tab_labels[$1]+set}" ]] || return 0
+    if herdr_agents_herdr tab list --workspace "$1" </dev/null; then
+        tab_labels[$1]="$(jq -c '[.result.tabs[]? | {key: .tab_id, value: (.label // "")}] | from_entries' <<<"$HERDR_AGENTS_OUT")"
+    else
+        herdr_agents_note "herdr tab list failed for workspace $1: $HERDR_AGENTS_ERR_MESSAGE"
+        tab_labels[$1]="{}"
+    fi
+}
+
+# herdr can drop an agent's name while it runs (acfs-i7p). Find the one
+# unnamed agent in $2 (a JSON array from herdr_agents_select) whose tab
+# label starts with herdr name $1, ignoring case: spawn labels the tab with
+# the Agent Mail name. Re-apply the name with `herdr agent rename` and set
+# HERDR_AGENTS_RECOVERED to the agent, name set, as JSON; it stays empty
+# when no unnamed agent's tab matches, or more than one does. Runs in the
+# caller's shell, so it fills the caller's tab_labels cache.
+HERDR_AGENTS_RECOVERED=""
+herdr_agents_recover_name() {
+    local want="$1" agents="$2" ws matches count pane
+    local -a candidates=()
+    HERDR_AGENTS_RECOVERED=""
+    while IFS= read -r ws; do
+        [[ -n "$ws" ]] || continue
+        herdr_agents_cache_tab_labels "$ws"
+        candidates+=("$(jq -c --arg w "$ws" --arg n "$want" --argjson labels "${tab_labels[$ws]}" '
+            [.[] | select(.workspace_id == $w and ((.name // "") | . == "" or . == "-"))
+             | select((($labels[.tab_id] // "") | split(" ") | .[0] // "" | ascii_downcase) == $n)]' <<<"$agents")")
+    done < <(jq -r '[.[] | select((.name // "") | . == "" or . == "-") | .workspace_id // empty] | unique[]' <<<"$agents")
+    [[ ${#candidates[@]} -gt 0 ]] || return 0
+    matches="$(jq -cs 'add // []' <<<"${candidates[*]}")"
+    count="$(jq 'length' <<<"$matches")"
+    if (( count > 1 )); then
+        herdr_agents_note "$want: $count unnamed agents sit in tabs labelled with that name; not guessing which one"
+        return 0
+    fi
+    (( count == 1 )) || return 0
+    pane="$(jq -r '.[0].pane_id' <<<"$matches")"
+    if ! herdr_agents_herdr agent rename "$pane" "$want" </dev/null; then
+        herdr_agents_note "$want: found it in pane $pane by its tab label, but herdr agent rename failed: $HERDR_AGENTS_ERR_MESSAGE"
+        return 0
+    fi
+    herdr_agents_note "$want: its herdr name had dropped; re-applied it to pane $pane, the agent in the tab labelled with that name"
+    HERDR_AGENTS_RECOVERED="$(jq -c --arg n "$want" '.[0] | .name = $n' <<<"$matches")"
+}
+
 herdr_agents_send() {
     local workspace="" all=false wait=false timeout="" kinds="[]" names="[]"
     local template="" thread="" thread_set=false
@@ -1096,18 +1147,28 @@ herdr_agents_send() {
     local -A tab_labels=()
 
     local agents count i target name pane missing ws tab session mail_name text
+    local unnamed="" recovered
     local sent=0 skipped=0
     agents="$(herdr_agents_select "$workspace" "$kinds" "$names")"
-    count="$(jq 'length' <<<"$agents")"
-    # A --name herdr does not list is a failure, not a quiet no-op: an
-    # agent's herdr name can drop while it runs.
+    # A --name herdr does not list may be an agent whose herdr name dropped:
+    # it is found again by its tab label and renamed. One it can't find is a
+    # failure, not a quiet no-op.
     missing="$(jq -r --argjson names "$names" \
         '[.[].name // empty] as $have | $names[] | select(. as $n | $have | any(. == $n) | not)' <<<"$agents")"
     while IFS= read -r name; do
         [[ -n "$name" ]] || continue
+        [[ -n "$unnamed" ]] || unnamed="$(herdr_agents_select "$workspace" "$kinds" "[]")"
+        herdr_agents_recover_name "$name" "$unnamed"
+        recovered="$HERDR_AGENTS_RECOVERED"
+        if [[ -n "$recovered" ]]; then
+            agents="$(jq -c --argjson a "$recovered" '. + [$a]' <<<"$agents")"
+            unnamed="$(jq -c --arg p "$(jq -r '.pane_id' <<<"$recovered")" '[.[] | select(.pane_id != $p)]' <<<"$unnamed")"
+            continue
+        fi
         skipped=$((skipped + 1))
-        herdr_agents_note "skipped $name (agent_not_found): herdr lists no such agent${workspace:+ in workspace $workspace}; its herdr name may have dropped (see 'acfs agents list')"
+        herdr_agents_note "skipped $name (agent_not_found): herdr lists no such agent${workspace:+ in workspace $workspace}, and no unnamed agent sits in a tab labelled with that name (see 'acfs agents list')"
     done <<<"$missing"
+    count="$(jq 'length' <<<"$agents")"
     if (( count == 0 && skipped == 0 )); then
         herdr_agents_note "no matching agents"
         return 1
@@ -1138,14 +1199,7 @@ herdr_agents_send() {
             if [[ "$uses_agent" == true || ( "$uses_herdr" == true && -z "$name" ) ]]; then
                 # The Agent Mail name is the tab label's first word: spawn
                 # sets the label to the name, and people append a model.
-                if [[ -z "${tab_labels[$ws]+set}" ]]; then
-                    if herdr_agents_herdr tab list --workspace "$ws"; then
-                        tab_labels[$ws]="$(jq -c '[.result.tabs[]? | {key: .tab_id, value: (.label // "")}] | from_entries' <<<"$HERDR_AGENTS_OUT")"
-                    else
-                        herdr_agents_note "herdr tab list failed for workspace $ws: $HERDR_AGENTS_ERR_MESSAGE"
-                        tab_labels[$ws]="{}"
-                    fi
-                fi
+                herdr_agents_cache_tab_labels "$ws"
                 tab="$(jq -r ".[$i].tab_id // empty" <<<"$agents")"
                 mail_name="$(jq -r --arg t "$tab" '.[$t] // empty' <<<"${tab_labels[$ws]}")"
                 mail_name="${mail_name%% *}"
