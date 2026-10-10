@@ -364,13 +364,13 @@ acfs_generated_install_cli_modern() {
     log_step "Installing cli.modern"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev (root)"
+        log_info "dry-run: install: apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev age (root)"
     else
         if ! run_as_root_shell <<'INSTALL_CLI_MODERN'
-apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev
+apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev age
 INSTALL_CLI_MODERN
         then
-            log_error "cli.modern: install command failed: apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev"
+            log_error "cli.modern: install command failed: apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev age"
             return 1
         fi
     fi
@@ -527,6 +527,17 @@ minisign -v
 INSTALL_CLI_MODERN
         then
             log_error "cli.modern: verify failed: minisign -v"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: age --version (root)"
+    else
+        if ! run_as_root_shell <<'INSTALL_CLI_MODERN'
+age --version
+INSTALL_CLI_MODERN
+        then
+            log_error "cli.modern: verify failed: age --version"
             return 1
         fi
     fi
