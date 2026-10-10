@@ -169,16 +169,22 @@ recycle
 reap   Retire, through retire and all its refusals, each agent of the herdr
        server (every workspace and project, or only --workspace) that has
        been idle or done for --idle minutes (default 15) and has no bead in
-       progress assigned to its Agent Mail name (its tab label). Each
-       agent's project is its cwd: its beads, reservations and identity are
-       looked up there. Idle time is what reap itself saw: herdr reports no
-       timestamps, so an agent counts from the first cycle that saw it
-       between turns, and starts again when its state changes. A refused
-       agent is tried again after another --idle minutes (at least 5).
+       progress assigned to its Agent Mail name (the first word of its tab
+       label; any case). Each agent's project is its cwd: its beads,
+       reservations and identity are looked up there. Idle time is what reap
+       itself saw: herdr reports no timestamps, so an agent counts from the
+       first cycle that saw it between turns, and starts again when its
+       state changes. A refused agent is tried again after another --idle
+       minutes (at least 5). An in-progress bead with no assignee protects
+       nobody, and an agent waiting between turns on its own background
+       work (a CI watch, a subagent) looks idle: claim beads with an
+       assignee, and give such waits less than --idle minutes.
        Never reaped: the focused pane, the pane running reap, a name
        ~/.config/acfs/agents.toml protects ($ACFS_AGENTS_CONFIG), and, in a
        project agents.toml names nothing for, the oldest agent of each
-       workspace (lowest pane id), which is taken to be its coordinator:
+       workspace (the pane whose shell started first), which is taken to be
+       its coordinator; when a pane's start can't be read, every agent of
+       that workspace in such a project is kept:
          [reap]
          protected = ["GreenCastle"]           # in every project
          [reap.projects."/data/projects/app"]
@@ -194,10 +200,13 @@ reap   Retire, through retire and all its refusals, each agent of the herdr
        why it keeps each agent. --loop repeats every --interval seconds
        (default 60); state lives in ~/.acfs/state/reap/. Nothing runs reap
        by default. A systemd user timer runs it unattended; installing one
-       is a host unit change, the operator's call:
+       is a host unit change, the operator's call. The user manager's PATH
+       has none of the user's tool directories, so the unit sets one; the
+       installed acfs must be one that has reap (acfs-update):
          ~/.config/systemd/user/acfs-agents-reap.service
            [Service]
            Type=oneshot
+           Environment=PATH=%h/.local/bin:%h/.bun/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
            ExecStart=%h/.acfs/bin/acfs agents reap
          ~/.config/systemd/user/acfs-agents-reap.timer
            [Timer]
@@ -1854,10 +1863,23 @@ print(json.dumps({
 PY
 }
 
+# When the shell of pane $1 started, in clock ticks since boot (field 22 of
+# /proc/<pid>/stat, counted after the command name, which may hold spaces).
+herdr_agents_pane_started() {
+    local pid
+    herdr_agents_herdr pane process-info --pane "$1" </dev/null || return 1
+    pid="$(jq -r '.result.process_info.shell_pid // empty' <<<"$HERDR_AGENTS_OUT")"
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    awk '{ sub(/^.*\) /, ""); if ($20 ~ /^[0-9]+$/) { print $20; found = 1 } } END { exit !found }' \
+        "${HERDR_AGENTS_PROC_ROOT:-/proc}/$pid/stat" 2>/dev/null
+}
+
 # What reap needs from the herdr server, in workspace $1 ("" = every one):
 # HERDR_AGENTS_REAP_CONFIG (agents.toml), HERDR_AGENTS_REAP_AGENTS (herdr's
-# agents) and HERDR_AGENTS_REAP_OLDEST (each workspace's lowest pane id,
-# named or not; herdr numbers panes in the order it opens them).
+# agents) and HERDR_AGENTS_REAP_OLDEST (each workspace's oldest agent, named
+# or not: the pane whose shell started first; pane ids are not in the order
+# herdr opened them). A workspace where any pane's start can't be read maps
+# to "?", which keeps every agent there that agents.toml doesn't cover.
 HERDR_AGENTS_REAP_CONFIG=""
 HERDR_AGENTS_REAP_AGENTS=""
 HERDR_AGENTS_REAP_OLDEST=""
@@ -1865,11 +1887,18 @@ herdr_agents_reap_load() {
     HERDR_AGENTS_REAP_CONFIG="$(herdr_agents_reap_config)" || return 1
     # select dies on a failed `herdr agent list`; here that only ends its subshell.
     HERDR_AGENTS_REAP_AGENTS="$(herdr_agents_select "$1" "[]" "[]")" || return 1
-    HERDR_AGENTS_REAP_OLDEST="$(jq -c '
-        group_by(.workspace_id)
+    local starts="[]" pane started
+    while IFS= read -r pane; do
+        started="$(herdr_agents_pane_started "$pane")" || started=null
+        starts="$(jq -c --arg p "$pane" --argjson s "$started" '. + [{pane: $p, started: $s}]' <<<"$starts")"
+    done < <(jq -r '.[].pane_id' <<<"$HERDR_AGENTS_REAP_AGENTS")
+    HERDR_AGENTS_REAP_OLDEST="$(jq -c --argjson starts "$starts" '
+        ($starts | map({key: .pane, value: .started}) | from_entries) as $s
+        | group_by(.workspace_id)
         | map({key: .[0].workspace_id,
-               value: (sort_by(.pane_id | sub("^.*:p"; "") | [length, .]) | .[0].pane_id)})
-        | from_entries' <<<"$HERDR_AGENTS_REAP_AGENTS")"
+               value: (if any(.[]; $s[.pane_id] == null) then "?"
+                       else sort_by($s[.pane_id]) | .[0].pane_id end)})
+        | from_entries' <<<"$HERDR_AGENTS_REAP_AGENTS")" || return 1
 }
 
 # Why agent $1 (herdr's JSON for it; Agent Mail name $2) is never reaped, or
@@ -1884,18 +1913,21 @@ herdr_agents_reap_exemption() {
           elif $config.protected | map(ascii_downcase) | index($mail) then "agents.toml protects it"
           elif $named != null then
               (if $named | map(ascii_downcase) | index($mail) then "agents.toml protects it in \($project)" else empty end)
+          elif ($oldest[.workspace_id] // "?") == "?" then
+              "the oldest agent of workspace \(.workspace_id) is unknown (a pane start could not be read), and agents.toml names no protected agent for \($project)"
           elif .pane_id == $oldest[.workspace_id] then
               "it is the oldest agent of workspace \(.workspace_id), and agents.toml names no protected agent for \($project)"
           else empty end' <<<"$1"
 }
 
-# How many beads in progress project $1 has assigned to $2. A project
+# How many beads in progress project $1 has assigned to $2, whatever the
+# case of the assignee (br's --assignee matches it exactly). A project
 # without .beads has none; failing to read them fails.
 herdr_agents_reap_beads() {
     [[ -d "$1/.beads" ]] || { printf '0\n'; return 0; }
     command -v br >/dev/null 2>&1 || return 1
-    (cd "$1" && br list --status in_progress --assignee "$2" --json </dev/null 2>/dev/null) \
-        | jq -e '.issues | length' 2>/dev/null
+    (cd "$1" && br list --status in_progress --limit 0 --json </dev/null 2>/dev/null) \
+        | jq -e --arg a "${2,,}" '.issues | map(select((.assignee // "") | ascii_downcase == $a)) | length' 2>/dev/null
 }
 
 # Retire agent $1 (herdr's JSON for it; Agent Mail name $2) unless an
@@ -1908,7 +1940,11 @@ herdr_agents_reap_one() {
     name="$(jq -r '.name' <<<"$agent")"
     workspace="$(jq -r '.workspace_id' <<<"$agent")"
     cwd="$(jq -r '.cwd // empty' <<<"$agent")"
-    reason="$(herdr_agents_reap_exemption "$agent" "$mail_name")"
+    # Called under `if` and `||`, where set -e is off: a failed check keeps.
+    if ! reason="$(herdr_agents_reap_exemption "$agent" "$mail_name")"; then
+        herdr_agents_note "reap: keeps $mail_name: its exemptions could not be checked"
+        return 1
+    fi
     if [[ -n "$reason" ]]; then
         [[ "$dry_run" == false ]] || herdr_agents_note "reap: keeps $mail_name: $reason"
         return 0
@@ -1924,6 +1960,15 @@ herdr_agents_reap_one() {
     if (( beads > 0 )); then
         [[ "$dry_run" == false ]] || herdr_agents_note "reap: keeps $mail_name: $beads bead(s) in progress are assigned to it in $cwd"
         return 0
+    fi
+    # The agent must still be in the state reap decided on: a turn that
+    # started (or ran and ended) since then keeps it.
+    if ! herdr_agents_herdr agent get "$name" </dev/null \
+        || ! jq -e --argjson was "$agent" '.result.agent
+            | (.agent_status == "idle" or .agent_status == "done")
+              and (.state_change_seq // null) == ($was.state_change_seq // null)' <<<"$HERDR_AGENTS_OUT" >/dev/null 2>&1; then
+        herdr_agents_note "reap: keeps $mail_name: its state changed, or herdr could not show it"
+        return 1
     fi
     herdr_agents_note "$(date -u +%Y-%m-%dT%H:%M:%SZ) reap: retiring $mail_name ($name, workspace $workspace, $cwd): $why"
     retire_args=("$mail_name" --workspace "$workspace" --cwd "$cwd")
@@ -1970,7 +2015,7 @@ herdr_agents_reap_done_one() {
 # turns at that seq, and when retiring it last failed.
 herdr_agents_reap_sweep() {
     local workspace="$1" idle_min="$2" dry_run="$3" file="$4"
-    local now state agent key name tab mail_name failed=0
+    local now state agent key name tab label mail_name failed=0
     local idle_s=$(( $2 * 60 )) retry_s
     retry_s=$(( idle_s > 300 ? idle_s : 300 ))
     (( idle_min > 0 )) || retry_s=0
@@ -1979,13 +2024,16 @@ herdr_agents_reap_sweep() {
     state="$(jq -c 'if type == "object" then . else empty end' "$file" 2>/dev/null || true)"
     [[ -n "$state" ]] || state="{}"
     # Only agents between turns are tracked; any other state starts over.
-    state="$(jq -c --argjson prev "$state" --argjson now "$now" '
+    # A --workspace sweep keeps the other workspaces' entries.
+    state="$(jq -c --argjson prev "$state" --argjson now "$now" --arg ws "$workspace" '
+        ($prev | with_entries(select($ws != "" and .value.workspace != $ws))) + (
         map(select(.name != null and (.agent_status == "idle" or .agent_status == "done"))
             | (.pane_id + " " + .name) as $key
             | (.state_change_seq // null) as $seq
             | ($prev[$key] // {}) as $p
-            | {key: $key, value: (if $p.since != null and $p.seq == $seq then $p else {seq: $seq, since: $now} end)})
-        | from_entries' <<<"$HERDR_AGENTS_REAP_AGENTS")"
+            | {key: $key, value: (if $p.since != null and $p.seq == $seq then $p
+                                  else {seq: $seq, since: $now, workspace: .workspace_id} end)})
+        | from_entries)' <<<"$HERDR_AGENTS_REAP_AGENTS")"
 
     local -A labels=()
     local ws
@@ -1995,10 +2043,11 @@ herdr_agents_reap_sweep() {
         jq -e --arg k "$key" --argjson now "$now" --argjson idle "$idle_s" --argjson retry "$retry_s" '
             .[$k] as $e | $e != null and $now - $e.since >= $idle
             and ($e.failed == null or $now - $e.failed >= $retry)' <<<"$state" >/dev/null || continue
-        # The Agent Mail name is the tab label, which spawn sets.
+        # The Agent Mail name is the tab label's first word: spawn sets the
+        # label to the name, and people append a model after it.
         ws="$(jq -r '.workspace_id' <<<"$agent")"
         if [[ -z "${labels[$ws]+set}" ]]; then
-            if herdr_agents_herdr tab list --workspace "$ws"; then
+            if herdr_agents_herdr tab list --workspace "$ws" </dev/null; then
                 labels[$ws]="$(jq -c '[.result.tabs[]? | {key: .tab_id, value: (.label // "")}] | from_entries' <<<"$HERDR_AGENTS_OUT")"
             else
                 herdr_agents_note "reap: herdr tab list failed for workspace $ws: $HERDR_AGENTS_ERR_MESSAGE"
@@ -2006,15 +2055,18 @@ herdr_agents_reap_sweep() {
             fi
         fi
         tab="$(jq -r '.tab_id' <<<"$agent")"
-        mail_name="$(jq -r --arg t "$tab" '.[$t] // empty' <<<"${labels[$ws]}")"
+        label="$(jq -r --arg t "$tab" '.[$t] // empty' <<<"${labels[$ws]}")"
+        mail_name="${label%% *}"
         if [[ "${mail_name,,}" != "$name" ]]; then
-            [[ "$dry_run" == false ]] || herdr_agents_note "reap: keeps $name: its tab label '${mail_name}' is not its Agent Mail name"
+            [[ "$dry_run" == false ]] || herdr_agents_note "reap: keeps $name: its tab label '${label}' does not start with its Agent Mail name"
             continue
         fi
         if ! herdr_agents_reap_one "$agent" "$mail_name" \
             "between turns for $(( (now - $(jq -r --arg k "$key" '.[$k].since' <<<"$state")) / 60 )) min, with no bead in progress" "$dry_run"; then
             failed=$((failed + 1))
-            state="$(jq -c --arg k "$key" --argjson now "$now" '.[$k].failed = $now' <<<"$state")"
+            # A dry run tried nothing, so it delays no real retirement.
+            [[ "$dry_run" == true ]] \
+                || state="$(jq -c --arg k "$key" --argjson now "$now" '.[$k].failed = $now' <<<"$state")"
         fi
     done < <(jq -c '.[] | select(.name != null)' <<<"$HERDR_AGENTS_REAP_AGENTS")
     herdr_agents_wake_save "$file" "$state"

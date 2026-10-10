@@ -55,7 +55,11 @@ case "$1 $2" in
     "pane process-info")
         # shell_starting_<pane> holds how many more polls see a startup
         # command in the foreground; shell_stuck makes every poll see one.
+        # shell_pid_<pane> holds its shell's pid (default 100);
+        # process_info_fail_<pane> makes herdr fail for that pane.
+        [[ ! -e "$STUB_DIR/process_info_fail_$4" ]] || fail_with pane_not_found "pane $4 not found"
         starting="$STUB_DIR/shell_starting_$4"
+        pid="$(cat "$STUB_DIR/shell_pid_$4" 2>/dev/null || echo 100)"
         busy=false
         if [[ -e "$STUB_DIR/shell_stuck" ]]; then
             busy=true
@@ -64,9 +68,9 @@ case "$1 $2" in
             busy=true
         fi
         if [[ "$busy" == true ]]; then
-            printf '{"id":"cli:pane:process_info","result":{"process_info":{"foreground_process_group_id":200,"foreground_processes":[{"name":"compinit","pid":200}],"pane_id":"%s","shell_pid":100}}}\n' "$4"
+            printf '{"id":"cli:pane:process_info","result":{"process_info":{"foreground_process_group_id":200,"foreground_processes":[{"name":"compinit","pid":200}],"pane_id":"%s","shell_pid":%s}}}\n' "$4" "$pid"
         else
-            printf '{"id":"cli:pane:process_info","result":{"process_info":{"foreground_process_group_id":100,"foreground_processes":[],"pane_id":"%s","shell_pid":100}}}\n' "$4"
+            printf '{"id":"cli:pane:process_info","result":{"process_info":{"foreground_process_group_id":%s,"foreground_processes":[],"pane_id":"%s","shell_pid":%s}}}\n' "$pid" "$4" "$pid"
         fi
         ;;
     "agent start")
@@ -118,10 +122,13 @@ case "$1 $2" in
         printf '{"id":"cli:notification:show","result":{"type":"ok"}}\n'
         ;;
     "agent get")
-        # The agent from list.json, with the session session_<name> holds.
-        jq -c --arg n "$3" --arg s "$(cat "$STUB_DIR/session_$3" 2>/dev/null)" '
+        # The agent from list.json, with the session session_<name> holds and
+        # the fields get_<name>.json overrides.
+        jq -c --arg n "$3" --arg s "$(cat "$STUB_DIR/session_$3" 2>/dev/null)" \
+            --argjson over "$(cat "$STUB_DIR/get_$3.json" 2>/dev/null || echo '{}')" '
             first(.result.agents[] | select(.name == $n))
             | if $s != "" then .agent_session = {value: $s} else . end
+            | . + $over
             | {id: "cli:agent:get", result: {agent: ., type: "agent"}}' "$STUB_DIR/list.json"
         ;;
     "tab list") cat "$STUB_DIR/tabs.json" ;;
@@ -247,8 +254,8 @@ else
     printf 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{}"}],"isError":false}}\n'
 fi
 STUB
-# The stub br answers `br list --status in_progress --assignee NAME --json`
-# with br_<NAME>.json (default: no issues); br_fail makes it fail. The stub
+# The stub br answers `br list --status in_progress ... --json` with
+# br_in_progress.json (default: no issues); br_fail makes it fail. The stub
 # bv answers `bv --robot-next` with bv_next.json (default: nothing
 # actionable); bv_fail makes it fail. Both log the directory they ran in.
 cat >"$WORK/bin/br" <<'STUB'
@@ -256,12 +263,7 @@ cat >"$WORK/bin/br" <<'STUB'
 set -euo pipefail
 printf 'br %s (in %s)\n' "$*" "$PWD" >>"$STUB_DIR/calls"
 [[ ! -e "$STUB_DIR/br_fail" ]] || { echo "stub: database locked" >&2; exit 1; }
-args=("$@")
-assignee=""
-for ((i = 0; i < ${#args[@]}; i++)); do
-    [[ "${args[i]}" != --assignee ]] || assignee="${args[i + 1]}"
-done
-cat "$STUB_DIR/br_$assignee.json" 2>/dev/null || printf '{"issues":[]}\n'
+cat "$STUB_DIR/br_in_progress.json" 2>/dev/null || printf '{"issues":[]}\n'
 STUB
 cat >"$WORK/bin/bv" <<'STUB'
 #!/usr/bin/env bash
@@ -1522,10 +1524,12 @@ check "--lines takes only whole numbers above zero" \
 
 echo "reap"
 # Two projects, $REPO (workspace w9) and $REPO2 (w2), each in a git repo.
-# w9: BossYak idle in the lowest pane (p1), AlphaFox idle, BetaOwl done,
-# GammaYak working, DeltaElk idle in the focused pane, and kappa idle in a
-# tab whose label is not its Agent Mail name. w2: OtherElk idle in its
-# lowest pane (p3), OtherFox idle. Every tab holds one pane.
+# w9: BossYak idle in the pane whose shell started first (p11: pane ids are
+# not in start order, as on a real server, where p0 and p11 follow pZ),
+# AlphaFox idle (p0), BetaOwl done, GammaYak working, DeltaElk idle in the
+# focused pane, and kappa idle in a tab whose label is not its Agent Mail
+# name. w2: OtherElk idle in its oldest pane (pZ), OtherFox idle, in a tab
+# labelled with its name and a model. Every tab holds one pane.
 REAP_STATE="$WORK/acfs-home/state/reap/idle.json"
 reap_case() {
     reset_stub "$1"
@@ -1538,19 +1542,36 @@ reap_case() {
     export ACFS_AGENTS_CONFIG="$STUB_DIR/agents.toml"
     cat >"$STUB_DIR/list.json" <<EOF
 {"id":"cli:agent:list","result":{"agents":[
- {"agent":"claude","agent_status":"idle","name":"bossyak","pane_id":"w9:p1","tab_id":"w9:t1","workspace_id":"w9","cwd":"$REPO","focused":false,"state_change_seq":10},
- {"agent":"claude","agent_session":{"value":"old-a"},"agent_status":"idle","name":"alphafox","pane_id":"w9:p2","tab_id":"w9:t2","workspace_id":"w9","cwd":"$REPO","focused":false,"state_change_seq":11},
+ {"agent":"claude","agent_status":"idle","name":"bossyak","pane_id":"w9:p11","tab_id":"w9:t1","workspace_id":"w9","cwd":"$REPO","focused":false,"state_change_seq":10},
+ {"agent":"claude","agent_session":{"value":"old-a"},"agent_status":"idle","name":"alphafox","pane_id":"w9:p0","tab_id":"w9:t2","workspace_id":"w9","cwd":"$REPO","focused":false,"state_change_seq":11},
  {"agent":"codex","agent_session":null,"agent_status":"done","name":"betaowl","pane_id":"w9:p3","tab_id":"w9:t3","workspace_id":"w9","cwd":"$REPO","focused":false,"state_change_seq":12},
  {"agent":"claude","agent_status":"working","name":"gammayak","pane_id":"w9:p4","tab_id":"w9:t4","workspace_id":"w9","cwd":"$REPO","focused":false,"state_change_seq":13},
  {"agent":"claude","agent_status":"idle","name":"deltaelk","pane_id":"w9:pA","tab_id":"w9:tA","workspace_id":"w9","cwd":"$REPO","focused":true,"state_change_seq":14},
  {"agent":"claude","agent_status":"idle","name":"kappa","pane_id":"w9:pB","tab_id":"w9:tB","workspace_id":"w9","cwd":"$REPO","focused":false,"state_change_seq":15},
- {"agent":"claude","agent_status":"idle","name":"otherelk","pane_id":"w2:p3","tab_id":"w2:t3","workspace_id":"w2","cwd":"$REPO2","focused":false,"state_change_seq":16},
+ {"agent":"claude","agent_status":"idle","name":"otherelk","pane_id":"w2:pZ","tab_id":"w2:t3","workspace_id":"w2","cwd":"$REPO2","focused":false,"state_change_seq":16},
  {"agent":"claude","agent_status":"idle","name":"otherfox","pane_id":"w2:p7","tab_id":"w2:t7","workspace_id":"w2","cwd":"$REPO2","focused":false,"state_change_seq":17}
 ]}}
 EOF
     printf '{"result":{"tabs":[%s]}}\n' "$(printf '{"label":"%s","pane_count":1,"tab_id":"%s"},' \
-        BossYak w9:t1 AlphaFox w9:t2 BetaOwl w9:t3 GammaYak w9:t4 DeltaElk w9:tA Something w9:tB OtherElk w2:t3 OtherFox w2:t7 | sed 's/,$//')" \
+        BossYak w9:t1 AlphaFox w9:t2 BetaOwl w9:t3 GammaYak w9:t4 DeltaElk w9:tA Something w9:tB OtherElk w2:t3 'OtherFox Opus 5.5' w2:t7 | sed 's/,$//')" \
         >"$STUB_DIR/tabs.json"
+    # Each pane's shell (pid) and when it started (clock ticks since boot).
+    local pane pid ticks
+    while read -r pane pid ticks; do
+        printf '%s\n' "$pid" >"$STUB_DIR/shell_pid_$pane"
+        mkdir -p "$STUB_DIR/proc/$pid"
+        printf '%s (zsh -l) S 1 %s 0 0 -1 4194560 1 0 0 0 0 0 0 0 20 0 1 0 %s 1000 100\n' "$pid" "$pid" "$ticks" \
+            >"$STUB_DIR/proc/$pid/stat"
+    done <<'PANES'
+w9:p11 1001 100
+w9:p0 1002 500
+w9:p3 1003 600
+w9:p4 1004 700
+w9:pA 1005 800
+w9:pB 1006 900
+w2:pZ 1007 50
+w2:p7 1008 60
+PANES
 }
 # The tabs reap closed, in order, joined by spaces.
 closed() { sed -n 's/^herdr tab close //p' "$STUB_DIR/calls" | tr '\n' ' ' | sed 's/ $//'; }
@@ -1573,7 +1594,7 @@ check "each retirement is one line on stderr, with the time in UTC and why" \
 reap_case rpidle
 run_helper reap
 check "with the default --idle 15, an agent first seen idle now is not reaped" \
-    bash -c '[[ "$1" -eq 0 && -z "$2" ]] && jq -e "has(\"w9:p2 alphafox\") and (has(\"w9:p4 gammayak\") | not)" "$3" >/dev/null' \
+    bash -c '[[ "$1" -eq 0 && -z "$2" ]] && jq -e "has(\"w9:p0 alphafox\") and (has(\"w9:p4 gammayak\") | not)" "$3" >/dev/null' \
     _ "$RC" "$(closed)" "$REAP_STATE"
 age_state
 sed -i 's/"state_change_seq":11/"state_change_seq":21/' "$STUB_DIR/list.json"
@@ -1583,12 +1604,14 @@ check "once 15 min have passed it is, but an agent whose state changed since sta
 
 reap_case rpbead
 mkdir -p "$REPO/.beads"
-printf '{"issues":[{"id":"acfs-1","status":"in_progress","assignee":"AlphaFox"}]}\n' >"$STUB_DIR/br_AlphaFox.json"
+printf '{"issues":[{"id":"acfs-1","status":"in_progress","assignee":"alphafox"},{"id":"acfs-2","status":"in_progress","assignee":null}]}\n' \
+    >"$STUB_DIR/br_in_progress.json"
 run_helper reap --idle 0 --dry-run
-check "an agent with a bead in progress assigned to it is kept, and --dry-run says why" \
+check "an agent with a bead in progress assigned to it, in any case, is kept, and --dry-run says why" \
     bash -c '[[ "$1" -eq 0 ]] && grep -q "reap: keeps AlphaFox: 1 bead(s) in progress are assigned to it in $3" <<<"$2"' _ "$RC" "$ERR" "$REPO"
-check "the beads are read in the agent's project" \
-    grep -q "^br list --status in_progress --assignee AlphaFox --json (in $REPO)$" "$STUB_DIR/calls"
+check "an unassigned bead in progress keeps nobody" grep -q "would close tab w9:t3" <<<"$ERR"
+check "the beads are read in the agent's project, all of them" \
+    grep -q "^br list --status in_progress --limit 0 --json (in $REPO)$" "$STUB_DIR/calls"
 touch "$STUB_DIR/br_fail"
 run_helper reap --idle 0
 check "beads that cannot be read keep the agents of that project, and fail the cycle" \
@@ -1600,7 +1623,7 @@ check "--dry-run closes nothing and says what retire would do" \
     bash -c '[[ "$1" -eq 0 && -z "$2" ]] && grep -q "would close tab w9:t2" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
 check "--dry-run says why it keeps the oldest, the focused and the mislabelled agent" \
     bash -c 'grep -q "keeps BossYak: it is the oldest agent of workspace w9, and agents.toml names no protected agent for" <<<"$1" \
-        && grep -q "keeps DeltaElk: it is the focused pane" <<<"$1" && grep -q "keeps kappa: its tab label .Something. is not its Agent Mail name" <<<"$1"' _ "$ERR"
+        && grep -q "keeps DeltaElk: it is the focused pane" <<<"$1" && grep -q "keeps kappa: its tab label .Something. does not start with its Agent Mail name" <<<"$1"' _ "$ERR"
 
 reap_case rpprotect
 printf '[reap]\nprotected = ["alphafox"]\n' >"$ACFS_AGENTS_CONFIG"
@@ -1637,9 +1660,42 @@ check "the caller's registration token is never used for a reaped agent's identi
 
 reap_case rpself
 RC=0
-PATH="$WORK/bin:$PATH" HOME="$WORK/home" ACFS_HOME="$WORK/acfs-home" HERDR_PANE_ID=w9:p2 \
-    bash "$HELPER" reap --idle 0 --dry-run >/dev/null 2>"$STUB_DIR/err" || RC=$?
+PATH="$WORK/bin:$PATH" HOME="$WORK/home" ACFS_HOME="$WORK/acfs-home" HERDR_AGENTS_PROC_ROOT="$STUB_DIR/proc" \
+    HERDR_PANE_ID=w9:p0 bash "$HELPER" reap --idle 0 --dry-run >/dev/null 2>"$STUB_DIR/err" || RC=$?
 check "the pane running reap is kept" grep -q "keeps AlphaFox: it runs in this pane" "$STUB_DIR/err"
+
+reap_case rpunknownage
+touch "$STUB_DIR/process_info_fail_w9:p3"
+run_helper reap --idle 0
+check "when one pane's start can't be read, its workspace keeps every agent agents.toml doesn't cover" \
+    bash -c '[[ "$1" -eq 0 && "$2" == w2:t7 ]]' _ "$RC" "$(closed)"
+printf '[reap.projects."%s"]\nprotected = ["BossYak"]\n' "$REPO" >"$ACFS_AGENTS_CONFIG"
+: >"$STUB_DIR/calls"
+run_helper reap --idle 0
+check "a project agents.toml covers does not need the oldest agent" \
+    test "$RC/$(closed)" = "0/w9:t2 w9:t3 w2:t7"
+
+reap_case rpraced
+printf '{"state_change_seq":99,"agent_status":"idle"}\n' >"$STUB_DIR/get_alphafox.json"
+run_helper reap --idle 0
+check "an agent whose state changed since the sweep looked is kept, and the cycle fails" \
+    bash -c '[[ "$1" -ne 0 && "$2" == "w9:t3 w2:t7" ]] && grep -q "keeps AlphaFox: its state changed" <<<"$3"' _ "$RC" "$(closed)" "$ERR"
+
+reap_case rpdrymark
+printf '{"all_active":[{"agent":"AlphaFox","path":"a.txt"}]}\n' >"$STUB_DIR/reservations.json"
+run_helper reap --idle 0 --dry-run
+run_helper reap --idle 1
+age_state
+run_helper reap --idle 1
+check "a refusal in a dry run does not delay the real retirement's try" \
+    bash -c '[[ "$(grep -c "^am agents show AlphaFox" "$1")" -eq 2 ]] && jq -e "has(\"w9:p0 alphafox\") and .[\"w9:p0 alphafox\"].failed != null" "$2" >/dev/null' \
+    _ "$STUB_DIR/calls" "$REAP_STATE"
+
+reap_case rpscope
+run_helper reap --idle 60
+run_helper reap --idle 60 --workspace w9
+check "a --workspace sweep keeps the other workspaces' idle timers" \
+    jq -e 'has("w2:p7 otherfox") and has("w9:p0 alphafox")' "$REAP_STATE"
 
 reap_case rplock
 exec {reap_lock_fd}>"$WORK/acfs-home/state/reap/reap.lock"
