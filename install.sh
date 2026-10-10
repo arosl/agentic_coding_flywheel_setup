@@ -8178,7 +8178,7 @@ install_cli_tools() {
         used_generated_network=true
     fi
 
-    # tools phase 5: lazygit, and tools.docker when selected — bug #146 audit follow-up
+    # tools phase 5: lazygit, tools.incus, and tools.docker when selected — bug #146 audit follow-up
     if acfs_use_generated_category "tools"; then
         log_detail "Using generated installers for tools (phase 5)"
         acfs_run_generated_category_phase "tools" "5" || cli_phase_rc=1
@@ -8338,6 +8338,30 @@ install_cli_tools() {
     else
         log_warn "Docker installation failed (optional)"
         record_skipped_tool "tools.docker" "pacman install failed"
+    fi
+
+    # Incus (tools.incus) is the default container runtime. Ubuntu's package
+    # sets up its groups, root's subordinate ids and incus.socket itself;
+    # Arch's sets up only the groups.
+    if ! should_run_module "tools.incus"; then
+        log_detail "Skipping Incus (tools.incus is not selected)"
+    elif [[ "$ACFS_DISTRO_FAMILY" != "arch" ]]; then
+        acfs_legacy_run_manifest_module "tools.incus" || log_warn "Incus installation failed (see summary)"
+    elif acfs_arch_pkg_install incus; then
+        # Unprivileged containers map root's subordinate ids; Debian's postinst
+        # adds this range, pacman doesn't.
+        if ! grep -q '^root:' /etc/subuid 2>/dev/null || ! grep -q '^root:' /etc/subgid 2>/dev/null; then
+            try_step "Adding subordinate ids for root (Incus)" $SUDO usermod --add-subuids 1000000-1000999999 --add-subgids 1000000-1000999999 root || log_warn "Could not add root's subordinate ids; unprivileged Incus containers won't start"
+        fi
+        if command_exists systemctl && [[ -d /run/systemd/system ]]; then
+            try_step "Enabling Incus socket" $SUDO systemctl enable --now incus.socket || log_warn "Incus installed but its socket could not be started (optional)"
+        fi
+        if getent group incus-admin &>/dev/null; then
+            try_step "Adding $TARGET_USER to incus-admin group" $SUDO usermod -aG incus-admin "$TARGET_USER" || true
+        fi
+    else
+        log_warn "Incus installation failed (optional)"
+        record_skipped_tool "tools.incus" "pacman install failed"
     fi
 
     # Robust lazygit install (apt or binary fallback)

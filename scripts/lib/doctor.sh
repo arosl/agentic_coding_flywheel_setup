@@ -3352,6 +3352,36 @@ check_service_binary_drift() {
     return 0
 }
 
+# Incus (tools.incus, on by default). Without /dev/kvm Incus still runs
+# containers, so a host without KVM passes as "containers only".
+check_incus() {
+    local incus_bin="" version="" kvm="${ACFS_DOCTOR_KVM_DEVICE:-/dev/kvm}" user="" user_groups=""
+
+    incus_bin="$(doctor_binary_path incus 2>/dev/null || true)"
+    if [[ -z "$incus_bin" ]]; then
+        check "tools.incus" "Incus" "skip" "not installed (optional)"
+        return 0
+    fi
+
+    version="$(get_version_line "$incus_bin")"
+    if [[ -e "$kvm" ]]; then
+        check "tools.incus" "Incus ($version)" "pass" "containers and VMs"
+    else
+        check "tools.incus" "Incus ($version)" "pass" "containers only (no /dev/kvm, so no VMs)"
+    fi
+
+    # The group database, not this process's groups: a login that predates
+    # the install still counts as a member. Root needs no group.
+    user="${USER:-$(id -un 2>/dev/null || true)}"
+    [[ "$user" == root ]] && return 0
+    user_groups=" $(id -nG "$user" 2>/dev/null || true) "
+    if [[ "$user_groups" != *" incus-admin "* ]]; then
+        check "tools.incus.group" "Incus access" "warn" \
+            "$user is not in incus-admin, so incus needs sudo" \
+            "sudo usermod -aG incus-admin $user, then log in again"
+    fi
+}
+
 # ============================================================
 # Utility Tools Health Checks (bd-2gog)
 # ============================================================
@@ -3501,6 +3531,8 @@ _is_bespoke_covered() {
         network.tailscale|network.tailscale.*|network.ssh_keepalive|network.ssh_keepalive.*) return 0 ;;
         # check_stack  (individual stack entries)
         tools.herdr|stack.slb|stack.mcp_agent_mail|stack.mcp_agent_mail.*) return 0 ;;
+        # check_incus
+        tools.incus|tools.incus.*) return 0 ;;
         stack.ultimate_bug_scanner|stack.ultimate_bug_scanner.*|stack.beads_viewer) return 0 ;;
         stack.beads_rust|stack.beads_rust.*|stack.cass|stack.cm|stack.cm.*|stack.caam) return 0 ;;
         stack.dcg|stack.dcg.*|stack.ru|stack.meta_skill|stack.meta_skill.*) return 0 ;;
@@ -6044,6 +6076,7 @@ $(gum style --foreground "$ACFS_MUTED" "OS:") $(gum style --foreground "$ACFS_TE
     check_stack
     check_service_binary_drift
     check_utilities
+    check_incus
     check_updates_health
     check_manifest_supplemental
     show_skipped_tools

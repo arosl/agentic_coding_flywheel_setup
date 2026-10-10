@@ -350,7 +350,7 @@ acfs_security_init() {
 }
 
 # Category: tools
-# Generated modules: 17
+# Generated modules: 18
 
 # Lazygit (apt or binary fallback)
 acfs_generated_install_tools_lazygit() {
@@ -540,6 +540,101 @@ INSTALL_TOOLS_DOCKER
     fi
 
     log_success "tools.docker installed"
+}
+
+# Incus containers and VMs, the default container runtime
+acfs_generated_install_tools_incus() {
+    local module_id="tools.incus"
+    acfs_require_contract "module:${module_id}" || return 1
+    acfs_generated_ensure_selection || return 1
+    if ! should_run_module "${module_id}"; then
+        log_info "Skipping tools.incus (not selected)"
+        return 0
+    fi
+    log_step "Installing tools.incus"
+
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: install: install Incus from Ubuntu's archive (root)"
+    else
+        if ! run_as_root_shell <<'INSTALL_TOOLS_INCUS'
+# acfs-summary: install Incus from Ubuntu's archive
+# The package creates the incus and incus-admin groups, gives root a
+# subordinate id range and enables incus.socket.
+apt-get -o DPkg::Lock::Timeout=120 install -y incus
+INSTALL_TOOLS_INCUS
+        then
+            log_warn "tools.incus: install command failed: install Incus from Ubuntu's archive"
+            # Optional-module failures are warnings on a default install, but a
+            # module the user explicitly named with --only had exactly one job:
+            # propagate the failure instead of reporting phase success (#373).
+            if declare -f acfs_module_explicitly_selected >/dev/null 2>&1 \
+                && acfs_module_explicitly_selected "tools.incus"; then
+              log_error "tools.incus: explicitly requested via --only; treating optional-module failure as fatal"
+              return 1
+            fi
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "tools.incus" "install command failed: install Incus from Ubuntu's archive"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "tools.incus"
+            fi
+            return 0
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: install: add the target user to the incus-admin group (root)"
+    else
+        if ! run_as_root_shell <<'INSTALL_TOOLS_INCUS'
+# acfs-summary: add the target user to the incus-admin group
+if getent group incus-admin >/dev/null 2>&1; then
+  usermod -aG incus-admin "${TARGET_USER:-ubuntu}"
+fi
+INSTALL_TOOLS_INCUS
+        then
+            log_warn "tools.incus: install command failed: add the target user to the incus-admin group"
+            # Optional-module failures are warnings on a default install, but a
+            # module the user explicitly named with --only had exactly one job:
+            # propagate the failure instead of reporting phase success (#373).
+            if declare -f acfs_module_explicitly_selected >/dev/null 2>&1 \
+                && acfs_module_explicitly_selected "tools.incus"; then
+              log_error "tools.incus: explicitly requested via --only; treating optional-module failure as fatal"
+              return 1
+            fi
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "tools.incus" "install command failed: add the target user to the incus-admin group"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "tools.incus"
+            fi
+            return 0
+        fi
+    fi
+
+    # Verify
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: incus --version (root)"
+    else
+        if ! run_as_root_shell <<'INSTALL_TOOLS_INCUS'
+incus --version
+INSTALL_TOOLS_INCUS
+        then
+            log_warn "tools.incus: verify failed: incus --version"
+            # Optional-module failures are warnings on a default install, but a
+            # module the user explicitly named with --only had exactly one job:
+            # propagate the failure instead of reporting phase success (#373).
+            if declare -f acfs_module_explicitly_selected >/dev/null 2>&1 \
+                && acfs_module_explicitly_selected "tools.incus"; then
+              log_error "tools.incus: explicitly requested via --only; treating optional-module failure as fatal"
+              return 1
+            fi
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "tools.incus" "verify failed: incus --version"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "tools.incus"
+            fi
+            return 0
+        fi
+    fi
+
+    log_success "tools.incus installed"
 }
 
 # Atuin CLI with guarded agent-safe shim

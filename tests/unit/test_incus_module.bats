@@ -1,0 +1,207 @@
+#!/usr/bin/env bats
+#
+# tools.incus is the fork's default container runtime. These tests resolve the
+# real selection from the generated manifest index, run the shipped Incus
+# block extracted from install.sh's legacy (Arch-family) CLI phase with
+# package installs, systemctl and usermod stubbed out, and run the doctor's
+# Incus check against a fake incus and /dev/kvm.
+
+setup() {
+    PROJECT_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
+    CALLS="$BATS_TEST_TMPDIR/incus_calls"
+}
+
+# Resolves the selection with the given --only modules (none: a default
+# install), with dependencies, and prints the modules that would run.
+resolve_selection() {
+    run bash -c '
+        set -uo pipefail
+        root="$1"; shift
+        log_detail() { :; }
+        log_warn() { :; }
+        log_info() { :; }
+        log_error() { printf "%s\n" "$*" >&2; }
+        source "$root/scripts/generated/manifest_index.sh"
+        ACFS_MANIFEST_INDEX_LOADED=true
+        source "$root/scripts/lib/install_helpers.sh"
+        ONLY_MODULES=()
+        SKIP_MODULES=()
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --skip) SKIP_MODULES+=("$2"); shift 2 ;;
+                *) ONLY_MODULES+=("$1"); shift ;;
+            esac
+        done
+        ONLY_PHASES=()
+        NO_DEPS=false
+        acfs_resolve_selection >/dev/null || { echo "selection failed"; exit 3; }
+        for m in "${ACFS_MODULES_IN_ORDER[@]}"; do
+            should_run_module "$m" && printf "run %s\n" "$m"
+        done
+        exit 0
+    ' _ "$PROJECT_ROOT" "$@"
+}
+
+# Runs the Incus block from install.sh on the given distro family. With
+# "skip" as the second argument, tools.incus is skipped; otherwise the
+# selection is a default install. ROOT_SUBUID=yes makes root already own a
+# subordinate id range.
+run_incus_block() {
+    local family="$1" skip="${2:-}"
+    run bash -c '
+        set -uo pipefail
+        root="$1"; calls="$2"; family="$3"; skip="$4"
+        log_detail() { :; }
+        log_warn() { :; }
+        log_info() { :; }
+        log_error() { :; }
+        source "$root/scripts/generated/manifest_index.sh"
+        ACFS_MANIFEST_INDEX_LOADED=true
+        source "$root/scripts/lib/install_helpers.sh"
+        ONLY_MODULES=()
+        ONLY_PHASES=()
+        SKIP_MODULES=()
+        [[ "$skip" == skip ]] && SKIP_MODULES=(tools.incus)
+        NO_DEPS=false
+        acfs_resolve_selection >/dev/null 2>&1 || { echo "selection failed"; exit 3; }
+
+        ACFS_DISTRO_FAMILY="$family"
+        TARGET_USER=alice
+        SUDO=""
+        try_step() { shift; "$@"; }
+        command_exists() { [[ "$1" == systemctl ]]; }
+        getent() { [[ "$1 $2" == "group incus-admin" ]]; }
+        grep() {
+            if [[ "$*" == "-q ^root: /etc/subuid" || "$*" == "-q ^root: /etc/subgid" ]]; then
+                # Called with 2>/dev/null, which is not part of "$*".
+                [[ "${ROOT_SUBUID:-no}" == yes ]]
+                return
+            fi
+            command grep "$@"
+        }
+        acfs_arch_pkg_install() { printf "pacman %s\n" "$*" >> "$calls"; }
+        systemctl() { printf "systemctl %s\n" "$*" >> "$calls"; }
+        usermod() { printf "usermod %s\n" "$*" >> "$calls"; }
+        acfs_legacy_run_manifest_module() { printf "manifest %s\n" "$1" >> "$calls"; }
+        record_skipped_tool() { printf "skipped %s\n" "$1" >> "$calls"; }
+
+        eval "incus_block() {
+$(sed -n "/^    # Incus (tools.incus) is the default/,/^    fi$/p" "$root/install.sh")
+}"
+        # The block only enables the socket when systemd is running.
+        if [[ -d /run/systemd/system ]]; then systemd=yes; else systemd=no; fi
+        incus_block
+        echo "systemd=$systemd"
+    ' _ "$PROJECT_ROOT" "$CALLS" "$family" "$skip"
+}
+
+# Runs doctor.sh's check_incus with a fake incus (or none) and a fake KVM
+# device path, and prints each check() call.
+run_check_incus() {
+    local have_incus="$1" kvm="$2" groups="$3"
+    local bin="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$bin"
+    if [[ "$have_incus" == yes ]]; then
+        printf '#!/bin/sh\necho 6.0.5\n' > "$bin/incus"
+        chmod 0755 "$bin/incus"
+    fi
+    run bash -c '
+        set -uo pipefail
+        root="$1"; bin="$2"; kvm="$3"; groups="$4"
+        eval "$(sed -n "/^check_incus() {/,/^}/p" "$root/scripts/lib/doctor.sh")"
+        check() { printf "check %s|%s|%s|%s|%s\n" "$1" "$2" "$3" "${4:-}" "${5:-}"; }
+        doctor_binary_path() { [[ -x "$bin/$1" ]] && printf "%s\n" "$bin/$1"; }
+        get_version_line() { "$1" --version; }
+        id() { printf "%s\n" "$groups"; }
+        ACFS_DOCTOR_KVM_DEVICE="$kvm"
+        check_incus
+    ' _ "$PROJECT_ROOT" "$bin" "$kvm" "$groups"
+}
+
+@test "a default install selects tools.incus" {
+    resolve_selection
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"run tools.incus"* ]]
+    [[ "$output" != *"run tools.docker"* ]]
+}
+
+@test "tools.incus can be skipped" {
+    resolve_selection --skip tools.incus
+    [[ "$status" -eq 0 ]]
+    [[ "$output" != *"run tools.incus"* ]]
+}
+
+@test "a default Arch install installs Incus, enables its socket and adds the group" {
+    run_incus_block arch
+    [[ "$status" -eq 0 ]]
+    local systemd="${output##*systemd=}"
+    run cat "$CALLS"
+    [[ "${lines[0]}" == "pacman incus" ]]
+    [[ "$output" == *"usermod --add-subuids 1000000-1000999999 --add-subgids 1000000-1000999999 root"* ]]
+    if [[ "$systemd" == yes ]]; then
+        [[ "$output" == *"systemctl enable --now incus.socket"* ]]
+    fi
+    [[ "$output" == *"usermod -aG incus-admin alice"* ]]
+}
+
+@test "Arch leaves an existing root subordinate id range alone" {
+    ROOT_SUBUID=yes run_incus_block arch
+    [[ "$status" -eq 0 ]]
+    run cat "$CALLS"
+    [[ "$output" != *"--add-subuids"* ]]
+    [[ "$output" == *"usermod -aG incus-admin alice"* ]]
+}
+
+@test "a default Ubuntu legacy install runs the manifest module" {
+    run_incus_block debian
+    [[ "$status" -eq 0 ]]
+    run cat "$CALLS"
+    [[ "$output" == "manifest tools.incus" ]]
+}
+
+@test "skipping tools.incus performs no Incus action" {
+    run_incus_block arch skip
+    [[ "$status" -eq 0 ]]
+    [[ ! -e "$CALLS" ]]
+    run_incus_block debian skip
+    [[ "$status" -eq 0 ]]
+    [[ ! -e "$CALLS" ]]
+}
+
+@test "the generated tools.incus installer installs incus and adds the group" {
+    run grep -c 'install -y incus' "$PROJECT_ROOT/scripts/generated/install_tools.sh"
+    [[ "$output" -ge 1 ]]
+    run grep -c 'usermod -aG incus-admin' "$PROJECT_ROOT/scripts/generated/install_tools.sh"
+    [[ "$output" -ge 1 ]]
+}
+
+@test "doctor: Incus with /dev/kvm passes for containers and VMs" {
+    touch "$BATS_TEST_TMPDIR/kvm"
+    run_check_incus yes "$BATS_TEST_TMPDIR/kvm" "alice incus-admin"
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"check tools.incus|Incus (6.0.5)|pass|containers and VMs|"* ]]
+}
+
+@test "doctor: Incus without /dev/kvm passes as containers only" {
+    run_check_incus yes "$BATS_TEST_TMPDIR/no-kvm" "alice incus-admin"
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"check tools.incus|Incus (6.0.5)|pass|containers only (no /dev/kvm, so no VMs)|"* ]]
+}
+
+@test "doctor: a user outside incus-admin gets a warning with the fix" {
+    run_check_incus yes "$BATS_TEST_TMPDIR/no-kvm" "alice sudo"
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"check tools.incus.group|Incus access|warn|"*"not in incus-admin"*"usermod -aG incus-admin"* ]]
+}
+
+@test "doctor: root is never warned about incus-admin" {
+    USER=root run_check_incus yes "$BATS_TEST_TMPDIR/no-kvm" "root"
+    [[ "$status" -eq 0 ]]
+    [[ "$output" != *"tools.incus.group"* ]]
+}
+
+@test "doctor: no incus is a skip, not a failure" {
+    run_check_incus no "$BATS_TEST_TMPDIR/kvm" "alice"
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"check tools.incus|Incus|skip|not installed (optional)|"* ]]
+}

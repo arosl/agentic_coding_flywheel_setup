@@ -543,6 +543,37 @@ modules:
     notes:
       - "The docker group grants root-equivalent access; the target user joins it so `docker` works without sudo after a new login"
 
+  - id: tools.incus
+    description: Incus containers and VMs, the default container runtime
+    category: tools
+    phase: 5
+    run_as: root
+    optional: true
+    enabled_by_default: true
+    tags: [containers, vms]
+    dependencies:
+      - base.system
+    installed_check:
+      run_as: current
+      command: "command -v incus"
+    install:
+      - |
+        # acfs-summary: install Incus from Ubuntu's archive
+        # The package creates the incus and incus-admin groups, gives root a
+        # subordinate id range and enables incus.socket.
+        apt-get -o DPkg::Lock::Timeout=120 install -y incus
+      - |
+        # acfs-summary: add the target user to the incus-admin group
+        if getent group incus-admin >/dev/null 2>&1; then
+          usermod -aG incus-admin "${TARGET_USER:-ubuntu}"
+        fi
+    verify:
+      - incus --version
+    notes:
+      - "The incus-admin group grants root-equivalent access; the target user joins it so `incus` works without sudo after a new login"
+      - "ACFS doesn't initialise Incus: run `incus admin init --minimal` (or `incus admin init` to choose storage and network) before the first instance"
+      - "VMs need /dev/kvm; without it Incus runs containers only, and the doctor says so"
+
   # Network tools (still Phase 5)
   - id: network.tailscale
     description: Zero-config mesh VPN for secure remote VPS access

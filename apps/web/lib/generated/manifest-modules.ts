@@ -41,7 +41,7 @@ export interface ManifestProvenanceMetadata {
 
 export const manifestProvenance = {
   acfsVersion: "0.10.0",
-  manifestSha256: "fc3be4ad4badf5a17aa035243f15fa3e5114e6cddd8b867dbcea6cf3530aec07",
+  manifestSha256: "23f8f64aa89be7cf1527db132bf22b54a1cb18a53b4bcac350899abcbe6285c2",
   checksumsYamlSha256: "d974f0c852bd144405e622cbf414e7bf32b89d6f2668a569e681ca61afe23651",
 } as const satisfies ManifestProvenanceMetadata;
 
@@ -160,6 +160,21 @@ export const manifestModules: ManifestModuleMetadata[] = [
       "containers",
     ],
     enabledByDefault: false,
+    optional: true,
+  },
+  {
+    id: "tools.incus",
+    description: "Incus containers and VMs, the default container runtime",
+    category: "tools",
+    phase: 5,
+    dependencies: [
+      "base.system",
+    ],
+    tags: [
+      "containers",
+      "vms",
+    ],
+    enabledByDefault: true,
     optional: true,
   },
   {
