@@ -37,7 +37,8 @@ check() {
 # ------------------------------------------------------------
 # The stubs. incus logs "<stdin>\t<argv>" per call ("null" when stdin is
 # /dev/null) and keeps each API object as $STUB_DIR/api/<path>.json, with
-# "/" as "_" and "?" as "@". findmnt answers from $STUB_FS and $STUB_MOUNTED.
+# "/" as "_" and "?" as "@". findmnt answers from $STUB_FS, lsblk from
+# $STUB_MOUNTED.
 # ------------------------------------------------------------
 mkdir -p "$WORK/bin"
 cat >"$WORK/bin/incus" <<'STUB'
