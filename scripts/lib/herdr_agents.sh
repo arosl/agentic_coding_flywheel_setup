@@ -17,6 +17,7 @@
 #   acfs agents list [--workspace ID] [--kind K] [--json]
 #   acfs agents inbox [--agent NAME] [--project KEY] [--keep-unread]
 #   acfs agents wake [--workspace ID] [--project KEY] [--loop [--interval SEC]] [--dry-run]
+#   acfs agents limits [--workspace ID] [--lines N] [--mail-from NAME [--project KEY]] [--loop [--interval SEC]] [--dry-run]
 #   acfs agents codex-daemon (status [--json] | start | restart)
 #   acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token T] [--dry-run]
 #   acfs agents recycle (<MailName> | --watch [--coordinator NAME] [--loop]) [--prompt TEXT] [--dry-run]
@@ -52,6 +53,8 @@ Usage:
   acfs agents list  [--workspace ID] [--kind KIND] [--json]
   acfs agents inbox [--agent NAME] [--project KEY] [--keep-unread]
   acfs agents wake  [--workspace ID] [--project KEY] [--loop [--interval SEC]] [--dry-run]
+  acfs agents limits [--workspace ID] [--lines N] [--mail-from NAME [--project KEY]]
+                    [--loop [--interval SEC]] [--dry-run]
   acfs agents codex-daemon (status [--json] | start | restart)
   acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token TOKEN] [--dry-run]
   acfs agents recycle (<MailName> | --watch [--coordinator NAME] [--loop [--interval SEC]])
@@ -109,6 +112,16 @@ wake   Send "Check your Agent Mail inbox." to each idle agent of the workspace
        it in its own pane, or with --workspace from a user unit. The project
        key is --project, else $AGENT_MAIL_PROJECT, else the git top level;
        per-agent cursors live in ~/.acfs/state/wake/.
+limits Report each agent of the workspace that a usage or rate limit stopped:
+       one that is not working and whose screen's bottom --lines lines
+       (default 15) show its kind's limit message (claude, codex, agy and
+       gemini each have their own patterns). The report is a herdr
+       notification and one line on stderr, and with --mail-from NAME also
+       an Agent Mail message from NAME to the agent's tab label (its Agent
+       Mail name). Each message is reported once, until it leaves the
+       screen. Nothing runs this by default: start it with --loop (every
+       --interval seconds, default 60) in its own pane, or with --workspace
+       from a user unit. Per-agent state lives in ~/.acfs/state/limits/.
 codex-daemon
        Codex runs its hooks through one shared app-server daemon. Started from
        inside a herdr pane, the daemon keeps that pane's HERDR_* variables, and
@@ -1201,6 +1214,132 @@ herdr_agents_wake() {
     done
 }
 
+# ------------------------------------------------------------
+# limits
+# ------------------------------------------------------------
+
+# What agent kind $1 prints when its plan's usage limit or the API's rate
+# limit stops it, as one case-insensitive extended regex: the one place
+# these patterns live. Whole phrases, never a bare "rate limit", so that an
+# agent's own prose about limits rarely matches. A kind without patterns of
+# its own gets the generic ones.
+herdr_agents_limit_pattern() {
+    case "$1" in
+        claude)
+            printf '%s\n' "usage limit reached|you('|’)ve (hit|reached) your ([a-z0-9-]+ )?limit|(5-hour|session|weekly|opus|sonnet) limit reached|rate_limit_error|api error: 429" ;;
+        codex)
+            printf '%s\n' "you('|’)ve hit your usage limit|usage limit (has been )?reached|rate limit reached|429 too many requests" ;;
+        agy|gemini)
+            printf '%s\n' "resource_exhausted|quota (exceeded|exhausted)|(reached|exhausted) (your|the) [a-z0-9. -]{0,30}quota|usage limit reached|429 too many requests" ;;
+        *)
+            printf '%s\n' "usage limit reached|rate limit reached|quota exceeded|429 too many requests" ;;
+    esac
+}
+
+# One pass over the workspace's agents: report each one newly stopped at a
+# limit. An agent's state file holds the limit line last reported for it
+# (empty once that line left its screen), so each line is reported once.
+herdr_agents_limits_cycle() {
+    local workspace="$1" lines="$2" state_dir="$3" mail_from="$4" project="$5" dry_run="$6"
+    local agents tabs="" count i name pane tab kind status target line seen file mail_name failed=0
+    agents="$(herdr_agents_select "$workspace" "[]" "[]")"
+    if [[ -n "$mail_from" ]]; then
+        herdr_agents_herdr tab list --workspace "$workspace" \
+            || herdr_agents_die "herdr tab list failed: $HERDR_AGENTS_ERR_MESSAGE"
+        tabs="$HERDR_AGENTS_OUT"
+    fi
+    count="$(jq 'length' <<<"$agents")"
+    for ((i = 0; i < count; i++)); do
+        name="$(jq -r ".[$i].name // empty" <<<"$agents")"
+        pane="$(jq -r ".[$i].pane_id" <<<"$agents")"
+        tab="$(jq -r ".[$i].tab_id // empty" <<<"$agents")"
+        kind="$(jq -r ".[$i].agent // empty" <<<"$agents")"
+        status="$(jq -r ".[$i].agent_status // \"unknown\"" <<<"$agents")"
+        # A limit stops the agent, so a working one has not hit one.
+        [[ "$status" != working ]] || continue
+        target="${name:-$pane}"
+        file="$state_dir/${pane//[^A-Za-z0-9_-]/_}"
+        if ! herdr_agents_herdr agent read "$target" --source visible --lines "$lines" --format text; then
+            herdr_agents_note "limits: could not read $target ($HERDR_AGENTS_ERR_CODE): $HERDR_AGENTS_ERR_MESSAGE"
+            failed=$((failed + 1))
+            continue
+        fi
+        line="$(grep -aiE -- "$(herdr_agents_limit_pattern "$kind")" <<<"$HERDR_AGENTS_OUT" | tail -n 1 \
+            | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' || true)"
+        line="${line:0:200}"
+        seen="$(cat "$file" 2>/dev/null || true)"
+        if [[ -z "$line" ]]; then
+            [[ -z "$seen" || "$dry_run" == true ]] || : >"$file"
+            continue
+        fi
+        [[ "$line" != "$seen" ]] || continue
+        if [[ "$dry_run" == true ]]; then
+            herdr_agents_note "would report $target ($kind): $line"
+            continue
+        fi
+        herdr_agents_note "$(date -u +%Y-%m-%dT%H:%M:%SZ) $target ($kind) stopped at a limit: $line"
+        if ! herdr_agents_herdr notification show "$target stopped at a limit" --body "$line" --sound request; then
+            herdr_agents_note "limits: herdr notification failed ($HERDR_AGENTS_ERR_CODE): $HERDR_AGENTS_ERR_MESSAGE"
+            failed=$((failed + 1))
+        fi
+        if [[ -n "$mail_from" ]]; then
+            mail_name="$(jq -r --arg t "$tab" 'first(.result.tabs[]? | select(.tab_id == $t) | .label // empty) // empty' <<<"$tabs")"
+            if [[ ! "$mail_name" =~ ^[A-Za-z][A-Za-z0-9_-]{0,63}$ ]]; then
+                herdr_agents_note "limits: no mail for $target: its tab label is not an Agent Mail name"
+            elif ! am mail send --project "$project" --from "$mail_from" --to "$mail_name" \
+                --subject "[limits] $mail_name stopped at a usage or rate limit" \
+                --body "herdr showed $target ($kind) stopped at a limit at $(date -u +%Y-%m-%dT%H:%M:%SZ):"$'\n\n'"    $line"$'\n\n'"Its work waits until the limit resets; hand it over if it can't wait." \
+                </dev/null >/dev/null; then
+                herdr_agents_note "limits: am mail send failed for $mail_name"
+                failed=$((failed + 1))
+            fi
+        fi
+        printf '%s\n' "$line" >"$file"
+    done
+    (( failed == 0 ))
+}
+
+herdr_agents_limits() {
+    local workspace="" project="${AGENT_MAIL_PROJECT:-}" mail_from="" lines=15 loop=false interval=60 dry_run=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --workspace) [[ $# -ge 2 ]] || herdr_agents_die "--workspace needs a value"; workspace="$2"; shift 2 ;;
+            --lines) [[ $# -ge 2 && "$2" =~ ^[1-9][0-9]*$ ]] || herdr_agents_die "--lines needs a whole number above zero"; lines="$2"; shift 2 ;;
+            --mail-from) [[ $# -ge 2 ]] || herdr_agents_die "--mail-from needs an Agent Mail name"; mail_from="$2"; shift 2 ;;
+            --project) [[ $# -ge 2 ]] || herdr_agents_die "--project needs a value"; project="$2"; shift 2 ;;
+            --loop) loop=true; shift ;;
+            --interval) [[ $# -ge 2 && "$2" =~ ^[1-9][0-9]*$ ]] || herdr_agents_die "--interval needs whole seconds"; interval="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            -h|--help) herdr_agents_usage; return 0 ;;
+            *) herdr_agents_die "unknown limits option: $1" ;;
+        esac
+    done
+    herdr_agents_require herdr jq flock
+    workspace="$(herdr_agents_resolve_workspace "$workspace")"
+    if [[ -n "$mail_from" ]]; then
+        herdr_agents_require am
+        [[ -n "$project" ]] || project="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    fi
+
+    local state_dir lock_fd
+    state_dir="${ACFS_HOME:-$HOME/.acfs}/state/limits/${workspace//[^A-Za-z0-9_-]/_}"
+    mkdir -p "$state_dir"
+    # Two watchers over one workspace would report each limit twice.
+    exec {lock_fd}>"$state_dir/lock"
+    flock -n "$lock_fd" || herdr_agents_die "another acfs agents limits is running for workspace $workspace"
+
+    if [[ "$loop" == false ]]; then
+        herdr_agents_limits_cycle "$workspace" "$lines" "$state_dir" "$mail_from" "$project" "$dry_run"
+        return
+    fi
+    herdr_agents_note "watching workspace $workspace for agents stopped at a limit, every ${interval}s"
+    while :; do
+        # A failed cycle (herdr or am unreachable) ends only that cycle.
+        ( herdr_agents_limits_cycle "$workspace" "$lines" "$state_dir" "$mail_from" "$project" "$dry_run" ) || true
+        sleep "$interval"
+    done
+}
+
 # The repo's files with uncommitted changes, one path per line.
 herdr_agents_dirty_files() {
     git -C "$1" status --porcelain=v1 -z --untracked-files=all 2>/dev/null \
@@ -1605,6 +1744,7 @@ herdr_agents_main() {
         list|ls) herdr_agents_list "$@" ;;
         inbox) herdr_agents_inbox "$@" ;;
         wake) herdr_agents_wake "$@" ;;
+        limits) herdr_agents_limits "$@" ;;
         codex-daemon) herdr_agents_codex_daemon "$@" ;;
         retire) herdr_agents_retire "$@" ;;
         recycle) herdr_agents_recycle "$@" ;;

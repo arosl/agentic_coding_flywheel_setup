@@ -113,6 +113,10 @@ case "$1 $2" in
         printf '{"id":"cli:agent:wait","result":{"agent":{"name":"%s","agent_status":"idle"}}}\n' "$3"
         ;;
     "agent list") cat "$STUB_DIR/list.json" ;;
+    "notification show")
+        [[ ! -e "$STUB_DIR/notify_fail" ]] || fail_with failed "no client attached"
+        printf '{"id":"cli:notification:show","result":{"type":"ok"}}\n'
+        ;;
     "agent get")
         # The agent from list.json, with the session session_<name> holds.
         jq -c --arg n "$3" --arg s "$(cat "$STUB_DIR/session_$3" 2>/dev/null)" '
@@ -192,6 +196,10 @@ case "$1 ${2:-}" in
                 | ($new[:$limit]) as $page
                 | {events: $page, next_cursor: (($page | map(.cursor) | max) // $after), has_more: (($new | length) > $limit)}' "$events"
         fi
+        exit 0 ;;
+    "mail send")
+        [[ ! -e "$STUB_DIR/mail_send_fail" ]] || { echo "stub: send refused" >&2; exit 1; }
+        printf '{"id":1}\n'
         exit 0 ;;
     "acks overdue")
         if [[ -s "$STUB_DIR/overdue_$4" ]]; then
@@ -1344,6 +1352,118 @@ recycle_case wnocoord
 AGENT_MAIL_AGENT='' AGENT_NAME='' run_recycle --watch
 check "--watch without a coordinator is refused" \
     bash -c '[[ "$1" -ne 0 ]] && grep -q "recycle --watch needs --coordinator" <<<"$2"' _ "$RC" "$ERR"
+
+echo "limits"
+# Four agents, each in a tab labelled with its Agent Mail name: AlphaFox
+# (claude) idle, BetaOwl (codex) done, GammaYak (agy) blocked, DeltaElk
+# (claude) working. screen_<name> is what the agent's screen shows.
+limits_case() {
+    reset_stub "$1"
+    # Each case's workspace is named after it, so it has its own state.
+    LIMITS_WS="$1"
+    cat >"$STUB_DIR/list.json" <<EOF
+{"id":"cli:agent:list","result":{"agents":[
+ {"agent":"claude","agent_status":"idle","name":"alphafox","pane_id":"w9:p1","tab_id":"w9:t1","workspace_id":"$LIMITS_WS"},
+ {"agent":"codex","agent_status":"done","name":"betaowl","pane_id":"w9:p2","tab_id":"w9:t2","workspace_id":"$LIMITS_WS"},
+ {"agent":"agy","agent_status":"blocked","name":"gammayak","pane_id":"w9:p3","tab_id":"w9:t3","workspace_id":"$LIMITS_WS"},
+ {"agent":"claude","agent_status":"working","name":"deltaelk","pane_id":"w9:p4","tab_id":"w9:t4","workspace_id":"$LIMITS_WS"}
+]}}
+EOF
+    printf '{"result":{"tabs":[{"label":"AlphaFox","tab_id":"w9:t1"},{"label":"BetaOwl","tab_id":"w9:t2"},{"label":"GammaYak","tab_id":"w9:t3"},{"label":"DeltaElk","tab_id":"w9:t4"}]}}\n' \
+        >"$STUB_DIR/tabs.json"
+    local name
+    for name in alphafox betaowl gammayak deltaelk; do
+        printf '\xe2\x9d\xaf \n' >"$STUB_DIR/screen_$name"
+    done
+}
+screen() { printf '%s\n\xe2\x9d\xaf \n' "$2" >"$STUB_DIR/screen_$1"; }
+run_limits() { run_helper limits --workspace "$LIMITS_WS" "$@"; }
+CLAUDE_LIMIT="  ⎿  You’ve hit your session limit · resets 9pm (UTC)"
+CODEX_LIMIT="■ You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), or try again at 3:45 PM."
+AGY_LIMIT="Error: 429 RESOURCE_EXHAUSTED: Quota exceeded for model gemini-3-pro"
+
+limits_case limitsclean
+run_limits
+check "with no limit on any screen, nothing is reported" \
+    bash -c '[[ "$1" -eq 0 && "$2" -eq 0 ]]' _ "$RC" "$(count_calls '^herdr notification')"
+check "each settled agent's visible screen bottom is read as text" \
+    grep -qx -- "herdr agent read alphafox --source visible --lines 15 --format text" "$STUB_DIR/calls"
+check "a working agent's screen is not read" bash -c '! grep -q "^herdr agent read deltaelk" "$1"' _ "$STUB_DIR/calls"
+
+limits_case limitskinds
+screen alphafox "$CLAUDE_LIMIT"
+screen betaowl "$CODEX_LIMIT"
+screen gammayak "$AGY_LIMIT"
+screen deltaelk "$CLAUDE_LIMIT"
+run_limits
+check "claude's, codex's and agy's limit messages are each reported with a herdr notification" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qx -- "herdr notification show alphafox stopped at a limit --body ⎿  You.ve hit your session limit · resets 9pm (UTC) --sound request" "$2" && grep -q "^herdr notification show betaowl stopped at a limit --body ■ You.ve hit your usage limit" "$2" && grep -q "^herdr notification show gammayak stopped at a limit --body Error: 429 RESOURCE_EXHAUSTED" "$2"' \
+    _ "$RC" "$STUB_DIR/calls"
+check "a working agent is not reported" bash -c '! grep -q "^herdr notification show deltaelk" "$1"' _ "$STUB_DIR/calls"
+check "each report is one line on stderr, with the time in UTC" \
+    grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z betaowl \(codex\) stopped at a limit: ■ You.ve hit your usage limit' <<<"$ERR"
+check "without --mail-from, no mail is sent" bash -c '! grep -q "^am " "$1"' _ "$STUB_DIR/calls"
+run_limits
+check "a limit still on screen is not reported again" test "$(count_calls '^herdr notification show')" = 3
+screen alphafox "Resumed."
+run_limits
+screen alphafox "$CLAUDE_LIMIT"
+run_limits
+check "a limit that left the screen and came back is reported again" test "$(count_calls '^herdr notification show alphafox')" = 2
+
+limits_case limitsprose
+screen alphafox "I added a rate limit to the login endpoint and a test for the 429 path."
+screen betaowl "Rate limits: none configured yet."
+run_limits
+check "an agent's own prose about rate limits is not a limit" test "$(count_calls '^herdr notification')" = 0
+
+limits_case limitsmail
+screen alphafox "$CLAUDE_LIMIT"
+sed -i 's/"label":"BetaOwl"/"label":"not a mail name"/' "$STUB_DIR/tabs.json"
+screen betaowl "$CODEX_LIMIT"
+run_limits --mail-from BlackGlacier --project /proj/limitsmail
+check "--mail-from mails the agent's tab label from that name" \
+    grep -q -- "^am mail send --project /proj/limitsmail --from BlackGlacier --to AlphaFox --subject \[limits\] AlphaFox stopped at a usage or rate limit --body " "$STUB_DIR/calls"
+check "an agent whose tab label is no Agent Mail name gets the notification but no mail" \
+    bash -c 'grep -q "^herdr notification show betaowl" "$1" && ! grep -q -- "--to not" "$1" && grep -q "no mail for betaowl" <<<"$2"' _ "$STUB_DIR/calls" "$ERR"
+
+limits_case limitsfail
+screen alphafox "$CLAUDE_LIMIT"
+touch "$STUB_DIR/mail_send_fail"
+run_limits --mail-from BlackGlacier --project /proj/limitsfail
+check "a mail that fails fails the cycle and says so" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "am mail send failed for AlphaFox" <<<"$2"' _ "$RC" "$ERR"
+
+limits_case limitsdry
+screen alphafox "$CLAUDE_LIMIT"
+run_limits --dry-run
+check "--dry-run says whom it would report and notifies nobody" \
+    bash -c 'grep -q "would report alphafox (claude): ⎿  You.ve hit your session limit" <<<"$1" && [[ "$2" -eq 0 ]]' _ "$ERR" "$(count_calls '^herdr notification')"
+run_limits
+check "a dry run records nothing, so the next run reports" test "$(count_calls '^herdr notification show alphafox')" = 1
+
+limits_case limitslock
+run_limits
+exec {limits_lock_fd}>"$WORK/acfs-home/state/limits/limitslock/lock"
+flock -n "$limits_lock_fd"
+run_limits
+exec {limits_lock_fd}>&-
+check "a second watcher for the same workspace refuses to run" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "another acfs agents limits is running for workspace limitslock" <<<"$2"' _ "$RC" "$ERR"
+
+limits_case limitsloop
+( sleep 1.5; screen alphafox "$CLAUDE_LIMIT" ) &
+RUN_WRAPPER=(timeout 4)
+run_limits --loop --interval 1
+RUN_WRAPPER=()
+wait
+check "with the loop running, a limit is reported within one interval, once" \
+    bash -c '[[ "$1" -eq 124 && "$2" -eq 1 ]]' _ "$RC" "$(count_calls '^herdr notification show alphafox')"
+
+limits_case limitsargs
+run_limits --lines 0
+check "--lines takes only whole numbers above zero" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q -- "--lines needs a whole number above zero" <<<"$2"' _ "$RC" "$ERR"
 
 echo
 echo "passed: $PASS, failed: $FAIL"

@@ -53,7 +53,7 @@ route() {
 }
 
 echo "acfs agents routing"
-for sub in spawn send list ls inbox wake codex-daemon retire quota; do
+for sub in spawn send list ls inbox wake limits codex-daemon retire recycle quota; do
     check "acfs agents $sub reaches herdr_agents.sh" test "$(route "$sub" --x "a b")" = "$sub --x a b"
 done
 for sub in update path help; do
