@@ -3389,7 +3389,8 @@ sync_acfs_deployed() {
     # by the git-tracked target guard. The REMAPPED pairs, however, still
     # need deploying on that topology (acfs/onboard/lessons/*.md ->
     # onboard/lessons/, packages/onboard/onboard.sh -> onboard/onboard.sh,
-    # acfs/zsh/* -> zsh/*), so do not bail out entirely; a per-file
+    # acfs/zsh/* -> zsh/*, acfs/onboard/docs/ntm/command_palette.md ->
+    # onboard/docs/ntm/), so do not bail out entirely; a per-file
     # same-path guard below prevents any file from being copied onto itself.
 
     _acfs_deployed_path_is_git_tracked() {
@@ -3598,6 +3599,7 @@ sync_acfs_deployed() {
         "scripts/completions/acfs.bash:completions/acfs.bash"
         "acfs/zsh/acfs.zshrc:zsh/acfs.zshrc"
         "acfs/zsh/p10k.zsh:zsh/p10k.zsh"
+        "acfs/onboard/docs/ntm/command_palette.md:onboard/docs/ntm/command_palette.md"
         "VERSION:VERSION"
         "CHANGELOG.md:CHANGELOG.md"
     )
