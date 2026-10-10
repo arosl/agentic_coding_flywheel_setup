@@ -3880,6 +3880,7 @@ acfs_load_internal_checksums_data() {
         scripts/lib/provenance.sh
         scripts/lib/rescue.sh
         scripts/lib/status.sh
+        scripts/lib/state_layer.sh
         scripts/lib/support.sh
         scripts/lib/swarm_assign.sh
         scripts/lib/swarm_calibration.sh
@@ -8225,7 +8226,7 @@ install_cli_tools() {
         # sqlite provides the headers/libs utils.caut needs at link time
         # (rusqlite without the bundled feature); Arch ships them in the
         # main sqlite package (#372).
-        local -a arch_required_pkgs=(ripgrep fzf direnv jq git-lfs lsof bind strace rsync zstd gum github-cli minisign sqlite)
+        local -a arch_required_pkgs=(ripgrep fzf direnv jq git-lfs lsof bind strace rsync zstd gum github-cli minisign sqlite age)
         # openbsd-netcat conflicts with gnu-netcat; only add it when no `nc`
         # provider is present so an existing choice never aborts the batch.
         if ! command_exists nc; then
@@ -8250,8 +8251,8 @@ install_cli_tools() {
         log_detail "Installing required apt packages"
         # libsqlite3-dev: utils.caut links the system libsqlite3 (rusqlite
         # without the bundled feature), so the dev package must exist before
-        # its cargo build (#372).
-        try_step "Installing required apt packages" $SUDO apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev || return 1
+        # its cargo build (#372). age encrypts `acfs state export` archives.
+        try_step "Installing required apt packages" $SUDO apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev age || return 1
     fi
 
     # GitHub CLI (gh)
@@ -10844,6 +10845,7 @@ finalize() {
     try_step "Installing agent_mail_hook.sh" install_asset "scripts/lib/agent_mail_hook.sh" "$ACFS_HOME/scripts/lib/agent_mail_hook.sh" || return 1
     try_step "Installing agent_quota.sh" install_asset "scripts/lib/agent_quota.sh" "$ACFS_HOME/scripts/lib/agent_quota.sh" || return 1
     try_step "Installing temp_sweep.sh" install_asset "scripts/lib/temp_sweep.sh" "$ACFS_HOME/scripts/lib/temp_sweep.sh" || return 1
+    try_step "Installing state_layer.sh" install_asset "scripts/lib/state_layer.sh" "$ACFS_HOME/scripts/lib/state_layer.sh" || return 1
     try_step "Installing support.sh" install_asset "scripts/lib/support.sh" "$ACFS_HOME/scripts/lib/support.sh" || return 1
     try_step "Installing acfs-nightly-update.service template" install_asset "scripts/templates/acfs-nightly-update.service" "$ACFS_HOME/scripts/templates/acfs-nightly-update.service" || return 1
     try_step "Installing acfs-nightly-update.timer template" install_asset "scripts/templates/acfs-nightly-update.timer" "$ACFS_HOME/scripts/templates/acfs-nightly-update.timer" || return 1
@@ -10958,6 +10960,16 @@ finalize() {
     try_step "Setting acfs permissions" $SUDO chmod 755 "$ACFS_HOME/bin/acfs" || return 1
     try_step "Setting acfs ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/acfs" || return 1
     try_step "Linking acfs command" acfs_link_primary_bin_command "$ACFS_HOME/bin/acfs" "acfs" || return 1
+
+    # State layer (acfs-ioo3.3): where the launcher mounted a state volume
+    # (/etc/acfs/state), install the lease unit that keeps the volume to
+    # one running machine, and keep sshd's host keys on the volume.
+    # Elsewhere there is nothing to set up.
+    if [[ -d /etc/acfs/state ]]; then
+        try_step "Setting up the state layer (lease unit, SSH host keys)" \
+            $SUDO env "ACFS_STATE_USER=$TARGET_USER" "ACFS_STATE_HOME=$TARGET_HOME" \
+            bash "$ACFS_HOME/scripts/lib/state_layer.sh" setup-guest || return 1
+    fi
 
     # Install global acfs wrapper (works for root and all users)
     # This wrapper finds the target user from state and runs acfs as that user
