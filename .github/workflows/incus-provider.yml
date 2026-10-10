@@ -1,24 +1,25 @@
 name: Incus provider (stub incus)
 
-# The fork's own workflow. It runs the launcher's fast tier, which tests
-# scripts/providers/incus.sh against a stub incus. Upstream's installer.yml
-# runs each tests/unit script by name, so a new one needs its own job.
+# The fork's own workflow. It runs the Incus provider's fast tier, which
+# tests scripts/providers/incus.sh, its host setup and its Tailscale
+# sidecar against a stub incus. Upstream's installer.yml runs each
+# tests/unit script by name, so a new one needs its own job.
 
 on:
   push:
     branches: [main]
     paths:
-      - 'scripts/providers/incus.sh'
+      - 'scripts/providers/incus*.sh'
       - 'scripts/lib/logging.sh'
-      - 'tests/unit/test_incus_provider_stub.sh'
+      - 'tests/unit/test_incus_*.sh'
       - 'tests/unit/fixtures/incus/**'
       - '.github/workflows/incus-provider.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'scripts/providers/incus.sh'
+      - 'scripts/providers/incus*.sh'
       - 'scripts/lib/logging.sh'
-      - 'tests/unit/test_incus_provider_stub.sh'
+      - 'tests/unit/test_incus_*.sh'
       - 'tests/unit/fixtures/incus/**'
       - '.github/workflows/incus-provider.yml'
 
@@ -39,3 +40,7 @@ jobs:
           sudo apt-get install -y jq
       - name: Launcher against a stub incus
         run: HOME="$(mktemp -d)" bash tests/unit/test_incus_provider_stub.sh
+      - name: Host setup against a stub incus
+        run: HOME="$(mktemp -d)" bash tests/unit/test_incus_host_setup.sh
+      - name: Tailscale sidecar against a stub incus
+        run: HOME="$(mktemp -d)" bash tests/unit/test_incus_tailscale.sh
