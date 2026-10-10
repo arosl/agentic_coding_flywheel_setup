@@ -141,19 +141,27 @@ reset_stub() {
 
 # A fake running Codex daemon, pid 777, in this case's CODEX_HOME and proc
 # root: `clean` carries no HERDR_* variable, `leaked` the ones a pane's
-# shell exports, `dead` has a pid file but no process.
+# shell exports, `dead` has a pid file but no process, `unreadable` an
+# environment the test user cannot read, `other` a reused pid that is not
+# a codex process.
 fake_daemon() {
     local how="$1"
     mkdir -p "$STUB_DIR/codex-home/app-server-daemon"
     printf '{"pid":777,"processStartTime":"stub"}\n' >"$STUB_DIR/codex-home/app-server-daemon/daemon.pid"
     [[ "$how" != dead ]] || return 0
     mkdir -p "$STUB_DIR/proc/777"
+    if [[ "$how" == other ]]; then
+        printf 'sleep\0100\0' >"$STUB_DIR/proc/777/cmdline"
+        printf 'HOME=/home/stub\0' >"$STUB_DIR/proc/777/environ"
+        return 0
+    fi
     printf 'codex\0app-server\0--listen\0unix://\0--managed-daemon\0' >"$STUB_DIR/proc/777/cmdline"
     if [[ "$how" == leaked ]]; then
         printf 'HOME=/home/stub\0HERDR_ENV=1\0HERDR_PANE_ID=w1:pA\0HERDR_TAB_ID=w1:tA\0HERDR_WORKSPACE_ID=w1\0HERDR_SOCKET_PATH=/s\0HERDR_BIN_PATH=/b\0PATH=/usr/bin\0' >"$STUB_DIR/proc/777/environ"
     else
         printf 'HOME=/home/stub\0PATH=/usr/bin\0' >"$STUB_DIR/proc/777/environ"
     fi
+    [[ "$how" != unreadable ]] || chmod 000 "$STUB_DIR/proc/777/environ"
 }
 
 # Run the helper with the stubs first on PATH; stdout, stderr and the
@@ -450,6 +458,28 @@ fake_daemon dead
 run_helper spawn --codex 1 --cwd "$WORK/repo" --no-prompt
 check "a pid file without a live process counts as not running" \
     test "$RC/$(count_calls '^codex app-server daemon start')" = "0/1"
+
+reset_stub daemonother
+fake_daemon other
+run_helper spawn --codex 1 --cwd "$WORK/repo" --no-prompt
+check "a pid reused by a process that is not a codex app-server counts as not running" \
+    test "$RC/$(count_calls '^codex app-server daemon start')" = "0/1"
+
+# As root every file is readable, so this case can only run unprivileged.
+if [[ "$(id -u)" -ne 0 ]]; then
+    reset_stub daemonunreadable
+    fake_daemon unreadable
+    run_helper spawn --codex 1 --cwd "$WORK/repo" --no-prompt --json
+    check "a daemon whose environment cannot be read is unknown, not clean: spawn stops before any identity" \
+        bash -c '[[ "$1" -ne 0 && "$2" -eq 0 && "$3" -eq 0 ]] && grep -q "environment cannot be read" <<<"$4"' \
+        _ "$RC" "$(count_calls '^am')" "$(count_calls '^codex')" "$ERR"
+    run_helper codex-daemon status --json
+    check "status --json reports clean null and exits 2 for an unreadable environment" \
+        test "$RC/$(jq -c '[.running, .clean, .leaked_herdr_vars]' <<<"$OUT")" = "2/[true,null,null]"
+    run_helper codex-daemon status
+    check "the text status says the variables are unknown" \
+        grep -q "environment unreadable, HERDR_\* variables unknown" <<<"$OUT"
+fi
 
 reset_stub daemonfail
 touch "$STUB_DIR/daemon_start_fail"

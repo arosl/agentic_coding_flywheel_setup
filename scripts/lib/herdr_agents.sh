@@ -249,21 +249,27 @@ herdr_agents_codex_home() {
 }
 
 # The pid of the running Codex app-server daemon: the pid file's process,
-# when it is alive and is a codex app-server. Fails when none runs.
+# when it is alive, ours (a reused pid can belong to another user) and a
+# codex app-server. Fails when none runs.
 herdr_agents_codex_daemon_pid() {
     local pid_file pid cmdline proc_root="${HERDR_AGENTS_PROC_ROOT:-/proc}"
     pid_file="$(herdr_agents_codex_home)/app-server-daemon/daemon.pid"
     [[ -r "$pid_file" ]] || return 1
     pid="$(jq -r '.pid // empty' "$pid_file" 2>/dev/null)" || return 1
     [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [[ -d "$proc_root/$pid" && -O "$proc_root/$pid" ]] || return 1
     cmdline="$(tr '\0' ' ' <"$proc_root/$pid/cmdline" 2>/dev/null)" || return 1
     [[ "$cmdline" == *"app-server"* ]] || return 1
     printf '%s\n' "$pid"
 }
 
-# The HERDR_* variables in process $1's environment, one NAME=VALUE per line.
+# The HERDR_* variables in process $1's environment, one NAME=VALUE per
+# line. Fails when the environment cannot be read: that is unknown, not
+# clean.
 herdr_agents_codex_daemon_leaked_vars() {
-    tr '\0' '\n' <"${HERDR_AGENTS_PROC_ROOT:-/proc}/$1/environ" 2>/dev/null | grep '^HERDR_' || true
+    local environ="${HERDR_AGENTS_PROC_ROOT:-/proc}/$1/environ"
+    [[ -r "$environ" ]] || return 1
+    tr '\0' '\n' <"$environ" | grep '^HERDR_' || true
 }
 
 # Run codex with every HERDR_* variable removed from its environment: the
@@ -280,13 +286,18 @@ herdr_agents_codex_outside_herdr() {
 }
 
 # One JSON object describing the daemon: running, pid, leaked_herdr_vars
-# (names), clean (true when it carries none, or none runs).
+# (names), clean (true when it carries none, or none runs; null when its
+# environment cannot be read).
 herdr_agents_codex_daemon_status_json() {
-    local pid leaked="[]"
+    local pid leaked="[]" vars
     if pid="$(herdr_agents_codex_daemon_pid)"; then
-        leaked="$(herdr_agents_codex_daemon_leaked_vars "$pid" | cut -d= -f1 | jq -Rc . | jq -sc .)"
-        jq -nc --argjson pid "$pid" --argjson leaked "$leaked" \
-            '{running: true, pid: $pid, leaked_herdr_vars: $leaked, clean: ($leaked | length == 0)}'
+        if vars="$(herdr_agents_codex_daemon_leaked_vars "$pid")"; then
+            leaked="$(cut -d= -f1 <<<"$vars" | grep . | jq -Rc . | jq -sc .)"
+            jq -nc --argjson pid "$pid" --argjson leaked "$leaked" \
+                '{running: true, pid: $pid, leaked_herdr_vars: $leaked, clean: ($leaked | length == 0)}'
+        else
+            jq -nc --argjson pid "$pid" '{running: true, pid: $pid, leaked_herdr_vars: null, clean: null}'
+        fi
     else
         jq -nc '{running: false, pid: null, leaked_herdr_vars: [], clean: true}'
     fi
@@ -311,9 +322,14 @@ herdr_agents_codex_daemon_ensure() {
     status="$(herdr_agents_codex_daemon_status_json)"
     if [[ "$(jq -r '.running' <<<"$status")" == true ]]; then
         pid="$(jq -r '.pid' <<<"$status")"
-        if [[ "$(jq -r '.clean' <<<"$status")" == true ]]; then
-            return 0
-        fi
+        case "$(jq -r '.clean' <<<"$status")" in
+            true) return 0 ;;
+            null)
+                herdr_agents_note "the Codex app-server daemon (pid $pid) is running but its environment cannot be read, so its HERDR_* variables are unknown"
+                herdr_agents_note "  check it with 'acfs agents codex-daemon status' as the user who started it, or restart it with 'acfs agents codex-daemon restart'"
+                return 1
+                ;;
+        esac
         herdr_agents_note "the Codex app-server daemon (pid $pid) carries $(jq -r '.leaked_herdr_vars | join(", ")' <<<"$status"): it was started inside a herdr pane, and every Codex session on this host reports as that pane's agent"
         herdr_agents_note "  restart it with 'acfs agents codex-daemon restart' (running Codex agents lose their daemon connection until they reconnect), then spawn again"
         return 1
@@ -333,19 +349,29 @@ herdr_agents_codex_daemon_ensure() {
     return 1
 }
 
+# Print status $1 (as JSON when $2 is true). Exit 0 for a clean daemon or
+# none, 1 for one carrying HERDR_* variables, 2 when its environment is
+# unreadable.
 herdr_agents_codex_daemon_print_status() {
-    local status="$1" json="$2"
+    local status="$1" json="$2" clean
+    clean="$(jq -r '.clean' <<<"$status")"
     if [[ "$json" == true ]]; then
         printf '%s\n' "$status"
     elif [[ "$(jq -r '.running' <<<"$status")" != true ]]; then
         printf 'codex app-server daemon: not running\n'
-    elif [[ "$(jq -r '.clean' <<<"$status")" == true ]]; then
+    elif [[ "$clean" == true ]]; then
         printf 'codex app-server daemon: running (pid %s), no HERDR_* variables\n' "$(jq -r '.pid' <<<"$status")"
+    elif [[ "$clean" == null ]]; then
+        printf 'codex app-server daemon: running (pid %s), environment unreadable, HERDR_* variables unknown\n' "$(jq -r '.pid' <<<"$status")"
     else
         printf 'codex app-server daemon: running (pid %s) with %s; every Codex session on this host reports as that pane'"'"'s agent. Fix: acfs agents codex-daemon restart\n' \
             "$(jq -r '.pid' <<<"$status")" "$(jq -r '.leaked_herdr_vars | join(", ")' <<<"$status")"
     fi
-    [[ "$(jq -r '.clean' <<<"$status")" == true ]]
+    case "$clean" in
+        true) return 0 ;;
+        null) return 2 ;;
+        *) return 1 ;;
+    esac
 }
 
 herdr_agents_codex_daemon() {
