@@ -93,6 +93,10 @@ STUB
 
 cat >"$BIN/pgrep" <<'STUB'
 #!/usr/bin/env bash
+if [[ " $* " == *" -f "* ]]; then
+    [[ -n "${RUNNING_INTERP:-}" ]] && { echo 4343; exit 0; }
+    exit 1
+fi
 name="${*: -1}"
 [[ " ${RUNNING_WRITERS:-} " == *" $name "* ]] && { echo 4242; exit 0; }
 exit 1
@@ -111,11 +115,17 @@ cat >"$BIN/chown" <<'STUB'
 echo "chown $*" >>"$STUB_LOG"
 STUB
 
+# curl: the guest API, answering with the body and then the status line
+# that -w '\n%{http_code}' adds; GUEST_DOWN makes it unreachable.
 cat >"$BIN/curl" <<'STUB'
 #!/usr/bin/env bash
 echo "curl $*" >>"$STUB_LOG"
-[[ -n "${INSTANCE_LEASE:-}" ]] || exit 22
-printf '%s' "$INSTANCE_LEASE"
+[[ -n "${GUEST_DOWN:-}" ]] && exit 7
+if [[ -n "${INSTANCE_LEASE:-}" ]]; then
+    printf '%s\n200' "$INSTANCE_LEASE"
+else
+    printf 'not found\n404'
+fi
 STUB
 
 cat >"$BIN/mountpoint" <<'STUB'
@@ -164,6 +174,9 @@ make_machine() {
     ln -s /etc/passwd "$m/home/.claude/link-out"
     echo shared >"$m/home/.claude/hard-a"
     ln "$m/home/.claude/hard-a" "$m/home/.claude/hard-b"
+    ln -s "$m/home/.claude.json" "$m/home/.claude/link-abs"
+    mkdir -p "$m/home/.ssh"
+    echo "ssh-ed25519 key-$(basename "$m")" >"$m/home/.ssh/authorized_keys"
     echo '{"auth":"codex-secret"}' >"$m/home/.codex/auth.json"
     echo 'github.com: {}' >"$m/home/.config/gh/hosts.yml"
     echo '[Unit]' >"$m/home/.config/systemd/user/x.service"
@@ -182,11 +195,21 @@ make_machine() {
 SOCK="$WORK/s.sock"
 python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$SOCK"
 
+# A cgroup outside the user manager, and an SSH client off Tailscale, so
+# the quiesce preflight passes unless a test says otherwise (this test
+# itself may well run in a herdr pane).
+echo "0::/system.slice/ssh.service" >"$WORK/cgroup-outside"
+echo "0::/user.slice/user-$(id -u).slice/user@$(id -u).service/app.slice/herdr.service" >"$WORK/cgroup-herdr"
+
 # st MACHINE ARGS...: run acfs state against fixture machine MACHINE.
 st() {
     local m="$1"
     shift
     env PATH="$BIN:$PATH" STUB_LOG="$LOG" ACFS_STATE_ALLOW_NONROOT=1 \
+        ACFS_STATE_GUEST_RETRIES=2 ACFS_STATE_GUEST_DELAY=0 \
+        ACFS_STATE_PROC_SELF_CGROUP="${CGROUP_FILE:-$WORK/cgroup-outside}" \
+        SSH_CONNECTION="${SSH_FROM:-192.0.2.1} 50000 192.0.2.2 22" \
+        INSTANCE_LEASE="${INSTANCE_LEASE-lease-default}" \
         ACFS_STATE_USER="$(id -un)" ACFS_STATE_HOME="$m/home" ACFS_STATE_META="$m/meta" \
         ACFS_STATE_SSH_DIR="$m/ssh" ACFS_STATE_TS_DIR="$m/ts" ACFS_STATE_ETC_SSH="$m/etcssh" \
         ACFS_STATE_SSHD_DROPIN="$m/etcssh/sshd_config.d/10-acfs-host-keys.conf" \
@@ -233,6 +256,21 @@ check "export refuses while a writer still runs, and names it" \
 check "after refusing, export restarts the units it stopped" \
     bash -c 'grep -q "systemctl stop user@$2.service" "$1" && grep -q "systemctl start user@$2.service" "$1" && grep -q "systemctl start tailscaled.service" "$1"' _ "$LOG" "$UID_NOW"
 check "no archive is left after a refusal" bash -c '! compgen -G "$1/home/acfs-state/*" >/dev/null' _ "$A"
+
+: >"$LOG"
+ACTIVE_UNITS="user@$UID_NOW.service" RUNNING_INTERP=1 run "$A" export devbox --recipient age1x
+check "export refuses a writer running under node or bun" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "under an interpreter (pid 4343)" "$2"' _ "$RC" "$ERR"
+: >"$LOG"
+ACTIVE_UNITS="user@$UID_NOW.service" CGROUP_FILE="$WORK/cgroup-herdr" run "$A" export devbox --recipient age1x
+check "export refuses inside the user manager (a herdr pane), before stopping anything" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "runs inside .* user manager" "$2" && grep -q "incus exec" "$2" && ! grep -q "systemctl stop" "$3"' _ "$RC" "$ERR" "$LOG"
+: >"$LOG"
+ACTIVE_UNITS="user@$UID_NOW.service tailscaled.service" SSH_FROM=100.101.2.3 run "$A" export devbox --recipient age1x
+check "export refuses an SSH session over Tailscale while tailscaled runs" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "comes over Tailscale" "$2" && ! grep -q "systemctl stop" "$3"' _ "$RC" "$ERR" "$LOG"
+ACTIVE_UNITS="user@$UID_NOW.service" SSH_FROM=100.101.2.3 run "$A" export devbox "$WORK/ts-off.tar.age" --recipient age1x
+check "the same session is fine when tailscaled doesn't run" bash -c '[[ "$1" -eq 0 ]]' _ "$RC"
 
 echo "export: dry run"
 run "$A" export devbox --dry-run
@@ -284,6 +322,12 @@ check "the hook keeps its execute bit, with no group or other access" \
     bash -c '[[ "$(stat -c %a "$1/home/.claude/hooks/h.sh")" == 700 ]]' _ "$B"
 check "the relative symlink and the hardlink survive" \
     bash -c '[[ "$(readlink "$1/home/.claude/link-in")" == ../.claude.json && "$(stat -c %i "$1/home/.claude/hard-a")" == "$(stat -c %i "$1/home/.claude/hard-b")" ]]' _ "$B"
+check "an absolute symlink into the source's home points into this home" \
+    bash -c '[[ "$(readlink "$1/home/.claude/link-abs")" == "$1/home/.claude.json" ]]' _ "$B"
+check "authorized_keys keeps this machine's key first and adds the source's" \
+    bash -c '[[ "$(sed -n 1p "$1/home/.ssh/authorized_keys")" == "ssh-ed25519 key-b" && "$(sed -n 2p "$1/home/.ssh/authorized_keys")" == "ssh-ed25519 key-a" && "$(stat -c %a "$1/home/.ssh/authorized_keys")" == 600 ]]' _ "$B"
+check "the import points sshd at the imported host keys" \
+    bash -c 'grep -qx "HostKey $1/ssh/ssh_host_ed25519_key" "$1/etcssh/sshd_config.d/10-acfs-host-keys.conf"' _ "$B"
 check "root rows are replaced by the archive's, the old ones kept" \
     bash -c 'grep -q ed25519-private "$1/ssh/ssh_host_ed25519_key" && grep -q b-private "$1"/ssh/.acfs-import-*/old/ssh_host_ed25519_key' _ "$B"
 check "the private key on the ssh row is 0600 and its .pub 0644" \
@@ -339,18 +383,33 @@ check "a member with .. is refused" bash -c '[[ "$1" -ne 0 ]] && grep -q "not no
 tamper absolute "add('/etc/evil', b'x'); manifest([])"
 run "$C" import devbox "$WORK/absolute.tar.age"
 check "an absolute member is refused" bash -c '[[ "$1" -ne 0 ]] && grep -q "refused" "$2"' _ "$RC" "$ERR"
-tamper symout "add('home/.codex/l', b'', kind='sym', link='/etc'); add('home/.codex/l/passwd', b'x'); manifest([])"
+tamper symout "add('home/.codex/l', b'', kind='sym', link='/etc'); manifest([], source={'bases': {'home': '/home/ubuntu'}})"
 run "$C" import devbox "$WORK/symout.tar.age"
-check "a symlink out of its row is refused" bash -c '[[ "$1" -ne 0 ]] && grep -q "symlink leaves its row" "$2"' _ "$RC" "$ERR"
+check "an absolute symlink out of its row is refused" bash -c '[[ "$1" -ne 0 ]] && grep -q "symlink leaves its row" "$2"' _ "$RC" "$ERR"
+tamper symrel "add('home/.codex/l', b'', kind='sym', link='../../../etc'); manifest([])"
+run "$C" import devbox "$WORK/symrel.tar.age"
+check "a relative symlink out of its row is refused" bash -c '[[ "$1" -ne 0 ]] && grep -q "symlink leaves its row" "$2"' _ "$RC" "$ERR"
+tamper symthrough "add('home/.codex/l', b'', kind='sym', link='sub'); add('home/.codex/l/passwd', b'x'); manifest([])"
+run "$C" import devbox "$WORK/symthrough.tar.age"
+check "a member under a symlink member is refused" bash -c '[[ "$1" -ne 0 ]] && grep -q "under a symlink member" "$2"' _ "$RC" "$ERR"
 tamper badhash "add('home/.codex/auth.json', b'evil'); manifest([{'path': 'home/.codex/auth.json', 'sha256': '00'}])"
 run "$C" import devbox "$WORK/badhash.tar.age"
 check "a file whose sha256 differs from manifest.json is refused" bash -c '[[ "$1" -ne 0 ]] && grep -q "do not match manifest.json" "$2"' _ "$RC" "$ERR"
 tamper norow "add('home/.bashrc-evil', b'x'); manifest([{'path': 'home/.bashrc-evil', 'sha256': hashlib.sha256(b'x').hexdigest()}])"
 run "$C" import devbox "$WORK/norow.tar.age"
 check "a member under no manifest row is refused" bash -c '[[ "$1" -ne 0 ]] && grep -q "not under a manifest row" "$2"' _ "$RC" "$ERR"
+tamper rowpath "manifest([], rows=[{'id': 'codex', 'class': 'login', 'base': 'home', 'path': '../../etc', 'policy': 'asis', 'markers': [], 'present': True}])"
+run "$C" import devbox "$WORK/rowpath.tar.age"
+check "a row whose path differs from this machine's is refused" bash -c '[[ "$1" -ne 0 ]] && grep -q "names a different path" "$2"' _ "$RC" "$ERR"
+tamper rowid "manifest([], rows=[{'id': 'everything', 'class': 'login', 'base': 'home', 'path': '', 'policy': 'asis', 'markers': [], 'present': True}])"
+run "$C" import devbox "$WORK/rowid.tar.age"
+check "a row this machine doesn't know is refused" bash -c '[[ "$1" -ne 0 ]] && grep -q "not in this machine.s manifest" "$2"' _ "$RC" "$ERR"
 tamper unfenced "add('home/.codex/auth.json', b'x'); manifest([{'path': 'home/.codex/auth.json', 'sha256': hashlib.sha256(b'x').hexdigest()}], kind='move', fenced=False)"
 run "$C" import devbox "$WORK/unfenced.tar.age"
 check "a move archive whose source is not fenced is refused" bash -c '[[ "$1" -ne 0 ]] && grep -q "not fenced" "$2"' _ "$RC" "$ERR"
+INSTANCE_LEASE="" run "$C" import devbox "$WORK/a.tar.age"
+check "an import in a container whose instance has no lease is refused up front" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "has no user.acfs.lease" "$2"' _ "$RC" "$ERR"
 AGE_FAIL=1 run "$C" import devbox "$WORK/a.tar.age"
 check "an archive age can't decrypt is refused" bash -c '[[ "$1" -ne 0 ]] && grep -q "could not decrypt" "$2"' _ "$RC" "$ERR"
 check "no refused archive changed the machine's home or root rows" bash -c '[[ "$1" == "$2" ]]' _ "$before" "$(snapshot "$C")"
@@ -402,8 +461,15 @@ INSTANCE_LEASE="tok2" run "$L" lease check
 check "a different instance's lease: refuse" bash -c '[[ "$1" -ne 0 ]] && grep -q "another instance holds" "$2"' _ "$RC" "$ERR"
 INSTANCE_LEASE="" run "$L" lease check
 check "volume set, instance without a lease: refuse" bash -c '[[ "$1" -ne 0 ]]' _ "$RC"
+INSTANCE_LEASE="tok1" GUEST_DOWN=1 run "$L" lease check
+check "a guest API that doesn't answer: refuse, after retrying" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "did not answer" "$2" && [[ "$(grep -c "^curl " "$3")" -ge 2 ]]' _ "$RC" "$ERR" "$LOG"
 run "$E" lease check
-check "a fenced volume: refuse, naming reclaim" bash -c '[[ "$1" -ne 0 ]] && grep -q "lease reclaim" "$2"' _ "$RC" "$ERR"
+check "a fenced volume: refuse, naming reclaim through incus exec" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "incus exec <name> -- sudo acfs state lease reclaim" "$2"' _ "$RC" "$ERR"
+INSTANCE_LEASE="" run "$E" lease reclaim
+check "reclaim refuses in a container whose instance has no lease" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "^fenced:" "$2/meta/lease"' _ "$RC" "$E"
 INSTANCE_LEASE="tok-e" run "$E" lease reclaim
 check "reclaim takes the lease back" bash -c '[[ "$1" -eq 0 && "$(cat "$2/meta/lease")" == tok-e ]]' _ "$RC" "$E"
 check "the lease file is 0600" bash -c '[[ "$(stat -c %a "$1/meta/lease")" == 600 ]]' _ "$E"
@@ -479,8 +545,8 @@ check "a second setup-guest changes nothing and doesn't reload" \
     bash -c '[[ "$1" -eq 0 ]] && ! grep -q daemon-reload "$2" && ! grep -q "sshd -t" "$2"' _ "$RC" "$LOG"
 rm -f "$G/etcssh/sshd_config.d/10-acfs-host-keys.conf"
 SSHD_FAIL=1 run "$G" setup-guest
-check "a drop-in sshd rejects is set aside, not left live" \
-    bash -c '[[ "$1" -ne 0 && ! -e "$2/etcssh/sshd_config.d/10-acfs-host-keys.conf" && -e "$2/etcssh/sshd_config.d/10-acfs-host-keys.conf.rejected" ]]' _ "$RC" "$G"
+check "a drop-in sshd rejects is set aside with a warning, and the install goes on" \
+    bash -c '[[ "$1" -eq 0 && ! -e "$2/etcssh/sshd_config.d/10-acfs-host-keys.conf" && -e "$2/etcssh/sshd_config.d/10-acfs-host-keys.conf.rejected" ]] && grep -q "sshd -t rejected" "$3"' _ "$RC" "$G" "$ERR"
 H="$WORK/h"
 make_machine "$H"
 : >"$LOG"

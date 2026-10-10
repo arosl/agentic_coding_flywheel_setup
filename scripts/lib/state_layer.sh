@@ -243,9 +243,12 @@ STATE_PY=$(cat <<'PY'
 import hashlib, io, json, os, posixpath, stat, sys, tarfile
 
 PREFIXES = ("home", "root/ssh-host", "root/tailscale")
-# Where each archive prefix lands on this machine; an absolute symlink
-# must point inside its own one.
+ARC = {"home": "home", "ssh-host": "root/ssh-host", "tailscale": "root/tailscale"}
+# Where each archive prefix lands on this machine.
 BASES = json.loads(os.environ.get("ACFS_STATE_BASES", "{}"))
+# This machine's own rows: an archive's rows are trusted only where they
+# name one of these by id with the same base and path.
+LOCAL_ROWS = {r["id"]: r for r in json.loads(os.environ.get("ACFS_STATE_ROWS", "[]"))}
 
 class Refuse(Exception):
     pass
@@ -253,12 +256,38 @@ class Refuse(Exception):
 def under(name, prefix):
     return name == prefix or name.startswith(prefix + "/")
 
+def path_under(path, base):
+    t = posixpath.normpath(path)
+    return t == base or t.startswith(base.rstrip("/") + "/")
+
 def link_escapes(arcname, target, row_arc, base_dir):
     if target.startswith("/"):
-        t = posixpath.normpath(target)
-        return not (t == base_dir or t.startswith(base_dir.rstrip("/") + "/"))
+        return not path_under(target, base_dir)
     resolved = posixpath.normpath(posixpath.join(posixpath.dirname(arcname), target))
     return not under(resolved, row_arc)
+
+def trusted_rows(manifest):
+    rows, seen = [], set()
+    for r in manifest.get("rows", []):
+        rid = r.get("id")
+        local = LOCAL_ROWS.get(rid)
+        if local is None:
+            raise Refuse("row %r is not in this machine's manifest" % rid)
+        if r.get("base") != local["base"] or r.get("path") != local["path"]:
+            raise Refuse("row %r names a different path than this machine's" % rid)
+        if rid in seen:
+            raise Refuse("row %r appears twice" % rid)
+        seen.add(rid)
+        row = {k: local[k] for k in ("id", "class", "base", "path", "policy", "markers")}
+        row["present"] = bool(r.get("present"))
+        rows.append(row)
+    return rows
+
+def source_base(manifest, prefix):
+    base = (manifest.get("source") or {}).get("bases", {}).get(prefix)
+    if not isinstance(base, str) or not base.startswith("/"):
+        raise Refuse("manifest.json has no source path for %s" % prefix)
+    return base
 
 def create(spec_path, manifest_out):
     spec = json.load(open(spec_path))
@@ -307,6 +336,7 @@ def create(spec_path, manifest_out):
             else:
                 out.addfile(ti)
     manifest = dict(spec["meta"])
+    manifest.setdefault("source", {})["bases"] = {r["arc"]: r["base_dir"] for r in spec["rows"]}
     manifest["rows"] = [{k: r[k] for k in ("id", "class", "base", "path", "policy", "markers", "present")}
                         for r in spec["rows"]]
     manifest["files"] = files
@@ -320,7 +350,18 @@ def create(spec_path, manifest_out):
         json.dump({"skipped": skipped, "files": len(files),
                    "rows": [r["id"] for r in spec["rows"] if r["present"]]}, f)
 
-def check_member(m, seen, links):
+def check_abs_links(manifest, abs_links):
+    for name, target, arcroot in abs_links:
+        if not path_under(target, source_base(manifest, arcroot)):
+            raise Refuse("symlink leaves its row: %r" % name)
+
+def rebase(manifest, target, arcroot):
+    # An absolute link into the source's home points into this one's.
+    src = source_base(manifest, arcroot).rstrip("/")
+    t = posixpath.normpath(target)
+    return BASES[arcroot].rstrip("/") + t[len(src):]
+
+def check_member(m, seen, links, abs_links):
     name = m.name
     if name == "manifest.json":
         if not m.isreg():
@@ -341,7 +382,11 @@ def check_member(m, seen, links):
         parent = posixpath.dirname(parent)
     if m.issym():
         arcroot = next(p for p in PREFIXES if under(name, p))
-        if link_escapes(name, m.linkname, arcroot, BASES[arcroot]):
+        if m.linkname.startswith("/"):
+            # Checked against the source's own paths, which manifest.json
+            # (the last member) records.
+            abs_links.append((name, m.linkname, arcroot))
+        elif link_escapes(name, m.linkname, arcroot, ""):
             raise Refuse("symlink leaves its row: %r" % name)
         links.add(name)
     elif m.islnk():
@@ -351,23 +396,22 @@ def check_member(m, seen, links):
         raise Refuse("member is not a file, directory or link: %r" % name)
     seen[name] = "reg" if m.isreg() else "other"
 
-def rows_cover(manifest, name):
-    for r in manifest.get("rows", []):
-        arc = {"home": "home", "ssh-host": "root/ssh-host", "tailscale": "root/tailscale"}.get(r.get("base"))
-        if arc is None:
+def rows_cover(rows, name):
+    for r in rows:
+        if not r["present"]:
             continue
-        root = arc + ("/" + r["path"] if r.get("path") else "")
+        root = ARC[r["base"]] + ("/" + r["path"] if r["path"] else "")
         if under(name, root):
             return True
     return False
 
 def verify(manifest_out):
     tf = tarfile.open(fileobj=sys.stdin.buffer, mode="r|")
-    seen, links, hashes, manifest, after = {}, set(), {}, None, False
+    seen, links, abs_links, hashes, manifest, after = {}, set(), [], {}, None, False
     for m in tf:
         if after:
             raise Refuse("member after manifest.json: %r" % m.name)
-        check_member(m, seen, links)
+        check_member(m, seen, links, abs_links)
         if m.name == "manifest.json":
             manifest = json.load(tf.extractfile(m))
             after = True
@@ -382,9 +426,11 @@ def verify(manifest_out):
         raise Refuse("no manifest.json")
     if manifest.get("schema") != 1:
         raise Refuse("unknown manifest schema %r" % manifest.get("schema"))
+    manifest["rows"] = trusted_rows(manifest)
     for name in seen:
-        if not rows_cover(manifest, name):
+        if not rows_cover(manifest["rows"], name):
             raise Refuse("member not under a manifest row: %r" % name)
+    check_abs_links(manifest, abs_links)
     listed = {f["path"]: f["sha256"] for f in manifest.get("files", [])}
     if listed != hashes:
         bad = sorted(set(listed) ^ set(hashes)) or sorted(k for k in listed if listed[k] != hashes.get(k))
@@ -398,9 +444,13 @@ def extract(dest, manifest_path):
     tf = tarfile.open(fileobj=sys.stdin.buffer, mode="r|")
     seen, links, dirs = {}, set(), []
     for m in tf:
-        check_member(m, seen, links)
+        abs_links = []
+        check_member(m, seen, links, abs_links)
+        check_abs_links(manifest, abs_links)
         if m.name == "manifest.json":
             continue
+        if not rows_cover(manifest["rows"], m.name):
+            raise Refuse("member not under a manifest row: %r" % m.name)
         path = os.path.join(dest, m.name)
         parent = os.path.dirname(path)
         p = parent
@@ -414,7 +464,10 @@ def extract(dest, manifest_path):
             os.makedirs(path, mode=0o700, exist_ok=True)
             dirs.append((path, mode, m.mtime))
         elif m.issym():
-            os.symlink(m.linkname, path)
+            target = m.linkname
+            if target.startswith("/"):
+                target = rebase(manifest, target, next(p for p in PREFIXES if under(m.name, p)))
+            os.symlink(target, path)
         elif m.islnk():
             os.link(os.path.join(dest, m.linkname), path, follow_symlinks=False)
         else:
@@ -462,6 +515,7 @@ PY
 state_py() {
     ACFS_STATE_BASES="$(jq -cn --arg h "$STATE_HOME" --arg s "$STATE_SSH_DIR" --arg t "$STATE_TS_DIR" \
         '{"home": $h, "root/ssh-host": $s, "root/tailscale": $t}')" \
+        ACFS_STATE_ROWS="$(state_rows_json true)" \
         python3 -I -c "$STATE_PY" "$@"
 }
 
@@ -527,17 +581,65 @@ state_restart_writers() {
 }
 
 state_running_writers() {
-    local name pids
+    local name pids alt
     for name in "${STATE_WRITERS[@]}"; do
         pids="$(pgrep -u "$STATE_USER" -x "$name" 2>/dev/null | tr '\n' ' ' || true)"
         [[ -n "${pids// /}" ]] && printf '%s (pid %s)\n' "$name" "${pids% }"
     done
+    # Tools that run under an interpreter carry its name (node, bun).
+    alt="$(IFS='|'; echo "${STATE_WRITERS[*]}")"
+    pids="$(pgrep -u "$STATE_USER" -f -- "^[^ ]*(node|bun|deno|python3?)( -[^ ]*)* [^ ]*/($alt)( |\$)" 2>/dev/null | tr '\n' ' ' || true)"
+    [[ -n "${pids// /}" ]] && printf 'a writer under an interpreter (pid %s)\n' "${pids% }"
     return 0
+}
+
+# The address an SSH client connected from, from this process's
+# environment or its nearest ancestor's (sudo drops SSH_CONNECTION).
+state_ssh_client() {
+    if [[ -n "${SSH_CONNECTION:-}" ]]; then
+        printf '%s\n' "${SSH_CONNECTION%% *}"
+        return 0
+    fi
+    local pid="$PPID" i conn
+    for ((i = 0; i < 20; i++)); do
+        [[ "$pid" -gt 1 && -r "/proc/$pid/environ" ]] || return 0
+        conn="$(tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | sed -n 's/^SSH_CONNECTION=//p' | head -1)"
+        if [[ -n "$conn" ]]; then
+            printf '%s\n' "${conn%% *}"
+            return 0
+        fi
+        pid="$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null || echo 0)"
+    done
+}
+
+state_is_tailscale_addr() {
+    local ip="$1" a b
+    if [[ "$ip" == *:* ]]; then
+        [[ "${ip,,}" == fd7a:115c:a1e0:* ]]
+        return
+    fi
+    IFS=. read -r a b _ _ <<<"$ip"
+    [[ "$a" == 100 && "$b" =~ ^[0-9]+$ && "$b" -ge 64 && "$b" -le 127 ]]
+}
+
+# Refuse before stopping anything when the stop would kill this command
+# or cut the session it runs in.
+state_quiesce_preflight() {
+    local cgroup_file="${ACFS_STATE_PROC_SELF_CGROUP:-/proc/self/cgroup}" client
+    if grep -q "/user@$(state_uid)\.service/" "$cgroup_file" 2>/dev/null; then
+        state_die "this runs inside $STATE_USER's user manager (a herdr pane or a user unit), which the quiesce stops. Run it from outside: 'incus exec <name> -- sudo acfs state ...' on the host, or a plain SSH login"
+    fi
+    client="$(state_ssh_client)"
+    if [[ -n "$client" ]] && state_is_tailscale_addr "$client" \
+        && systemctl is-active --quiet tailscaled.service 2>/dev/null; then
+        state_die "this SSH session comes over Tailscale, which the quiesce stops. Run it over another path: 'incus exec <name> -- sudo acfs state ...' on the host"
+    fi
 }
 
 # Stop every registered writer, or refuse and restart what was stopped.
 state_quiesce() {
     local unit running
+    state_quiesce_preflight
     while IFS= read -r unit; do
         if systemctl is-active --quiet "$unit" 2>/dev/null; then
             state_info "Stopping $unit"
@@ -561,13 +663,40 @@ state_lease_new() {
     echo
 }
 
-# The instance's user.acfs.lease from the guest API; empty when unset.
+# The instance's user.acfs.lease from the guest API: prints it and
+# returns 0, prints nothing and returns 0 when the key is unset (404) or
+# there is no guest API, and returns 2 when the guest API doesn't answer
+# after the retries (at boot the socket can be slow to come up).
 state_lease_instance() {
     [[ -S "$STATE_GUEST_SOCK" ]] || return 0
-    local body=""
-    body="$(curl -fsS --max-time 5 --unix-socket "$STATE_GUEST_SOCK" \
-        http://custom.socket/1.0/config/user.acfs.lease 2>/dev/null || true)"
-    printf '%s' "$body" | tr -d '[:space:]'
+    local tries="${ACFS_STATE_GUEST_RETRIES:-15}" delay="${ACFS_STATE_GUEST_DELAY:-2}" i out code
+    for ((i = 1; i <= tries; i++)); do
+        out="$(curl -sS --max-time 5 --unix-socket "$STATE_GUEST_SOCK" -w '\n%{http_code}' \
+            http://custom.socket/1.0/config/user.acfs.lease 2>/dev/null || true)"
+        code="${out##*$'\n'}"
+        case "$code" in
+            200) printf '%s' "${out%$'\n'*}" | tr -d '[:space:]'; return 0 ;;
+            404) return 0 ;;
+        esac
+        [[ "$i" -lt "$tries" ]] && sleep "$delay"
+    done
+    state_err "lease: the guest API at $STATE_GUEST_SOCK did not answer (last status '${code:-none}')"
+    return 2
+}
+
+# The instance's lease, or die: a container must not write a lease the
+# next boot's check would refuse.
+state_lease_instance_required() {
+    local inst rc=0
+    inst="$(state_lease_instance)" || rc=$?
+    [[ "$rc" -eq 0 ]] || state_die "cannot read this instance's user.acfs.lease, so the lease is left as it is"
+    if [[ -S "$STATE_GUEST_SOCK" && -z "$inst" ]]; then
+        state_die "this instance has no user.acfs.lease; set one on the host (incus config set <name> user.acfs.lease <token>) or relaunch it with the launcher"
+    fi
+    if [[ -z "$inst" ]]; then
+        inst="vps:$(state_lease_new)"
+    fi
+    printf '%s\n' "$inst"
 }
 
 state_lease_volume() {
@@ -587,11 +716,15 @@ state_write_lease() {
 
 # Exit 0 when this instance may run the user manager, 1 when not.
 state_lease_check() {
-    local vol inst
+    local vol inst rc=0
     vol="$(state_lease_volume)"
-    inst="$(state_lease_instance)"
+    inst="$(state_lease_instance)" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+        state_err "lease: refusing to start the user manager without an answer from the guest API; once it answers: sudo systemctl restart $STATE_LEASE_UNIT"
+        return 1
+    fi
     if [[ "$vol" == fenced:* ]]; then
-        state_err "lease: the state volume was moved away by a --move export (${vol#fenced:}); the user manager stays stopped. Take it back with: sudo acfs state lease reclaim"
+        state_err "lease: the state volume was moved away by a --move export (${vol#fenced:}); the user manager stays stopped. Take it back from the host with: incus exec <name> -- sudo acfs state lease reclaim"
         return 1
     fi
     if [[ -z "$vol" && -z "$inst" ]]; then
@@ -622,7 +755,7 @@ state_cmd_lease() {
         status)
             state_require_root lease status
             local vol inst
-            vol="$(state_lease_volume)"; inst="$(state_lease_instance)"
+            vol="$(state_lease_volume)"; inst="$(state_lease_instance)" || inst=""
             printf 'volume lease:   %s\n' "$([[ -z "$vol" ]] && echo none || { [[ "$vol" == fenced:* ]] && echo fenced || echo set; })"
             printf 'instance lease: %s\n' "$([[ -n "$inst" ]] && echo set || echo none)"
             if [[ -n "$vol" && "$vol" == "$inst" ]]; then echo "match: yes"; else echo "match: no"; fi
@@ -630,12 +763,9 @@ state_cmd_lease() {
         reclaim)
             state_require_root lease reclaim
             local inst
-            inst="$(state_lease_instance)"
-            if [[ -z "$inst" ]]; then
-                inst="vps:$(state_lease_new)"
-            fi
+            inst="$(state_lease_instance_required)"
             state_write_lease "$inst"
-            echo "lease: this machine holds the state volume again; start it with: sudo systemctl start user@$(state_uid).service"
+            echo "lease: this machine holds the state volume again; start it with: sudo systemctl restart $STATE_LEASE_UNIT && sudo systemctl start user@$(state_uid).service"
             ;;
         *) state_usage_die "lease needs new, check, status or reclaim" ;;
     esac
@@ -718,9 +848,15 @@ state_cmd_export() {
     [[ -d "$out_dir" ]] || state_die "no such directory: $out_dir"
 
     state_lock
+    # Asked before the quiesce: running the tools may write their state.
+    local tools
+    tools="$(state_tool_versions_json)"
     trap 'state_restart_writers' EXIT
     state_quiesce
 
+    # The snapshot is the rollback point; the archive is read from the
+    # quiesced volume itself, which the guest can see and the snapshot
+    # it can't.
     if [[ -n "$snap_pool" ]]; then
         local snap="acfs-export-$stamp"
         state_info "Snapshotting $snap_remote:acfs-state-$name as $snap"
@@ -743,7 +879,7 @@ state_cmd_export() {
     spec="$work/spec.json"
     summary="$work/summary.json"
     jq -n --argjson rows "$(state_rows_json "$with_cache")" \
-        --argjson tools "$(state_tool_versions_json)" \
+        --argjson tools "$tools" \
         --arg created "$(state_now)" --arg name "$name" --arg id "$archive_id" \
         --arg kind "$([[ "$move" == "true" ]] && echo move || echo backup)" \
         --arg host "$(hostname 2>/dev/null || echo unknown)" \
@@ -849,9 +985,13 @@ state_cmd_import() {
         esac
     done
     [[ -n "$name" ]] || state_usage_die "import needs the machine's name"
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9-]*$ ]] || state_usage_die "machine name must be letters, digits and dashes: $name"
     state_need python3 jq flock
 
     state_lock
+    # Read the instance's lease now: an import that couldn't write it at
+    # the end would leave a volume the next boot refuses.
+    [[ "$dry_run" == "true" ]] || state_lease_instance_required >/dev/null
     local pending
     pending="$(state_pending_import)"
     if [[ "$resume" == "true" ]]; then
@@ -885,6 +1025,11 @@ state_cmd_import() {
     fenced="$(jq -r '.fenced' "$manifest")"
     if [[ "$kind" == "move" && "$fenced" != "true" ]]; then
         state_die "a move archive whose source is not fenced; export again with --move on the source"
+    fi
+    local source_name
+    source_name="$(jq -r '.source.name // ""' "$manifest")"
+    if [[ -n "$source_name" && "$source_name" != "$name" ]]; then
+        state_info "note: the archive was exported from $source_name, and this machine is $name"
     fi
     state_import_tool_warnings "$manifest"
 
@@ -1026,6 +1171,7 @@ state_import_swap() {
                 state_make_parents "$base" "$path"
                 mv -T -- "$stage/new/$path" "$dir/$path"
             fi
+            [[ "$row" == "home:.ssh" ]] && state_merge_authorized_keys "$stage/old/.ssh/authorized_keys" "$dir/.ssh/authorized_keys"
         else
             while IFS= read -r -d '' entry; do
                 mv -- "$entry" "$dir/"
@@ -1035,13 +1181,29 @@ state_import_swap() {
     done <"$STATE_META/$id/rows"
 }
 
-state_import_finish() {
-    local id="$1" inst
-    inst="$(state_lease_instance)"
-    if [[ -n "$inst" ]]; then
-        state_write_lease "$inst"
+# The keys this machine was launched with keep working after an import
+# brings the source's ~/.ssh: the result holds both sets, this
+# machine's first. Running it again changes nothing.
+state_merge_authorized_keys() {
+    local old="$1" new="$2" tmp
+    [[ -f "$old" ]] || return 0
+    tmp="$(mktemp "$(dirname "$new")/.authorized_keys.XXXXXX")"
+    if [[ -f "$new" ]]; then
+        awk 'NF && !seen[$0]++' "$old" "$new" >"$tmp"
     else
-        state_write_lease "vps:$(state_lease_new)"
+        awk 'NF && !seen[$0]++' "$old" >"$tmp"
+    fi
+    chmod 0600 "$tmp"
+    chown "$(state_uid):$(state_gid)" "$tmp"
+    mv -f "$tmp" "$new"
+}
+
+state_import_finish() {
+    local id="$1"
+    state_write_lease "$(state_lease_instance_required)"
+    # New host keys from the archive: point sshd at the ones now there.
+    if grep -qx 'ssh-host:' "$STATE_META/$id/rows" && [[ -d "$STATE_SSH_DIR" ]]; then
+        state_setup_ssh_host_keys
     fi
     state_journal "$id done"
     echo "Imported $(wc -l <"$STATE_META/$id/rows") rows; this machine holds the lease."
@@ -1157,7 +1319,8 @@ state_cmd_doctor() {
     uid="$(state_uid 2>/dev/null || echo -1)"
     for row in "${ROWS[@]}"; do
         IFS='|' read -r id class base path policy markers <<<"$row"
-        [[ "$base" == "home" ]] || continue
+        # Cache rows hold no login and are too big to walk on every run.
+        [[ "$base" == "home" && "$class" != "cache" ]] || continue
         target="$(state_row_target "$base" "$path")"
         [[ -e "$target" ]] || continue
         if [[ "$policy" == "private" && -n "$(state_mode_problems "$target" | head -1)" ]]; then bad+=("$id"); continue; fi
@@ -1205,6 +1368,10 @@ state_cmd_doctor() {
         result="$(systemctl show -p Result --value "$STATE_LEASE_UNIT" 2>/dev/null || true)"
         if [[ "$active" == "active" && "$result" == "success" ]]; then
             state_doctor_item state.lease "State lease" pass "this instance holds the state volume's lease"
+            # acfs update refreshes ~/.acfs, not the unit's root-owned copy.
+            if [[ -f "$STATE_LIBEXEC" ]] && ! cmp -s "$STATE_SCRIPT" "$STATE_LIBEXEC"; then
+                state_doctor_item state.lease_script "State lease script" warn "the lease unit runs an older copy at $STATE_LIBEXEC" "sudo acfs state setup-guest"
+            fi
         elif [[ "$load" != "loaded" ]]; then
             state_doctor_item state.lease "State lease" warn "$STATE_LEASE_UNIT is not installed or never ran" "sudo acfs state setup-guest"
         else
@@ -1244,6 +1411,46 @@ state_write_if_changed() {
     printf '%s\n' "$content" >"$tmp"
     chmod "$mode" "$tmp"
     mv -f "$tmp" "$path"
+}
+
+# SSH host keys on the volume: seed them from /etc/ssh once, then point
+# sshd's HostKey at them. A drop-in sshd rejects is set aside with a
+# warning and sshd keeps its own keys, so this never fails an install.
+state_setup_ssh_host_keys() {
+    chmod 0700 "$STATE_SSH_DIR"
+    local key seeded=false
+    if ! compgen -G "$STATE_SSH_DIR/ssh_host_*_key" >/dev/null; then
+        for key in "$STATE_ETC_SSH"/ssh_host_*_key; do
+            [[ -f "$key" ]] || continue
+            cp -p -- "$key" "$STATE_SSH_DIR/"
+            [[ -f "$key.pub" ]] && cp -p -- "$key.pub" "$STATE_SSH_DIR/"
+            seeded=true
+        done
+        if [[ "$seeded" != "true" ]]; then
+            state_err "warning: no SSH host keys in $STATE_ETC_SSH to seed $STATE_SSH_DIR from; sshd keeps its own"
+            return 0
+        fi
+    fi
+    chown -R 0:0 "$STATE_SSH_DIR"
+    state_fix_modes "$STATE_SSH_DIR"
+    local conf="# ACFS state layer (acfs-ioo3.3): the host keys live on the state volume,
+# so a rebuilt machine keeps its SSH identity."
+    for key in "$STATE_SSH_DIR"/ssh_host_*_key; do
+        conf+=$'\n'"HostKey $key"
+    done
+    if state_write_if_changed "$STATE_SSHD_DROPIN" "$conf" 0644; then
+        # sshd -t needs its privilege separation directory, which a
+        # socket-activated ssh creates only on the first connection.
+        [[ -d /run/sshd ]] || mkdir -p /run/sshd 2>/dev/null || true
+        local why=""
+        if ! why="$(sshd -t 2>&1)"; then
+            mv -f "$STATE_SSHD_DROPIN" "$STATE_SSHD_DROPIN.rejected"
+            state_err "warning: sshd -t rejected the HostKey drop-in, set aside at $STATE_SSHD_DROPIN.rejected; sshd keeps its own keys. sshd said: ${why:-nothing}"
+            return 0
+        fi
+        systemctl reload ssh.service 2>/dev/null || systemctl reload sshd.service 2>/dev/null || true
+    fi
+    echo "sshd uses the host keys in $STATE_SSH_DIR"
 }
 
 state_cmd_setup_guest() {
@@ -1295,34 +1502,8 @@ After=$STATE_LEASE_UNIT"
         echo "No guest API ($STATE_GUEST_SOCK); the lease unit is for Incus containers only."
     fi
 
-    # SSH host keys on the volume: seed them from /etc/ssh once.
     if [[ -d "$STATE_SSH_DIR" ]]; then
-        chmod 0700 "$STATE_SSH_DIR"
-        local key seeded=false
-        if ! compgen -G "$STATE_SSH_DIR/ssh_host_*_key" >/dev/null; then
-            for key in "$STATE_ETC_SSH"/ssh_host_*_key; do
-                [[ -f "$key" ]] || continue
-                cp -p -- "$key" "$STATE_SSH_DIR/"
-                [[ -f "$key.pub" ]] && cp -p -- "$key.pub" "$STATE_SSH_DIR/"
-                seeded=true
-            done
-            [[ "$seeded" == "true" ]] || state_die "no SSH host keys in $STATE_ETC_SSH to seed $STATE_SSH_DIR from"
-        fi
-        chown -R 0:0 "$STATE_SSH_DIR"
-        state_fix_modes "$STATE_SSH_DIR"
-        local conf="# ACFS state layer (acfs-ioo3.3): the host keys live on the state volume,
-# so a rebuilt machine keeps its SSH identity."
-        for key in "$STATE_SSH_DIR"/ssh_host_*_key; do
-            conf+=$'\n'"HostKey $key"
-        done
-        if state_write_if_changed "$STATE_SSHD_DROPIN" "$conf" 0644; then
-            if ! sshd -t 2>/dev/null; then
-                mv -f "$STATE_SSHD_DROPIN" "$STATE_SSHD_DROPIN.rejected"
-                state_die "sshd -t rejected the HostKey drop-in; it is kept at $STATE_SSHD_DROPIN.rejected"
-            fi
-            systemctl reload ssh.service 2>/dev/null || systemctl reload sshd.service 2>/dev/null || true
-        fi
-        echo "sshd uses the host keys in $STATE_SSH_DIR"
+        state_setup_ssh_host_keys
     fi
     if [[ -d "$STATE_TS_DIR" ]]; then
         chown 0:0 "$STATE_TS_DIR"
