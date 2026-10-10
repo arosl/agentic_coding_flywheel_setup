@@ -45,7 +45,7 @@ COEX_HTTPS_DEFAULT="https://cloudflare.com"
 _coex_note() { printf '[coexistence] %s\n' "$*" >&2; }
 _coex_die() { _coex_note "$*"; exit 2; }
 
-# --- System tools, from fixed directories (as service_protection.sh does) ---
+# --- System tools, from fixed directories, never from PATH ---
 
 _coex_bin_prefix_trusted() {
     local dir="${ACFS_COEX_SYSTEM_BIN_PREFIX:-}" perms=""
