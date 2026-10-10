@@ -330,6 +330,44 @@ check "the re-run stops nothing and renames nothing" incus_not_called '^stop \|^
 check "the re-run launches again with the lease" launcher_args_are "dev --lease-from dev-old --ssh-key k"
 check "the re-run removes the journal" bash -c '[[ ! -e "$1/dev.replace" ]]' _ "$CASE/state"
 
+echo "== up --replace: a journal that no longer matches the instances is refused, not resumed"
+new_case replace-stale-launched
+# A rollback by hand after a failed verify: dev-old renamed back to dev,
+# the journal left behind at launched=1.
+installed_machine
+printf 'stopped=1\ndetached=1\nrenamed=1\nlaunched=1\n' >"$CASE/state/dev.replace"
+run_machine up --replace dev --ssh-key k
+check "exits 2" rc_is 2
+check "says the journal is stale and how to start over" err_has 'says dev was renamed to dev-old, but no such instance exists'
+check "names the journal to remove" err_has "$CASE/state/dev.replace"
+check "touches nothing: only lists" only_lists
+check "launches nothing" no_launch
+check "doesn't report a replace as done" err_lacks 'replace: done'
+check "keeps the journal for the user to remove" test -f "$CASE/state/dev.replace"
+new_case replace-stale-renamed
+# The journal says renamed, but neither dev nor dev-old exists.
+printf 'stopped=1\ndetached=1\nrenamed=1\n' >"$CASE/state/dev.replace"
+run_machine up --replace dev --ssh-key k
+check "no dev-old after renamed: exits 2" rc_is 2
+check "no dev-old after renamed: launches nothing with --lease-from a missing instance" no_launch
+new_case replace-stale-launched-only-old
+# The journal says launched, dev-old exists, dev doesn't (the new instance was deleted).
+instance_json dev-old Stopped container 1 >"$CASE/inst-dev-old.json"
+printf 'stopped=1\ndetached=1\nrenamed=1\nlaunched=1\n' >"$CASE/state/dev.replace"
+run_machine up --replace dev --ssh-key k
+check "launched but dev missing: exits 2" rc_is 2
+check "launched but dev missing: says so" err_has 'says dev was launched, but no such instance exists'
+new_case replace-journal-valid
+# A journal that matches the instances resumes: renamed, dev-old present, dev absent.
+instance_json dev-old Stopped container 1 >"$CASE/inst-dev-old.json"
+printf '0123456789abcdef0123456789abcdef\n' >"$CASE/lease-dev-old"
+echo '[]' >"$CASE/guest-report.json"
+printf 'stopped=1\ndetached=1\nrenamed=1\n' >"$CASE/state/dev.replace"
+run_machine up --replace dev --ssh-key k
+check "a matching journal resumes: exits 0" rc_is 0
+check "a matching journal resumes: says it continues from the journal" err_has 'continuing from the journal'
+check "a matching journal resumes: launches with the lease" launcher_args_are "dev --lease-from dev-old --ssh-key k"
+
 echo "== up --replace: a failed verify keeps the journal and names the rollback"
 new_case replace-verify-fails
 installed_machine
@@ -337,6 +375,7 @@ echo '[{"check":"claude","status":"fail","detail":"login stored, mode 0600; clau
 run_machine up --replace dev --ssh-key k
 check "exits 1" rc_is 1
 check "names the old instance as the rollback" err_has 'the old instance is still dev-old, stopped'
+check "the rollback text names the journal to remove" err_has "rm $CASE/state/dev.replace"
 check "the journal keeps launched, not verified" bash -c 'grep -qx launched=1 "$1" && ! grep -q verified "$1"' _ "$CASE/state/dev.replace"
 
 echo "== up --replace: preflight refusals touch nothing"

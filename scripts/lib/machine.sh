@@ -167,6 +167,23 @@ machine_journal_mark() {
     machine_journal_has "$1" || printf '%s=1\n' "$1" >>"$file"
 }
 
+# A journal left by an earlier run must still describe the instances: after
+# the rename, <name>-old exists; after the launch, <name> exists too. A
+# rollback by hand (the old instance renamed back) leaves a journal that
+# would otherwise skip every step and call the rolled-back machine replaced.
+machine_replace_check_journal() {
+    local file
+    file="$(machine_journal_file)"
+    [[ -f "$file" ]] || return 0
+    if machine_journal_has renamed && [[ -z "$(machine_instance_json "$MACHINE_NAME-old")" ]]; then
+        machine_die "the replace journal $file says $(machine_qualified "$MACHINE_NAME") was renamed to $(machine_qualified "$MACHINE_NAME-old"), but no such instance exists (rolled back by hand?). Remove the journal and re-run to start the replace over" 2
+    fi
+    if machine_journal_has launched && [[ -z "$(machine_instance_json "$MACHINE_NAME")" ]]; then
+        machine_die "the replace journal $file says $(machine_qualified "$MACHINE_NAME") was launched, but no such instance exists. Remove the journal and re-run to start the replace over" 2
+    fi
+    machine_note "replace: continuing from the journal $file"
+}
+
 # Step 1 of --replace: the old instance must be one the launcher made and
 # installed, so its volumes carry a login worth keeping.
 machine_replace_preflight() {
@@ -234,7 +251,7 @@ machine_replace_verify() {
     machine_journal_has verified && return 0
     machine_note "replace: verifying $(machine_qualified "$MACHINE_NAME")"
     machine_verify_in_instance "$MACHINE_NAME" \
-        || machine_die "verify found a failure in the new $(machine_qualified "$MACHINE_NAME"); the old instance is still $(machine_qualified "$MACHINE_NAME-old"), stopped. Fix the cause and re-run to verify again, or roll back: incus delete $(machine_qualified "$MACHINE_NAME"); incus rename $(machine_qualified "$MACHINE_NAME-old") $(machine_qualified "$MACHINE_NAME"); re-attach the volumes with the launcher's device names" 1
+        || machine_die "verify found a failure in the new $(machine_qualified "$MACHINE_NAME"); the old instance is still $(machine_qualified "$MACHINE_NAME-old"), stopped. Fix the cause and re-run to verify again, or roll back: incus delete $(machine_qualified "$MACHINE_NAME"); incus rename $(machine_qualified "$MACHINE_NAME-old") $(machine_qualified "$MACHINE_NAME"); re-attach the volumes with the launcher's device names; rm $(machine_journal_file)" 1
     machine_journal_mark verified
 }
 
@@ -287,6 +304,7 @@ machine_up() {
     fi
 
     machine_require incus jq
+    machine_replace_check_journal
     machine_replace_preflight
     machine_replace_stop
     machine_replace_detach
@@ -305,6 +323,10 @@ MACHINE_VERIFY_JSON=""
 MACHINE_VERIFY_READ_ONLY=""
 MACHINE_VERIFY_FAILED=0
 MACHINE_VERIFY_ROWS=()
+# The file a request's output is captured in; removed on exit too, so an
+# interrupted request leaves no tool output behind.
+MACHINE_CAPTURE_FILE=""
+trap '[[ -z "$MACHINE_CAPTURE_FILE" ]] || rm -f -- "$MACHINE_CAPTURE_FILE"' EXIT
 
 # record <check> <status> <detail>: status is ok, fail, not-configured or
 # skip. The detail never carries file contents or command output beyond
@@ -354,6 +376,7 @@ machine_request() {
     shift 2
     local out rc=0
     out="$(mktemp "${TMPDIR:-/tmp}/acfs-verify.XXXXXX")"
+    MACHINE_CAPTURE_FILE="$out"
     timeout "$MACHINE_VERIFY_TIMEOUT" "$@" >"$out" 2>&1 </dev/null || rc=$?
     local verdict
     if ((rc == 0)); then
@@ -370,6 +393,7 @@ machine_request() {
         verdict="fail: exit $rc ($(wc -l <"$out" | tr -d ' ') lines of output, not shown)"
     fi
     rm -f -- "$out"
+    MACHINE_CAPTURE_FILE=""
     if [[ "$verdict" == ok ]]; then
         machine_record "$check" ok "$MACHINE_LOGIN_DETAIL; $tag answered"
     else
