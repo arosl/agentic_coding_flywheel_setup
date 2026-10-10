@@ -135,6 +135,9 @@ jobs:
       - name: Run machine entry command tests (acfs machine up|verify, against stubs)
         run: HOME="$(mktemp -d)" bash tests/unit/test_machine.sh
 
+      - name: Run root-owned tool binary tests (acfs update and doctor, against fixtures)
+        run: bash tests/unit/test_tool_ownership.sh
+
       - name: Run Incus, podman and Docker coexistence tests (against stubs)
         run: HOME="$(mktemp -d)" bash tests/unit/test_coexistence.sh
 

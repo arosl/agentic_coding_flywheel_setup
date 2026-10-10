@@ -7474,6 +7474,57 @@ update_srps_herdr_rule() {
 # keeps everything else in each file, and touches only installed agents'.
 # Agent Mail is a stack component, so partial modes (--agents-only, ...)
 # leave the agents' settings alone, as they leave the DCG hook.
+# The two binaries ACFS unpacks into /usr/local/bin from release tarballs
+# (tools.lazygit, tools.lazydocker). Installs made before acfs-x2c9 extracted
+# them without --no-same-owner, so they belong to the tarball's uid, and on
+# a host where that uid is a real account it could replace a binary on
+# root's PATH. The doctor's check_root_tool_ownership mirrors this list.
+UPDATE_ROOT_TOOL_BINARIES=(/usr/local/bin/lazygit /usr/local/bin/lazydocker)
+
+# "<uid>:<octal mode>" of a file, or nothing. A function, so a test can
+# answer for a fixture file no test user could own.
+update_file_owner_mode() {
+    stat -c '%u:%a' "$1" 2>/dev/null
+}
+
+# Re-owns exactly those binaries to root:root 0755 when they aren't root's
+# or are writable by group or other (acfs-u0wy). Idempotent: a binary that
+# is already right is left alone.
+update_root_tool_ownership() {
+    local desc="Root-owned tool binaries" path owner_mode uid mode
+    local -a wrong=() fixed=() left=()
+
+    for path in "${UPDATE_ROOT_TOOL_BINARIES[@]}"; do
+        [[ -e "$path" ]] || continue
+        owner_mode="$(update_file_owner_mode "$path" || true)"
+        [[ "$owner_mode" =~ ^[0-9]+:[0-7]+$ ]] || continue
+        uid="${owner_mode%%:*}"
+        mode="${owner_mode##*:}"
+        if [[ "$uid" != 0 ]] || (( (8#$mode & 8#022) != 0 )); then
+            wrong+=("$path")
+        fi
+    done
+    if ((${#wrong[@]} == 0)); then
+        log_item "ok" "$desc" "lazygit and lazydocker, where installed, are root's"
+        return 0
+    fi
+    if update_is_read_only_mode; then
+        log_item "skip" "$desc" "dry-run: would chown root:root and chmod 0755: ${wrong[*]}"
+        return 0
+    fi
+    for path in "${wrong[@]}"; do
+        if run_cmd_sudo "Re-own $path" chown root:root "$path" \
+            && run_cmd_sudo "Set the mode of $path" chmod 0755 "$path"; then
+            fixed+=("$path")
+        else
+            left+=("$path")
+        fi
+    done
+    ((${#fixed[@]} == 0)) || log_item "ok" "$desc" "re-owned root:root 0755: ${fixed[*]}"
+    ((${#left[@]} == 0)) || log_item "warn" "$desc" "could not re-own ${left[*]}; run: sudo chown root:root <path> && sudo chmod 0755 <path>"
+    return 0
+}
+
 update_agent_mail_stop_hook() {
     local desc="Agent Mail Stop hook"
     local helper="" target_user="" current_user="" target_home="" agent="" file=""
@@ -9133,6 +9184,7 @@ main() {
     update_shell
     update_stack
     update_agent_mail_stop_hook
+    update_root_tool_ownership
     update_root_agents_md
 
     # Report managed services still running a replaced binary (#381)

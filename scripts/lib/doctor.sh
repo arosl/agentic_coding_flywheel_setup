@@ -3878,6 +3878,53 @@ _acfs_doctor_incus_extensions() {
 # These are non-fatal checks (skip status) since utilities are optional.
 # ============================================================
 
+# The two binaries ACFS unpacks into /usr/local/bin from release tarballs
+# (tools.lazygit, tools.lazydocker). Installs made before acfs-x2c9 extracted
+# them without --no-same-owner, so they belong to the tarball's uid, and on
+# a host where that uid is a real account it could replace a binary on
+# root's PATH. acfs update re-owns them (update_root_tool_ownership mirrors
+# this list); the doctor only reports (acfs-u0wy).
+DOCTOR_ROOT_TOOL_BINARIES=(/usr/local/bin/lazygit /usr/local/bin/lazydocker)
+
+# "<uid>:<octal mode>" of a file, or nothing. A function, so a test can
+# answer for a fixture file no test user could own.
+doctor_file_owner_mode() {
+    stat -c '%u:%a' "$1" 2>/dev/null
+}
+
+check_root_tool_ownership() {
+    local path owner_mode uid mode name
+    local -a present=()
+    for path in "${DOCTOR_ROOT_TOOL_BINARIES[@]}"; do
+        [[ -e "$path" ]] && present+=("$path")
+    done
+    ((${#present[@]} > 0)) || return 0
+
+    section "Root-owned tool binaries"
+    for path in "${present[@]}"; do
+        name="${path##*/}"
+        owner_mode="$(doctor_file_owner_mode "$path" || true)"
+        if [[ ! "$owner_mode" =~ ^[0-9]+:[0-7]+$ ]]; then
+            check "tools.$name.owner" "$path is root's" "warn" "stat can't read its owner and mode" ""
+            continue
+        fi
+        uid="${owner_mode%%:*}"
+        mode="${owner_mode##*:}"
+        if [[ "$uid" != 0 ]]; then
+            check "tools.$name.owner" "$path is root's" "warn" \
+                "owned by uid $uid, the release tarball's owner; an account with that uid could replace a binary on root's PATH" \
+                "sudo chown root:root $path && sudo chmod 0755 $path (acfs update does this too)"
+        elif (( (8#$mode & 8#022) != 0 )); then
+            check "tools.$name.owner" "$path is root's" "warn" \
+                "mode $mode lets group or other write it" \
+                "sudo chmod 0755 $path (acfs update does this too)"
+        else
+            check "tools.$name.owner" "$path is root's" "pass" "root:root, mode $mode" ""
+        fi
+    done
+    return 0
+}
+
 check_utilities() {
     local util_bin=""
 
@@ -6594,6 +6641,7 @@ $(gum style --foreground "$ACFS_MUTED" "OS:") $(gum style --foreground "$ACFS_TE
     check_utilities
     check_incus
     check_coexistence
+    check_root_tool_ownership
     check_updates_health
     check_manifest_supplemental
     show_skipped_tools
