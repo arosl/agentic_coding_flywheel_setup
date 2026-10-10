@@ -1695,9 +1695,9 @@ verify_checksum() {
             printf "  URL: %s\n" "$url" >&2
             printf "  Refusing to execute unverified installer script.\n" >&2
             printf "  Fix:\n" >&2
-            printf "    - End users: checksums.yaml is refreshed from upstream automatically, so a mismatch on a\n" >&2
+            printf "    - End users: checksums.yaml comes from the ACFS repo, so a mismatch on a\n" >&2
             printf "      current ACFS means the PUBLISHED pin is stale (upstream changed its installer); there is\n" >&2
-            printf "      nothing to repair locally. Hold the tool until the pin is refreshed upstream:\n" >&2
+            printf "      nothing to repair locally. Hold the tool until ACFS refreshes the pin:\n" >&2
             printf "        acfs hold %s --reason \"stale installer pin\" --expiry YYYY-MM-DD\n" "$name" >&2
             printf "      and report it at https://github.com/arosl/agentic_coding_flywheel_setup/issues\n" >&2
             printf "    - Maintainers: regenerate checksums.yaml with:\n" >&2
