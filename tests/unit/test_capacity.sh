@@ -515,12 +515,15 @@ run_guard() {
 
 # A fake container cgroup root under the guard host: memory.current and
 # memory.high in MiB ("max" for none), the cgroup's memory.pressure "full"
-# avg60, and, when given, acfs-agents.slice's "full" avg60.
+# avg60, and, when given, acfs-agents.slice's "full" avg60. A dash nests a
+# slice, so the acfs slices sit under acfs.slice. FAKE_INACTIVE_FILE_MIB
+# sets memory.stat's inactive_file (default 0).
 make_guard_cgroup() {
     local host="$1" current_mib="$2" high_mib="$3" psi_full="$4" agents_full="${5:-}"
-    local cg="$host/cgroup" slices="$host/cgroup/user.slice/user-1000.slice/user@1000.service"
+    local cg="$host/cgroup" slices="$host/cgroup/user.slice/user-1000.slice/user@1000.service/acfs.slice"
     mkdir -p "$cg"
     printf '%s\n' "$((current_mib * 1048576))" > "$cg/memory.current"
+    printf 'anon 1\nfile 2\nactive_file 3\ninactive_file %s\nslab 4\n' "$((${FAKE_INACTIVE_FILE_MIB:-0} * 1048576))" > "$cg/memory.stat"
     if [[ "$high_mib" == max ]]; then
         echo max > "$cg/memory.high"
     else
@@ -543,6 +546,11 @@ test_guard_container_reads_its_cgroup() {
     # The host's /proc/pressure says memory full 50: in a container that is
     # the host's PSI, and the guard must not read it.
     host="$(make_guard_host guard_container 33554432 8388608 50.00)"
+    # A flat acfs-agents.slice (no acfs.slice parent) is not where systemd
+    # puts it, and is never read.
+    mkdir -p "$host/cgroup/user.slice/user-1000.slice/user@1000.service/acfs-agents.slice"
+    printf 'full avg10=0.00 avg60=99.00 avg300=0.00 total=1\n' \
+        > "$host/cgroup/user.slice/user-1000.slice/user@1000.service/acfs-agents.slice/memory.pressure"
     make_guard_cgroup "$host" 40960 98304 0.10 1.00
     output="$(FAKE_TMP_FSTYPE=ext4 FAKE_VIRT=lxc run_guard "$host" --json)"
     write_output_artifact guard_container json "$output"
@@ -552,6 +560,7 @@ test_guard_container_reads_its_cgroup() {
     jq -e '
       .status == "green" and .reasons == [] and
       .container.virt == "lxc" and .container.memory_current_mib == 40960 and
+      .container.memory_working_set_mib == 40960 and
       .container.memory_limit_mib == 98304 and .container.memory_limit_file == "memory.high" and
       .container.memory_used_percent == 41 and
       .pressure.source == "cgroup" and .pressure.memory_full_avg60 == 0.1 and .pressure.cpu_some_avg60 == 3 and
@@ -571,7 +580,7 @@ test_guard_container_reads_its_cgroup() {
     local human
     human="$(FAKE_TMP_FSTYPE=ext4 FAKE_VIRT=lxc run_guard "$host")"
     write_output_artifact guard_container txt "$human"
-    [[ "$human" == *"Container (lxc):     memory.current 9216 MiB, 56% of memory.high 16384 MiB (red over 80%)"* \
+    [[ "$human" == *"Container (lxc):     working set 9216 MiB (memory.current 9216 MiB), 56% of memory.high 16384 MiB (red over 80%)"* \
         && "$human" == *"PSI avg60 (cgroup):  memory some 2.00, full 0.10"* \
         && "$human" == *"acfs-agents.slice: memory some 4.00, full 1.00"* ]] || return 1
     pass "guard_container_reads_its_cgroup"
@@ -585,9 +594,27 @@ test_guard_container_refuses_over_80_percent() {
     output="$(FAKE_TMP_FSTYPE=ext4 FAKE_VIRT=lxc run_guard "$host" --json)"
     write_output_artifact guard_container_full json "$output"
     jq -e '.status == "red" and .agents.more == 0 and (.reasons | length) == 1
-           and (.reasons[0] | test("memory.current is 13200 MiB, 80% of memory.high \\(16384 MiB\\), over 80%"))' <<<"$output" >/dev/null || return 1
+           and (.reasons[0] | test("working set \\(memory.current less inactive_file\\) is 13200 MiB, 80% of memory.high \\(16384 MiB\\), over 80%"))' <<<"$output" >/dev/null || return 1
     err="$(FAKE_TMP_FSTYPE=ext4 FAKE_VIRT=lxc run_guard "$host" --check 2>&1 >/dev/null)" || status=$?
-    [[ "$status" -eq 1 && "$err" == *"memory.current is 13200 MiB"* ]] || return 1
+    [[ "$status" -eq 1 && "$err" == *"working set (memory.current less inactive_file) is 13200 MiB"* ]] || return 1
+
+    # Page cache a soft limit leaves in place is not the working set: the
+    # same memory.current with 4000 MiB of inactive_file is 9200 MiB, 56%.
+    FAKE_INACTIVE_FILE_MIB=4000 make_guard_cgroup "$host" 13200 16384 0.00
+    output="$(FAKE_TMP_FSTYPE=ext4 FAKE_VIRT=lxc run_guard "$host" --json)"
+    jq -e '.status == "green" and .container.memory_current_mib == 13200
+           and .container.memory_working_set_mib == 9200 and .container.memory_used_percent == 56
+           and .agents.more == 3' <<<"$output" >/dev/null || return 1
+
+    # inactive_file larger than memory.current (a racy read) floors at 0.
+    FAKE_INACTIVE_FILE_MIB=20000 make_guard_cgroup "$host" 13200 16384 0.00
+    output="$(FAKE_TMP_FSTYPE=ext4 FAKE_VIRT=lxc run_guard "$host" --json)"
+    jq -e '.container.memory_working_set_mib == 0' <<<"$output" >/dev/null || return 1
+
+    # No memory.stat: the working set is memory.current.
+    make_guard_cgroup "$host" 13200 16384 0.00
+    rm -f "$host/cgroup/memory.stat"
+    FAKE_TMP_FSTYPE=ext4 FAKE_VIRT=lxc run_guard "$host" --check 2>/dev/null && return 1
 
     # Exactly 80% is still admitted, and the threshold moves with the knob.
     make_guard_cgroup "$host" 13107 16384 0.00
@@ -622,6 +649,9 @@ test_guard_container_without_limit_or_cgroup() {
     rm -f "$host/cgroup/memory.current"
     err="$(FAKE_TMP_FSTYPE=ext4 FAKE_VIRT=lxc run_guard "$host" --check 2>&1 >/dev/null)" || status=$?
     [[ "$status" -eq 2 && "$err" == *"cannot read the container's memory.current"* && "$err" != *MemAvailable* ]] || return 1
+    local human
+    human="$(FAKE_TMP_FSTYPE=ext4 FAKE_VIRT=lxc run_guard "$host")"
+    [[ "$human" == *"Container (lxc):     memory.current unreadable"* && "$human" != *"no memory limit"* ]] || return 1
 
     # Outside a container the cgroup root is never read.
     FAKE_TMP_FSTYPE=ext4 run_guard "$host" --check || return 1

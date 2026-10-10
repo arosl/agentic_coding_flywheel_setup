@@ -45,7 +45,8 @@ The guard is red when MemAvailable is under 4 GiB, a work or temp filesystem
 has under 10% free, or PSI memory "full" avg60 is over 10. It warns when the
 host has no swap, rch has no workers, or a tmpfs /tmp is more than 50% full.
 In an Incus system container (systemd-detect-virt -c says lxc) it reads the
-container's own cgroup: it is red when memory.current is over 80% of
+container's own cgroup: it is red when the working set (memory.current less
+inactive_file, so reclaimable page cache doesn't count) is over 80% of
 memory.high (memory.max when there is no soft limit), and PSI comes from the
 cgroup's memory.pressure, not /proc/pressure. Anywhere, the memory.pressure
 of acfs-agents.slice (and the other acfs slices, reported) is read when the
@@ -1216,6 +1217,24 @@ capacity_guard_container_virt() {
     printf '%s\n' "$virt"
 }
 
+# A slice's cgroup path below its manager: a dash in a slice name nests it,
+# so acfs-agents.slice is acfs.slice/acfs-agents.slice.
+capacity_guard_slice_path() {
+    local -a parts=()
+    local part prefix="" path=""
+    IFS=- read -r -a parts <<<"${1%.slice}"
+    for part in "${parts[@]}"; do
+        prefix="${prefix:+$prefix-}$part"
+        path="${path:+$path/}$prefix.slice"
+    done
+    printf '%s\n' "$path"
+}
+
+# A cgroup's memory.stat field in bytes; nothing when unreadable.
+capacity_guard_memory_stat() {
+    awk -v field="$2" '$1 == field && $2 ~ /^[0-9]+$/ && length($2) < 16 {print $2; exit}' "$1/memory.stat" 2>/dev/null || true
+}
+
 # The first line of a cgroup v2 file when it is a byte count or "max";
 # nothing otherwise.
 capacity_guard_cgroup_value() {
@@ -1346,6 +1365,7 @@ capacity_guard_collect() {
     CAPACITY_GUARD_VIRT="$(capacity_guard_container_virt)"
     CAPACITY_GUARD_PSI_SOURCE="proc"
     CAPACITY_GUARD_CG_CURRENT_MIB=""
+    CAPACITY_GUARD_CG_WORKING_SET_MIB=""
     CAPACITY_GUARD_CG_LIMIT_MIB=""
     CAPACITY_GUARD_CG_LIMIT_FILE=""
     CAPACITY_GUARD_CG_USED_PCT=""
@@ -1369,13 +1389,25 @@ capacity_guard_collect() {
             CAPACITY_GUARD_READABLE=false
         else
             CAPACITY_GUARD_CG_CURRENT_MIB=$((cg_current / 1048576))
+            # memory.current counts page cache, which a soft limit leaves in
+            # place until usage reaches memory.high, so a busy container sits
+            # near 100% with most of it reclaimable. The admission line is
+            # for the working set: memory.current less inactive_file, the
+            # kubelet's measure.
+            local cg_inactive_file="" cg_working_set="$cg_current"
+            cg_inactive_file="$(capacity_guard_memory_stat "$cgroot" inactive_file)"
+            if [[ -n "$cg_inactive_file" ]]; then
+                cg_working_set=$((cg_current - cg_inactive_file))
+                (( cg_working_set >= 0 )) || cg_working_set=0
+            fi
+            CAPACITY_GUARD_CG_WORKING_SET_MIB=$((cg_working_set / 1048576))
             if [[ -n "$cg_limit" ]]; then
                 CAPACITY_GUARD_CG_LIMIT_MIB=$((cg_limit / 1048576))
-                CAPACITY_GUARD_CG_USED_PCT=$((cg_current * 100 / cg_limit))
-                cg_room_mib=$(((cg_limit * max_cg_pct / 100 - cg_current) / 1048576))
+                CAPACITY_GUARD_CG_USED_PCT=$((cg_working_set * 100 / cg_limit))
+                cg_room_mib=$(((cg_limit * max_cg_pct / 100 - cg_working_set) / 1048576))
                 (( cg_room_mib >= 0 )) || cg_room_mib=0
-                if (( cg_current * 100 > cg_limit * max_cg_pct )); then
-                    CAPACITY_GUARD_REASONS+=("the container's memory.current is ${CAPACITY_GUARD_CG_CURRENT_MIB} MiB, ${CAPACITY_GUARD_CG_USED_PCT}% of ${CAPACITY_GUARD_CG_LIMIT_FILE} (${CAPACITY_GUARD_CG_LIMIT_MIB} MiB), over ${max_cg_pct}%")
+                if (( cg_working_set * 100 > cg_limit * max_cg_pct )); then
+                    CAPACITY_GUARD_REASONS+=("the container's working set (memory.current less inactive_file) is ${CAPACITY_GUARD_CG_WORKING_SET_MIB} MiB, ${CAPACITY_GUARD_CG_USED_PCT}% of ${CAPACITY_GUARD_CG_LIMIT_FILE} (${CAPACITY_GUARD_CG_LIMIT_MIB} MiB), over ${max_cg_pct}%")
                 fi
             else
                 CAPACITY_GUARD_WARNINGS+=("the container has no memory limit (memory.high and memory.max are max): the swarm can take the host's RAM")
@@ -1402,7 +1434,7 @@ capacity_guard_collect() {
     CAPACITY_GUARD_SLICE_LINES=()
     if [[ "$uid" =~ ^[0-9]+$ ]]; then
         for slice in acfs-services acfs-background acfs-agents; do
-            slice_file="$cgroot/user.slice/user-$uid.slice/user@$uid.service/$slice.slice/memory.pressure"
+            slice_file="$cgroot/user.slice/user-$uid.slice/user@$uid.service/$(capacity_guard_slice_path "$slice.slice")/memory.pressure"
             [[ -r "$slice_file" ]] || continue
             slice_some="$(capacity_guard_psi_avg60 "$slice_file" some)"
             slice_full="$(capacity_guard_psi_avg60 "$slice_file" full)"
@@ -1530,6 +1562,7 @@ capacity_guard_emit_json() {
         --arg virt "$CAPACITY_GUARD_VIRT" \
         --arg psi_source "$CAPACITY_GUARD_PSI_SOURCE" \
         --arg cg_current "$CAPACITY_GUARD_CG_CURRENT_MIB" \
+        --arg cg_working_set "$CAPACITY_GUARD_CG_WORKING_SET_MIB" \
         --arg cg_limit "$CAPACITY_GUARD_CG_LIMIT_MIB" \
         --arg cg_limit_file "$CAPACITY_GUARD_CG_LIMIT_FILE" \
         --arg cg_used "$CAPACITY_GUARD_CG_USED_PCT" \
@@ -1568,6 +1601,7 @@ capacity_guard_emit_json() {
             container: {
                 virt: $virt,
                 memory_current_mib: ($cg_current | num),
+                memory_working_set_mib: ($cg_working_set | num),
                 memory_limit_mib: ($cg_limit | num),
                 memory_limit_file: (if $cg_limit_file == "" then null else $cg_limit_file end),
                 memory_used_percent: ($cg_used | num)
@@ -1611,10 +1645,12 @@ capacity_guard_emit_human() {
         echo "  Swap:                ${CAPACITY_GUARD_SWAP_FREE_MIB:-unknown} MiB free of ${CAPACITY_GUARD_SWAP_TOTAL_MIB:-unknown} MiB"
     fi
     if [[ "$CAPACITY_GUARD_VIRT" == lxc ]]; then
-        if [[ -n "$CAPACITY_GUARD_CG_LIMIT_MIB" ]]; then
-            echo "  Container (lxc):     memory.current ${CAPACITY_GUARD_CG_CURRENT_MIB} MiB, ${CAPACITY_GUARD_CG_USED_PCT}% of ${CAPACITY_GUARD_CG_LIMIT_FILE} ${CAPACITY_GUARD_CG_LIMIT_MIB} MiB (red over ${CAPACITY_GUARD_MAX_CGROUP_PCT}%)"
+        if [[ -z "$CAPACITY_GUARD_CG_CURRENT_MIB" ]]; then
+            echo "  Container (lxc):     memory.current unreadable"
+        elif [[ -n "$CAPACITY_GUARD_CG_LIMIT_MIB" ]]; then
+            echo "  Container (lxc):     working set ${CAPACITY_GUARD_CG_WORKING_SET_MIB} MiB (memory.current ${CAPACITY_GUARD_CG_CURRENT_MIB} MiB), ${CAPACITY_GUARD_CG_USED_PCT}% of ${CAPACITY_GUARD_CG_LIMIT_FILE} ${CAPACITY_GUARD_CG_LIMIT_MIB} MiB (red over ${CAPACITY_GUARD_MAX_CGROUP_PCT}%)"
         else
-            echo "  Container (lxc):     memory.current ${CAPACITY_GUARD_CG_CURRENT_MIB:-unknown} MiB, no memory limit"
+            echo "  Container (lxc):     memory.current ${CAPACITY_GUARD_CG_CURRENT_MIB} MiB, no memory limit"
         fi
     fi
     printf '  %-20s memory some %s, full %s (red over %s); cpu some %s\n' \
