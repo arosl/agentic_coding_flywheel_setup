@@ -21,6 +21,7 @@ on:
       - 'scripts/lib/doctor.sh'
       - 'tests/unit/test_herdr_agents.sh'
       - 'tests/unit/test_doctor_codex_daemon.sh'
+      - 'tests/unit/test_doctor_herdr.sh'
       - 'scripts/lib/agent_mail_hook.sh'
       - 'tests/unit/test_agent_mail_hook.sh'
       - 'tests/unit/test_doctor_agent_mail_hook.sh'
@@ -43,6 +44,7 @@ on:
       - 'scripts/lib/doctor.sh'
       - 'tests/unit/test_herdr_agents.sh'
       - 'tests/unit/test_doctor_codex_daemon.sh'
+      - 'tests/unit/test_doctor_herdr.sh'
       - 'scripts/lib/agent_mail_hook.sh'
       - 'tests/unit/test_agent_mail_hook.sh'
       - 'tests/unit/test_doctor_agent_mail_hook.sh'
@@ -78,6 +80,8 @@ jobs:
         run: HOME="$(mktemp -d)" bash tests/unit/test_herdr_agents.sh
       - name: Doctor's Codex daemon check against a stub helper
         run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_codex_daemon.sh
+      - name: Doctor's herdr server and integration checks against a stub herdr
+        run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_herdr.sh
       - name: Agent Mail Stop hook against a stub am and herdr
         run: HOME="$(mktemp -d)" bash tests/unit/test_agent_mail_hook.sh
       - name: Doctor's Agent Mail Stop hook check against fixture settings
