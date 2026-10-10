@@ -49,8 +49,8 @@ DATA_SIZE="60GiB"
 # The container target needs the state layer's sub-path mounts, the sysinfo
 # intercept and the restricted test project; the two optional extensions
 # only add knobs the profile may use. The server is judged by the API
-# extensions it reports, never by its version string (the operator,
-# 2026-10-10: Ubuntu 26.04's 6.0.5 has what phase 1 needs).
+# extensions it reports, never by its version string: a distribution's
+# 6.0.x may carry what a newer upstream release introduced, or lack it.
 REQUIRED_API_EXTENSIONS=(disk_volume_subpath container_syscall_intercept_sysinfo projects_networks_restricted_access)
 OPTIONAL_API_EXTENSIONS=(instance_limits_oom container_disk_tmpfs)
 # Written by `host-setup`; every run reads it.
