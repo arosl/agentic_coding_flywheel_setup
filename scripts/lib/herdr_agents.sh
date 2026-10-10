@@ -12,7 +12,7 @@
 # that name lowercased, and the tab label is the Agent Mail name.
 #
 # Usage:
-#   acfs agents spawn [--claude N] [--codex N] [--agy N] [--kind K [--count N]]...
+#   acfs agents spawn [--claude N] [--codex N] [--agy N] [--pi N] [--kind K [--count N]]...
 #   acfs agents send (--all | --kind K | --name N)... <prompt>
 #   acfs agents list [--workspace ID] [--kind K] [--json]
 #   acfs agents inbox [--agent NAME] [--project KEY] [--keep-unread]
@@ -39,7 +39,7 @@ HERDR_AGENTS_WAKE_GAP=120
 herdr_agents_usage() {
     cat <<'EOF'
 Usage:
-  acfs agents spawn [--claude N] [--codex N] [--agy N] [--kind KIND [--count N]]...
+  acfs agents spawn [--claude N] [--codex N] [--agy N] [--pi N] [--kind KIND [--count N]]...
                     [--workspace ID] [--cwd DIR] [--model MODEL]
                     [--prompt TEXT | --no-prompt] [--trust-folder] [--dry-run] [--json]
   acfs agents send  (--all | --kind KIND | --name NAME)... [--workspace ID]
@@ -571,10 +571,10 @@ herdr_agents_spawn() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --claude|--codex|--agy|--gemini)
+            --claude|--codex|--agy|--gemini|--pi)
                 [[ $# -ge 2 ]] || herdr_agents_die "$1 needs a count"
                 herdr_agents_add_kind "${1#--}" "$2"; shift 2 ;;
-            --claude=*|--codex=*|--agy=*|--gemini=*)
+            --claude=*|--codex=*|--agy=*|--gemini=*|--pi=*)
                 local flag="${1%%=*}"
                 herdr_agents_add_kind "${flag#--}" "${1#*=}"; shift ;;
             --kind)
@@ -597,7 +597,7 @@ herdr_agents_spawn() {
         esac
     done
     [[ -z "$pending_kind" ]] || herdr_agents_add_kind "$pending_kind" 1
-    (( ${#kinds[@]} > 0 )) || herdr_agents_die "nothing to spawn: pass --claude N, --codex N, --agy N or --kind KIND [--count N]"
+    (( ${#kinds[@]} > 0 )) || herdr_agents_die "nothing to spawn: pass --claude N, --codex N, --agy N, --pi N or --kind KIND [--count N]"
     # --model reaches the agent CLI, not just its Agent Mail identity, so
     # every kind in this spawn must take it. Checked before anything exists.
     if [[ "$model_given" == true ]]; then

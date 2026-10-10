@@ -327,6 +327,16 @@ check "the Codex daemon is seen to before the first identity" \
 check "--json lists each agent as started" \
     test "$(jq -r '[.agents[].status] | unique | join(",")' <<<"$OUT")" = started
 
+# acfs-gen.7: one call spawns per-kind counts of every kind into one workspace.
+reset_stub kinds
+run_helper spawn --claude 1 --codex=1 --agy 1 --pi=1 --workspace w5 --cwd "$WORK/repo" --no-prompt --json
+check "spawn --claude --codex --agy --pi starts one agent of each kind, in order" \
+    test "$RC/$(grep -o -- '^herdr agent start [a-z]* --kind [a-z]*' "$STUB_DIR/calls" | awk '{print $6}' | tr '\n' ' ')" \
+        = "0/claude codex agy pi "
+check "every tab of one spawn goes into the same workspace" \
+    test "$(grep '^herdr tab create' "$STUB_DIR/calls" | grep -c -- '--workspace w5 ')" -eq 4
+check "a pi agent's identity has the program pi" grep -q -- '^am agents create .* --program pi ' "$STUB_DIR/calls"
+
 reset_stub kickoff
 run_helper spawn --claude 1 --cwd "$WORK/repo"
 check "spawn with the default kickoff exits 0" test "$RC" -eq 0
@@ -753,6 +763,16 @@ check "send --all --workspace skips this pane and other workspaces" \
 check "--wait and --timeout pass through, with the prompt words joined" \
     grep -qx -- "herdr agent prompt betaowl hello there --wait --timeout 5000" "$STUB_DIR/calls"
 check "send exits 0 when nothing was skipped" test "$RC" -eq 0
+
+# acfs-gen.7: --all reports each target, and one agent gone since the list fails send.
+reset_stub sendallmissing
+write_list
+touch "$STUB_DIR/agent_not_found_betaowl"
+run_helper send --all --workspace w9 ping
+check "send --all --workspace with one agent gone still prompts the rest, and exits nonzero" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "^sent: alphafox (working)$" <<<"$2" && grep -q "skipped betaowl (agent_not_found)" <<<"$2" \
+        && grep -q "^sent: gammayak (working)$" <<<"$2" && grep -q "^sent 2, skipped 1$" <<<"$2"' _ "$RC" "$ERR"
+check "send --all --workspace prompts no agent of another workspace" bash -c '! grep -q "agent prompt w2:" "$1"' _ "$STUB_DIR/calls"
 
 reset_stub unnamed
 write_list
