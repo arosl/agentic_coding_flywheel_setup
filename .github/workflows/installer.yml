@@ -96,6 +96,9 @@ jobs:
       - name: Run TTY safety linter
         run: bash scripts/tests/lint_tty_safety.sh
 
+      - name: Check the agent CLIs that Verify key tools checks
+        run: bash scripts/tests/lint_installer_verify_agents.sh
+
       - name: Run RCH offload policy linter
         run: bash scripts/tests/lint_rch_offload_policy.sh
 
@@ -411,7 +414,7 @@ jobs:
           # Agents
           su - ubuntu -c "zsh -ic 'claude --version'"
           su - ubuntu -c "zsh -ic 'codex --version'"
-          su - ubuntu -c "zsh -ic 'gemini --version'"
+          su - ubuntu -c "zsh -ic 'agy --version || agy --help'"
 
   e2e-curlbash-bootstrap:
     name: E2E curl|bash Bootstrap
