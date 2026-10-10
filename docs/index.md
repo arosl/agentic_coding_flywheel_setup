@@ -2,7 +2,7 @@
 
 Related: [log](log.md)
 
-The catalog of every documentation page, one line each, saying which questions the page answers. The pages describe the current state only; history is in git. Every page under `docs/` is upstream ACFS's, except this catalog, its log and `operations/fork-divergences.md`: where one names ntm, tmux or Docker, `README.md`, "About this fork", says what the fork installs instead.
+The catalog of every documentation page, one line each, saying which questions the page answers. The pages describe the current state only; history is in git. Every page under `docs/` is upstream ACFS's, except this catalog, its log, `operations/fork-divergences.md` and `operations/incus-swarm.md`: where one names ntm, tmux or Docker, `README.md`, "About this fork", says what the fork installs instead.
 
 ## How to navigate
 
@@ -30,6 +30,7 @@ Start here, pick the one page whose line matches your question, and open only th
 - [`operations/architecture-audit.md`](operations/architecture-audit.md): how module binaries are checked for the host's architecture before they run.
 - [`operations/installer-transcript.md`](operations/installer-transcript.md): how to explain a failed installer transcript locally.
 - [`operations/updater-locking.md`](operations/updater-locking.md): how `acfs update` keeps to one instance per target home.
+- [`operations/incus-swarm.md`](operations/incus-swarm.md) (the fork's own page): how to move a running dev machine, VM or VPS, into an Incus swarm machine with its data and logins, and how to roll back.
 - [`operations/updater-pin-recovery.md`](operations/updater-pin-recovery.md): what to do when a downloaded installer doesn't match its pin.
 - [`operations/config-restore.md`](operations/config-restore.md): how to restore an exported module selection on a new machine.
 - [`operations/postgresql.md`](operations/postgresql.md): how the PostgreSQL 18 module installs and runs on supported Ubuntu LTS hosts.

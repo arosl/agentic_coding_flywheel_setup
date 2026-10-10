@@ -11,3 +11,7 @@ The docs now have a catalog (`docs/index.md`) and this log. The catalog lists ev
 ## [2026-10-10] The fork's divergence list moves out of AGENTS.md
 
 `AGENTS.md` listed the known non-herdr divergences, the fork-only changes to upstream files, in its "Scope" section, and every agent read the list at startup. It is now `docs/operations/fork-divergences.md`, the first page under `docs/`, besides this log and the catalog, that is the fork's own, and "Scope" links to it (acfs-5f9).
+
+## [2026-10-10] A runbook for moving a dev machine into an Incus swarm machine
+
+`docs/operations/incus-swarm.md` is new and the fork's own. It says how to move a running ACFS dev machine, a VM or a VPS, into a container made by `scripts/providers/incus.sh`: host setup, a fresh install as the product test, a live copy and then a delta copy of `/data`, the logins moved with `acfs state export --move` and `import`, the restart, and the rollback. It holds no host-specific values. The guide, `scripts/providers/incus.md`, now also covers host setup, the swarm machine, the state layer, the Tailscale sidecar, the restricted test project and coexistence with podman (acfs-ioo3.12).

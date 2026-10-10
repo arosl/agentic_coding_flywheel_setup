@@ -9,10 +9,37 @@ The installer runs **inside the container**, never on the machine that runs Incu
 ## What you need
 
 - **A Linux host with Incus whose API has what a container needs:** the sub-path volume mounts (`disk_volume_subpath`), the `sysinfo` intercept (`container_syscall_intercept_sysinfo`) and restricted project networks (`projects_networks_restricted_access`). The launcher reads the server's `api_extensions` before it creates anything and names the missing one; it never judges by the version string. Ubuntu 26.04's own Incus 6.0.5 qualifies; it lacks the optional `instance_limits_oom` and `container_disk_tmpfs`, which the launcher notes and the profile then leaves unused. Check that `incus info` works for you; on many hosts that means being in `incus-admin`. A VM (`--vm`) needs `/dev/kvm` as well.
-- **Host setup, once:** `scripts/providers/incus.sh host-setup --storage <path|pool>`. It makes the storage pool from the location you give, the policy profile `acfs-swarm`, the egress ACLs, the test project, and writes the pool's name to `~/.config/acfs/incus.env` (`$XDG_CONFIG_HOME/acfs/incus.env`). Every launcher run reads that file and stops without it. The launcher uses the default profile's managed bridge (`incusbr0`) for the NIC.
+- **Host setup, once:** `scripts/providers/incus.sh host-setup --storage <path|pool>` ([below](#host-setup)). Every launcher run reads what it records and stops without it. The launcher uses the default profile's managed bridge (`incusbr0`) for the NIC.
 - **A clone of this repository on that host.** The launcher installs the clone's committed `HEAD`.
 - **`git`, `jq` and `ssh-keygen` on that host.**
 - **The public key of the machine you'll attach from,** usually your laptop's `~/.ssh/id_ed25519.pub`. Copy it to the host first. The host's own key is the wrong one when you attach from somewhere else.
+
+## Host setup
+
+Run it once on the host, as a user who can administer Incus there:
+
+```bash
+scripts/providers/incus.sh host-setup --storage /srv/incus --memory 96GiB
+```
+
+**`--storage` is required and has no default.** On a terminal it asks; otherwise it refuses. It takes one of:
+
+| You give | Pool | Are the sizes enforced? |
+|---|---|---|
+| The name of an existing Incus pool | that pool | as its driver does (`incus storage list` shows it) |
+| A directory on btrfs | a new `btrfs` pool there | yes |
+| A directory on anything else | a new `dir` pool there | only on ext4 or XFS with project quotas turned on; otherwise not, and host setup warns |
+
+The new pool is called `acfs` unless you pass `--pool-name`. ACFS formats no disk and adds no swap: how the host's disks and swap are laid out is your decision. To get enforced sizes on a spare disk, make a ZFS or btrfs pool on it yourself (`incus storage create …`) and pass its name.
+
+**What it creates,** each only when absent:
+- **The profile `acfs-swarm`,** policy only: the security pins ([below](#the-containers-shape)), the `sysinfo` intercept, `limits.processes=30000`, `limits.kernel.nofile=1048576`, autostart, and the CPU rule. A container sees every host thread (no `limits.cpu`) and yields under contention: `limits.cpu.priority=0` and `limits.cpu.allowance=30%`, which Incus turns into a `cpu.weight` of 20 against the 100 of the host's own services.
+- **Memory,** with `--memory SIZE`: `limits.memory` on the profile. It is soft (the container is throttled and reclaimed, nothing is killed) when the host has swap, and hard (killed inside the container at the limit) when it has none; `--memory-enforce soft|hard` overrides that. Without `--memory` there is no limit.
+- **The egress ACLs** `acfs-swarm-egress` and `acfs-vm-egress` ([The network](#the-network)). `--rch-worker ADDR` (repeatable) lets the containers reach an rch build worker over SSH.
+- **The test project** `acfs-tests` on its own bridge `acfstest0` ([below](#the-test-project)), and with `--client-cert FILE --client-name NAME` a client certificate trusted for that project only.
+- **`~/.config/acfs/incus.env`** (`$XDG_CONFIG_HOME/acfs/incus.env`): `ACFS_INCUS_POOL`, `ACFS_INCUS_STORAGE_SOURCE`, `ACFS_INCUS_PROJECT` and `ACFS_INCUS_BRIDGE_TESTS`. The launcher reads it on every run and stops without it.
+
+**Re-running it is safe.** What exists is checked against what these options would create and never changed: a difference stops the run and names the object, so change an existing profile or ACL yourself with `incus profile set` or `incus network acl edit`. Host setup never deletes anything.
 
 ## Create the container
 
@@ -146,13 +173,87 @@ The profile `acfs-swarm` carries the same pins, the limits and the `sysinfo` int
 
 - **It shares the host's kernel.** The agents run with passwordless sudo in vibe mode, so they are root in the container. That root is unprivileged on the host, but the container's processes call the host kernel directly, and a kernel bug they can reach is a way onto the host. A VM runs its own kernel, behind KVM's much smaller interface. **Where agents run with loose permissions on a host you care about, use the VM.**
 - **No kernel tunables, modules or swap.** The installer uses none: a read of `install.sh`, `scripts/lib/` and the generated installers on 2026-10-09 found no swap, sysctl, modprobe, mount, fstab, AppArmor or firewall step. Not yet confirmed by a real install in a container.
-- **Tailscale installs but can't connect.** An unprivileged container has no `/dev/net/tun`, so `tailscaled` can't make its interface and `sudo tailscale up` fails. Attaching through the printed SSH entry doesn't need Tailscale. The launcher adds no host devices; the planned way in is a Tailscale sidecar container next to the machine, not `/dev/net/tun` in it.
+- **Tailscale installs but can't connect from inside.** An unprivileged container has no `/dev/net/tun`, so `tailscaled` can't make its interface and `sudo tailscale up` fails. Attaching through the printed SSH entry doesn't need Tailscale; to put the machine on your tailnet, use the sidecar ([below](#the-tailnet-a-sidecar)), not `/dev/net/tun` in the container.
 - **The disk sizes depend on the storage pool.** On a `btrfs`, `zfs` or `lvm` pool, the root size and the volume sizes are enforced. On a `dir` pool they are enforced only on ext4 or XFS with project quotas. Otherwise Incus skips them with only a warning in its own log, and the container can fill the host's disk. `incus storage list` shows the driver; host setup warns when it makes a pool without enforced quotas.
 - **Memory:** the profile's `limits.memory` caps it. With `limits.memory.enforce=soft` the kernel throttles and reclaims above the limit and kills nothing; with the default, hard enforcement, it kills inside the container at the limit. `free` inside shows the limit, not the host's RAM, through the `sysinfo` intercept.
 
 ### Startup, disk and RAM
 
 `tests/vm/test_incus_provider.sh <name>` and `tests/vm/test_incus_provider.sh --vm <name>` each end by printing the instance's disk and memory use once installed, and the time from `incus start` to an SSH login. Run both on one host to compare. **No container run yet:** the container mode was written on a machine without Incus (2026-10-09, and again on 2026-10-10 for the profile, the volumes and the lease), so it is tested only against a stub `incus`. Two things a real run has to confirm: that cloud-init makes the `ubuntu` home on the mounted volume with the shell files the installer expects (the directory exists before the user does, so `useradd` copies no skeleton), and that `initial.uid` and `initial.gid` on the whole `dev-data` volume make `/data` the user's (the Incus documentation describes them for sub-paths).
+
+## A swarm machine
+
+A container the launcher makes is a swarm machine: one host can run several, each with its own logins, and they share the host through the profile's soft limits.
+
+- **Kept apart:** each has its own uid and gid range (`security.idmap.isolated`), its own two volumes, its own lease, and its own egress ACL on its NIC.
+- **Inside,** the installer sets it up for a container:
+  - `/tmp` stays on the root disk, not RAM, so it isn't charged to the container's memory. The agents' `TMPDIR` is `/data/tmp`, on the data volume. `acfs agents sweep` cleans both.
+  - The lease unit and the sshd `HostKey` drop-in for the state volume ([below](#logins-survive-a-rebuild-the-state-layer)).
+- **`acfs doctor` in a container** recognises it (`container.virt`). It checks the container's `memory.current` against its limit, `/tmp` on disk, `TMPDIR` on the data volume, linger, the acfs slices, and the state layer's lease and modes. It only reads.
+- **Not built yet:** `acfs machine up|verify`, one command for a machine on either target with an authenticated login check (acfs-ioo3.4). Until then, use the launcher and the commands on this page.
+
+## Logins survive a rebuild: the state layer
+
+Everything a login needs is on the state volume `acfs-state-<name>`: the whole home, the SSH host keys and Tailscale's state ([the table above](#create-the-container)). Rebuilding the instance (`incus rebuild`) or replacing it keeps them, as long as the volume moves with it. `acfs state` works on that layer from inside the machine; on a VPS the same paths are plain directories and the same commands apply.
+
+```bash
+sudo acfs state export dev --recipient age1…     # an age-encrypted archive of the logins and sessions
+sudo acfs state import dev ~/acfs-state/dev-….tar.age --identity key.txt
+acfs state export dev --dry-run                     # what would go, including unknown dot-directories
+sudo acfs state repair                              # fix modes and owners, row by row
+acfs state doctor                                   # read-only; acfs doctor runs it
+acfs state manifest                                 # the rows: logins, cache and root
+```
+
+- **Export** takes a lock, stops every process that writes login or session state (or refuses while one still runs), and streams `tar | age` to a 0600 file under `~/acfs-state/`, published by an atomic rename. Nothing is written in plain text. It needs `--recipient` or `--recipients-file`. Caches such as cass's index stay out unless `--with-cache`. On Incus, `--snapshot-pool <pool>` first snapshots the volume through the `host` remote.
+- **A move, not a backup:** `--move` marks the archive as a move. This machine gives up the login, stays quiesced and is fenced; `acfs state lease reclaim` takes it back if the move is called off.
+- **Import** validates the archive, unpacks it into a staging area on the volume, sets owners and modes per row (root's rows stay root's), then swaps it in and writes the lease. It refuses a machine that already holds a login unless `--replace`. It is journalled: `--resume` finishes an interrupted import, and a failed one leaves the machine's existing login usable.
+- **The lease: one running machine per state volume.** Codex expects one `auth.json` per machine, so two instances on one volume would fight over its refresh. The launcher puts a random token on the instance (`user.acfs.lease`). On first boot the container claims it into the volume. At every boot, a unit that runs before the user manager compares the two and refuses to start the user's services on a mismatch. `acfs state lease status` shows it.
+- **A second machine gets its own logins.** Copying one machine's archive into a second running one would share the login; log the second in itself.
+- **Never** commit an archive, mail it or upload it anywhere. Move it with `scp`.
+
+## The tailnet: a sidecar
+
+```bash
+scripts/providers/incus.sh tailscale dev --auth-key-file ~/ts-authkey
+```
+
+This puts the machine on your tailnet without Tailscale in it. A small container next to it, `acfs-ts-dev`, logs into the tailnet and forwards tailnet TCP port 22 to the machine's sshd (`--port PORT`, repeatable, forwards more). It prints the sidecar's tailnet name, by default the machine's (`--hostname` changes it).
+
+- **Why a sidecar:** the node key stays out of the container where agents run with sudo. The machine's egress ACL stays closed to `100.64.0.0/10`. And the machine can be rebuilt while its tailnet name and node stay.
+- **No host devices:** `tailscaled` runs in userspace networking, so neither container needs `/dev/net/tun`.
+- **The auth key** goes in on stdin, into a file only root can read, and is removed once `tailscale up` returns. It is never in a command line or in the output. It is needed only until the sidecar is logged in: the node's state is on the sidecar's own volume, `acfs-ts-dev-state`, which survives a rebuild of the sidecar.
+- **The sidecar's NIC** carries `acfs-vm-egress`, so it reaches the internet (the coordination server and DERP) and no private range.
+- **Re-running** reuses the sidecar if it belongs to this machine, keeps its login and forwards, and refuses to change a different forward on a port. The machine itself is never changed.
+
+## The test project
+
+Tests that need their own Incus instances run them in `acfs-tests`, a project that host setup restricts:
+- **Restrictions:** no nesting, no privileged or shared-idmap containers, no syscall interception, no unix-char or GPU devices, disks and NICs only from managed pools and networks, only the bridge `acfstest0`, images only from `images.linuxcontainers.org`, and no snapshots or backups.
+- **Limits:** 6 instances, 16 CPUs, 32 GiB of memory and 200 GiB of disk in all. Its default profile gives each instance 4 CPUs and 8 GiB, because a project with limits refuses instances that set none. Host setup sets these limits only when they are unset, so changes you make are kept.
+
+**To let a machine use it:**
+1. **The certificate:** inside the machine, any `incus` command (`incus remote list`) creates its client certificate, `~/.config/incus/client.crt`. Copy that file to the host.
+2. **Trust it:** on the host, `incus.sh host-setup … --client-cert client.crt --client-name dev`. The certificate is trusted for `acfs-tests` only.
+3. **Expose the API:** host setup doesn't make Incus listen on the network. Set `core.https_address` to the gateway address of the machine's bridge, port 8443, and allow that port in the host's firewall. `acfs-swarm-egress` already lets the containers reach exactly that address and port.
+4. **Add the remote:** inside the machine, `incus remote add host https://<gateway>:8443`. Before you accept the server's certificate, compare its fingerprint with the host's own `incus info`. The machine then reaches the instances on `acfstest0` over SSH and ping, and nothing else of the host's.
+
+A run of `tests/vm/test_incus_provider.sh` through such a remote, which would also check what the certificate is refused, is acfs-ioo3.11.
+
+## Next to podman
+
+A host that also runs podman deployments shares its firewall, address space, uid ranges, storage and memory with Incus. Neither stack configures the other, so check the overlaps yourself:
+
+| What | Incus | Podman | Check |
+|---|---|---|---|
+| Firewall | its own nftables table per managed bridge | netavark's table, or an older backend | after any firewall or service restart, from both stacks: DNS, outbound HTTPS and SSH still work, and a private address the ACL rejects is still rejected, over IPv4 and IPv6 |
+| Subnets | `incusbr0`, `acfstest0` | `podman0` (`10.88.0.0/16`) and each network's | no overlap with each other, a VPN or the tailnet: `ip route`, `incus network show <bridge>`, `podman network inspect <net>` |
+| uid and gid ranges | root's `/etc/subuid` entry; 65536 per isolated container | rootless: each user's entry; `--userns=auto`: the `containers` entry | disjoint: `/etc/subuid`, `/etc/subgid`, `incus config get dev volatile.idmap.current` |
+| Storage | the pool | `/var/lib/containers`, `~/.local/share/containers` | separate filesystems, or enforced sizes on the pool |
+| Memory | the profile's limit | each deployment's limits | budget both together |
+| Host ports | proxy devices | published ports | one owner per port |
+
+A doctor check that runs these flows is acfs-ioo3.16.
 
 ## A VM instead of a container
 
@@ -197,4 +298,6 @@ Untested, because there was no Mac. What should apply:
 ## Tests
 
 - `bash tests/unit/test_incus_provider_stub.sh`: the launcher's calls and output, against a stub `incus`.
+- `bash tests/unit/test_incus_host_setup.sh` and `bash tests/unit/test_incus_tailscale.sh`: host setup and the sidecar, against the same stub.
+- `bash tests/unit/test_state_layer.sh`: `acfs state` against a fixture home and volume.
 - `tests/vm/test_incus_provider.sh [--vm] <new-name>`: a real container, or with `--vm` a real VM, checked through the printed block, then measured. It's opt-in and runs a full ACFS install, and it skips with the reason when Incus, KVM (for a VM) or `images:` isn't available. A container run needs host setup first.
