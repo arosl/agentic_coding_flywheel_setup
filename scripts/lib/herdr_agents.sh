@@ -103,7 +103,8 @@ spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        --guard --check': MemAvailable under 4 GiB, the --cwd or temp
        filesystem under 10% free, or PSI memory full avg60 over 10; its
        ACFS_CAPACITY_GUARD_* variables set the thresholds); --force spawns
-       anyway. Unknown usage or capacity never refuses.
+       anyway; --dry-run notes 'would refuse' and goes on with the plan.
+       Unknown usage or capacity never refuses.
 send   Prompt every matching agent, and wait until each is seen working, which
        proves the prompt was submitted (with --wait: until its turn ends), for
        at most --timeout ms (default 15000). Exits non-zero when any agent
@@ -726,6 +727,16 @@ herdr_agents_kinds_include_codex() {
     return 1
 }
 
+# A spawn guard said no, for reason $2. A real spawn stops; a dry run ($1
+# true) is a read-only plan, so it notes what would refuse and goes on.
+herdr_agents_spawn_refuse() {
+    if [[ "$1" == true ]]; then
+        herdr_agents_note "would refuse: $2"
+        return 0
+    fi
+    herdr_agents_die "spawn refused: $2"
+}
+
 herdr_agents_spawn() {
     local workspace="" cwd="" model="unknown" model_given=false prompt="" prompt_mode="palette"
     local dry_run=false json=false trust_folder=false force=false with_memory=false with_cass=false
@@ -801,7 +812,7 @@ herdr_agents_spawn() {
             bash "$HERDR_AGENTS_SCRIPT_DIR/agent_quota.sh" check "$quota_kind" || quota_status=$?
             case "$quota_status" in
                 0) ;;
-                1) herdr_agents_die "spawn refused: $quota_kind is near its usage limit (see 'acfs agents quota'); --force spawns anyway" ;;
+                1) herdr_agents_spawn_refuse "$dry_run" "$quota_kind is near its usage limit (see 'acfs agents quota'); --force spawns anyway" ;;
                 *) herdr_agents_note "could not check $quota_kind's usage (agent_quota.sh exited $quota_status); spawning anyway" ;;
             esac
         done
@@ -824,7 +835,7 @@ herdr_agents_spawn() {
         fi
         case "$guard_status" in
             0) ;;
-            1) herdr_agents_die "spawn refused: the host's capacity guard is red (see 'acfs capacity --guard'); retire idle agents ('acfs agents reap'), or --force spawns anyway" ;;
+            1) herdr_agents_spawn_refuse "$dry_run" "the host's capacity guard is red (see 'acfs capacity --guard'); retire idle agents ('acfs agents reap'), or --force spawns anyway" ;;
             127) herdr_agents_note "could not check the host's capacity ($HERDR_AGENTS_CAPACITY_SCRIPT not found); spawning anyway" ;;
             *) herdr_agents_note "could not check the host's capacity (capacity.sh exited $guard_status); spawning anyway" ;;
         esac

@@ -828,6 +828,17 @@ check "a Codex plan at 95% of its 5-hour window stops spawn before any identity,
 check "it says why and how to override" \
     bash -c 'grep -q "codex: 5-hour window 95% used (limit 90%)" <<<"$1" && grep -q "spawn refused: codex is near its usage limit" <<<"$1" && grep -q -- "--force spawns anyway" <<<"$1"' _ "$ERR"
 
+# acfs-r3wv: a dry run is a read-only plan; it notes the refusal and goes on.
+reset_stub quotadry
+fake_daemon clean
+codex_usage 95.0
+run_helper spawn --codex 1 --cwd "$WORK/repo" --dry-run --json
+check "--dry-run on a full plan exits 0, notes 'would refuse' and still prints the plan" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "would refuse: codex is near its usage limit" <<<"$2" && ! grep -q "spawn refused" <<<"$2" && jq -e . "$3" >/dev/null' \
+    _ "$RC" "$ERR" "$STUB_DIR/out"
+check "and creates nothing" \
+    test "$(count_calls '^am')/$(count_calls '^herdr agent start')/$(count_calls '^herdr tab create')/$(count_calls '^codex')" = "0/0/0/0"
+
 reset_stub quotaforce
 fake_daemon clean
 codex_usage 95.0
@@ -857,6 +868,13 @@ check "the guard is asked with --check, about the filesystem of --cwd" \
     grep -qx "capacity --guard --check work=$(cd "$WORK/repo" && pwd -P)" "$STUB_DIR/capacity_calls"
 check "it shows the guard's reasons and how to override" \
     bash -c 'grep -q "capacity guard: MemAvailable is 1024 MiB" <<<"$1" && grep -q "spawn refused: the host.s capacity guard is red" <<<"$1" && grep -q -- "--force spawns anyway" <<<"$1"' _ "$ERR"
+
+reset_stub guarddry
+echo 1 >"$STUB_DIR/guard_rc"
+run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt --dry-run
+check "--dry-run with a red guard exits 0, notes 'would refuse' and creates nothing" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "would refuse: the host.s capacity guard is red" <<<"$2" && [[ "$3" == 0/0 ]]' \
+    _ "$RC" "$ERR" "$(count_calls '^am')/$(count_calls '^herdr agent start')"
 
 reset_stub guardforce
 echo 1 >"$STUB_DIR/guard_rc"
