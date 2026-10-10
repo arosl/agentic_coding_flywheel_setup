@@ -11,8 +11,12 @@ import shlex
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from codex_daemon_guard import guard_codex_daemons  # noqa: E402
 
 LIB = Path(__file__).resolve().parents[2] / "scripts/lib"
 SCRIPT = LIB / "swarm_launch.sh"
@@ -119,6 +123,7 @@ class LaunchTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="acfs-launch-test-")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(os.path.realpath(self.tmp.name))
+        guard_codex_daemons(self, self.root)
         self.repo = self.root / "repo"
         self.repo.mkdir()
         self.lib = self.root / "lib"

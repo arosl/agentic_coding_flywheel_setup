@@ -12,6 +12,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from herdr_socket_stub import HerdrStub, agent_row  # noqa: E402
+from codex_daemon_guard import guard_codex_daemons  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 LAUNCH = ROOT / "scripts/lib/swarm_launch.sh"
@@ -209,6 +210,7 @@ class HandoffTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="acfs-receipt-handoff-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(os.path.realpath(self.temp.name))
+        guard_codex_daemons(self, self.root)
         self.repo = self.root / "repo"
         self.repo.mkdir()
         self.lib = self.root / "lib"

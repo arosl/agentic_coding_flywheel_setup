@@ -17,6 +17,7 @@ on:
       - 'checksums.yaml'
       - 'bun.lock'
       - 'tests/unit/test_swarm_launch*.py'
+      - 'tests/unit/codex_daemon_guard.py'
       - 'tests/unit/test_swarm_packet_preparation.py'
       - '.github/workflows/swarm-recovery-regressions.yml'
   workflow_dispatch:

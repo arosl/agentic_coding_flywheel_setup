@@ -19,6 +19,10 @@ on:
       - 'tests/unit/test_swarm_packet_preparation.py'
       - 'tests/unit/test_swarm_packet_delivery*.py'
       - 'tests/unit/herdr_socket_stub.py'
+      - 'tests/unit/codex_daemon_guard.py'
+      - 'tests/unit/test_codex_daemon_guard.py'
+      - 'tests/unit/newproj/test_herdr_launch.py'
+      - 'scripts/lib/newproj_screens/screen_success.sh'
       - 'tests/fixtures/herdr/**'
       - '.github/workflows/swarm-launch-regressions.yml'
   workflow_dispatch:
@@ -54,11 +58,13 @@ jobs:
           bash -n scripts/lib/doctor.sh
           bash -n scripts/lib/update.sh
           shellcheck scripts/lib/swarm_launch.sh
+          python3 -B tests/unit/test_codex_daemon_guard.py -v
           python3 -B tests/unit/test_swarm_launch.py -v
           python3 -B tests/unit/test_swarm_packet_preparation.py -v
           python3 -B tests/unit/test_swarm_packet_delivery.py -v
           python3 -B tests/unit/test_swarm_packet_delivery_batch.py -v
           python3 -B tests/unit/test_swarm_launch_handoff.py -v
+          python3 -B tests/unit/newproj/test_herdr_launch.py -v
           TARGET_USER="$(id -un)" bash scripts/lib/doctor.sh swarm launch --help > /tmp/acfs-launch-help
           grep -F -- '--expect-sha256' /tmp/acfs-launch-help
           grep -F -- '--launch' /tmp/acfs-launch-help

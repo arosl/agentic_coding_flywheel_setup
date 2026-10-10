@@ -16,12 +16,15 @@ import sys
 import tempfile
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from codex_daemon_guard import guard_codex_daemons  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[3]
 SCREEN = REPO / "scripts/lib/newproj_screens/screen_success.sh"
 BASH = shutil.which("bash")
 JQ = shutil.which("jq")
 # What the screen and herdr_agents.sh run besides the fixtures.
-SYSTEM_TOOLS = ("bash", "mktemp", "cat", "rm", "awk", "sed", "grep", "dirname")
+SYSTEM_TOOLS = ("bash", "mktemp", "cat", "rm", "awk", "sed", "grep", "dirname", "sort", "tr", "cut")
 
 HERDR = r'''
 import json, os, sys
@@ -143,6 +146,7 @@ render_success_screen() { :; }
 class LaunchTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="acfs-herdr-launch-"))
+        guard_codex_daemons(self, self.root)
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.project = self.root / "project spaces ' $(literal); [brackets]"
@@ -157,9 +161,19 @@ class LaunchTests(unittest.TestCase):
             self.bin.joinpath(tool).symlink_to(shutil.which(tool))
         for agent in ("claude", "codex", "agy"):
             self.executable(agent, "#!" + BASH + "\nprintf 'UNEXPECTED PROVIDER EXECUTION' >&2\nexit 91\n")
-        env = {key: value for key, value in os.environ.items() if key != "HERDR_WORKSPACE_ID"}
+        # Spawning Codex needs its app-server daemon running without HERDR_*
+        # variables (acfs-gen.3). Fake a clean one under a throwaway HOME, so
+        # the host's real codex, daemon and quota state are never read.
+        codex_home, proc = self.root / "home" / ".codex", self.root / "proc"
+        (codex_home / "app-server-daemon").mkdir(parents=True)
+        (codex_home / "app-server-daemon" / "daemon.pid").write_text('{"pid":777}\n')
+        (proc / "777").mkdir(parents=True)
+        (proc / "777" / "cmdline").write_bytes(b"codex\0app-server\0daemon\0")
+        (proc / "777" / "environ").write_bytes(b"PATH=/usr/bin\0")
+        env = {key: value for key, value in os.environ.items() if key not in ("HERDR_WORKSPACE_ID", "CODEX_HOME")}
         self.env = {
-            **env, "PATH": str(self.bin), "SCREEN": str(SCREEN),
+            **env, "HOME": str(self.root / "home"), "HERDR_AGENTS_PROC_ROOT": str(proc),
+            "PATH": str(self.bin), "SCREEN": str(SCREEN),
             "PROJECT": str(self.project), "PROJECT_NAME": "my-app",
             "CALLS": str(self.calls), "AM_CALLS": str(self.am_calls),
             "EVENTS": str(self.events), "FAKE_HERDR_MODE": "ok", "LC_ALL": "C",
@@ -444,7 +458,8 @@ class LaunchTests(unittest.TestCase):
             self.assertIn("Your Agent Mail identity is already registered", argv[3])
             self.assertIn("project key " + str(self.project), argv[3])
             self.assertIn("beads", argv[3].lower())
-            self.assertNotIn("--wait", argv)
+            # Waits only until the prompt is taken (acfs-gen.2), never for the turn.
+            self.assertEqual(argv[4:9], ["--wait", "--until", "working", "--until", "blocked"])
         self.assertIn("Prompted 3 agent(s)", result.stderr)
         self.assertIn("Implement the feature", result.stdout)
         self.assertTrue(all(call["argv"] == ["ready", "--json"] for call in self.bead_invocations()))
