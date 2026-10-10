@@ -741,6 +741,31 @@ run_helper spawn --codex 1 --cwd "$WORK/repo" --no-prompt
 check "a pid reused by a process that is not a codex app-server counts as not running" \
     test "$RC/$(count_calls '^codex app-server daemon start')" = "0/1"
 
+# acfs-gen.6: Codex's pid file carries processIdentity (bootId, startTicks);
+# a pid whose start ticks or boot differ is a reused pid, not the daemon.
+daemon_identity() {
+    mkdir -p "$STUB_DIR/proc/sys/kernel/random"
+    printf 'boot-now\n' >"$STUB_DIR/proc/sys/kernel/random/boot_id"
+    printf '777 (codex app server) S 1 777 777 0 -1 4194560 1 0 0 0 0 0 0 0 20 0 1 0 5555 1000 100\n' \
+        >"$STUB_DIR/proc/777/stat"
+    printf '{"pid":777,"processStartTime":"stub","processIdentity":{"bootId":"%s","startTicks":%s}}\n' "$1" "$2" \
+        >"$STUB_DIR/codex-home/app-server-daemon/daemon.pid"
+}
+reset_stub daemonidentity
+fake_daemon clean
+daemon_identity boot-now 5555
+run_helper codex-daemon status --json
+check "a daemon whose start ticks and boot match its pid file's processIdentity is running" \
+    test "$RC/$(jq -c '[.running, .pid]' <<<"$OUT")" = "0/[true,777]"
+daemon_identity boot-now 4444
+run_helper codex-daemon status --json
+check "a pid file whose startTicks differ names a reused pid: not running" \
+    test "$(jq -c '.running' <<<"$OUT")" = false
+daemon_identity boot-before 5555
+run_helper spawn --codex 1 --cwd "$WORK/repo" --no-prompt
+check "a pid file from another boot is not the daemon: spawn starts one" \
+    test "$RC/$(count_calls '^codex app-server daemon start')" = "0/1"
+
 # As root every file is readable, so this case can only run unprivileged.
 if [[ "$(id -u)" -ne 0 ]]; then
     reset_stub daemonunreadable

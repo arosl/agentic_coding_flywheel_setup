@@ -560,9 +560,12 @@ herdr_agents_codex_home() {
 
 # The pid of the running Codex app-server daemon: the pid file's process,
 # when it is alive, ours (a reused pid can belong to another user) and a
-# codex app-server. Fails when none runs.
+# codex app-server. When the pid file carries Codex's processIdentity
+# (bootId, startTicks), the process must also have started at those clock
+# ticks (field 22 of /proc/<pid>/stat) in this boot, which rules out a
+# reused pid exactly. Fails when none runs.
 herdr_agents_codex_daemon_pid() {
-    local pid_file pid cmdline proc_root="${HERDR_AGENTS_PROC_ROOT:-/proc}"
+    local pid_file pid cmdline identity want_boot want_ticks ticks proc_root="${HERDR_AGENTS_PROC_ROOT:-/proc}"
     pid_file="$(herdr_agents_codex_home)/app-server-daemon/daemon.pid"
     [[ -r "$pid_file" ]] || return 1
     pid="$(jq -r '.pid // empty' "$pid_file" 2>/dev/null)" || return 1
@@ -570,6 +573,18 @@ herdr_agents_codex_daemon_pid() {
     [[ -d "$proc_root/$pid" && -O "$proc_root/$pid" ]] || return 1
     cmdline="$(tr '\0' ' ' <"$proc_root/$pid/cmdline" 2>/dev/null)" || return 1
     [[ "$cmdline" == *"app-server"* ]] || return 1
+    identity="$(jq -r '.processIdentity // empty | "\(.bootId // "") \(.startTicks // "")"' "$pid_file" 2>/dev/null)" || return 1
+    if [[ -n "$identity" ]]; then
+        read -r want_boot want_ticks <<<"$identity"
+        if [[ -n "$want_boot" ]]; then
+            [[ "$(cat "$proc_root/sys/kernel/random/boot_id" 2>/dev/null)" == "$want_boot" ]] || return 1
+        fi
+        if [[ -n "$want_ticks" ]]; then
+            # The command name in field 2 may hold spaces; count after it.
+            ticks="$(awk '{ sub(/^.*\) /, ""); print $20 }' "$proc_root/$pid/stat" 2>/dev/null)" || return 1
+            [[ "$ticks" == "$want_ticks" ]] || return 1
+        fi
+    fi
     printf '%s\n' "$pid"
 }
 
