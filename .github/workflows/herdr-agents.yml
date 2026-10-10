@@ -8,7 +8,9 @@ name: herdr agents (stub herdr)
 # (scripts/tests/run_gate.sh) against a stub checkout, and the agents'
 # service protection (scripts/lib/service_protection.sh) against a stub
 # systemctl and systemd-run, and doctor's container section against stub
-# systemd, incus and state layer. Upstream's
+# systemd, incus and state layer. The check-generated job runs the
+# generated-file pre-commit check (scripts/hooks/check_generated.sh)
+# against fixture repos and the real generator. Upstream's
 # installer.yml runs each tests/unit script by name, so a new one needs its
 # own job.
 
@@ -34,6 +36,8 @@ on:
       - 'scripts/lib/service_protection.sh'
       - 'tests/unit/test_service_protection.sh'
       - 'tests/unit/test_doctor_container.sh'
+      - 'scripts/hooks/check_generated.sh'
+      - 'tests/unit/test_check_generated.sh'
       - '.github/workflows/herdr-agents.yml'
   pull_request:
     branches: [main]
@@ -56,6 +60,8 @@ on:
       - 'scripts/lib/service_protection.sh'
       - 'tests/unit/test_service_protection.sh'
       - 'tests/unit/test_doctor_container.sh'
+      - 'scripts/hooks/check_generated.sh'
+      - 'tests/unit/test_check_generated.sh'
       - '.github/workflows/herdr-agents.yml'
 
 permissions:
@@ -95,3 +101,18 @@ jobs:
         run: HOME="$(mktemp -d)" bash tests/unit/test_service_protection.sh
       - name: Doctor's container section against stub systemd, incus and state layer
         run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_container.sh
+
+  check-generated:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Install the manifest generator's dependencies
+        run: bun install --frozen-lockfile --filter '@acfs/manifest'
+      - name: Generated-file check against fixture repos and the real generator
+        run: HOME="$(mktemp -d)" bash tests/unit/test_check_generated.sh
