@@ -4,8 +4,8 @@
 The screen's [n] and [w] options start agents through the real
 scripts/lib/herdr_agents.sh (`acfs agents spawn`); only herdr, am, br and the
 agent CLIs are fixtures. No agents, herdr server, network, or login flows are
-started. Fixtures are retained in a named temporary directory to make failures
-inspectable. Ported from upstream's test_ntm_launch.py.
+started. Each test's fixtures live in a temporary directory, removed after the
+test. Ported from upstream's test_ntm_launch.py.
 """
 import json
 import os
@@ -146,6 +146,7 @@ render_success_screen() { :; }
 class LaunchTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="acfs-herdr-launch-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         guard_codex_daemons(self, self.root)
         self.bin = self.root / "bin"
         self.bin.mkdir()
