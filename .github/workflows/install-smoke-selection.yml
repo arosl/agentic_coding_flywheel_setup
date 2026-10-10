@@ -1,0 +1,42 @@
+name: Install smoke test (module selection)
+
+# The fork's own workflow. It runs install.sh's post-install smoke test
+# against a resolved module selection, with the host probes stubbed, so a
+# skipped module can't fail the install again. Upstream's installer.yml runs
+# each tests/unit script by name, so a new one needs its own job.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'install.sh'
+      - 'scripts/lib/install_helpers.sh'
+      - 'scripts/lib/logging.sh'
+      - 'scripts/lib/progress.sh'
+      - 'scripts/generated/manifest_index.sh'
+      - 'tests/unit/test_install_smoke_selection.sh'
+      - '.github/workflows/install-smoke-selection.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'install.sh'
+      - 'scripts/lib/install_helpers.sh'
+      - 'scripts/lib/logging.sh'
+      - 'scripts/lib/progress.sh'
+      - 'scripts/generated/manifest_index.sh'
+      - 'tests/unit/test_install_smoke_selection.sh'
+      - '.github/workflows/install-smoke-selection.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Smoke test against a resolved selection
+        run: HOME="$(mktemp -d)" bash tests/unit/test_install_smoke_selection.sh
