@@ -37,6 +37,17 @@ printf 'herdr %s\n' "$*" >>"$STUB_DIR/herdr_calls"
 printf '{"result":{"agents":[{"agent":"claude","name":"a"},{"agent":"claude","name":"b"},{"agent":"codex","name":"c"}]}}\n'
 STUB
 chmod +x "$WORK/bin/herdr"
+# A stub capacity.sh, so quota's host section never reads this host.
+cat >"$WORK/capacity.sh" <<'STUB'
+#!/usr/bin/env bash
+[[ "$1" == --guard ]] || exit 2
+if [[ "${2:-}" == --json ]]; then
+    printf '{"status":"red","reasons":["MemAvailable is 2048 MiB, under 4096 MiB"],"agents":{"suggested_max":3}}\n'
+else
+    printf 'Host capacity guard: red\n  RED: MemAvailable is 2048 MiB, under 4096 MiB\n'
+fi
+STUB
+export ACFS_AGENTS_CAPACITY_SCRIPT="$WORK/capacity.sh"
 
 NOW="$(date -u +%s)"
 iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%S.123Z; }
@@ -200,6 +211,20 @@ for kind in claude codex agy pi; do
 done
 run_helper check
 check "check needs a kind" test "$RC" -eq 2
+
+echo "host capacity"
+new_case host
+run_helper --json
+check "--json carries the capacity guard under host" \
+    jq_out '.host.status == "red" and .host.agents.suggested_max == 3 and (.plans | length) == 3'
+run_helper
+check "the table is followed by the guard's report" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "^Host capacity guard: red" <<<"$2" && grep -q "RED: MemAvailable is 2048 MiB" <<<"$2"' _ "$RC" "$OUT"
+ACFS_AGENTS_CAPACITY_SCRIPT="$WORK/missing.sh" run_helper --json
+check "without capacity.sh, host is null and quota still answers" \
+    bash -c '[[ "$1" -eq 0 ]] && jq -e ".host == null and (.plans | length) == 3" >/dev/null <<<"$2"' _ "$RC" "$OUT"
+run_helper check claude
+check "check reads no host capacity (spawn asks the guard itself)" test "$RC" -eq 0
 
 echo
 echo "passed: $PASS, failed: $FAIL"

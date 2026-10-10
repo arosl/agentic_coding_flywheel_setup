@@ -21,6 +21,7 @@ on:
       - 'scripts/lib/agent_quota.sh'
       - 'tests/unit/test_agent_quota.sh'
       - 'tests/unit/test_doctor_agents_route.sh'
+      - 'tests/unit/test_doctor_host_capacity.sh'
       - '.github/workflows/herdr-agents.yml'
   pull_request:
     branches: [main]
@@ -35,6 +36,7 @@ on:
       - 'scripts/lib/agent_quota.sh'
       - 'tests/unit/test_agent_quota.sh'
       - 'tests/unit/test_doctor_agents_route.sh'
+      - 'tests/unit/test_doctor_host_capacity.sh'
       - '.github/workflows/herdr-agents.yml'
 
 permissions:
@@ -64,3 +66,5 @@ jobs:
         run: HOME="$(mktemp -d)" bash tests/unit/test_agent_quota.sh
       - name: acfs agents routing in doctor.sh against a stub helper
         run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_agents_route.sh
+      - name: Doctor's host capacity checks against a stub capacity.sh
+        run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_host_capacity.sh

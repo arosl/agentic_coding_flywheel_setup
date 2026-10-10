@@ -15,6 +15,8 @@ CAPACITY_RESOURCE_PROFILE=false
 CAPACITY_RESOURCE_PROFILE_APPLY=false
 CAPACITY_RESOURCE_PROFILE_DISABLE=false
 CAPACITY_RESOURCE_PROFILE_ROOT=""
+CAPACITY_GUARD=false
+CAPACITY_GUARD_CHECK=false
 
 capacity_usage() {
     cat <<'EOF'
@@ -30,7 +32,21 @@ Options:
                           Write opt-in ACFS wrapper files under ~/.acfs
   --disable-resource-profile
                           Write a disabled profile marker/snippet, no deletion
+  --guard                 Report the host's live headroom for one more agent:
+                          MemAvailable, swap, disk free on the work and temp
+                          filesystems, PSI memory and cpu, rch's posture and
+                          workers, and a suggested maximum number of agents
+  --check                 With --guard: exit 1 when the guard is red, with the
+                          reasons on stderr; 0 otherwise; 2 when unreadable
   -h, --help              Show this help
+
+The guard is red when MemAvailable is under 4 GiB, a work or temp filesystem
+has under 10% free, or PSI memory "full" avg60 is over 10. It warns when the
+host has no swap, rch has no workers, or a tmpfs /tmp is more than 50% full.
+Thresholds: ACFS_CAPACITY_GUARD_MIN_MEM_MIB (4096),
+ACFS_CAPACITY_GUARD_MIN_DISK_PCT (10), ACFS_CAPACITY_GUARD_MAX_PSI_FULL (10),
+ACFS_CAPACITY_GUARD_AGENT_MIB (1024, one Claude agent with its MCP children)
+and ACFS_CAPACITY_GUARD_GATE_MIB (4096, headroom kept for one gate run).
 
 Environment overrides for tests:
   ACFS_CAPACITY_CPU_COUNT
@@ -42,6 +58,8 @@ Environment overrides for tests:
   ACFS_CAPACITY_SYSTEMD_USER_AVAILABLE=true|false
   ACFS_CAPACITY_BIN_DIR
   ACFS_RESOURCE_PROFILE_HOME
+  ACFS_CAPACITY_MEMINFO_FILE, ACFS_CAPACITY_PSI_DIR
+  ACFS_CAPACITY_WORK_DIR, ACFS_CAPACITY_TEMP_DIR
 EOF
 }
 
@@ -80,6 +98,14 @@ capacity_parse_args() {
                 CAPACITY_RESOURCE_PROFILE_DISABLE=true
                 shift
                 ;;
+            --guard)
+                CAPACITY_GUARD=true
+                shift
+                ;;
+            --check)
+                CAPACITY_GUARD_CHECK=true
+                shift
+                ;;
             -h|--help)
                 capacity_usage
                 return 100
@@ -99,6 +125,11 @@ capacity_parse_args() {
             return 2
             ;;
     esac
+
+    if [[ "$CAPACITY_GUARD_CHECK" == true && "$CAPACITY_GUARD" != true ]]; then
+        echo "Error: --check needs --guard" >&2
+        return 2
+    fi
 
     if [[ "$CAPACITY_RESOURCE_PROFILE_APPLY" == true && "$CAPACITY_RESOURCE_PROFILE_DISABLE" == true ]]; then
         echo "Error: choose only one of --apply-resource-profile or --disable-resource-profile" >&2
@@ -1135,6 +1166,354 @@ capacity_emit_human() {
     fi
 }
 
+# ------------------------------------------------------------
+# Guard: the host's live headroom, read before another agent starts
+# ------------------------------------------------------------
+
+capacity_guard_threshold() {
+    local value="$1" default="$2"
+    if [[ "$value" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$((10#$value))"
+    else
+        printf '%s\n' "$default"
+    fi
+}
+
+# A /proc/meminfo field in kB; nothing when it can't be read.
+capacity_guard_meminfo_kb() {
+    local field="$1"
+    awk -v field="$field:" '$1 == field {print $2; exit}' "${ACFS_CAPACITY_MEMINFO_FILE:-/proc/meminfo}" 2>/dev/null || true
+}
+
+# A PSI avg60 ("some" or "full") for memory or cpu; nothing when the kernel
+# has no PSI.
+capacity_guard_psi_avg60() {
+    local resource="$1" kind="$2"
+    awk -v kind="$kind" '$1 == kind {
+            for (i = 2; i <= NF; i++) if ($i ~ /^avg60=/) { sub(/^avg60=/, "", $i); print $i; exit }
+        }' "${ACFS_CAPACITY_PSI_DIR:-/proc/pressure}/$resource" 2>/dev/null || true
+}
+
+# "<fstype> <size_kb> <avail_kb> <mountpoint>" for the filesystem holding a path.
+capacity_guard_df() {
+    local path="$1" df_bin=""
+    df_bin="$(capacity_system_binary_path df 2>/dev/null || true)"
+    [[ -n "$df_bin" ]] || return 1
+    "$df_bin" -PkT -- "$path" 2>/dev/null | awk 'NR == 2 && $3 > 0 {print $2, $3, $5, $7; exit}'
+}
+
+# Runs a command with stderr dropped, under a 10-second timeout when one
+# exists, so a wedged rch or herdr can't hang spawn or doctor.
+capacity_guard_run_timed() {
+    local timeout_bin=""
+    timeout_bin="$(capacity_system_binary_path timeout 2>/dev/null || true)"
+    if [[ -n "$timeout_bin" ]]; then
+        "$timeout_bin" 10 "$@" 2>/dev/null
+    else
+        "$@" 2>/dev/null
+    fi
+}
+
+# Sets CAPACITY_GUARD_RCH_{POSTURE,WORKERS,HEALTHY}. Posture is rch's own
+# word (remote_ready, local_only, ...), "not_installed" or "unknown".
+capacity_guard_read_rch() {
+    CAPACITY_GUARD_RCH_POSTURE="not_installed"
+    CAPACITY_GUARD_RCH_WORKERS=""
+    CAPACITY_GUARD_RCH_HEALTHY=""
+
+    [[ "${ACFS_CAPACITY_RCH_AVAILABLE:-}" == false ]] && return 0
+    local rch_bin="" status_json=""
+    rch_bin="$(capacity_system_binary_path rch 2>/dev/null || true)"
+    [[ -n "$rch_bin" ]] || return 0
+    CAPACITY_GUARD_RCH_POSTURE="unknown"
+    command -v jq >/dev/null 2>&1 || return 0
+
+    status_json="$(capacity_guard_run_timed "$rch_bin" status --json || true)"
+
+    local parsed=""
+    parsed="$(jq -r '
+        .data as $d
+        | [($d.posture // "unknown"),
+           ($d.daemon.daemon.workers_total // "" | tostring),
+           ($d.daemon.daemon.workers_healthy // "" | tostring)]
+        | join(" ")' <<<"$status_json" 2>/dev/null || true)"
+    [[ -n "$parsed" ]] || return 0
+    read -r CAPACITY_GUARD_RCH_POSTURE CAPACITY_GUARD_RCH_WORKERS CAPACITY_GUARD_RCH_HEALTHY <<<"$parsed"
+    [[ "$CAPACITY_GUARD_RCH_POSTURE" =~ ^[A-Za-z0-9_-]+$ ]] || CAPACITY_GUARD_RCH_POSTURE="unknown"
+    [[ "$CAPACITY_GUARD_RCH_WORKERS" =~ ^[0-9]+$ ]] || CAPACITY_GUARD_RCH_WORKERS=""
+    [[ "$CAPACITY_GUARD_RCH_HEALTHY" =~ ^[0-9]+$ ]] || CAPACITY_GUARD_RCH_HEALTHY=""
+}
+
+# How many agents herdr lists across every workspace; nothing when unknown.
+capacity_guard_live_agents() {
+    [[ "${ACFS_CAPACITY_HERDR_AVAILABLE:-}" == false ]] && return 0
+    local herdr_bin=""
+    herdr_bin="$(capacity_system_binary_path herdr 2>/dev/null || true)"
+    [[ -n "$herdr_bin" ]] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    capacity_guard_run_timed "$herdr_bin" agent list | jq -r '[.result.agents[]?] | length' 2>/dev/null || true
+}
+
+# Is decimal $1 greater than decimal $2?
+capacity_guard_gt() {
+    awk -v a="$1" -v b="$2" 'BEGIN { exit !((a + 0) > (b + 0)) }'
+}
+
+capacity_guard_collect() {
+    local min_mem_mib min_disk_pct max_psi_full agent_mib gate_mib
+    min_mem_mib="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_MIN_MEM_MIB:-}" 4096)"
+    min_disk_pct="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_MIN_DISK_PCT:-}" 10)"
+    max_psi_full="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_MAX_PSI_FULL:-}" 10)"
+    agent_mib="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_AGENT_MIB:-}" 1024)"
+    gate_mib="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_GATE_MIB:-}" 4096)"
+    (( agent_mib > 0 )) || agent_mib=1024
+
+    CAPACITY_GUARD_MIN_MEM_MIB="$min_mem_mib"
+    CAPACITY_GUARD_MIN_DISK_PCT="$min_disk_pct"
+    CAPACITY_GUARD_MAX_PSI_FULL="$max_psi_full"
+    CAPACITY_GUARD_AGENT_MIB="$agent_mib"
+    CAPACITY_GUARD_GATE_MIB="$gate_mib"
+    CAPACITY_GUARD_REASONS=()
+    CAPACITY_GUARD_WARNINGS=()
+    CAPACITY_GUARD_READABLE=true
+
+    local mem_total_kb mem_avail_kb swap_total_kb swap_free_kb
+    mem_total_kb="$(capacity_guard_meminfo_kb MemTotal)"
+    mem_avail_kb="$(capacity_guard_meminfo_kb MemAvailable)"
+    swap_total_kb="$(capacity_guard_meminfo_kb SwapTotal)"
+    swap_free_kb="$(capacity_guard_meminfo_kb SwapFree)"
+    [[ "$mem_total_kb" =~ ^[0-9]+$ ]] || mem_total_kb=""
+    [[ "$swap_total_kb" =~ ^[0-9]+$ ]] || swap_total_kb=""
+    [[ "$swap_free_kb" =~ ^[0-9]+$ ]] || swap_free_kb=""
+    CAPACITY_GUARD_MEM_TOTAL_MIB="${mem_total_kb:+$((mem_total_kb / 1024))}"
+    CAPACITY_GUARD_SWAP_TOTAL_MIB="${swap_total_kb:+$((swap_total_kb / 1024))}"
+    CAPACITY_GUARD_SWAP_FREE_MIB="${swap_free_kb:+$((swap_free_kb / 1024))}"
+    if [[ "$mem_avail_kb" =~ ^[0-9]+$ ]]; then
+        CAPACITY_GUARD_MEM_AVAILABLE_MIB=$((mem_avail_kb / 1024))
+        if (( CAPACITY_GUARD_MEM_AVAILABLE_MIB < min_mem_mib )); then
+            CAPACITY_GUARD_REASONS+=("MemAvailable is ${CAPACITY_GUARD_MEM_AVAILABLE_MIB} MiB, under ${min_mem_mib} MiB")
+        fi
+    else
+        CAPACITY_GUARD_MEM_AVAILABLE_MIB=""
+        CAPACITY_GUARD_READABLE=false
+    fi
+    if [[ "$swap_total_kb" == 0 ]]; then
+        CAPACITY_GUARD_WARNINGS+=("the host has no swap: a memory spike goes straight to the OOM killer")
+    fi
+
+    CAPACITY_GUARD_PSI_MEMORY_SOME="$(capacity_guard_psi_avg60 memory some)"
+    CAPACITY_GUARD_PSI_MEMORY_FULL="$(capacity_guard_psi_avg60 memory full)"
+    CAPACITY_GUARD_PSI_CPU_SOME="$(capacity_guard_psi_avg60 cpu some)"
+    local psi_var
+    for psi_var in CAPACITY_GUARD_PSI_MEMORY_SOME CAPACITY_GUARD_PSI_MEMORY_FULL CAPACITY_GUARD_PSI_CPU_SOME; do
+        [[ "${!psi_var}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || printf -v "$psi_var" '%s' ""
+    done
+    if [[ -n "$CAPACITY_GUARD_PSI_MEMORY_FULL" ]] && capacity_guard_gt "$CAPACITY_GUARD_PSI_MEMORY_FULL" "$max_psi_full"; then
+        CAPACITY_GUARD_REASONS+=("PSI memory full avg60 is ${CAPACITY_GUARD_PSI_MEMORY_FULL}, over ${max_psi_full}")
+    fi
+
+    # Filesystems: the work directory and the temp directories, each mount once.
+    local -a fs_roles=() fs_paths=()
+    fs_roles+=(work)
+    fs_paths+=("${ACFS_CAPACITY_WORK_DIR:-$PWD}")
+    if [[ -n "${ACFS_CAPACITY_TEMP_DIR:-}" ]]; then
+        fs_roles+=(temp)
+        fs_paths+=("$ACFS_CAPACITY_TEMP_DIR")
+    else
+        fs_roles+=(temp)
+        fs_paths+=("${TMPDIR:-/tmp}")
+        fs_roles+=(temp)
+        fs_paths+=(/tmp)
+    fi
+
+    CAPACITY_GUARD_FS_LINES=()
+    local i line fstype size_kb avail_kb mount free_pct used_pct seen=" "
+    for i in "${!fs_paths[@]}"; do
+        line="$(capacity_guard_df "${fs_paths[$i]}" || true)"
+        [[ -n "$line" ]] || continue
+        read -r fstype size_kb avail_kb mount <<<"$line"
+        [[ "$size_kb" =~ ^[0-9]+$ && "$avail_kb" =~ ^[0-9]+$ ]] || continue
+        [[ "$seen" == *" $mount "* ]] && continue
+        seen+="$mount "
+        free_pct=$((avail_kb * 100 / size_kb))
+        used_pct=$((100 - free_pct))
+        CAPACITY_GUARD_FS_LINES+=("${fs_roles[$i]} $mount $fstype $((size_kb / 1024)) $((avail_kb / 1024)) $free_pct")
+        if (( free_pct < min_disk_pct )); then
+            CAPACITY_GUARD_REASONS+=("$mount (${fs_roles[$i]}) has ${free_pct}% free, under ${min_disk_pct}%")
+        fi
+        if [[ "$fstype" == tmpfs && "$mount" == /tmp ]] && (( used_pct > 50 )); then
+            CAPACITY_GUARD_WARNINGS+=("/tmp is a tmpfs ${used_pct}% full: it holds RAM that agents need")
+        fi
+    done
+
+    capacity_guard_read_rch
+    case "$CAPACITY_GUARD_RCH_POSTURE" in
+        not_installed)
+            CAPACITY_GUARD_WARNINGS+=("rch is not installed: every build runs locally") ;;
+        unknown)
+            CAPACITY_GUARD_WARNINGS+=("rch's posture is unknown (rch status --json gave nothing usable)") ;;
+        *)
+            if [[ "$CAPACITY_GUARD_RCH_POSTURE" == local_only || "$CAPACITY_GUARD_RCH_HEALTHY" == 0 || "$CAPACITY_GUARD_RCH_WORKERS" == 0 ]]; then
+                CAPACITY_GUARD_WARNINGS+=("rch has no healthy workers (posture $CAPACITY_GUARD_RCH_POSTURE): every build runs locally")
+            fi
+            ;;
+    esac
+
+    CAPACITY_GUARD_LIVE_AGENTS="$(capacity_guard_live_agents)"
+    [[ "$CAPACITY_GUARD_LIVE_AGENTS" =~ ^[0-9]+$ ]] || CAPACITY_GUARD_LIVE_AGENTS=""
+    CAPACITY_GUARD_MORE_AGENTS=""
+    CAPACITY_GUARD_MAX_AGENTS=""
+    if [[ -n "$CAPACITY_GUARD_MEM_AVAILABLE_MIB" ]]; then
+        CAPACITY_GUARD_MORE_AGENTS=$(((CAPACITY_GUARD_MEM_AVAILABLE_MIB - gate_mib) / agent_mib))
+        # A red guard has room for none, whatever memory says.
+        if (( CAPACITY_GUARD_MORE_AGENTS < 0 || ${#CAPACITY_GUARD_REASONS[@]} > 0 )); then
+            CAPACITY_GUARD_MORE_AGENTS=0
+        fi
+        if [[ -n "$CAPACITY_GUARD_LIVE_AGENTS" ]]; then
+            CAPACITY_GUARD_MAX_AGENTS=$((CAPACITY_GUARD_LIVE_AGENTS + CAPACITY_GUARD_MORE_AGENTS))
+        fi
+    fi
+
+    if (( ${#CAPACITY_GUARD_REASONS[@]} > 0 )); then
+        CAPACITY_GUARD_STATUS="red"
+    elif [[ "$CAPACITY_GUARD_READABLE" != true ]]; then
+        CAPACITY_GUARD_STATUS="unknown"
+    elif (( ${#CAPACITY_GUARD_WARNINGS[@]} > 0 )); then
+        CAPACITY_GUARD_STATUS="yellow"
+    else
+        CAPACITY_GUARD_STATUS="green"
+    fi
+}
+
+capacity_guard_emit_json() {
+    command -v jq >/dev/null 2>&1 || {
+        echo "Error: jq is required for --json output" >&2
+        return 1
+    }
+
+    local reasons_json warnings_json fs_json
+    reasons_json="$(printf '%s\n' "${CAPACITY_GUARD_REASONS[@]}" | jq -R . | jq -s -c 'map(select(. != ""))')"
+    warnings_json="$(printf '%s\n' "${CAPACITY_GUARD_WARNINGS[@]}" | jq -R . | jq -s -c 'map(select(. != ""))')"
+    fs_json="$(printf '%s\n' "${CAPACITY_GUARD_FS_LINES[@]}" | jq -R -c 'select(. != "") | split(" ")
+        | {role: .[0], mount: .[1], fstype: .[2], size_mib: (.[3] | tonumber),
+           available_mib: (.[4] | tonumber), free_percent: (.[5] | tonumber)}' | jq -s -c .)"
+
+    jq -n \
+        --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg status "$CAPACITY_GUARD_STATUS" \
+        --argjson reasons "$reasons_json" \
+        --argjson warnings "$warnings_json" \
+        --argjson filesystems "$fs_json" \
+        --arg mem_total "$CAPACITY_GUARD_MEM_TOTAL_MIB" \
+        --arg mem_available "$CAPACITY_GUARD_MEM_AVAILABLE_MIB" \
+        --arg swap_total "$CAPACITY_GUARD_SWAP_TOTAL_MIB" \
+        --arg swap_free "$CAPACITY_GUARD_SWAP_FREE_MIB" \
+        --arg psi_mem_some "$CAPACITY_GUARD_PSI_MEMORY_SOME" \
+        --arg psi_mem_full "$CAPACITY_GUARD_PSI_MEMORY_FULL" \
+        --arg psi_cpu_some "$CAPACITY_GUARD_PSI_CPU_SOME" \
+        --arg rch_posture "$CAPACITY_GUARD_RCH_POSTURE" \
+        --arg rch_workers "$CAPACITY_GUARD_RCH_WORKERS" \
+        --arg rch_healthy "$CAPACITY_GUARD_RCH_HEALTHY" \
+        --arg live "$CAPACITY_GUARD_LIVE_AGENTS" \
+        --arg more "$CAPACITY_GUARD_MORE_AGENTS" \
+        --arg max "$CAPACITY_GUARD_MAX_AGENTS" \
+        --argjson min_mem "$CAPACITY_GUARD_MIN_MEM_MIB" \
+        --argjson min_disk "$CAPACITY_GUARD_MIN_DISK_PCT" \
+        --argjson max_psi "$CAPACITY_GUARD_MAX_PSI_FULL" \
+        --argjson agent_mib "$CAPACITY_GUARD_AGENT_MIB" \
+        --argjson gate_mib "$CAPACITY_GUARD_GATE_MIB" '
+        def num: if . == "" then null else tonumber end;
+        {
+            schema_version: 1,
+            generated_at: $generated_at,
+            status: $status,
+            reasons: $reasons,
+            warnings: $warnings,
+            memory: {
+                total_mib: ($mem_total | num),
+                available_mib: ($mem_available | num),
+                swap_total_mib: ($swap_total | num),
+                swap_free_mib: ($swap_free | num)
+            },
+            pressure: {
+                memory_some_avg60: ($psi_mem_some | num),
+                memory_full_avg60: ($psi_mem_full | num),
+                cpu_some_avg60: ($psi_cpu_some | num)
+            },
+            filesystems: $filesystems,
+            rch: {
+                posture: $rch_posture,
+                workers_total: ($rch_workers | num),
+                workers_healthy: ($rch_healthy | num)
+            },
+            agents: {
+                live: ($live | num),
+                more: ($more | num),
+                suggested_max: ($max | num)
+            },
+            thresholds: {
+                min_mem_available_mib: $min_mem,
+                min_disk_free_percent: $min_disk,
+                max_psi_memory_full_avg60: $max_psi,
+                per_agent_mib: $agent_mib,
+                gate_headroom_mib: $gate_mib
+            }
+        }'
+}
+
+capacity_guard_emit_human() {
+    local line role mount fstype size_mib avail_mib free_pct item
+    echo "Host capacity guard: $CAPACITY_GUARD_STATUS"
+    echo "  MemAvailable:        ${CAPACITY_GUARD_MEM_AVAILABLE_MIB:-unknown} MiB of ${CAPACITY_GUARD_MEM_TOTAL_MIB:-unknown} MiB (red under ${CAPACITY_GUARD_MIN_MEM_MIB} MiB)"
+    if [[ "$CAPACITY_GUARD_SWAP_TOTAL_MIB" == 0 ]]; then
+        echo "  Swap:                none"
+    else
+        echo "  Swap:                ${CAPACITY_GUARD_SWAP_FREE_MIB:-unknown} MiB free of ${CAPACITY_GUARD_SWAP_TOTAL_MIB:-unknown} MiB"
+    fi
+    echo "  PSI avg60:           memory some ${CAPACITY_GUARD_PSI_MEMORY_SOME:-n/a}, full ${CAPACITY_GUARD_PSI_MEMORY_FULL:-n/a} (red over ${CAPACITY_GUARD_MAX_PSI_FULL}); cpu some ${CAPACITY_GUARD_PSI_CPU_SOME:-n/a}"
+    for line in "${CAPACITY_GUARD_FS_LINES[@]}"; do
+        read -r role mount fstype size_mib avail_mib free_pct <<<"$line"
+        printf '  Disk (%s):%*s%s %s: %s MiB free of %s MiB, %s%% (red under %s%%)\n' \
+            "$role" $((13 - ${#role})) "" "$mount" "$fstype" "$avail_mib" "$size_mib" "$free_pct" "$CAPACITY_GUARD_MIN_DISK_PCT"
+    done
+    echo "  rch:                 $CAPACITY_GUARD_RCH_POSTURE, ${CAPACITY_GUARD_RCH_HEALTHY:-?} of ${CAPACITY_GUARD_RCH_WORKERS:-?} workers healthy"
+    echo "  Agents:              ${CAPACITY_GUARD_LIVE_AGENTS:-unknown} live; room for ${CAPACITY_GUARD_MORE_AGENTS:-unknown} more; suggested max ${CAPACITY_GUARD_MAX_AGENTS:-unknown}"
+    echo "                       (${CAPACITY_GUARD_AGENT_MIB} MiB per agent, ${CAPACITY_GUARD_GATE_MIB} MiB kept for one gate)"
+    for item in "${CAPACITY_GUARD_REASONS[@]}"; do
+        echo "  RED: $item"
+    done
+    for item in "${CAPACITY_GUARD_WARNINGS[@]}"; do
+        echo "  WARN: $item"
+    done
+}
+
+capacity_guard_main() {
+    capacity_guard_collect
+
+    if [[ "$CAPACITY_GUARD_CHECK" == true ]]; then
+        local item
+        case "$CAPACITY_GUARD_STATUS" in
+            red)
+                for item in "${CAPACITY_GUARD_REASONS[@]}"; do
+                    printf 'capacity guard: %s\n' "$item" >&2
+                done
+                return 1
+                ;;
+            unknown)
+                printf 'capacity guard: cannot read MemAvailable\n' >&2
+                return 2
+                ;;
+        esac
+        return 0
+    fi
+
+    if [[ "$CAPACITY_JSON" == "true" ]]; then
+        capacity_guard_emit_json
+    else
+        capacity_guard_emit_human
+    fi
+}
+
 capacity_main() {
     capacity_parse_args "$@"
     local parse_status=$?
@@ -1142,6 +1521,11 @@ capacity_main() {
         return 0
     elif [[ $parse_status -ne 0 ]]; then
         return "$parse_status"
+    fi
+
+    if [[ "$CAPACITY_GUARD" == "true" ]]; then
+        capacity_guard_main
+        return $?
     fi
 
     if [[ "$CAPACITY_RESOURCE_PROFILE" == "true" ]]; then

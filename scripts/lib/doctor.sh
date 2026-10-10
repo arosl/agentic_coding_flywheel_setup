@@ -2209,6 +2209,68 @@ check_workspace() {
     blank_line
 }
 
+# Host headroom for an agent swarm (acfs-gmbo), from 'acfs capacity --guard':
+# warns on a host with no swap, an rch with no workers, and a tmpfs /tmp more
+# than half full. Read-only; the guard's red line is for spawn, not doctor.
+check_host_capacity() {
+    local helper="" guard="" swap_total="" posture="" workers="" healthy="" tmp_line=""
+    helper="$(_acfs_doctor_find_lib_script "capacity.sh" 2>/dev/null || true)"
+    [[ -n "$helper" ]] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    guard="$(_acfs_doctor_exec_bash_script "$helper" --guard --json 2>/dev/null)" || guard=""
+
+    section "Host capacity"
+
+    if ! jq -e '.schema_version == 1' >/dev/null 2>&1 <<<"$guard"; then
+        check "host.capacity" "Host capacity guard" "skip" "acfs capacity --guard gave no report"
+        blank_line
+        return 0
+    fi
+
+    swap_total="$(jq -r '.memory.swap_total_mib // ""' <<<"$guard")"
+    case "$swap_total" in
+        "") check "host.swap" "Swap" "skip" "unknown" ;;
+        0)
+            check "host.swap" "Swap" "warn" "none: a memory spike under a swarm goes straight to the OOM killer" \
+                "Add a swap file sized to the swarm (e.g. 8 GiB) and keep vm.swappiness low"
+            ;;
+        *) check "host.swap" "Swap" "pass" "${swap_total} MiB" ;;
+    esac
+
+    posture="$(jq -r '.rch.posture // ""' <<<"$guard")"
+    workers="$(jq -r '.rch.workers_total // ""' <<<"$guard")"
+    healthy="$(jq -r '.rch.workers_healthy // ""' <<<"$guard")"
+    case "$posture" in
+        ""|not_installed) ;;
+        unknown) check "host.rch_workers" "rch workers" "skip" "rch status --json gave no posture" ;;
+        *)
+            if [[ "$posture" == local_only || "$workers" == 0 || "$healthy" == 0 ]]; then
+                check "host.rch_workers" "rch workers" "warn" "${healthy:-0} of ${workers:-0} healthy (posture $posture): every build runs locally" \
+                    "Run: rch doctor; rch workers probe --all"
+            elif [[ -n "$healthy" ]]; then
+                check "host.rch_workers" "rch workers" "pass" "$healthy of ${workers:-?} healthy ($posture)"
+            else
+                check "host.rch_workers" "rch workers" "skip" "worker count unknown (posture $posture)"
+            fi
+            ;;
+    esac
+
+    tmp_line="$(jq -r 'first(.filesystems[] | select(.mount == "/tmp")) | "\(.fstype) \(100 - .free_percent)"' <<<"$guard" 2>/dev/null || true)"
+    [[ "$tmp_line" =~ ^[A-Za-z0-9_.-]+\ [0-9]+$ ]] || tmp_line=""
+    case "$tmp_line" in
+        tmpfs\ *)
+            if (( ${tmp_line#tmpfs } > 50 )); then
+                check "host.tmp_tmpfs" "/tmp (tmpfs)" "warn" "${tmp_line#tmpfs }% full: what it holds is RAM agents can't use" \
+                    "Find what fills it: du -xsh /tmp/* 2>/dev/null | sort -h | tail"
+            else
+                check "host.tmp_tmpfs" "/tmp (tmpfs)" "pass" "${tmp_line#tmpfs }% full"
+            fi
+            ;;
+    esac
+
+    blank_line
+}
+
 # Check shell
 check_shell() {
     section "Shell"
@@ -5756,7 +5818,7 @@ main() {
             # Coding agents in herdr (herdr_agents.sh), and quota, which it
             # hands to agent_quota.sh.
             case "${1:-}" in
-                spawn|send|list|ls|inbox|wake|limits|codex-daemon|retire|recycle|quota)
+                spawn|send|list|ls|inbox|wake|limits|codex-daemon|retire|recycle|reap|quota)
                     local herdr_agents_script=""
                     herdr_agents_script="$(_acfs_doctor_find_lib_script "herdr_agents.sh" 2>/dev/null || true)"
                     if [[ -n "$herdr_agents_script" ]]; then
@@ -6119,6 +6181,7 @@ $(gum style --foreground "$ACFS_MUTED" "OS:") $(gum style --foreground "$ACFS_TE
 
     check_identity
     check_workspace
+    check_host_capacity
     check_shell
     check_core_tools
     check_agents

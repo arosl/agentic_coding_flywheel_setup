@@ -433,6 +433,169 @@ test_resource_profile_disable_writes_marker_without_deleting_wrappers() {
     pass "resource_profile_disable_writes_marker_without_deleting_wrappers"
 }
 
+# A fake host for --guard: meminfo, PSI files and a bin dir with df, rch and
+# herdr, all under the artifact dir. Knobs (env, read when the fakes run):
+# FAKE_WORK_AVAIL_KB and FAKE_TMP_AVAIL_KB out of 1000000 kB each,
+# FAKE_TMP_FSTYPE, FAKE_RCH_POSTURE, FAKE_RCH_WORKERS, FAKE_HERDR_AGENTS.
+make_guard_host() {
+    local name="$1" mem_available_kb="$2" swap_total_kb="$3" psi_memory_full="$4"
+    local host="$ARTIFACT_DIR/$name-host"
+    mkdir -p "$host/bin" "$host/pressure"
+
+    cat > "$host/meminfo" <<EOF
+MemTotal:       32000000 kB
+MemFree:         1000000 kB
+MemAvailable:   $mem_available_kb kB
+SwapTotal:      $swap_total_kb kB
+SwapFree:       $swap_total_kb kB
+EOF
+    cat > "$host/pressure/memory" <<EOF
+some avg10=0.00 avg60=1.50 avg300=0.00 total=1
+full avg10=0.00 avg60=$psi_memory_full avg300=0.00 total=1
+EOF
+    cat > "$host/pressure/cpu" <<'EOF'
+some avg10=0.00 avg60=6.39 avg300=0.00 total=1
+full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+EOF
+
+    cat > "$host/bin/df" <<'EOF'
+#!/usr/bin/env bash
+path="${!#}"
+echo "Filesystem Type 1024-blocks Used Available Capacity Mounted on"
+case "$path" in
+    /tmp) avail="${FAKE_TMP_AVAIL_KB:-500000}"; echo "tmpfs ${FAKE_TMP_FSTYPE:-tmpfs} 1000000 $((1000000 - avail)) $avail 0% /tmp" ;;
+    *) avail="${FAKE_WORK_AVAIL_KB:-500000}"; echo "/dev/sda2 ext4 1000000 $((1000000 - avail)) $avail 0% /" ;;
+esac
+EOF
+    cat > "$host/bin/rch" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1 $2" == "status --json" ]] || exit 2
+w="${FAKE_RCH_WORKERS:-4}"
+printf '{"success":true,"data":{"posture":"%s","daemon":{"daemon":{"workers_total":%s,"workers_healthy":%s}}}}\n' \
+    "${FAKE_RCH_POSTURE:-remote_ready}" "$w" "$w"
+EOF
+    cat > "$host/bin/herdr" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1 $2" == "agent list" ]] || exit 2
+n="${FAKE_HERDR_AGENTS:-3}"
+jq -n -c --argjson n "$n" '{result: {agents: [range($n) | {agent: "claude"}]}}'
+EOF
+    chmod +x "$host/bin/df" "$host/bin/rch" "$host/bin/herdr"
+    printf '%s\n' "$host"
+}
+
+run_guard() {
+    local host="$1"
+    shift
+    ACFS_CAPACITY_BIN_DIR="$host/bin" \
+    ACFS_CAPACITY_MEMINFO_FILE="$host/meminfo" \
+    ACFS_CAPACITY_PSI_DIR="$host/pressure" \
+    ACFS_CAPACITY_WORK_DIR=/fake/work \
+    ACFS_CAPACITY_TEMP_DIR=/tmp \
+    bash "$CAPACITY_SH" --guard "$@"
+}
+
+test_guard_green_suggests_max_agents() {
+    local host output status=0
+    host="$(make_guard_host guard_green 33554432 8388608 0.00)"
+    output="$(FAKE_TMP_FSTYPE=ext4 run_guard "$host" --json)"
+    write_output_artifact guard_green json "$output"
+
+    # (32768 MiB - 4096 MiB gate) / 1024 MiB per agent = 28 more, plus 3 live.
+    jq -e '
+      .status == "green" and .reasons == [] and .warnings == [] and
+      .memory.available_mib == 32768 and .memory.swap_total_mib == 8192 and
+      .pressure.memory_full_avg60 == 0 and .pressure.cpu_some_avg60 == 6.39 and
+      .rch.posture == "remote_ready" and .rch.workers_healthy == 4 and
+      .agents.live == 3 and .agents.more == 28 and .agents.suggested_max == 31 and
+      ([.filesystems[].mount] == ["/", "/tmp"]) and .filesystems[0].free_percent == 50
+    ' <<<"$output" >/dev/null || return 1
+
+    FAKE_TMP_FSTYPE=ext4 run_guard "$host" --check || status=$?
+    [[ "$status" -eq 0 ]] || return 1
+    pass "guard_green_suggests_max_agents"
+}
+
+test_guard_red_on_low_memory() {
+    local host output status=0 err
+    host="$(make_guard_host guard_low_mem 2097152 8388608 0.00)"
+    output="$(run_guard "$host" --json)"
+    write_output_artifact guard_low_mem json "$output"
+    jq -e '.status == "red" and .agents.more == 0 and .agents.suggested_max == 3
+           and (.reasons | length) == 1 and (.reasons[0] | test("MemAvailable is 2048 MiB"))' <<<"$output" >/dev/null || return 1
+
+    err="$(run_guard "$host" --check 2>&1 >/dev/null)" || status=$?
+    [[ "$status" -eq 1 ]] || return 1
+    [[ "$err" == *"MemAvailable is 2048 MiB, under 4096 MiB"* ]] || return 1
+    pass "guard_red_on_low_memory"
+}
+
+test_guard_red_on_disk_and_psi() {
+    local host output status=0 err
+    host="$(make_guard_host guard_disk_psi 33554432 8388608 12.50)"
+    output="$(FAKE_WORK_AVAIL_KB=50000 run_guard "$host" --json)"
+    write_output_artifact guard_disk_psi json "$output"
+    jq -e '.status == "red" and (.reasons | length) == 2
+           and any(.reasons[]; test("^/ \\(work\\) has 5% free"))
+           and any(.reasons[]; test("PSI memory full avg60 is 12.50"))' <<<"$output" >/dev/null || return 1
+
+    err="$(FAKE_WORK_AVAIL_KB=50000 run_guard "$host" --check 2>&1 >/dev/null)" || status=$?
+    [[ "$status" -eq 1 && "$err" == *"PSI memory full"* ]] || return 1
+
+    # A threshold from the environment moves the line.
+    status=0
+    FAKE_WORK_AVAIL_KB=50000 ACFS_CAPACITY_GUARD_MIN_DISK_PCT=5 ACFS_CAPACITY_GUARD_MAX_PSI_FULL=20 \
+        run_guard "$host" --check 2>/dev/null || status=$?
+    [[ "$status" -eq 0 ]] || return 1
+    pass "guard_red_on_disk_and_psi"
+}
+
+test_guard_warns_without_refusing() {
+    local host output status=0 human
+    host="$(make_guard_host guard_warn 33554432 0 0.00)"
+    output="$(FAKE_TMP_AVAIL_KB=300000 FAKE_RCH_POSTURE=local_only FAKE_RCH_WORKERS=0 run_guard "$host" --json)"
+    write_output_artifact guard_warn json "$output"
+    jq -e '.status == "yellow" and .reasons == [] and (.warnings | length) == 3
+           and any(.warnings[]; test("no swap"))
+           and any(.warnings[]; test("/tmp is a tmpfs 70% full"))
+           and any(.warnings[]; test("rch has no healthy workers"))' <<<"$output" >/dev/null || return 1
+
+    FAKE_TMP_AVAIL_KB=300000 FAKE_RCH_POSTURE=local_only FAKE_RCH_WORKERS=0 run_guard "$host" --check || status=$?
+    [[ "$status" -eq 0 ]] || return 1
+
+    human="$(FAKE_TMP_AVAIL_KB=300000 FAKE_RCH_POSTURE=local_only FAKE_RCH_WORKERS=0 run_guard "$host")"
+    write_output_artifact guard_warn txt "$human"
+    [[ "$human" == *"Host capacity guard: yellow"* && "$human" == *"Swap:                none"* \
+        && "$human" == *"WARN: rch has no healthy workers"* ]] || return 1
+
+    # rch running local_only with no daemon to count workers still warns.
+    output="$(FAKE_RCH_POSTURE=local_only FAKE_RCH_WORKERS=null run_guard "$host" --json)"
+    jq -e '.rch.posture == "local_only" and .rch.workers_total == null
+           and any(.warnings[]; test("rch has no healthy workers"))' <<<"$output" >/dev/null || return 1
+    pass "guard_warns_without_refusing"
+}
+
+test_guard_unreadable_and_bad_args() {
+    local host status=0
+    host="$(make_guard_host guard_unreadable 33554432 0 0.00)"
+    : > "$host/meminfo"
+    run_guard "$host" --check 2>/dev/null || status=$?
+    [[ "$status" -eq 2 ]] || return 1
+
+    status=0
+    bash "$CAPACITY_SH" --check 2>/dev/null || status=$?
+    [[ "$status" -eq 2 ]] || return 1
+
+    # No rch and no herdr: the guard still answers, with both unknown.
+    local output
+    output="$(make_guard_host guard_no_tools 33554432 8388608 0.00 >/dev/null
+              ACFS_CAPACITY_RCH_AVAILABLE=false ACFS_CAPACITY_HERDR_AVAILABLE=false \
+              run_guard "$ARTIFACT_DIR/guard_no_tools-host" --json)"
+    jq -e '.rch.posture == "not_installed" and .agents.live == null and .agents.more == 28
+           and .agents.suggested_max == null and any(.warnings[]; test("rch is not installed"))' <<<"$output" >/dev/null || return 1
+    pass "guard_unreadable_and_bad_args"
+}
+
 run_test() {
     local name="$1"
     if "$name"; then
@@ -460,6 +623,11 @@ main() {
     run_test test_resource_profile_partial_failure_reports_error
     run_test test_resource_profile_no_systemd_writes_safe_fallback_wrappers
     run_test test_resource_profile_disable_writes_marker_without_deleting_wrappers
+    run_test test_guard_green_suggests_max_agents
+    run_test test_guard_red_on_low_memory
+    run_test test_guard_red_on_disk_and_psi
+    run_test test_guard_warns_without_refusing
+    run_test test_guard_unreadable_and_bad_args
 
     echo "Results: $TESTS_PASSED passed, $TESTS_FAILED failed"
     echo "Artifacts: $ARTIFACT_DIR"
