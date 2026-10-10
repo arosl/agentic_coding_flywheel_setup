@@ -3534,6 +3534,7 @@ sync_acfs_deployed() {
         "scripts/lib/agent_quota.sh:scripts/lib/agent_quota.sh"
         "scripts/lib/temp_sweep.sh:scripts/lib/temp_sweep.sh"
         "scripts/lib/service_protection.sh:scripts/lib/service_protection.sh"
+        "scripts/lib/coexistence.sh:scripts/lib/coexistence.sh"
         "scripts/lib/state_layer.sh:scripts/lib/state_layer.sh"
         "scripts/lib/support.sh:scripts/lib/support.sh"
         "scripts/lib/policy_lint.sh:scripts/lib/policy_lint.sh"
