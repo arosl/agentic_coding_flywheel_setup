@@ -1863,7 +1863,9 @@ agents
 # List agents and their state
 herdr agent list
 
-# Send a prompt to one agent
+# Send a prompt to one agent: <agent> is its name or its pane id
+# (such as w1:p2) from the list; an agent started by hand has no
+# name until: herdr agent rename <pane id> <name>
 herdr agent prompt <agent> "Your marching orders prompt here"`}
             />
 

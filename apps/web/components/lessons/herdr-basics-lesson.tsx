@@ -89,7 +89,7 @@ agents`}
           <CommandSection
             title="List Your Agents"
             code="herdr agent list"
-            description="See every agent and whether it is working, idle or done, without opening herdr."
+            description="See every agent and whether it is working, idle or done, without opening herdr. Other herdr agent commands take an agent's name or its pane id (such as w1:p2) from this list; an agent you started by typing claude in a pane has no name until you run herdr agent rename <pane id> <name>."
           />
         </div>
       </Section>

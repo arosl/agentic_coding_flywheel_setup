@@ -439,6 +439,8 @@ rg -l -t rust 'unwrap\(' | xargs ast-grep run -l Rust -p '$X.unwrap()' --json
 
 Never run bare `herdr` from an agent: it opens the TUI and blocks.
 
+`<agent>` is an agent's `name` or its `pane_id` (such as `w1:p2`) from `herdr agent list`. An agent started by typing its command in a pane has no name until `herdr agent rename <pane_id> <name>`; use its pane id until then.
+
 | Command | Description |
 |---------|-------------|
 | `herdr workspace create --cwd <dir>` | Create a workspace for a project |

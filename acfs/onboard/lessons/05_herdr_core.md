@@ -87,6 +87,11 @@ things can still stand in the way:
 herdr agent list
 ```
 
+Wherever a command takes an agent, give it the agent's `name` or its
+`pane_id` (such as `w1:p2`) from this list. An agent you started yourself,
+by typing `claude` in a pane, has no name until you give it one with
+`herdr agent rename <pane_id> <name>`; until then, use its pane id.
+
 ### Attach to a Workspace
 
 ```bash
