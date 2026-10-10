@@ -271,12 +271,42 @@ case "$*" in
 esac
 STUB
 # The stub curl stands in for Agent Mail's HTTP MCP endpoint: it records the
-# request body and answers a tool result (curl_refuse: a refusal).
+# request body and answers a tool result (curl_refuse: a refusal). It
+# answers create_agent_identity with the next name in am_names and the
+# token tok-<name>, and logs it as one "mcp create_agent_identity" line
+# (curl_create_fail: a refusal; curl_no_token: no token in the answer).
 cat >"$WORK/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'curl %s\n' "$*" >>"$STUB_DIR/calls"
 cat >"$STUB_DIR/curl_body"
+# The headers come from a file (-H @file), which the caller removes after.
+prev=""
+for arg in "$@"; do
+    [[ "$prev" != -H || "$arg" != @* ]] || cat "${arg#@}" >"$STUB_DIR/curl_headers"
+    prev="$arg"
+done
+tool="$(jq -r '.params.name' "$STUB_DIR/curl_body")"
+if [[ "$tool" == ensure_project ]]; then
+    printf '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\\"id\\":1}"}],"isError":false}}\n'
+    exit 0
+fi
+if [[ "$tool" == create_agent_identity ]]; then
+    jq -r '.params.arguments | "mcp create_agent_identity --project \(.project_key) --program \(.program) --model \(.model)"' \
+        "$STUB_DIR/curl_body" >>"$STUB_DIR/calls"
+    if [[ -e "$STUB_DIR/curl_create_fail" ]]; then
+        printf '{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"stub: server down"}}\n'
+        exit 0
+    fi
+    n=$(( $(cat "$STUB_DIR/am_count" 2>/dev/null || echo 0) + 1 ))
+    echo "$n" >"$STUB_DIR/am_count"
+    name="$(sed -n "${n}p" "$STUB_DIR/am_names")"
+    token="tok-$name"
+    [[ ! -e "$STUB_DIR/curl_no_token" ]] || token=""
+    text="$(jq -nc --arg n "$name" --arg t "$token" '{name: $n} + (if $t == "" then {} else {registration_token: $t} end)')"
+    jq -nc --arg t "$text" '{jsonrpc: "2.0", id: 1, result: {content: [{type: "text", text: $t}], isError: false}}'
+    exit 0
+fi
 if [[ -e "$STUB_DIR/curl_refuse" ]]; then
     printf '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"invalid registration_token"}],"isError":true}}\n'
 else
@@ -410,9 +440,10 @@ check "--dry-run names the workspace from HERDR_WORKSPACE_ID" test "$(jq -r .wor
 reset_stub plain
 run_helper spawn --claude 2 --codex 1 --workspace w5 --cwd "$WORK/repo" --model opus --no-prompt --json
 check "spawn of three agents exits 0" test "$RC" -eq 0
-check "spawn creates one Agent Mail identity per agent" test "$(count_calls '^am agents create')" -eq 3
+check "spawn creates one Agent Mail identity per agent" test "$(count_calls '^mcp create_agent_identity')" -eq 3
+check "spawn creates identities over HTTP, never with am agents create" test "$(count_calls '^am agents create')" -eq 0
 check "the identity's program follows the kind" \
-    test "$(grep '^am ' "$STUB_DIR/calls" | grep -o -- '--program [a-z-]*' | tr '\n' ' ')" = "--program claude-code --program claude-code --program codex-cli "
+    test "$(grep '^mcp ' "$STUB_DIR/calls" | grep -o -- '--program [a-z-]*' | tr '\n' ' ')" = "--program claude-code --program claude-code --program codex-cli "
 check "the identity's project key is the cwd" grep -q -- "--project $WORK/repo --program" "$STUB_DIR/calls"
 check "the tab gets the Agent Mail name, the explicit workspace and --no-focus" \
     grep -qx -- "herdr tab create --workspace w5 --cwd $WORK/repo --label AlphaFox --no-focus" "$STUB_DIR/calls"
@@ -420,10 +451,17 @@ check "the herdr name is the Agent Mail name lowercased, started in the tab's ro
     grep -q -- "^herdr agent start gammayak --kind codex --pane w9:p3 " "$STUB_DIR/calls"
 check "--model reaches each agent CLI after --, and its Agent Mail identity" \
     bash -c '[[ $(grep -c -- "^herdr agent start [a-z]* --kind [a-z]* --pane w9:p[0-9] -- --model opus$" "$1") -eq 3 ]] \
-        && [[ $(grep -c -- "^am agents create .* --model opus " "$1") -eq 3 ]]' _ "$STUB_DIR/calls"
+        && [[ $(grep -c -- "^mcp create_agent_identity .* --model opus$" "$1") -eq 3 ]]' _ "$STUB_DIR/calls"
 check "--no-prompt sends no prompt" test "$(count_calls '^herdr agent prompt')" -eq 0
 check "identity, then tab, then start, per agent" \
-    test "$(grep -v '^codex ' "$STUB_DIR/calls" | cut -d' ' -f1-3 | head -3 | tr '\n' '|')" = "am agents create|herdr tab create|herdr agent start|"
+    test "$(grep -v -e '^codex ' -e '^curl ' "$STUB_DIR/calls" | cut -d' ' -f1-3 | head -3 | tr '\n' '|')" = "mcp create_agent_identity --project|herdr tab create|herdr agent start|"
+check "each identity's project is ensured first" \
+    bash -c 'jq -e --arg p "$2" ".params.name == \"create_agent_identity\" and .params.arguments.project_key == \$p" "$1" >/dev/null \
+        && [[ $(grep -c "^curl " "$3") -eq 6 ]]' _ "$STUB_DIR/curl_body" "$WORK/repo" "$STUB_DIR/calls"
+check "spawn keeps each agent's registration token, readable only by its user" \
+    bash -c 'f="$1/state/tokens/$(printf "%s" "$2" | sha256sum | cut -c1-16)/GammaYak"
+        [[ "$(cat "$f")" == tok-GammaYak && "$(stat -c %a "$f")" == 600 && "$(stat -c %a "${f%/*}")" == 700 ]]' \
+        _ "$WORK/acfs-home" "$WORK/repo"
 check "the Codex daemon is seen to before the first identity" \
     test "$(head -1 "$STUB_DIR/calls")" = "codex app-server daemon start"
 check "--json lists each agent as started" \
@@ -437,7 +475,7 @@ check "spawn --claude --codex --agy --pi starts one agent of each kind, in order
         = "0/claude codex agy pi "
 check "every tab of one spawn goes into the same workspace" \
     test "$(grep '^herdr tab create' "$STUB_DIR/calls" | grep -c -- '--workspace w5 ')" -eq 4
-check "a pi agent's identity has the program pi" grep -q -- '^am agents create .* --program pi ' "$STUB_DIR/calls"
+check "a pi agent's identity has the program pi" grep -q -- '^mcp create_agent_identity .* --program pi ' "$STUB_DIR/calls"
 
 reset_stub kickoff
 run_helper spawn --claude 1 --cwd "$WORK/repo"
@@ -502,7 +540,7 @@ reset_stub notready
 touch "$STUB_DIR/not_ready_betaowl"
 run_helper spawn --claude 3 --cwd "$WORK/repo" --no-prompt --json
 check "agent_not_ready stops the spawn with a nonzero exit" test "$RC" -ne 0
-check "no identity is created after the agent that did not start" test "$(count_calls '^am agents create')" -eq 2
+check "no identity is created after the agent that did not start" test "$(count_calls '^mcp create_agent_identity')" -eq 2
 check "the dialog on its screen is shown" grep -q "trust the files in this folder" <<<"$ERR"
 check "the stuck agent is reported with its pane, and the first as started" \
     test "$(jq -r '[.agents[] | "\(.herdr_name)=\(.status)@\(.pane_id)"] | join(" ")' <<<"$OUT")" = "alphafox=started@w9:p1 betaowl=agent_not_ready@w9:p2"
@@ -512,7 +550,7 @@ touch "$STUB_DIR/agent_blocked_alphafox"
 run_helper spawn --claude 2 --cwd "$WORK/repo" --json
 check "a failed kickoff makes spawn exit nonzero" test "$RC" -ne 0
 check "an agent whose kickoff failed keeps its one identity and is not restarted" \
-    test "$(count_calls '^am agents create')/$(count_calls '^herdr agent start alphafox')" = "2/1"
+    test "$(count_calls '^mcp create_agent_identity')/$(count_calls '^herdr agent start alphafox')" = "2/1"
 check "it is reported as started, with the prompt failure" \
     test "$(jq -r '.agents[0].status' <<<"$OUT")" = "started; prompt failed: agent_blocked"
 check "the next agent still starts and gets its kickoff" test -s "$STUB_DIR/prompt_betaowl"
@@ -587,7 +625,7 @@ touch "$STUB_DIR/not_ready_alphafox" "$STUB_DIR/wait_fail_alphafox"
 codex_trust_screen >"$STUB_DIR/screen_alphafox"
 run_helper spawn --codex 2 --cwd "$WORK/repo" --no-prompt --trust-folder --json
 check "a second dialog after the trust answer stops spawn as agent_not_ready" \
-    test "$RC/$(jq -r '.agents[0].status' <<<"$OUT")/$(count_calls '^am agents create')" = "1/agent_not_ready/1"
+    test "$RC/$(jq -r '.agents[0].status' <<<"$OUT")/$(count_calls '^mcp create_agent_identity')" = "1/agent_not_ready/1"
 
 # acfs-zsz: herdr refuses agent start while a new tab's shell is still
 # running its startup files (agent_pane_busy).
@@ -605,7 +643,7 @@ reset_stub busytwice
 echo 2 >"$STUB_DIR/busy_alphafox"
 run_helper spawn --claude 2 --cwd "$WORK/repo" --no-prompt --json
 check "a second agent_pane_busy stops spawn, after exactly one retry" \
-    test "$RC/$(count_calls '^herdr agent start alphafox')/$(count_calls '^am agents create')" = "1/2/1"
+    test "$RC/$(count_calls '^herdr agent start alphafox')/$(count_calls '^mcp create_agent_identity')" = "1/2/1"
 check "the tab it created, holding only a shell, is closed" grep -qx -- "herdr tab close w9:t1" "$STUB_DIR/calls"
 check "the result keeps the closed tab and pane and flags the unused identity" \
     test "$(jq -r '.agents[0] | "\(.status) \(.tab_id) \(.pane_id) \(.tab_closed) \(.unused_identity)"' <<<"$OUT")" \
@@ -640,6 +678,21 @@ run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt
 check "a name herdr cannot take stops before any tab is created" \
     test "$RC/$(count_calls '^herdr')" = "1/0"
 
+reset_stub createfail
+touch "$STUB_DIR/curl_create_fail"
+run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt
+check "a refused create_agent_identity stops spawn before any tab, and says why" \
+    bash -c '[[ "$1" -ne 0 && $(grep -c "^herdr" "$2") -eq 0 ]] && grep -q "create_agent_identity refused: stub: server down" <<<"$3" \
+        && grep -q "spawn stopped: create_agent_identity failed for a claude agent" <<<"$3"' _ "$RC" "$STUB_DIR/calls" "$ERR"
+
+reset_stub notoken
+touch "$STUB_DIR/curl_no_token"
+mkdir -p "$WORK/project-notoken"
+run_helper spawn --claude 1 --cwd "$WORK/project-notoken" --no-prompt
+check "an identity created without a token still starts its agent, and says retire needs --token" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "returned no registration token for AlphaFox: retire it with --token" <<<"$2" \
+        && [[ ! -e "$3" ]]' _ "$RC" "$ERR" "$WORK/acfs-home/state/tokens/$(printf '%s' "$WORK/project-notoken" | sha256sum | cut -c1-16)/AlphaFox"
+
 reset_stub noworkspace
 RC=0
 env -u HERDR_WORKSPACE_ID PATH="$WORK/bin:$PATH" bash "$HELPER" spawn --claude 1 --cwd "$WORK/repo" \
@@ -657,7 +710,7 @@ check "spawn --codex with no daemon starts one before any identity or tab" \
     test "$RC/$(cut -d' ' -f1-4 "$STUB_DIR/calls" | head -1)" = "0/codex app-server daemon start"
 check "the daemon is started with every HERDR_* variable removed" test ! -s "$STUB_DIR/codex_env"
 check "the Codex agent is then spawned as usual" \
-    test "$(count_calls '^am agents create')/$(count_calls '^herdr agent start alphafox --kind codex')" = "1/1"
+    test "$(count_calls '^mcp create_agent_identity')/$(count_calls '^herdr agent start alphafox --kind codex')" = "1/1"
 
 reset_stub daemonclaude
 run_helper spawn --claude 2 --cwd "$WORK/repo" --no-prompt
@@ -1197,6 +1250,14 @@ retire_case() {
     retire_repo
 }
 
+# Keep token $2 for agent $1 in $REPO, where spawn keeps one.
+store_token() {
+    local dir
+    dir="$WORK/acfs-home/state/tokens/$(printf '%s' "$(cd "$REPO" && pwd -P)" | sha256sum | cut -c1-16)"
+    mkdir -p "$dir"
+    printf '%s\n' "$2" >"$dir/$1"
+}
+
 retire_case rdry
 run_helper retire AlphaFox --cwd "$REPO" --dry-run
 check "retire --dry-run exits 0 and says it would close the agent's tab" \
@@ -1276,6 +1337,52 @@ touch "$STUB_DIR/curl_refuse"
 run_helper retire AlphaFox --cwd "$REPO" --token bad
 check "a refused retire_agent fails retire and says why" \
     bash -c '[[ "$1" -ne 0 ]] && grep -q "retire_agent refused: invalid registration_token" <<<"$2"' _ "$RC" "$ERR"
+
+# acfs-e2il: the token spawn kept, when neither --token nor the environment
+# gives one.
+retire_case rstored
+store_token AlphaFox tok-stored
+run_helper retire AlphaFox --cwd "$REPO"
+check "without --token, retire soft-retires the identity with the token spawn kept" \
+    bash -c '[[ "$1" -eq 0 ]] && jq -e ".params.name == \"retire_agent\" and .params.arguments.registration_token == \"tok-stored\"" "$2" >/dev/null' \
+    _ "$RC" "$STUB_DIR/curl_body"
+write_tabs 1
+AGENT_MAIL_REGISTRATION_TOKEN=tok-env run_helper retire AlphaFox --cwd "$REPO"
+check "AGENT_MAIL_REGISTRATION_TOKEN comes before the kept token" \
+    jq -e '.params.arguments.registration_token == "tok-env"' "$STUB_DIR/curl_body"
+write_tabs 1
+run_helper retire AlphaFox --cwd "$REPO" --token tok-flag
+check "--token comes before both" jq -e '.params.arguments.registration_token == "tok-flag"' "$STUB_DIR/curl_body"
+check "a retired identity's kept token is dropped" \
+    test ! -e "$WORK/acfs-home/state/tokens/$(printf '%s' "$(cd "$REPO" && pwd -P)" | sha256sum | cut -c1-16)/AlphaFox"
+store_token AlphaFox tok-stored
+write_tabs 1
+touch "$STUB_DIR/curl_refuse"
+run_helper retire AlphaFox --cwd "$REPO"
+check "a refused retire_agent keeps the token" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qx tok-stored "$2"' _ "$RC" \
+    "$WORK/acfs-home/state/tokens/$(printf '%s' "$(cd "$REPO" && pwd -P)" | sha256sum | cut -c1-16)/AlphaFox"
+rm "$STUB_DIR/curl_refuse"
+mkdir -p "$WORK/home/.config/mcp-agent-mail"
+printf 'HTTP_BEARER_TOKEN="bearer-secret"\n' >"$WORK/home/.config/mcp-agent-mail/config.env"
+write_tabs 1
+run_helper retire AlphaFox --cwd "$REPO"
+check "with Agent Mail's bearer token configured, it is sent in a header file, never on argv" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qx "Authorization: Bearer bearer-secret" "$2" && ! grep -q "bearer-secret\|tok-stored" "$3" \
+        && [[ -z "$(find "$4" -maxdepth 1 -name "acfs-agents-mail.*" 2>/dev/null)" ]]' \
+    _ "$RC" "$STUB_DIR/curl_headers" "$STUB_DIR/calls" "${TMPDIR:-/tmp}"
+rm "$WORK/home/.config/mcp-agent-mail/config.env"
+write_tabs 1
+: >"$STUB_DIR/calls"
+run_helper retire ../../tokens --cwd "$REPO"
+check "a name that isn't an Agent Mail name reads no token and calls nothing" \
+    bash -c '[[ "$1" -ne 0 ]] && ! grep -q "^curl " "$2"' _ "$RC" "$STUB_DIR/calls"
+write_tabs 1
+: >"$STUB_DIR/calls"
+run_helper retire AlphaFox --cwd "$REPO" --keep-identity
+check "--keep-identity closes the tab and leaves the identity, quietly" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qx "herdr tab close w9:t1" "$2" && ! grep -q "^curl " "$2" && ! grep -q "identity stays active" <<<"$3"' \
+    _ "$RC" "$STUB_DIR/calls" "$ERR"
 
 retire_case rdropped
 sed -i '/"name":"alphafox"/d' "$STUB_DIR/list.json"
@@ -1855,6 +1962,32 @@ reap_case rptoken
 AGENT_MAIL_REGISTRATION_TOKEN=callers-own run_reap --idle 0
 check "the caller's registration token is never used for a reaped agent's identity" \
     test "$RC/$(count_calls '^curl')" = "0/0"
+
+# acfs-e2il: reap retires the identity with the token spawn kept, after its
+# mail, since a retired identity can't send.
+reap_case rpstored
+printf '[reap]\nkeep = ["BossYak"]\n' >"$ACFS_AGENTS_CONFIG"
+store_token AlphaFox tok-alpha
+AGENT_MAIL_REGISTRATION_TOKEN=callers-own run_reap --idle 0
+check "reap soft-retires a reaped agent's identity with the token spawn kept" \
+    bash -c '[[ "$1" -eq 0 ]] && jq -e ".params.name == \"retire_agent\" and .params.arguments.agent_name == \"AlphaFox\" and .params.arguments.registration_token == \"tok-alpha\"" "$2" >/dev/null \
+        && [[ $(grep -c "^curl " "$3") -eq 1 ]]' _ "$RC" "$STUB_DIR/curl_body" "$STUB_DIR/calls"
+check "the project is told first, from the identity, and told it is retired next" \
+    bash -c 'grep -E "^(am mail send --project [^ ]+ --from AlphaFox|curl )" "$1" | cut -c1-4 | tr "\n" "|" | grep -qx "am m|curl|" \
+        && grep -q -- "--from AlphaFox .*Its Agent Mail identity is soft-retired next" "$1"' _ "$STUB_DIR/calls"
+reap_case rpstoredfail
+store_token AlphaFox tok-alpha
+touch "$STUB_DIR/curl_refuse"
+run_reap --idle 0
+check "a refused identity retirement fails the cycle, after the tab is closed" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "herdr tab close w9:t2" "$2" && grep -q "reap: the Agent Mail identity AlphaFox stays active" <<<"$3"' \
+    _ "$RC" "$STUB_DIR/calls" "$ERR"
+reap_case rpstoreddry
+store_token AlphaFox tok-alpha
+run_reap --idle 0 --dry-run
+check "reap --dry-run says it would retire the identity, and calls nothing" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "would soft-retire Agent Mail identity AlphaFox after telling the project" <<<"$2" && ! grep -q "^curl " "$3"' \
+    _ "$RC" "$ERR" "$STUB_DIR/calls"
 
 reap_case rpself
 RC=0

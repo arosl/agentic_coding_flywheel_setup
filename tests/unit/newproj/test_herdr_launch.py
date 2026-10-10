@@ -24,7 +24,8 @@ SCREEN = REPO / "scripts/lib/newproj_screens/screen_success.sh"
 BASH = shutil.which("bash")
 JQ = shutil.which("jq")
 # What the screen and herdr_agents.sh run besides the fixtures.
-SYSTEM_TOOLS = ("bash", "mktemp", "cat", "rm", "awk", "sed", "grep", "dirname", "sort", "tr", "cut")
+SYSTEM_TOOLS = ("bash", "mktemp", "cat", "rm", "awk", "sed", "grep", "dirname", "sort", "tr", "cut",
+                "sha256sum", "mkdir", "mv", "head", "tail")
 
 HERDR = r'''
 import json, os, sys
@@ -88,19 +89,27 @@ if args[:2] == ["workspace", "focus"]:
 sys.exit(95)
 '''
 
-AM = r'''
+# Agent Mail's HTTP MCP endpoint, as spawn calls it through curl: the next
+# name and its token for create_agent_identity, an empty result otherwise.
+CURL = r'''
 import json, os, sys
 from pathlib import Path
-args = sys.argv[1:]
-with open(os.environ["AM_CALLS"], "a") as log:
-    log.write(json.dumps({"argv": args}) + "\n")
-if os.environ.get("FAKE_AM_MODE") == "fail":
-    sys.exit(1)
-names = ["BlueLake", "GreenCastle", "RedStone", "AmberFox", "CopperHill", "IvoryPeak", "JadeRiver", "OnyxField"]
-path = Path(os.environ["AM_CALLS"] + ".n")
-n = int(path.read_text()) if path.exists() else 0
-path.write_text(str(n + 1))
-print(json.dumps({"name": names[n]}))
+body = json.load(sys.stdin)
+with open(os.environ["MAIL_CALLS"], "a") as log:
+    log.write(json.dumps({"argv": sys.argv[1:], "body": body}) + "\n")
+def answer(result):
+    print(json.dumps({"jsonrpc": "2.0", "id": 1, **result}))
+if os.environ.get("FAKE_MAIL_MODE") == "fail":
+    answer({"error": {"code": -32000, "message": "fake: Agent Mail is down"}})
+    sys.exit(0)
+text = "{}"
+if body["params"]["name"] == "create_agent_identity":
+    names = ["BlueLake", "GreenCastle", "RedStone", "AmberFox", "CopperHill", "IvoryPeak", "JadeRiver", "OnyxField"]
+    path = Path(os.environ["MAIL_CALLS"] + ".n")
+    n = int(path.read_text()) if path.exists() else 0
+    path.write_text(str(n + 1))
+    text = json.dumps({"name": names[n], "registration_token": "tok-" + names[n]})
+answer({"result": {"content": [{"type": "text", "text": text}], "isError": False}})
 '''
 
 BR = r'''
@@ -153,10 +162,12 @@ class LaunchTests(unittest.TestCase):
         self.project = self.root / "project spaces ' $(literal); [brackets]"
         self.project.mkdir()
         self.calls = self.root / "calls.jsonl"
-        self.am_calls = self.root / "am-calls.jsonl"
+        self.mail_calls = self.root / "mail-calls.jsonl"
         self.events = self.root / "events"
         self.executable("herdr", "#!" + sys.executable + "\n" + HERDR)
-        self.executable("am", "#!" + sys.executable + "\n" + AM)
+        self.executable("curl", "#!" + sys.executable + "\n" + CURL)
+        # The screen checks Agent Mail's CLI is installed; spawn never runs it.
+        self.executable("am", "#!" + BASH + "\nprintf 'UNEXPECTED AM EXECUTION' >&2\nexit 92\n")
         self.bin.joinpath("jq").symlink_to(JQ)
         for tool in SYSTEM_TOOLS:
             self.bin.joinpath(tool).symlink_to(shutil.which(tool))
@@ -176,7 +187,7 @@ class LaunchTests(unittest.TestCase):
             **env, "HOME": str(self.root / "home"), "HERDR_AGENTS_PROC_ROOT": str(proc),
             "PATH": str(self.bin), "SCREEN": str(SCREEN),
             "PROJECT": str(self.project), "PROJECT_NAME": "my-app",
-            "CALLS": str(self.calls), "AM_CALLS": str(self.am_calls),
+            "CALLS": str(self.calls), "MAIL_CALLS": str(self.mail_calls),
             "EVENTS": str(self.events), "FAKE_HERDR_MODE": "ok", "LC_ALL": "C",
             # The repo's command palette, never an installed copy.
             "ACFS_HOME": str(self.root / "no-acfs-home"),
@@ -242,6 +253,13 @@ class LaunchTests(unittest.TestCase):
         ])
         self.assertEqual(self.prompts(), [])
         self.assertFalse(self.events.exists())
+        # Each identity's registration token is kept for retire and reap,
+        # readable only by the user (acfs-e2il).
+        tokens = list((self.root / "no-acfs-home" / "state" / "tokens").glob("*/*"))
+        self.assertEqual(sorted(path.name for path in tokens), ["BlueLake", "GreenCastle", "RedStone"])
+        for path in tokens:
+            self.assertEqual(path.read_text(), "tok-" + path.name + "\n")
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_failure_preserves_diagnostic_and_never_retries(self):
         result = self.start(FAKE_HERDR_MODE="start_blocked")
@@ -295,12 +313,12 @@ class LaunchTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("did not confirm a new workspace", result.stderr)
         self.assertEqual(self.starts(), [])
-        self.assertFalse(self.am_calls.exists())
+        self.assertFalse(self.mail_calls.exists())
 
     def test_agent_mail_failure_starts_no_agent(self):
-        result = self.start(FAKE_AM_MODE="fail")
+        result = self.start(FAKE_MAIL_MODE="fail")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("am agents create failed", result.stderr)
+        self.assertIn("create_agent_identity failed", result.stderr)
         self.assertEqual(self.starts(), [])
 
     def test_invalid_mix_never_executes_herdr(self):
@@ -330,7 +348,7 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(self.mutating(), [])
 
     def test_each_infrastructure_dependency_is_required(self):
-        for tool in ("herdr", "jq", "am"):
+        for tool in ("herdr", "jq", "am", "curl"):
             with self.subTest(tool=tool):
                 path = self.bin / tool
                 saved = self.bin / (tool + ".saved")

@@ -7,10 +7,11 @@
 # `herdr agent start`, and a broadcast is a loop over `herdr agent list`
 # and `herdr agent prompt`. This wraps exactly that and keeps no state, but
 # for the mail cursors and timers of wake, limits and reap under
-# ~/.acfs/state/.
+# ~/.acfs/state/, and the registration tokens spawn keeps there.
 #
-# Names come from Agent Mail first (`am agents create`); the herdr name is
-# that name lowercased, and the tab label is the Agent Mail name.
+# Names come from Agent Mail first (create_agent_identity, over its HTTP
+# endpoint, since only that returns the registration token); the herdr name
+# is that name lowercased, and the tab label is the Agent Mail name.
 #
 # Usage:
 #   acfs agents spawn [--claude N] [--codex N] [--agy N] [--pi N] [--kind K [--count N]]...
@@ -20,7 +21,7 @@
 #   acfs agents wake [--workspace ID] [--project KEY] [--loop [--interval SEC]] [--dry-run]
 #   acfs agents limits [--workspace ID] [--lines N] [--mail-from NAME [--project KEY]] [--loop [--interval SEC]] [--dry-run]
 #   acfs agents codex-daemon (status [--json] | start | restart)
-#   acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token T] [--dry-run]
+#   acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token T] [--keep-identity] [--dry-run]
 #   acfs agents recycle <MailName> [--prompt TEXT] [--dry-run]
 #   acfs agents reap [--idle MIN] [--workspace ID] [--project KEY | --all-workspaces] [--loop [--interval SEC]] [--dry-run]
 #   acfs agents quota [--json] | quota check <kind> | quota record-claude   (agent_quota.sh)
@@ -66,7 +67,8 @@ Usage:
   acfs agents limits [--workspace ID] [--lines N] [--mail-from NAME [--project KEY]]
                     [--loop [--interval SEC]] [--dry-run]
   acfs agents codex-daemon (status [--json] | start | restart)
-  acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token TOKEN] [--dry-run]
+  acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token TOKEN]
+                    [--keep-identity] [--dry-run]
   acfs agents recycle <MailName> [--workspace ID] [--project KEY] [--prompt TEXT]
                     [--timeout MS] [--dry-run]
   acfs agents reap  [--idle MIN] [--workspace ID] [--project KEY | --all-workspaces]
@@ -76,7 +78,9 @@ Usage:
 
 spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        an Agent Mail identity first; its herdr name is that name lowercased and
-       its tab is labelled with it. By default each agent is then sent its
+       its tab is labelled with it. Spawn keeps the identity's registration
+       token, readable only by you, under ~/.acfs/state/tokens/, so retire and
+       reap can soft-retire it later. By default each agent is then sent its
        identity and the command palette's default_new_agent prompt.
        --model sets the model of the agent CLI (claude, codex and gemini take
        it; agy runs on the model agy-locked pins) and of its Agent Mail
@@ -177,9 +181,12 @@ retire Retire an agent whose work is done: leave a handoff comment on its bead
        nothing is done; any other failure exits 1). Otherwise it
        removes its merged worktrees (git worktree remove, never --force),
        closes its herdr pane (its tab, when that is the tab's only pane) and,
-       given the agent's registration token (--token or
-       AGENT_MAIL_REGISTRATION_TOKEN), soft-retires its Agent Mail identity;
-       unretire_agent restores it. --dry-run lists what it would do.
+       given the agent's registration token (--token, else
+       AGENT_MAIL_REGISTRATION_TOKEN, else the one spawn kept), soft-retires
+       its Agent Mail identity and drops the token kept for it;
+       unretire_agent restores the identity. --keep-identity
+       leaves the identity alone (reap retires it itself, after its mail).
+       --dry-run lists what it would do.
 recycle
        Give an agent a fresh context in its own pane, tab and names, between
        two tasks: send /clear (Claude Code) or /new (Codex), see that it
@@ -226,9 +233,10 @@ reap   Retire, through retire and all its refusals, each agent of this
        agents its project has. A refused retirement is logged and is no
        failure; reap exits non-zero when herdr, the config, an agent's beads,
        reservations or mail can't be read, or when a retirement or its mail
-       fails for another reason. A retired agent's Agent Mail identity stays
-       active (reap has no registration tokens; 'am agents reap' sweeps
-       stale ones).
+       fails for another reason. After that mail, reap soft-retires the
+       agent's Agent Mail identity with the token spawn kept; an agent spawn
+       didn't start keeps an active identity ('am agents reap' sweeps stale
+       ones).
        --dry-run retires nothing, and says what it would do and why it
        keeps each agent. --loop repeats every --interval seconds
        (default 60); state lives in ~/.acfs/state/reap/. Nothing runs reap
@@ -782,7 +790,7 @@ herdr_agents_spawn() {
     fi
 
     herdr_agents_require herdr jq
-    [[ "$dry_run" == true ]] || herdr_agents_require am
+    [[ "$dry_run" == true ]] || herdr_agents_require curl sha256sum
     workspace="$(herdr_agents_resolve_workspace "$workspace")"
     # An agent spawned on a plan whose window is nearly used up stalls at its
     # first turns (acfs-ybg). Checked once per kind, before anything exists.
@@ -863,7 +871,7 @@ herdr_agents_spawn() {
         agent_args=()
         [[ "$model_given" == false ]] || agent_args=(-- "$(herdr_agents_model_flag "$kind")" "$model")
         if [[ "$dry_run" == true ]]; then
-            herdr_agents_note "would run: am agents create --project $cwd --program $(herdr_agents_program_for_kind "$kind") --model $model --json"
+            herdr_agents_note "would call Agent Mail: ensure_project $cwd, then create_agent_identity (program $(herdr_agents_program_for_kind "$kind"), model $model), keeping its registration token"
             herdr_agents_note "would run: herdr tab create --workspace $workspace --cwd $cwd --label <AgentMailName> --no-focus"
             herdr_agents_note "would run: herdr agent start <agentmailname> --kind $kind --pane <root pane>${agent_args[*]:+ ${agent_args[*]}}"
             [[ "$prompt_mode" == none ]] || herdr_agents_note "would run: herdr agent prompt <agentmailname> <kickoff>"
@@ -871,10 +879,8 @@ herdr_agents_spawn() {
             continue
         fi
 
-        mail_name="$(am agents create --project "$cwd" --program "$(herdr_agents_program_for_kind "$kind")" \
-            --model "$model" --json 2>/dev/null | jq -r '.name // empty' 2>/dev/null || true)"
-        if [[ -z "$mail_name" ]]; then
-            herdr_agents_note "spawn stopped: am agents create failed for a $kind agent (is Agent Mail running?)"
+        if ! mail_name="$(herdr_agents_create_identity "$cwd" "$(herdr_agents_program_for_kind "$kind")" "$model")"; then
+            herdr_agents_note "spawn stopped: create_agent_identity failed for a $kind agent (is Agent Mail running?)"
             failed=true
             break
         fi
@@ -1834,34 +1840,131 @@ herdr_agents_reserved_ever() {
         | awk -v agent="$2" 'NR > 1 { n = split($0, f, /  +/); if (n >= 3 && f[3] == agent) print f[2] }'
 }
 
-# Soft-retire an Agent Mail identity. Over HTTP the server takes only the
-# agent's own registration token.
-herdr_agents_retire_identity() {
-    local cwd="$1" mail_name="$2" token="$3" url response
+# Call Agent Mail tool $1 with arguments $2 (a JSON object) over its HTTP
+# MCP endpoint, and print the tool's text result. A transport error or a
+# refusal is noted, naming the tool, and returns 1. A server that wants a
+# bearer token gets the one in Agent Mail's config.env (HTTP_BEARER_TOKEN),
+# as machine_verify.sh sends it: through a private header file, never argv.
+herdr_agents_mail_call() {
+    local tool="$1" arguments="$2" url response headers env_file token="" rc=0
     url="${AGENT_MAIL_URL:-http://127.0.0.1:${ACFS_AGENT_MAIL_PORT:-8765}/mcp/}"
-    response="$(jq -nc --arg p "$cwd" --arg a "$mail_name" --arg t "$token" \
-        '{jsonrpc: "2.0", id: 1, method: "tools/call",
-          params: {name: "retire_agent", arguments: {project_key: $p, agent_name: $a, registration_token: $t}}}' \
-        | curl -sS --max-time 15 -X POST "$url" -H 'Content-Type: application/json' \
-            -H 'Accept: application/json, text/event-stream' --data-binary @- 2>&1)" || {
-        herdr_agents_note "retire_agent failed: $response"
+    for env_file in "$HOME/.config/mcp-agent-mail/config.env" "$HOME/.config/mcp-agent-mail/.env"; do
+        [[ -f "$env_file" ]] || continue
+        token="$(sed -n 's/^HTTP_BEARER_TOKEN=//p' "$env_file" | tail -n 1 | sed -E "s/^[\"']//; s/[\"']\$//")"
+        break
+    done
+    if ! headers="$(umask 077 && mktemp "${TMPDIR:-/tmp}/acfs-agents-mail.XXXXXX")"; then
+        herdr_agents_note "$tool failed: no temp file for its request headers"
         return 1
-    }
+    fi
+    {
+        printf 'Content-Type: application/json\n'
+        printf 'Accept: application/json, text/event-stream\n'
+        [[ -z "$token" ]] || printf 'Authorization: Bearer %s\n' "$token"
+    } >"$headers"
+    response="$(jq -nc --arg n "$tool" --argjson a "$arguments" \
+        '{jsonrpc: "2.0", id: 1, method: "tools/call", params: {name: $n, arguments: $a}}' \
+        | curl -sS --max-time 15 -X POST "$url" -H "@$headers" --data-binary @- 2>&1)" || rc=$?
+    rm -f "$headers"
+    if (( rc != 0 )); then
+        herdr_agents_note "$tool failed: $response"
+        return 1
+    fi
     # A streamed answer arrives as an SSE "data:" line.
     response="$(sed -n 's/^data: //p; /^{/p' <<<"$response" | tail -n 1)"
     if [[ "$(jq -r '(.error != null) or (.result.isError == true)' <<<"$response" 2>/dev/null)" != false ]]; then
-        herdr_agents_note "retire_agent refused: $(jq -r '.error.message // (.result.content[0].text // .)' <<<"$response" 2>/dev/null || printf '%s' "$response")"
+        herdr_agents_note "$tool refused: $(jq -r '.error.message // (.result.content[0].text // .)' <<<"$response" 2>/dev/null || printf '%s' "$response")"
+        return 1
+    fi
+    jq -r '.result.content[0].text // empty' <<<"$response"
+}
+
+# The file that keeps agent $2's registration token for project $1, keyed
+# by the project's physical path, as spawn and retire resolve it. Fails for
+# anything but an Agent Mail name, so a name never walks the path.
+herdr_agents_token_file() {
+    local project="$1"
+    [[ "$2" =~ ^[A-Za-z][A-Za-z0-9]*$ ]] || return 1
+    if [[ -d "$project" ]]; then
+        project="$(cd "$project" && pwd -P)"
+    fi
+    printf '%s/state/tokens/%s/%s\n' "${ACFS_HOME:-$HOME/.acfs}" \
+        "$(printf '%s' "$project" | sha256sum | cut -c1-16)" "$2"
+}
+
+# Keep token $3 of agent $2 in project $1, readable only by this user.
+herdr_agents_token_save() {
+    local file dir tmp
+    file="$(herdr_agents_token_file "$1" "$2")" || return 1
+    dir="${file%/*}"
+    (umask 077 && mkdir -p "$dir") || return 1
+    tmp="$(umask 077 && mktemp "$dir/.token.XXXXXX")" || return 1
+    if ! printf '%s\n' "$3" >"$tmp" || ! mv -f "$tmp" "$file"; then
+        rm -f "$tmp"
         return 1
     fi
 }
 
+# Print the token spawn kept for agent $2 in project $1, if any.
+herdr_agents_token_load() {
+    local file
+    file="$(herdr_agents_token_file "$1" "$2")" || return 0
+    [[ -r "$file" ]] || return 0
+    head -n 1 "$file"
+}
+
+# Drop the token kept for agent $2 in project $1, once its identity is
+# retired, so no token outlives the identity it was kept for.
+herdr_agents_token_forget() {
+    local file
+    file="$(herdr_agents_token_file "$1" "$2")" || return 0
+    rm -f "$file"
+}
+
+# Create a new Agent Mail identity in project $1 for program $2 and model
+# $3, keep its registration token (herdr_agents_token_save), and print its
+# name. `am agents create` returns no token, so this goes over HTTP:
+# ensure_project first, since create_agent_identity answers nothing for a
+# project the server doesn't have yet.
+herdr_agents_create_identity() {
+    local project="$1" text name token
+    herdr_agents_mail_call ensure_project "$(jq -nc --arg p "$project" '{human_key: $p}')" >/dev/null || return 1
+    text="$(herdr_agents_mail_call create_agent_identity \
+        "$(jq -nc --arg p "$project" --arg g "$2" --arg m "$3" '{project_key: $p, program: $g, model: $m}')")" || return 1
+    name="$(jq -r '.name // empty' <<<"$text" 2>/dev/null || true)"
+    token="$(jq -r '.registration_token // empty' <<<"$text" 2>/dev/null || true)"
+    if [[ -z "$name" ]]; then
+        herdr_agents_note "create_agent_identity returned no name"
+        return 1
+    fi
+    if [[ -z "$token" ]]; then
+        herdr_agents_note "create_agent_identity returned no registration token for $name: retire it with --token"
+    elif ! herdr_agents_token_save "$project" "$name" "$token"; then
+        herdr_agents_note "could not keep $name's registration token under ${ACFS_HOME:-$HOME/.acfs}/state/tokens: retire it with --token"
+    fi
+    printf '%s\n' "$name"
+}
+
+# Soft-retire Agent Mail identity $2 in project $1 with its registration
+# token $3, and drop the token kept for it. Over HTTP the server takes only
+# the agent's own token. The token reaches jq through its environment,
+# never argv, where any local user could read it.
+herdr_agents_retire_identity() {
+    local arguments
+    arguments="$(HERDR_AGENTS_TOKEN="$3" jq -nc --arg p "$1" --arg a "$2" \
+        '{project_key: $p, agent_name: $a, registration_token: env.HERDR_AGENTS_TOKEN}')"
+    herdr_agents_mail_call retire_agent "$arguments" >/dev/null || return 1
+    herdr_agents_token_forget "$1" "$2"
+}
+
 herdr_agents_retire() {
-    local workspace="" cwd="" dry_run=false token="${AGENT_MAIL_REGISTRATION_TOKEN:-}" mail_name=""
+    local workspace="" cwd="" dry_run=false token="" keep_identity=false mail_name=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --workspace) [[ $# -ge 2 ]] || herdr_agents_die "--workspace needs a value"; workspace="$2"; shift 2 ;;
             --cwd) [[ $# -ge 2 ]] || herdr_agents_die "--cwd needs a value"; cwd="$2"; shift 2 ;;
             --token) [[ $# -ge 2 ]] || herdr_agents_die "--token needs a value"; token="$2"; shift 2 ;;
+            --keep-identity) keep_identity=true; shift ;;
             --dry-run) dry_run=true; shift ;;
             -h|--help) herdr_agents_usage; return 0 ;;
             -*) herdr_agents_die "unknown retire option: $1" ;;
@@ -1870,12 +1973,20 @@ herdr_agents_retire() {
     done
     [[ -n "$mail_name" ]] || herdr_agents_die "retire needs the agent's Agent Mail name"
     herdr_agents_require herdr jq am git
-    [[ -z "$token" ]] || herdr_agents_require curl
     if [[ -z "$cwd" ]]; then
         cwd="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
     fi
     [[ -d "$cwd" ]] || herdr_agents_die "--cwd is not a directory: $cwd"
     cwd="$(cd "$cwd" && pwd -P)"
+    # The token: --token, else the caller's environment, else the one spawn
+    # kept. --keep-identity (reap's) leaves the identity to the caller.
+    if [[ "$keep_identity" == true ]]; then
+        token=""
+    else
+        [[ -n "$token" ]] || token="${AGENT_MAIL_REGISTRATION_TOKEN:-}"
+        [[ -n "$token" ]] || token="$(herdr_agents_token_load "$cwd" "$mail_name")"
+    fi
+    [[ -z "$token" ]] || herdr_agents_require curl
     local herdr_name
     herdr_name="$(herdr_agents_herdr_name "$mail_name")" || herdr_agents_die "$HERDR_AGENTS_NAME_ERROR"
     am agents show "$mail_name" --project "$cwd" --json >/dev/null 2>&1 \
@@ -1976,8 +2087,8 @@ herdr_agents_retire() {
 
     if [[ -n "$token" ]]; then
         actions+=("soft-retire Agent Mail identity $mail_name (unretire_agent restores it)")
-    else
-        herdr_agents_note "no registration token (--token or AGENT_MAIL_REGISTRATION_TOKEN): the Agent Mail identity stays active; the agent can call retire_agent itself"
+    elif [[ "$keep_identity" == false ]]; then
+        herdr_agents_note "no registration token (--token, AGENT_MAIL_REGISTRATION_TOKEN or the one spawn keeps): the Agent Mail identity stays active; the agent can call retire_agent itself"
     fi
 
     local line
@@ -2258,11 +2369,17 @@ herdr_agents_reap_beads() {
 }
 
 # Tell project $1's keep-listed agents, by Agent Mail from retired agent $2,
-# that reap retired it, and why ($3). Names on the keep list that the
+# that reap retired it, and why ($3). With its registration token ($4),
+# its identity is soft-retired next. Names on the keep list that the
 # project doesn't have are skipped.
 herdr_agents_reap_notify() {
-    local project="$1" mail_name="$2" why="$3" name failed=0
+    local project="$1" mail_name="$2" why="$3" token="$4" name failed=0 identity
     local -a to=()
+    if [[ -n "$token" ]]; then
+        identity="Its Agent Mail identity is soft-retired next; unretire_agent restores it."
+    else
+        identity="Its Agent Mail identity stays active (spawn kept no token for it)."
+    fi
     while IFS= read -r name; do
         [[ -n "$name" && "${name,,}" != "${mail_name,,}" ]] || continue
         am agents show "$name" --project "$project" --json </dev/null >/dev/null 2>&1 && to+=("$name")
@@ -2271,7 +2388,7 @@ herdr_agents_reap_notify() {
     for name in "${to[@]}"; do
         am mail send --project "$project" --from "$mail_name" --to "$name" \
             --subject "[reap] $mail_name retired: idle, with no work left" \
-            --body "acfs agents reap retired $mail_name at $(date -u +%Y-%m-%dT%H:%M:%SZ): $why. Its Agent Mail identity stays active; spawn a fresh agent when work comes back." \
+            --body "acfs agents reap retired $mail_name at $(date -u +%Y-%m-%dT%H:%M:%SZ): $why. $identity Spawn a fresh agent when work comes back." \
             </dev/null >/dev/null || { herdr_agents_note "reap: am mail send to $name failed"; failed=1; }
     done
     return "$failed"
@@ -2332,10 +2449,14 @@ herdr_agents_reap_one() {
         return 2
     fi
     herdr_agents_note "$(date -u +%Y-%m-%dT%H:%M:%SZ) reap: retiring $mail_name ($name, workspace $workspace, $cwd): $why"
-    retire_args=("$mail_name" --workspace "$workspace" --cwd "$cwd")
+    # retire keeps the identity: a retired identity can't send, and the
+    # project is told from it. The token is the one spawn kept; the one in
+    # this environment, if any, is the caller's own, never the reaped
+    # agent's.
+    local token
+    token="$(herdr_agents_token_load "$cwd" "$mail_name")"
+    retire_args=("$mail_name" --workspace "$workspace" --cwd "$cwd" --keep-identity)
     [[ "$dry_run" == false ]] || retire_args+=(--dry-run)
-    # The token in this environment, if any, is the caller's own, never the
-    # reaped agent's: retire_agent would refuse it after the pane closed.
     local rc=0
     (unset AGENT_MAIL_REGISTRATION_TOKEN; herdr_agents_retire "${retire_args[@]}") </dev/null || rc=$?
     case "$rc" in
@@ -2343,8 +2464,23 @@ herdr_agents_reap_one() {
         2) herdr_agents_note "reap: $mail_name was not retired: retire refused it"; return 2 ;;
         *) herdr_agents_note "reap: $mail_name was not retired: retire failed"; return 1 ;;
     esac
-    [[ "$dry_run" == false ]] || return 0
-    herdr_agents_reap_notify "$cwd" "$mail_name" "$why"
+    if [[ "$dry_run" == true ]]; then
+        [[ -z "$token" ]] || herdr_agents_note "would soft-retire Agent Mail identity $mail_name after telling the project"
+        return 0
+    fi
+    rc=0
+    herdr_agents_reap_notify "$cwd" "$mail_name" "$why" "$token" || rc=$?
+    # Retired even when the project could not be told: its pane is gone,
+    # so no later sweep would find it again.
+    if [[ -n "$token" ]]; then
+        if herdr_agents_retire_identity "$cwd" "$mail_name" "$token"; then
+            herdr_agents_note "reap: retired Agent Mail identity $mail_name"
+        else
+            herdr_agents_note "reap: the Agent Mail identity $mail_name stays active"
+            rc=1
+        fi
+    fi
+    return "$rc"
 }
 
 # One sweep over workspace $1 ("" = every one) and project $5 ("" = every

@@ -219,7 +219,7 @@ newproj_validate_herdr_request() {
         echo "An existing absolute project directory is required." >&2
         return 1
     fi
-    for tool in herdr jq am; do
+    for tool in herdr jq am curl; do
         if ! command -v "$tool" >/dev/null 2>&1; then
             printf 'Missing %s. Run acfs doctor before starting a workspace.\n' "$tool" >&2
             return 1
@@ -341,7 +341,7 @@ open_in_herdr() {
     [[ "$work" == true || "$work" == false ]] || return 1
     project_dir=$(newproj_herdr_project) || return 1
     project_name=$(state_get "project_name") || return 1
-    for answer in herdr jq am; do
+    for answer in herdr jq am curl; do
         if ! command -v "$answer" >/dev/null 2>&1; then
             printf 'Missing %s. Run acfs doctor before starting a workspace.\n' "$answer" >&2
             return 1
