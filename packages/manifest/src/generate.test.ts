@@ -1319,7 +1319,7 @@ describe("Generated script headers", () => {
     expect(countMatch).not.toBeNull();
     expect(rawEntries.length).toBe(checksums.size);
     expect(Number(countMatch?.[1])).toBe(checksums.size);
-    expect(checksums.size).toBe(124);
+    expect(checksums.size).toBe(126);
 
     const mandatoryPaths = [
       "install.sh",
@@ -1412,6 +1412,7 @@ describe("Generated script headers", () => {
       "scripts/lib/rescue.sh",
       "scripts/lib/status.sh",
       "scripts/lib/support.sh",
+      "scripts/lib/state_layer.sh",
       "scripts/lib/swarm_assign.sh",
       "scripts/lib/swarm_calibration.sh",
       "scripts/lib/swarm_convergence.sh",
@@ -1425,6 +1426,7 @@ describe("Generated script headers", () => {
       "scripts/lib/swarm_simulation.sh",
       "scripts/lib/swarm_status.sh",
       "scripts/lib/temp_sweep.sh",
+      "scripts/lib/service_protection.sh",
       "scripts/services-setup.sh",
       // `acfs agent-readiness` ships the audit with its TypeScript sources.
       "scripts/agent-readiness-audit.sh",
