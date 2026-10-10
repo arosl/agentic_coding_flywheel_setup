@@ -36,6 +36,7 @@ LIMIT = 1024 * 1024
 POLICY = "explicit-new-sessions-strict-ssh-native-admission-v1"
 PROFILES = ("balanced", "codex-heavy", "review-heavy", "docs-heavy")
 WORKLOADS = ("light", "standard", "heavy")
+AGENT_TYPES = ("claude", "codex", "agy")
 NEW_LAUNCH_ATTEMPTED = False
 
 
@@ -193,7 +194,7 @@ def validate_spec(value):
         for agent in req["agents"]:
             require(type(agent) is dict and set(agent) == {"agent_name", "agent_type"}
                     and matches(r"[A-Za-z][A-Za-z0-9_-]{0,63}", agent["agent_name"])
-                    and agent["agent_type"] in ("claude", "codex"), "invalid_agent")
+                    and agent["agent_type"] in AGENT_TYPES, "invalid_agent")
             name = agent["agent_name"].lower()
             require(name not in names, "duplicate_fleet_agent_name")
             names.add(name)

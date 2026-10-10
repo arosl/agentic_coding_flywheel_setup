@@ -2,8 +2,8 @@
 
 The explicit launcher fills the gap between the read-only swarm planner and
 packet preparation, which needs existing stable agent panes. It supports 1–32
-native Claude/Codex agents, each in its own tab of a new herdr workspace. It
-sends the agents no work.
+native Claude, Codex or Antigravity (`agy`) agents, each in its own tab of a new
+herdr workspace. It sends the agents no work.
 
 Preview first (the standalone entrypoint is also useful from a checkout):
 
@@ -45,9 +45,11 @@ the existing planner policies, not provider/model overrides. No saved admission
 snapshots are accepted as authority to start agents.
 
 Every requested name is bound to its original slot, even when the request
-interleaves Claude and Codex. After each agent starts, ACFS verifies it through
+interleaves agent types. After each agent starts, ACFS verifies it through
 herdr: its pane, tab, terminal ID and shell PID, the live native process in the
-pane, and its working directory. The result includes `preparation_targets`, such
+pane, and its working directory. A process counts as the agent when its name or
+its argv[0] is the agent type: `agy-locked` runs `agy-real` with argv[0] `agy`,
+which is also how herdr recognizes Antigravity. The result includes `preparation_targets`, such
 as:
 
 ```text

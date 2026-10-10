@@ -21,7 +21,8 @@ The local fleet launch journal must contain a confirmed result for every selecte
 host. Partial fleets are allowed only when each selected host has that evidence.
 Endpoint, remote user, session, repository, receipt and original native process
 identities come exclusively from that journal; they cannot be overridden by a
-batch selection. Native support is Claude and Codex, as in the fleet launcher.
+batch selection. Native support is Claude, Codex and Antigravity (`agy`), as in
+the fleet launcher.
 
 Create a private, mode-0600 file containing only explicit existing host IDs and
 absolute paths to their reviewed remote batches:

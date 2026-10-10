@@ -68,7 +68,7 @@ host with another port/user does not create extra capacity. IPv4-mapped IPv6
 aliases are also deduplicated; different DNS aliases can still resolve to the
 same machine, which operators must exclude themselves. Root remote accounts,
 unknown providers, malformed paths, implicit selections and extra executable
-fields are refused. Native support currently covers Claude and Codex.
+fields are refused. Native support covers Claude, Codex and Antigravity (`agy`).
 
 The workload and profile choose admission policy, **not a provider model or CAAM
 account**. Each remote agent CLI's own configuration still chooses its normal

@@ -210,12 +210,14 @@ class FleetTests(unittest.TestCase):
 
     def test_mixed_provider_original_slots_are_preserved(self):
         self.spec["hosts"][0]["request"]["agents"] = [
-            {"agent_name": "Coder", "agent_type": "codex"}, {"agent_name": "Reviewer", "agent_type": "claude"}]
+            {"agent_name": "Coder", "agent_type": "codex"}, {"agent_name": "Reviewer", "agent_type": "claude"},
+            {"agent_name": "Tester", "agent_type": "agy"}]
         self.plan = fleet.build_plan(self.spec, b"hosts", b"key", self.state, 360)
         self.approval = fleet.digest(fleet.encoded(self.plan))
         report, code = self.run_fleet("launch")
         self.assertEqual(code, 0)
-        self.assertEqual([t["agent_name"] for t in report["hosts"][0]["targets"]], ["Coder", "Reviewer"])
+        self.assertEqual([(t["agent_name"], t["agent_type"]) for t in report["hosts"][0]["targets"]],
+                         [("Coder", "codex"), ("Reviewer", "claude"), ("Tester", "agy")])
 
     def test_reports_do_not_echo_endpoints_paths_ssh_keys_or_raw_diagnostics(self):
         def private(h, m, r):
@@ -270,7 +272,7 @@ class ValidationTests(unittest.TestCase):
                            ("repo", "/double//slash"), ("receipt", "/tmp/file\x00"),
                            ("session", "--option"), ("session", "prefix--option"),
                            ("profile", "unknown"), ("workload", "unknown"), ("accept_warnings", "true"),
-                           ("agents", []), ("agents", [{"agent_name": "A", "agent_type": "agy"}])):
+                           ("agents", []), ("agents", [{"agent_name": "A", "agent_type": "gemini"}])):
             candidate = specification(1)
             candidate["hosts"][0]["request"][key] = value
             with self.subTest(key=key, value=value), self.assertRaises(fleet.Refused):

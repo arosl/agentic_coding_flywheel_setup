@@ -106,8 +106,10 @@ if args[:2] == ["pane", "process-info"]:
     agent = next(a for a in state["agents"] if a["pane_id"] == pane)
     n = int(pane.rsplit(":p", 1)[1])
     shown = "bash" if mode == "shell-pane" else agent["agent"]
+    # agy-locked runs agy-real with argv[0] agy (acfs-zg0): only argv[0] names the agent.
+    name = "agy-real" if shown == "agy" else shown
     ok({"process_info": {"pane_id": pane, "shell_pid": 1000 + n,
-        "foreground_processes": [{"name": shown, "pid": 2000 + n, "argv": [shown]}]}})
+        "foreground_processes": [{"name": name, "pid": 2000 + n, "argv": [shown]}]}})
 sys.exit(95)
 '''
 
@@ -138,12 +140,17 @@ class LaunchTests(unittest.TestCase):
                         ACFS_HOME=str(self.root / "no-acfs-home"))
         self.env.pop("HERDR_WORKSPACE_ID", None)
         self.receipt = self.root / "intent.json"
-        self.args = ["bash", str(self.script), "--repo", str(self.repo), "--session", "project",
-            "--agent", "BlueLake:codex", "--agent", "RedFox:claude", "--receipt", str(self.receipt)]
+        self.agents = [("BlueLake", "codex"), ("RedFox", "claude")]
+
+    @property
+    def args(self):
+        agents = [arg for name, kind in self.agents for arg in ("--agent", name + ":" + kind)]
+        return ["bash", str(self.script), "--repo", str(self.repo), "--session", "project",
+            *agents, "--receipt", str(self.receipt)]
 
     def request(self, extra=()):
         return {"repo": str(self.repo), "session": "project", "agents": [
-            {"agent_name": "BlueLake", "agent_type": "codex"}, {"agent_name": "RedFox", "agent_type": "claude"}],
+            {"agent_name": name, "agent_type": kind} for name, kind in self.agents],
             "receipt": str(self.receipt), "profile": "balanced", "workload": "standard",
             "accept_warnings": "--accept-warnings" in extra}
 
@@ -209,6 +216,21 @@ class LaunchTests(unittest.TestCase):
                           (2, "RedFox", "amberfox", "w9:p3", "term_3", 1003, "ready")])
         for name in ("intent.json", "intent.json.result.json"):
             self.assertEqual(stat.S_IMODE((self.root / name).stat().st_mode), 0o600)
+
+    def test_agy_launches_and_is_verified_by_its_argv0(self):
+        self.agents = [("BlueLake", "codex"), ("RedFox", "claude"), ("GreyOwl", "agy")]
+        code, report = self.invoke(launch=True)
+        self.assertEqual((code, report["status"]), (0, "ready"), report)
+        self.assertEqual(report["preparation_targets"][2], "3:CopperHill:agy:w9:p4")
+        self.assertEqual([a[2:5] for a in self.herdr_calls("agent", "start")][2], ["copperhill", "--kind", "agy"])
+        # A repeat re-verifies the recorded agy pane the same way.
+        code, report = self.invoke(launch=True)
+        self.assertEqual((code, report["status"], report["reconciled_only"]), (0, "ready", True), report)
+
+    def test_agy_pane_without_the_agy_process_is_refused(self):
+        self.agents = [("GreyOwl", "agy")]
+        code, report = self.invoke(launch=True, mode="shell-pane")
+        self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
 
     def test_agent_waiting_at_a_dialog_counts_as_launched(self):
         code, report = self.invoke(launch=True, mode="blocked-codex")

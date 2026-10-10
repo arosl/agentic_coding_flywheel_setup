@@ -17,8 +17,10 @@ own, `swarm-<session>-<first 12 hex of the review hash>`. None or more than one
 is refused.
 
 Inspect every proposed slot, agent type, Agent Mail name, pane, terminal and
-shell PID. Slots are assigned to the same native-agent types in tab creation
-order, which the launcher's one-at-a-time start made the slot order. Each
+shell PID. Slots are assigned to the same native-agent types (Claude, Codex or
+`agy`) in tab creation order, which the launcher's one-at-a-time start made the
+slot order. A pane runs its agent when a foreground process has the agent type
+as its name or its argv[0], as `agy-real` does under `agy-locked`. Each
 agent's Agent Mail name is read from its tab label, where `acfs agents spawn` put
 it. A herdr name that was dropped (for example after a Codex context compaction)
 is restored from the tab label; a renamed tab, or a herdr name that differs from

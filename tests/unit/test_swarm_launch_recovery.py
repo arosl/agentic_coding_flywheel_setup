@@ -70,7 +70,8 @@ if args[:2] == ["pane", "process-info"]:
     pane = args[args.index("--pane") + 1]
     a = next(a for a in state["agents"] if a["pane_id"] == pane)
     ok({"process_info": {"pane_id": pane, "shell_pid": a["shell_pid"],
-        "foreground_processes": [{"name": a["foreground"], "pid": a["shell_pid"] + 1, "argv": [a["foreground"]]}]}})
+        "foreground_processes": [{"name": a["foreground"], "pid": a["shell_pid"] + 1,
+                                  "argv": [a.get("argv0", a["foreground"])]}]}})
 sys.exit(95)
 '''
 READ_ONLY = (["workspace", "list"], ["tab", "list"], ["agent", "list"], ["pane", "process-info"],
@@ -192,6 +193,27 @@ class RecoveryTests(unittest.TestCase):
         self.save_state()
         self.assertEqual(review, self.preview())
         self.adopt(review)
+
+    def test_agy_slot_is_recovered_by_its_argv0(self):
+        self.request["agents"][1]["agent_type"] = "agy"
+        self.save_intent()
+        self.workspaces[1]["label"] = self.label()
+        # agy-locked runs agy-real with argv[0] agy (acfs-zg0); herdr reports the agent as agy.
+        self.agents[1] = {**self.agent(3, "agy", "AmberFox"), "foreground": "agy-real", "argv0": "agy"}
+        self.save_state()
+        self.assertTrue(self.adopt()["result_created"])
+        saved = json.loads(self.result.read_text())
+        self.assertEqual([(t["slot"], t["agent_type"], t["pane_id"]) for t in saved["targets"]],
+                         [(1, "codex", "w9:p2"), (2, "agy", "w9:p3"), (3, "codex", "w9:p7")])
+
+    def test_agy_pane_running_something_else_is_refused(self):
+        self.request["agents"][1]["agent_type"] = "agy"
+        self.save_intent()
+        self.workspaces[1]["label"] = self.label()
+        self.agents[1] = {**self.agent(3, "agy", "AmberFox"), "foreground": "agy-real", "argv0": "bash"}
+        self.save_state()
+        self.invoke(code=2)
+        self.assertFalse(self.result.exists())
 
     def test_tabs_past_nine_keep_creation_order(self):
         # herdr names the tab after t9 "tA", and a decimal parse would refuse it.

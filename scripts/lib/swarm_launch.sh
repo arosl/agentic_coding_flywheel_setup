@@ -35,6 +35,8 @@ HERDR_ID = r"[A-Za-z0-9][A-Za-z0-9_:.-]{0,63}"
 TERMINAL_ID = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
 HERDR_NAME = r"[a-z][a-z0-9_-]{0,31}"
 MAIL_NAME = r"[A-Za-z][A-Za-z0-9_-]{0,63}"
+# The agent kinds launch starts, as herdr and acfs agents spawn name them.
+AGENT_TYPES = ("claude", "codex", "agy")
 # Every field of a saved target. The identity fields are what reconcile
 # compares against live herdr state; names and launch state are reported.
 TARGET_KEYS = {"slot", "agent_name", "agent_type", "agent_mail_name", "herdr_name", "workspace_id",
@@ -244,10 +246,19 @@ def live_agents(herdr, request, workspace_id):
     return [a for a in agents if a.get("workspace_id") == workspace_id]
 
 
+def runs_agent(process, agent_type):
+    # agy-locked runs agy-real under the name agy (acfs-zg0), so check argv[0] too.
+    if not isinstance(process, dict):
+        return False
+    argv = process.get("argv")
+    first = argv[0] if isinstance(argv, list) and argv and isinstance(argv[0], str) else ""
+    return process.get("name") == agent_type or Path(first).name == agent_type
+
+
 def observe(herdr, request, row):
     """The live identity of one agent row, keyed by its pane. The agent's
     name is reported, never trusted: herdr can drop it (acfs-i7p)."""
-    require(row.get("agent") in ("claude", "codex") and isinstance(row.get("pane_id"), str)
+    require(row.get("agent") in AGENT_TYPES and isinstance(row.get("pane_id"), str)
             and re.fullmatch(HERDR_ID, row["pane_id"]) and isinstance(row.get("tab_id"), str)
             and re.fullmatch(HERDR_ID, row["tab_id"]) and isinstance(row.get("terminal_id"), str)
             and re.fullmatch(TERMINAL_ID, row["terminal_id"]) and isinstance(row.get("cwd"), str),
@@ -259,7 +270,7 @@ def observe(herdr, request, row):
     require(isinstance(info, dict) and info.get("pane_id") == row["pane_id"]
             and type(info.get("shell_pid")) is int and info["shell_pid"] > 0
             and isinstance(info.get("foreground_processes"), list)
-            and any(isinstance(p, dict) and p.get("name") == row["agent"] for p in info["foreground_processes"]),
+            and any(runs_agent(p, row["agent"]) for p in info["foreground_processes"]),
             "Pane is not running the native agent it reports.")
     return {"workspace_id": row.get("workspace_id"), "tab_id": row["tab_id"], "pane_id": row["pane_id"],
             "terminal_id": row["terminal_id"], "shell_pid": info["shell_pid"], "agent_type": row["agent"],
@@ -397,7 +408,7 @@ def saved_request(fd, receipt):
             and all(isinstance(a, dict) and set(a) == {"agent_name", "agent_type"}
                     and isinstance(a["agent_name"], str)
                     and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", a["agent_name"])
-                    and a["agent_type"] in ("claude", "codex") for a in agents)
+                    and a["agent_type"] in AGENT_TYPES for a in agents)
             and len({a["agent_name"].lower() for a in agents}) == len(agents),
             "Saved launch agent identities are invalid.")
     return request
@@ -737,7 +748,7 @@ def main():
                "incomplete launch recovery: acfs swarm launch --recover --help")
     parser.add_argument("--repo", required=True)
     parser.add_argument("--session", required=True, help="Swarm name; the herdr workspace label starts with it")
-    parser.add_argument("--agent", action="append", required=True, help="Unique NAME:claude or NAME:codex; repeat for each slot")
+    parser.add_argument("--agent", action="append", required=True, help="Unique NAME:claude, NAME:codex or NAME:agy; repeat for each slot")
     parser.add_argument("--receipt", required=True, help="New private intent file in an owned non-writable-by-others directory")
     parser.add_argument("--profile", choices=("balanced", "codex-heavy", "review-heavy", "docs-heavy"), default="balanced")
     parser.add_argument("--workload", choices=("light", "standard", "heavy"), default="standard")
@@ -749,8 +760,8 @@ def main():
     require(1 <= len(args.agent) <= 32, "Request 1 through 32 native agents.")
     agents = []
     for value in args.agent:
-        match = re.fullmatch(r"([A-Za-z][A-Za-z0-9_-]{0,63}):(claude|codex)", value)
-        require(match is not None, "Use --agent NAME:claude or NAME:codex.")
+        match = re.fullmatch(r"([A-Za-z][A-Za-z0-9_-]{0,63}):(claude|codex|agy)", value)
+        require(match is not None, "Use --agent NAME:claude, NAME:codex or NAME:agy.")
         agents.append({"agent_name": match[1], "agent_type": match[2]})
     require(len({a["agent_name"].lower() for a in agents}) == len(agents), "Agent names must be distinct.")
     repo = directory(args.repo)

@@ -33,6 +33,7 @@ HERDR_ID = r"[A-Za-z0-9][A-Za-z0-9_:.-]{0,63}"
 TERMINAL_ID = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
 HERDR_NAME = r"[a-z][a-z0-9_-]{0,31}"
 MAIL_NAME = r"[A-Za-z][A-Za-z0-9_-]{0,63}"
+AGENT_TYPES = ("claude", "codex", "agy")
 PROFILES = ("balanced", "codex-heavy", "review-heavy", "docs-heavy")
 WORKLOADS = ("light", "standard", "heavy")
 
@@ -155,7 +156,7 @@ def validate_request(intent, receipt):
             and all(isinstance(a, dict) and set(a) == {"agent_name", "agent_type"}
                 and isinstance(a["agent_name"], str)
                 and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", a["agent_name"])
-                and a["agent_type"] in ("claude", "codex") for a in agents)
+                and a["agent_type"] in AGENT_TYPES for a in agents)
             and len({a["agent_name"].lower() for a in agents}) == len(agents),
             "Invalid saved native-agent identities.")
     return request
@@ -207,6 +208,15 @@ def registered_names(request, timeout):
     return {a["name"] for a in value}
 
 
+def runs_agent(process, agent_type):
+    # agy-locked runs agy-real under the name agy (acfs-zg0), so check argv[0] too.
+    if not isinstance(process, dict):
+        return False
+    argv = process.get("argv")
+    first = argv[0] if isinstance(argv, list) and argv and isinstance(argv[0], str) else ""
+    return process.get("name") == agent_type or Path(first).name == agent_type
+
+
 def observe(request, timeout):
     """The launch's agents, keyed by pane. Names are reported, never trusted:
     herdr can drop an agent's name (acfs-i7p); the tab label keeps the Agent
@@ -230,7 +240,7 @@ def observe(request, timeout):
     require(len(rows) == len(request["agents"]), "Observed agent count does not match the saved launch.")
     observed = []
     for row in rows:
-        require(row.get("agent") in ("claude", "codex")
+        require(row.get("agent") in AGENT_TYPES
                 and all(isinstance(row.get(k), str) and re.fullmatch(HERDR_ID, row[k]) for k in ("pane_id", "tab_id"))
                 and re.fullmatch(r".*:t[0-9A-Z]{1,12}", row["tab_id"])
                 and isinstance(row.get("terminal_id"), str) and re.fullmatch(TERMINAL_ID, row["terminal_id"]),
@@ -247,7 +257,7 @@ def observe(request, timeout):
         require(isinstance(info, dict) and info.get("pane_id") == row["pane_id"]
                 and type(info.get("shell_pid")) is int and info["shell_pid"] > 0
                 and isinstance(info.get("foreground_processes"), list)
-                and any(isinstance(p, dict) and p.get("name") == row["agent"] for p in info["foreground_processes"]),
+                and any(runs_agent(p, row["agent"]) for p in info["foreground_processes"]),
                 "An observed pane is not running the native agent it reports.")
         observed.append({"agent_type": row["agent"], "agent_mail_name": mail_name, "herdr_name": mail_name.lower(),
             "workspace_id": workspace_id, "workspace_label": label, "tab_id": row["tab_id"],
@@ -266,7 +276,7 @@ def observe(request, timeout):
             == Counter(a["agent_type"] for a in request["agents"]), "Observed native-agent mix changed.")
     # Sequential start made tab creation order the slot order.
     ordered = sorted(observed, key=lambda o: o["order"])
-    by_type = {kind: iter([o for o in ordered if o["agent_type"] == kind]) for kind in ("claude", "codex")}
+    by_type = {kind: iter([o for o in ordered if o["agent_type"] == kind]) for kind in AGENT_TYPES}
     targets = []
     for slot, agent in enumerate(request["agents"], 1):
         target = next(by_type[agent["agent_type"]]).copy()
