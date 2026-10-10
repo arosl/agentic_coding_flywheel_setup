@@ -167,6 +167,22 @@ check "--regenerate without paths stages the ledger" \
 check "the plain commit then passes" bash -c "cd '$REPO' && git commit -q -m change"
 check "and its ledger matches" ledger_matches_commit
 
+echo "a temporary index (GIT_INDEX_FILE)"
+make_repo
+tmp_index="$WORK/tmp-index"
+echo "echo a5" > "$REPO/scripts/lib/a.sh"
+a_mode="$(git_fixture ls-files -s scripts/lib/a.sh | cut -d' ' -f1)"
+GIT_INDEX_FILE="$tmp_index" git_fixture read-tree HEAD
+GIT_INDEX_FILE="$tmp_index" git_fixture update-index --cacheinfo \
+    "$a_mode,$(git_fixture hash-object -w scripts/lib/a.sh),scripts/lib/a.sh"
+(cd "$REPO" && GIT_INDEX_FILE="$tmp_index" bash scripts/hooks/check_generated.sh --regenerate) > "$OUT" 2> "$ERR"
+check "--regenerate under GIT_INDEX_FILE stages into that index" \
+    [ "$(GIT_INDEX_FILE="$tmp_index" git_fixture diff --cached --name-only | tr '\n' ' ')" == "scripts/generated/internal_checksums.sh scripts/lib/a.sh " ]
+check "and leaves the shared index alone" git_fixture diff --cached --quiet
+check "a commit from that index passes" \
+    bash -c "cd '$REPO' && GIT_INDEX_FILE='$tmp_index' git commit -q -m tmp-index"
+check "and its ledger matches" ledger_matches_commit
+
 echo "hand-edited generated file"
 make_repo
 ledger="$REPO/scripts/generated/internal_checksums.sh"

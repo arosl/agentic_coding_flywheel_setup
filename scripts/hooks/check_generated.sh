@@ -182,10 +182,17 @@ run_hook() {
 }
 
 run_regenerate() {
-    local top="$1" path="" have=""
+    local top="$1" path="" have="" caller_index="" caller_index_set=false
     shift
     local -a paths=("$@") written=() blocked=()
 
+    # The caller's own index (a temporary one, for a commit that must leave
+    # others' uncommitted lines out) is where the result is staged, so put
+    # it back after the snapshot's index, never fall back to .git/index.
+    if [[ -n "${GIT_INDEX_FILE+x}" ]]; then
+        caller_index="$GIT_INDEX_FILE"
+        caller_index_set=true
+    fi
     make_work
     if [[ ${#paths[@]} -gt 0 ]]; then
         export GIT_INDEX_FILE="$WORK/index"
@@ -197,7 +204,11 @@ run_regenerate() {
         git add -A -- "${paths[@]}"
     fi
     generate_in_snapshot "$top"
-    unset GIT_INDEX_FILE
+    if [[ "$caller_index_set" == true ]]; then
+        export GIT_INDEX_FILE="$caller_index"
+    else
+        unset GIT_INDEX_FILE
+    fi
 
     if [[ ! -s "$WORK/changed" ]]; then
         echo "check_generated: the generated files are already up to date."
