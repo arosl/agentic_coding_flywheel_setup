@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -23,8 +24,9 @@ def host(name="alpha", recommended=10, safe=16):
 
 class InventoryAdmissionTests(unittest.TestCase):
     def setUp(self):
-        # Retain evidence; no repository or user files are removed by the suite.
+        # Only the test's own temp dir is removed; never repository or user files.
         self.base = Path(tempfile.mkdtemp(prefix="acfs-inventory-admission-"))
+        self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
         self.inventory = self.base / "inventory.json"
         self.data = {"schema_version": 1, "defaults": {"stale_after_hours": 24}, "hosts": [host()]}
 

@@ -9,6 +9,7 @@ real. Fixtures are retained, not deleted, for diagnostics.
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -33,6 +34,7 @@ def run(script, *args, env=None):
 class ResumeTrustTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="acfs-resume-trust-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.state_dir = self.root / "resume"
         self.lib = self.state_dir / "lib"
         self.lib.mkdir(parents=True)

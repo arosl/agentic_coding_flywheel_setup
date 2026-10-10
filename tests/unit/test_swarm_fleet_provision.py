@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import selectors
+import shutil
 import signal
 import struct
 import subprocess
@@ -25,11 +26,19 @@ spec = importlib.util.spec_from_file_location("provision", SCRIPT)
 p = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(p)
 fleet = p.load_fleet()
+FIXTURE_ROOTS = []
+
+
+def remove_fixtures():
+    """Remove every fixture made so far; a test registers this as a cleanup."""
+    while FIXTURE_ROOTS:
+        shutil.rmtree(FIXTURE_ROOTS.pop(), ignore_errors=True)
 
 
 class Fixture:
     def __init__(self, fmt="sha1"):
         self.root = Path(tempfile.mkdtemp(prefix="acfs-provision-test-"))
+        FIXTURE_ROOTS.append(self.root)
         self.repo = self.root / "source"
         self.repo.mkdir(mode=0o700)
         self.home = self.root / "home"
@@ -111,6 +120,7 @@ class ProvisionTests(unittest.TestCase):
     def setUp(self):
         # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
         self.addCleanup(os.umask, os.umask(0o022))
+        self.addCleanup(remove_fixtures)
         self.assertNotEqual(os.geteuid(), 0)
 
     def test_preview_is_repeatable_and_never_creates_state_or_projects(self):
@@ -353,6 +363,7 @@ class RecoveryTests(unittest.TestCase):
     def setUp(self):
         # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
         self.addCleanup(os.umask, os.umask(0o022))
+        self.addCleanup(remove_fixtures)
         self.assertNotEqual(os.geteuid(), 0)
         self.fx = Fixture()
         self.preview = self.fx.preview()
@@ -587,6 +598,7 @@ class PrivateGroupDirectoryTests(unittest.TestCase):
 
     def setUp(self):
         self.base = Path(tempfile.mkdtemp(prefix="acfs-provision-umask-"))
+        self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
         self.middle = self.base / "projects"
         self.repo = self.middle / "repo"
         self.repo.mkdir(parents=True)

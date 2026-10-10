@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import signal
 import stat
 import subprocess
@@ -88,6 +89,7 @@ class PreparationTests(unittest.TestCase):
         # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
         self.addCleanup(os.umask, os.umask(0o022))
         self.directory = Path(tempfile.mkdtemp(prefix="acfs-fleet-prepare-test-"))
+        self.addCleanup(shutil.rmtree, self.directory, ignore_errors=True)
         self.launch, self.history, self.records, self.work = sample(self.directory)
 
     def plan(self, work=None):
@@ -383,6 +385,7 @@ class RemotePeerTests(unittest.TestCase):
         # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
         self.addCleanup(os.umask, os.umask(0o022))
         self.directory = Path(tempfile.mkdtemp(prefix="acfs-real-preparation-peer-"))
+        self.addCleanup(shutil.rmtree, self.directory, ignore_errors=True)
         launch, history, records, work = sample(self.directory, 1)
         self.home = self.directory / "home"
         self.home.mkdir(mode=0o700)

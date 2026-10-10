@@ -53,6 +53,8 @@ class UpdateLockTests(unittest.TestCase):
 
     def setUp(self):
         self.base = Path(tempfile.mkdtemp(prefix="acfs-update-lock-test-"))
+        # Registered first, so it runs after stop_processes below.
+        self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
         self.base.chmod(0o755)
         self.home = self.base / "home"
         self.home.mkdir(mode=0o755)

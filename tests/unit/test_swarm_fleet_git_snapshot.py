@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -52,6 +53,7 @@ class GitSnapshotTests(unittest.TestCase):
         # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
         self.addCleanup(os.umask, os.umask(0o022))
         self.root = Path(tempfile.mkdtemp(prefix="acfs-git-snapshot-test-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.root.chmod(0o700)
         self.home = self.root / "home"
         self.home.mkdir(mode=0o700)

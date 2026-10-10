@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -288,6 +289,7 @@ fleet.execute(plan,'launch',fleet.digest(fleet.encoded(plan)),peer)
 class RemoteCommandTests(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix="acfs-remote-command-test-"))
+        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
         self.home.chmod(0o755)
         lib = self.home / ".acfs" / "scripts" / "lib"
         lib.mkdir(parents=True, mode=0o755)

@@ -36,6 +36,7 @@ class UpdateLogOwnershipTests(unittest.TestCase):
 
     def setUp(self):
         self.base = Path(tempfile.mkdtemp(prefix="acfs-update-log-owner-"))
+        self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
         self.home = self.base / "home"
         self.home.mkdir()
         self.calls = self.base / "chown-calls"

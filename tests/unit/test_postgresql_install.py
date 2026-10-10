@@ -8,6 +8,7 @@ is a separate acceptance probe for a fresh disposable Ubuntu container only.
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -53,8 +54,8 @@ def generated_doctor_check():
 
 class PostgresInstallTests(unittest.TestCase):
     def setUp(self):
-        # Retain failures/fixtures for inspection; no destructive cleanup.
         self.root = Path(tempfile.mkdtemp(prefix='acfs-postgres-test-'))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.apt = self.root / 'apt'
         self.apt.mkdir()
         self.release = self.root / 'os-release'

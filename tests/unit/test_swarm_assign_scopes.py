@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -17,8 +18,9 @@ def issue(bead, **values):
 
 class ScopeAssignmentTests(unittest.TestCase):
     def setUp(self):
-        # Retain artifacts for inspection; never clean a project directory.
+        # Only the test's own temp dir is removed; never a project directory.
         self.work = Path(tempfile.mkdtemp(prefix="acfs-assign-scopes-"))
+        self.addCleanup(shutil.rmtree, self.work, ignore_errors=True)
         self.ready = self.save("ready", [issue("bd-a"), issue("bd-b"), issue("bd-c")])
         self.triage = self.save("triage", {})
         self.scopes = self.save("scopes", {"schema_version": 1, "scopes": {

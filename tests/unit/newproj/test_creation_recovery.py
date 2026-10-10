@@ -60,6 +60,7 @@ execute_step() {
 class RecoveryTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="acfs-progress-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.project = self.root / "project ' quoted; [literal]"
         self.events = self.root / "events"
         self.env = {**os.environ, "SCRIPT": str(SCRIPT), "PROJECT": str(self.project),
