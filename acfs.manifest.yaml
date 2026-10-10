@@ -2350,7 +2350,7 @@ modules:
       tagline: "Intelligent process termination with Bayesian scoring"
       icon: "activity"
       color: "#EF4444"
-      href: "https://github.com/Dicklesworthstone/process_triage"
+      href: "https://github.com/arosl/process_triage"
       features:
         - "Intelligent process scoring"
         - "Interactive TUI selection"
@@ -2374,7 +2374,7 @@ modules:
     verified_installer:
       tool: pt
       runner: bash
-      url: "https://raw.githubusercontent.com/Dicklesworthstone/process_triage/main/install.sh"
+      url: "https://raw.githubusercontent.com/arosl/process_triage/main/install.sh"
     install: []
     verify:
       - pt --help

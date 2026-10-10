@@ -331,7 +331,7 @@ const RAW_TOOLS: Record<ToolId, ToolCard> = {
     icon: <Wrench className="h-8 w-8" aria-hidden="true" />,
     gradient: "from-lime-500/20 via-green-500/20 to-lime-500/20",
     glowColor: "rgba(132,204,22,0.4)",
-    docsUrl: "https://github.com/Dicklesworthstone/process_triage",
+    docsUrl: "https://github.com/arosl/process_triage",
     docsLabel: "GitHub",
     quickCommand: "pt --help",
     relatedTools: ["srps", "slb", "dcg"],

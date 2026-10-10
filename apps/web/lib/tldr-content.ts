@@ -1047,7 +1047,7 @@ const _tldrFlywheelTools: TldrFlywheelTool[] = [
     id: "pt",
     name: "Process Triage",
     shortName: "PT",
-    href: "https://github.com/Dicklesworthstone/process_triage",
+    href: "https://github.com/arosl/process_triage",
     icon: "Activity",
     color: "from-red-500 to-orange-600",
     category: "supporting",

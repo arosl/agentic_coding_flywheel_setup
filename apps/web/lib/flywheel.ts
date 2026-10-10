@@ -1202,7 +1202,7 @@ Robot mode (JSON API): apr robot validate <N> → apr robot run <N> → apr robo
     id: "pt",
     name: "Process Triage",
     shortName: "PT",
-    href: "https://github.com/Dicklesworthstone/process_triage",
+    href: "https://github.com/arosl/process_triage",
     icon: "Activity",
     color: "from-red-500 to-orange-600",
     tagline: "Bayesian-inference zombie/abandoned process detection and cleanup",
@@ -1242,7 +1242,7 @@ Tech stack: Rust pt-core inference engine + Bash wrapper + gum TUI. Session bund
       "pt history",
     ],
     installCommand:
-      "curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/process_triage/main/install.sh | bash",
+      "curl -fsSL https://raw.githubusercontent.com/arosl/process_triage/main/install.sh | bash",
     language: "Rust/Bash",
   },
   {

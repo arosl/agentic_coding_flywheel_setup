@@ -52,7 +52,7 @@ const NEW_TOOLS: ToolExpectation[] = [
     name: "Process Triage",
     shortName: "PT",
     installerTool: "pt",
-    href: "https://github.com/Dicklesworthstone/process_triage",
+    href: "https://github.com/arosl/process_triage",
   },
   {
     moduleId: "stack.frankensearch",
@@ -255,7 +255,8 @@ describe("New tool manifest entries", () => {
         expect(web.cli_name).toBe(tool.cli);
         expect(web.command_example).toBeTruthy();
         expect(web.href).toBe(tool.href);
-        expect(web.href?.startsWith("https://github.com/Dicklesworthstone/")).toBe(true);
+        // arosl hosts the fork's own builds of stack tools (pt).
+        expect(web.href).toMatch(/^https:\/\/github\.com\/(Dicklesworthstone|arosl)\//);
       });
 
       test("depends only on modules that exist", () => {
