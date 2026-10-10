@@ -9021,6 +9021,13 @@ EOF
         check_supabase_status() { SERVICE_STATUS[supabase]="configured"; }
         run_as_user() {
             local arg=""
+            # The real calls read the token that services-setup pipes in.
+            # A stub that leaves it unread races printf: when this function
+            # returns first, printf hits a closed pipe and pipefail fails the
+            # setup about one run in 60 (acfs-p0m2).
+            if [[ "${1:-}" == /bin/bash || "${2:-}" == login ]]; then
+                cat >/dev/null
+            fi
             for arg in "$@"; do
                 case "$arg" in
                     *vercel-secret-sentinel*|*supabase-secret-sentinel*|*cloudflare-secret-sentinel*)
