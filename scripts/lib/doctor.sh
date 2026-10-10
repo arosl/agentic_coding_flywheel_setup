@@ -3709,8 +3709,11 @@ check_service_binary_drift() {
 # overlap, subordinate id ranges and Docker's FORWARD policy, all read-only,
 # from coexistence.sh. Its traffic tests start probes inside instances, so
 # they run only on request: bash coexistence.sh traffic --instance <name>.
+# A helper the limit stops keeps the findings it printed, and a warning
+# says the rest timed out (acfs-wwk0).
 check_coexistence() {
-    local helper="" status="" id="" label="" details="" fix=""
+    local helper="" status="" id="" label="" details="" fix="" output="" rc=0
+    local seconds="${ACFS_DOCTOR_COEXISTENCE_TIMEOUT:-60}"
     local -a limit=()
 
     doctor_binary_exists incus || return 0
@@ -3719,12 +3722,18 @@ check_coexistence() {
         check "coexist" "Container coexistence" "skip" "coexistence.sh is not installed" "acfs update"
         return 0
     fi
-    command -v timeout >/dev/null 2>&1 && limit=(timeout 60)
+    command -v timeout >/dev/null 2>&1 && limit=(timeout "$seconds")
+    output="$("${limit[@]}" bash "$helper" check </dev/null 2>/dev/null)" || rc=$?
     while IFS=$'\t' read -r status id label details fix; do
         case "$status" in
             pass|warn|fail|skip) check "$id" "$label" "$status" "$details" "$fix" ;;
         esac
-    done < <("${limit[@]}" bash "$helper" check </dev/null 2>/dev/null || true)
+    done <<< "$output"
+    if [[ "$rc" -eq 124 ]]; then
+        check "coexist" "Container coexistence" "warn" \
+            "timed out after ${seconds}s; the checks after the last one shown did not run" \
+            "bash ~/.acfs/scripts/lib/coexistence.sh check"
+    fi
 }
 
 # Incus (tools.incus, on by default). Without /dev/kvm Incus still runs

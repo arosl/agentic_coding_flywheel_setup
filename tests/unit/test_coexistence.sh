@@ -400,6 +400,27 @@ OUT="$(
 )"
 check "doctor: without Incus it says nothing (check_incus already reports it)" test -z "$OUT"
 
+# A helper that outlives the limit (acfs-wwk0): the findings it printed stay,
+# and a warning says the rest timed out instead of vanishing.
+SLOW_HOME="$ROOT/slow-home"
+mkdir -p "$SLOW_HOME/.acfs/scripts/lib"
+cat > "$SLOW_HOME/.acfs/scripts/lib/coexistence.sh" <<'EOF'
+printf 'pass\tcoexist.firewall\tFirewall backend\tiptables: nf_tables\t\n'
+sleep 10
+printf 'pass\tcoexist.subnets\tSubnets\tno overlap\t\n'
+EOF
+OUT="$(
+    doctor_binary_exists() { [[ "$1" == incus ]]; }
+    doctor_runtime_home() { printf '%s\n' "$SLOW_HOME"; }
+    check() { printf 'CHECK %s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "${5:-}"; }
+    # shellcheck source=/dev/null
+    source "$doctor_fn"
+    ACFS_DOCTOR_COEXISTENCE_TIMEOUT=1 check_coexistence
+)"
+check "doctor: a timed-out helper keeps the findings it printed" has "CHECK coexist.firewall|Firewall backend|pass|iptables: nf_tables"
+check "doctor: ... never shows the ones it didn't reach" lacks "coexist.subnets"
+check "doctor: ... and warns that the rest timed out" has "CHECK coexist|Container coexistence|warn|timed out after 1s"
+
 # ------------------------------------------------------------
 printf '\nTests passed: %s\nTests failed: %s\n' "$TESTS_PASSED" "$TESTS_FAILED"
 (( TESTS_FAILED == 0 ))
