@@ -122,7 +122,7 @@ Different tools have different installer locations. Adjust the `paths` trigger a
 | giil | `Dicklesworthstone/giil` | `install.sh` |
 | cass | `Dicklesworthstone/coding_agent_session_search` | `install.sh` |
 | mcp_agent_mail | `Dicklesworthstone/mcp_agent_mail_rust` | `install.sh` |
-| dcg | `Dicklesworthstone/destructive_command_guard` | `install.sh` |
+| dcg | `arosl/destructive_command_guard` | `install.sh` |
 | cm | `Dicklesworthstone/cass_memory_system` | `install.sh` |
 | caam | `Dicklesworthstone/coding_agent_account_manager` | `install.sh` |
 | ubs | `Dicklesworthstone/ultimate_bug_scanner` | `install.sh` |
