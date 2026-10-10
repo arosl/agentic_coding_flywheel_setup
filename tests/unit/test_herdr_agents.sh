@@ -167,7 +167,10 @@ check "the identity's project key is the cwd" grep -q -- "--project $WORK/repo -
 check "the tab gets the Agent Mail name, the explicit workspace and --no-focus" \
     grep -qx -- "herdr tab create --workspace w5 --cwd $WORK/repo --label AlphaFox --no-focus" "$STUB_DIR/calls"
 check "the herdr name is the Agent Mail name lowercased, started in the tab's root pane" \
-    grep -qx -- "herdr agent start gammayak --kind codex --pane w9:p3" "$STUB_DIR/calls"
+    grep -q -- "^herdr agent start gammayak --kind codex --pane w9:p3 " "$STUB_DIR/calls"
+check "--model reaches each agent CLI after --, and its Agent Mail identity" \
+    bash -c '[[ $(grep -c -- "^herdr agent start [a-z]* --kind [a-z]* --pane w9:p[0-9] -- --model opus$" "$1") -eq 3 ]] \
+        && [[ $(grep -c -- "^am agents create .* --model opus " "$1") -eq 3 ]]' _ "$STUB_DIR/calls"
 check "--no-prompt sends no prompt" test "$(count_calls '^herdr agent prompt')" -eq 0
 check "identity, then tab, then start, per agent" \
     test "$(cut -d' ' -f1-3 "$STUB_DIR/calls" | head -3 | tr '\n' '|')" = "am agents create|herdr tab create|herdr agent start|"
@@ -182,6 +185,40 @@ check "the kickoff carries the agent's identity" \
 check "the kickoff carries the palette's default_new_agent and stops at the next heading" \
     bash -c 'grep -q "register with Agent Mail" "$1" && ! grep -q "Not part" "$1"' _ "$STUB_DIR/prompt_alphafox"
 check "the kickoff is submitted without --wait" bash -c '! grep -q -- "--wait" "$1"' _ "$STUB_DIR/calls"
+
+check "without --model the agent CLI gets no arguments" \
+    grep -qx -- "herdr agent start alphafox --kind claude --pane w9:p1" "$STUB_DIR/calls"
+
+# acfs-zyo: --model is checked against every kind before anything exists.
+reset_stub modelagy
+run_helper spawn --claude 1 --agy 1 --cwd "$WORK/repo" --model opus --no-prompt
+check "--model with an agy agent is refused before any identity or tab" \
+    bash -c '[[ "$1" -ne 0 && -z "$(cat "$2")" ]] && grep -q "agy runs on the model agy-locked pins" <<<"$3"' _ "$RC" "$STUB_DIR/calls" "$ERR"
+
+reset_stub modelother
+run_helper spawn --kind opencode --cwd "$WORK/repo" --model x1 --no-prompt
+check "--model with a kind spawn can't set it for is refused" \
+    bash -c '[[ "$1" -ne 0 && -z "$(cat "$2")" ]]' _ "$RC" "$STUB_DIR/calls"
+
+reset_stub modelbad
+run_helper spawn --codex 1 --cwd "$WORK/repo" --model "--dangerously-bypass" --no-prompt
+check "a --model value that could pass as an option is refused" \
+    bash -c '[[ "$1" -ne 0 && -z "$(cat "$2")" ]] && grep -q "invalid --model" <<<"$3"' _ "$RC" "$STUB_DIR/calls" "$ERR"
+
+reset_stub modelagyonly
+run_helper spawn --agy 1 --cwd "$WORK/repo" --no-prompt --json
+check "agy without --model still spawns, with no agent arguments" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qx -- "herdr agent start alphafox --kind agy --pane w9:p1" "$2"' _ "$RC" "$STUB_DIR/calls"
+
+reset_stub modeldry
+run_helper spawn --codex 1 --cwd "$WORK/repo" --model gpt-6.1-sol --dry-run
+check "--dry-run shows the model the agent CLI would get" grep -q -- "--pane <root pane> -- --model gpt-6.1-sol" <<<"$ERR"
+
+reset_stub modelretry
+echo 1 >"$STUB_DIR/busy_alphafox"
+run_helper spawn --claude 1 --cwd "$WORK/repo" --model claude-fable-5-1 --no-prompt
+check "the agent_pane_busy retry passes the model too" \
+    test "$RC/$(count_calls '^herdr agent start alphafox --kind claude --pane w9:p1 -- --model claude-fable-5-1$')" = "0/2"
 
 reset_stub custom
 run_helper spawn --kind codex --count 1 --cwd "$WORK/repo" --prompt "Review the diff."

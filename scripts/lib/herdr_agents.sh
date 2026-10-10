@@ -36,6 +36,9 @@ spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        an Agent Mail identity first; its herdr name is that name lowercased and
        its tab is labelled with it. By default each agent is then sent its
        identity and the command palette's default_new_agent prompt.
+       --model sets the model of the agent CLI (claude, codex and gemini take
+       it; agy runs on the model agy-locked pins) and of its Agent Mail
+       identity; a spawn whose kinds can't all take it is refused up front.
        A start herdr refuses because the new tab's shell is still starting is
        retried once, when that shell is idle; if it fails again, the tab is
        closed (only while it holds an idle shell) and spawn stops.
@@ -201,8 +204,17 @@ herdr_agents_shell_idle() {
             <<<"$HERDR_AGENTS_OUT" >/dev/null 2>&1
 }
 
+# The agent CLI flag that selects a model for kind $1. Fails for a kind
+# whose model spawn does not set: agy runs on the model agy-locked pins.
+herdr_agents_model_flag() {
+    case "$1" in
+        claude|codex|gemini) printf -- '--model\n' ;;
+        *) return 1 ;;
+    esac
+}
+
 herdr_agents_spawn() {
-    local workspace="" cwd="" model="unknown" prompt="" prompt_mode="palette"
+    local workspace="" cwd="" model="unknown" model_given=false prompt="" prompt_mode="palette"
     local dry_run=false json=false trust_folder=false
     local -a kinds=()
     local pending_kind=""
@@ -231,7 +243,7 @@ herdr_agents_spawn() {
                 herdr_agents_add_kind "$pending_kind" "$2"; pending_kind=""; shift 2 ;;
             --workspace) [[ $# -ge 2 ]] || herdr_agents_die "--workspace needs a value"; workspace="$2"; shift 2 ;;
             --cwd) [[ $# -ge 2 ]] || herdr_agents_die "--cwd needs a value"; cwd="$2"; shift 2 ;;
-            --model) [[ $# -ge 2 ]] || herdr_agents_die "--model needs a value"; model="$2"; shift 2 ;;
+            --model) [[ $# -ge 2 ]] || herdr_agents_die "--model needs a value"; model="$2"; model_given=true; shift 2 ;;
             --prompt) [[ $# -ge 2 ]] || herdr_agents_die "--prompt needs a value"; prompt="$2"; prompt_mode="custom"; shift 2 ;;
             --no-prompt) prompt_mode="none"; shift ;;
             --trust-folder) trust_folder=true; shift ;;
@@ -243,6 +255,20 @@ herdr_agents_spawn() {
     done
     [[ -z "$pending_kind" ]] || herdr_agents_add_kind "$pending_kind" 1
     (( ${#kinds[@]} > 0 )) || herdr_agents_die "nothing to spawn: pass --claude N, --codex N, --agy N or --kind KIND [--count N]"
+    # --model reaches the agent CLI, not just its Agent Mail identity, so
+    # every kind in this spawn must take it. Checked before anything exists.
+    if [[ "$model_given" == true ]]; then
+        [[ "$model" =~ ^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$ ]] \
+            || herdr_agents_die "invalid --model: $model (letters, digits and ._:/@+- only)"
+        local model_kind
+        for model_kind in "${kinds[@]}"; do
+            if ! herdr_agents_model_flag "$model_kind" >/dev/null; then
+                [[ "$model_kind" != agy ]] \
+                    || herdr_agents_die "--model can't be set for agy agents: agy runs on the model agy-locked pins. Spawn them without --model"
+                herdr_agents_die "--model can't be set for $model_kind agents: spawn them without --model"
+            fi
+        done
+    fi
 
     herdr_agents_require herdr jq
     [[ "$dry_run" == true ]] || herdr_agents_require am
@@ -265,11 +291,15 @@ herdr_agents_spawn() {
 
     local results="[]" kind mail_name herdr_name tab_id pane_id kickoff status
     local failed=false
+    local -a agent_args=()
     for kind in "${kinds[@]}"; do
+        # Arguments herdr passes to the agent CLI after `--`.
+        agent_args=()
+        [[ "$model_given" == false ]] || agent_args=(-- "$(herdr_agents_model_flag "$kind")" "$model")
         if [[ "$dry_run" == true ]]; then
             herdr_agents_note "would run: am agents create --project $cwd --program $(herdr_agents_program_for_kind "$kind") --model $model --json"
             herdr_agents_note "would run: herdr tab create --workspace $workspace --cwd $cwd --label <AgentMailName> --no-focus"
-            herdr_agents_note "would run: herdr agent start <agentmailname> --kind $kind --pane <root pane>"
+            herdr_agents_note "would run: herdr agent start <agentmailname> --kind $kind --pane <root pane>${agent_args[*]:+ ${agent_args[*]}}"
             [[ "$prompt_mode" == none ]] || herdr_agents_note "would run: herdr agent prompt <agentmailname> <kickoff>"
             results="$(jq -c --arg kind "$kind" '. + [{kind: $kind, status: "dry-run"}]' <<<"$results")"
             continue
@@ -302,7 +332,7 @@ herdr_agents_spawn() {
         [[ -n "$pane_id" ]] || herdr_agents_die "herdr tab create returned no root pane for $mail_name"
 
         local started=true start_error="" unused_identity=false tab_closed=false
-        if ! herdr_agents_herdr agent start "$herdr_name" --kind "$kind" --pane "$pane_id"; then
+        if ! herdr_agents_herdr agent start "$herdr_name" --kind "$kind" --pane "$pane_id" "${agent_args[@]}"; then
             started=false
             # Kept apart: the calls below reset HERDR_AGENTS_ERR_CODE.
             status="$HERDR_AGENTS_ERR_CODE"
@@ -311,7 +341,7 @@ herdr_agents_spawn() {
             # starting. Wait for it, then retry once in the same pane.
             if [[ "$status" == agent_pane_busy ]] && herdr_agents_wait_shell "$pane_id"; then
                 herdr_agents_note "retrying $herdr_name: the shell in $pane_id was not ready yet"
-                if herdr_agents_herdr agent start "$herdr_name" --kind "$kind" --pane "$pane_id"; then
+                if herdr_agents_herdr agent start "$herdr_name" --kind "$kind" --pane "$pane_id" "${agent_args[@]}"; then
                     started=true
                 else
                     status="$HERDR_AGENTS_ERR_CODE"
