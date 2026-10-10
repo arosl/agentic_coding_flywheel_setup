@@ -1,0 +1,69 @@
+name: Unit tests (bats)
+
+# The fork's own workflow (acfs-i9lz). No other workflow ran the bats
+# files under tests/unit, so they broke on main unnoticed. This job runs
+# every tests/unit/**/*.bats with a throwaway HOME, where
+# tests/unit/test_helper.bash finds bats-support and bats-assert.
+# bats-core, bats-support and bats-assert are cloned at pinned commits
+# (tags v1.11.0, v0.3.0, v2.1.0); GNU parallel gives bats --jobs.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+jobs:
+  bats:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # test_srps_integration.bats type-checks apps/web.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install GNU parallel
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y parallel
+
+      - name: Fetch bats-core, bats-support and bats-assert
+        run: |
+          fetch() {
+            git init -q "$RUNNER_TEMP/$1"
+            git -C "$RUNNER_TEMP/$1" fetch -q --depth 1 "https://github.com/bats-core/$1" "$2"
+            git -C "$RUNNER_TEMP/$1" checkout -q FETCH_HEAD
+            [[ "$(git -C "$RUNNER_TEMP/$1" rev-parse HEAD)" == "$2" ]]
+          }
+          fetch bats-core 5da66876b8b619235aee1eb3e54954eaca88059b
+          fetch bats-support 24a72e14349690bcbf7c151b9d2d1cdd32d36eb1
+          fetch bats-assert 78fa631d1370562d2cd4a1390989e706158e7bf0
+          echo "$RUNNER_TEMP/bats-core/bin" >> "$GITHUB_PATH"
+
+      - name: Run tests/unit/**/*.bats
+        run: |
+          home="$(mktemp -d)"
+          ln -s "$RUNNER_TEMP/bats-support" "$home/.bats-support"
+          ln -s "$RUNNER_TEMP/bats-assert" "$home/.bats-assert"
+          jobs=()
+          if command -v parallel >/dev/null; then
+            jobs=(--jobs "$(nproc)")
+          fi
+          mapfile -t files < <(find tests/unit -name '*.bats' | sort)
+          HOME="$home" bats "${jobs[@]}" "${files[@]}"

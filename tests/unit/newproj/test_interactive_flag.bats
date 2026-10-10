@@ -17,6 +17,12 @@ setup() {
     mkdir -p "$ACFS_LOG_DIR"
     export ACFS_LOG_LEVEL=0
 
+    # newproj commits only when git has an identity; a throwaway HOME
+    # (as in CI) has none, so give the tests their own global config
+    export GIT_CONFIG_GLOBAL="$TEST_DIR/gitconfig"
+    git config --global user.name "ACFS Test"
+    git config --global user.email "acfs-test@example.invalid"
+
     # Set script directory
     export NEWPROJ_SCRIPT_DIR="$ACFS_LIB_DIR"
 
