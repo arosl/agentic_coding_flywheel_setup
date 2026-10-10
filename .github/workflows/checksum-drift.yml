@@ -1,0 +1,59 @@
+name: Checksum Drift
+
+# The fork's own workflow (acfs-2iq). Pins in checksums.yaml name
+# installer scripts that change upstream often, and a stale pin used to
+# show only as a user's failed install. Once a day this compares every pin
+# with what its URL serves now (scripts/checksum-drift-check.sh, over
+# security.sh --verify --json) and fails, naming each stale pin, so drift
+# is fixed by the canonical refresh before an install trips on it. It
+# reads only: it never writes checksums.yaml. Upstream runs
+# scripts/checksum-monitor-local.sh, which publishes to its own repository.
+# A push that changes the check runs its tests only.
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/checksum-drift.yml'
+      - 'scripts/checksum-drift-check.sh'
+      - 'scripts/tests/test_checksum_drift_check.sh'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checksum-drift
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Test the drift check
+        run: HOME="$(mktemp -d)" bash scripts/tests/test_checksum_drift_check.sh
+
+  drift:
+    if: github.event_name != 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Compare checksums.yaml with the installers served now
+        run: |
+          rc=0
+          bash scripts/checksum-drift-check.sh >drift-report.md || rc=$?
+          cat drift-report.md
+          cat drift-report.md >>"$GITHUB_STEP_SUMMARY"
+          exit "$rc"
