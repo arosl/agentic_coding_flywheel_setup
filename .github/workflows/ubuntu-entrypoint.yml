@@ -47,7 +47,17 @@ jobs:
       - name: Run host-safe upgrade regression tests against the full checkout
         run: |
           sudo python3 tests/unit/test_ubuntu_upgrade_entrypoint.py
-          sudo python3 tests/unit/test_ubuntu_upgrade_main.py
+      # PrivilegedCheckpointReadTests needs a disposable container as root, with
+      # passwordless sudo for UID 1000 (the image's ubuntu user); it refuses the runner.
+      - name: Run upgrade regression tests in a disposable container
+        run: |
+          docker run --rm -v "$PWD:/src:ro" -w /src ubuntu:24.04 bash -euc '
+            apt-get update -qq
+            apt-get install -y -qq python3 jq sudo >/dev/null
+            echo "ubuntu ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/ubuntu
+            chmod 0440 /etc/sudoers.d/ubuntu
+            python3 tests/unit/test_ubuntu_upgrade_main.py
+          '
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
