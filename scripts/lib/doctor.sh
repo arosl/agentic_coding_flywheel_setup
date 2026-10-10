@@ -3780,6 +3780,7 @@ check_incus() {
             "sudo systemctl enable --now incus.socket"
         return 0
     fi
+    _acfs_doctor_incus_extensions "$incus_bin"
     storage="$("${limit[@]}" "$incus_bin" storage list --format csv 2>/dev/null || true)"
     if [[ -z "$storage" ]]; then
         check "tools.incus.daemon" "Incus daemon" "warn" \
@@ -3814,6 +3815,41 @@ _acfs_doctor_incus_remote() {
             "none: test instances can't be made from inside the container" \
             "Add the host's Incus with the token host setup printed: incus remote add <name> <token>"
     fi
+}
+
+# The API extensions a swarm container needs, and the two that only add
+# profile knobs: the launcher's lists (scripts/providers/incus.sh), which
+# tests/unit/test_incus_module.bats keeps equal to these. The server is
+# judged by what it reports, never by its version string: a distribution's
+# 6.0.x may carry what a newer upstream release introduced, or lack it.
+ACFS_DOCTOR_INCUS_REQUIRED_EXTENSIONS=(disk_volume_subpath container_syscall_intercept_sysinfo projects_networks_restricted_access)
+ACFS_DOCTOR_INCUS_OPTIONAL_EXTENSIONS=(instance_limits_oom container_disk_tmpfs)
+
+_acfs_doctor_incus_extensions() {
+    local incus_bin="$1" server="" version="" missing="" optional="" detail=""
+    local -a limit=()
+    command -v timeout >/dev/null 2>&1 && limit=(timeout 10)
+    server="$("${limit[@]}" "$incus_bin" query /1.0 2>/dev/null </dev/null || true)"
+    # One jq call per list: the names in the list the server doesn't report.
+    if ! command -v jq >/dev/null 2>&1 \
+        || ! missing="$(jq -er '.api_extensions as $have | ($have | type) == "array"
+                | if . then ($ARGS.positional - $have | join(", ")) else empty end' \
+                <<<"$server" --args "${ACFS_DOCTOR_INCUS_REQUIRED_EXTENSIONS[@]}" 2>/dev/null)"; then
+        check "tools.incus.extensions" "Incus API extensions" "skip" "incus query /1.0 gave no api_extensions"
+        return 0
+    fi
+    version="$(jq -r '.environment.server_version // "unknown"' <<<"$server" 2>/dev/null || echo unknown)"
+    optional="$(jq -r '$ARGS.positional - .api_extensions | join(", ")' \
+        <<<"$server" --args "${ACFS_DOCTOR_INCUS_OPTIONAL_EXTENSIONS[@]}" 2>/dev/null || true)"
+    if [[ -n "$missing" ]]; then
+        check "tools.incus.extensions" "Incus API extensions" "warn" \
+            "server $version lacks $missing, which a swarm container needs" \
+            "Install Incus from Zabbly's lts-6.0 repository (https://github.com/zabbly/incus, key fingerprint 4EFC 5906 96CB 15B8 7C73 A3AD 82CC 8797 C838 DCFD), then: sudo apt-get install incus"
+        return 0
+    fi
+    detail="server $version has what a swarm container needs"
+    [[ -n "$optional" ]] && detail+="; lacks the optional $optional"
+    check "tools.incus.extensions" "Incus API extensions" "pass" "$detail"
 }
 
 # ============================================================
@@ -6153,7 +6189,7 @@ main() {
             # Coding agents in herdr (herdr_agents.sh), and quota, which it
             # hands to agent_quota.sh.
             case "${1:-}" in
-                spawn|send|list|ls|inbox|wake|limits|codex-daemon|retire|recycle|reap|quota)
+                spawn|send|list|ls|inbox|wake|limits|codex-daemon|retire|recycle|reap|sweep|quota)
                     local herdr_agents_script=""
                     herdr_agents_script="$(_acfs_doctor_find_lib_script "herdr_agents.sh" 2>/dev/null || true)"
                     if [[ -n "$herdr_agents_script" ]]; then
