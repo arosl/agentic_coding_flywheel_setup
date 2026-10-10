@@ -217,7 +217,7 @@ export interface TeamProfile {
   shellPreferences: {
     loginShell: "zsh";
     history: "atuin";
-    multiplexer: "tmux";
+    multiplexer: "herdr";
   };
   lessonChoices: {
     startLesson: "linux-basics";
@@ -1080,7 +1080,7 @@ export function buildTeamProfile(inputs: TeamProfileInputs): TeamProfile {
     shellPreferences: {
       loginShell: "zsh",
       history: "atuin",
-      multiplexer: "tmux",
+      multiplexer: "herdr",
     },
     lessonChoices: {
       startLesson: "linux-basics",

@@ -92,7 +92,7 @@ but the profile JSON remains the trust boundary and must validate by itself.
   "shellPreferences": {
     "loginShell": "zsh",
     "history": "atuin",
-    "multiplexer": "tmux"
+    "multiplexer": "herdr"
   },
   "lessonChoices": {
     "startLesson": "linux-basics",
