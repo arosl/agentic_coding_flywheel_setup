@@ -22,3 +22,4 @@ Fork-only changes to upstream files, other than the herdr port, Incus first with
   - Every UBS install (manifest, `install.sh`, `acfs update`, the doctor's fix) passes `--skip-ast-grep`. Otherwise UBS's installer can install ast-grep's `sg` launcher as `~/.local/bin/ast-grep`, which runs itself until the system refuses. The doctor's fix also passes `--skip-hooks`, as the others already did.
   - The workflow YAML lint warns on line length instead of failing.
   - `test_fresh_root_bootstrap_regression.sh` reads the checkout from `$REPO_ROOT`, not `/repo`.
+- acfs-zbrk: repairs hosts that UBS already gave the `sg` launcher. `acfs update` moves a `~/.local/bin/ast-grep` that carries the launcher's deprecation banner aside, once `~/.cargo/bin/ast-grep` exists. The doctor's `tool.sg` fails on it without probing `sg`, which would start the loop. `stack.sh`'s `install_ubs` passes `--skip-hooks --skip-ast-grep`, as the manifest does.

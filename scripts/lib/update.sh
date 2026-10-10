@@ -3082,6 +3082,53 @@ cleanup_legacy_br_alias() {
     fi
 }
 
+# Before acfs-9ij4 passed --skip-ast-grep, UBS's installer fetched ast-grep's
+# release zip and moved the first of ast-grep/sg that `find` listed to
+# ~/.local/bin/ast-grep. When that was the sg launcher, it shadows
+# ~/.cargo/bin/ast-grep (acfs.zshrc puts ~/.local/bin first), and the launcher
+# runs `ast-grep` from PATH, which is itself, so every sg or ast-grep call
+# forks until EAGAIN (acfs-zbrk). Recognise the launcher by its deprecation
+# banner, never by running it.
+update_is_ast_grep_sg_launcher() {
+    local path="${1:-}"
+    [[ -n "$path" && -f "$path" ]] || return 1
+    LC_ALL=C grep -aqF 'is deprecated. Use `ast-grep` instead' "$path" 2>/dev/null
+}
+
+# Move such a launcher aside, once ~/.cargo/bin/ast-grep (tools.ast_grep) can
+# take over. This runs before update_cargo_tools probes `sg --version`.
+cleanup_ast_grep_sg_launcher() {
+    local runtime_home=""
+    runtime_home="$(update_runtime_shell_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 0
+    local launcher="$runtime_home/.local/bin/ast-grep"
+    local real_bin="$runtime_home/.cargo/bin/ast-grep"
+    local backup_path=""
+
+    update_is_ast_grep_sg_launcher "$launcher" || return 0
+
+    if [[ ! -x "$real_bin" ]] || update_is_ast_grep_sg_launcher "$real_bin"; then
+        log_item "warn" "ast-grep" "$launcher is ast-grep's sg launcher, which execs itself; run 'cargo install ast-grep --locked', then 'acfs update' again"
+        return 0
+    fi
+
+    if update_is_read_only_mode; then
+        log_item "skip" "legacy cleanup" "dry-run: would move ast-grep's sg launcher aside from $launcher"
+        return 0
+    fi
+
+    backup_path="${launcher}.acfs-backup.$(date +%s).$$"
+    if mv -- "$launcher" "$backup_path" 2>/dev/null; then
+        # A symlink (to ~/.cargo/bin/sg, say) moves as a link; chmod would
+        # follow it to the target, which must stay runnable.
+        [[ -L "$backup_path" ]] || chmod a-x -- "$backup_path" 2>/dev/null || true
+        log_item "ok" "legacy cleanup" "moved ast-grep's sg launcher aside to $backup_path; $real_bin is used now"
+        log_to_file "Moved sg launcher $launcher to $backup_path (acfs-zbrk)"
+    else
+        log_item "fail" "legacy cleanup" "could not move ast-grep's sg launcher aside from $launcher"
+    fi
+}
+
 # The atuin installer appends `eval "$(atuin init zsh)"` to ~/.zshrc, outside
 # the ACFS-managed loader (issue #359 item 3). Now that acfs.zshrc owns atuin
 # init, comment the unmanaged line out -- but only when the deployed managed
@@ -8998,6 +9045,7 @@ main() {
     cleanup_legacy_br_alias
     cleanup_legacy_bv_alias
     cleanup_unmanaged_atuin_init
+    cleanup_ast_grep_sg_launcher
 
     # Run updates
     update_apt

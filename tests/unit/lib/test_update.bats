@@ -15416,6 +15416,104 @@ EOF
 }
 
 # ============================================================
+# ast-grep's sg launcher installed as ~/.local/bin/ast-grep (acfs-zbrk)
+# ============================================================
+
+# A stand-in for the launcher: it carries the real launcher's banner, and
+# leaves a marker if anything runs it (the real one forks until EAGAIN).
+write_fake_sg_launcher() {
+    mkdir -p "$(dirname "$1")"
+    cat > "$1" <<'EOF'
+#!/bin/sh
+# WARNING: `sg` is deprecated. Use `ast-grep` instead.
+touch "$HOME/launcher-ran"
+EOF
+    chmod +x "$1"
+}
+
+write_fake_ast_grep() {
+    mkdir -p "$(dirname "$1")"
+    printf '#!/bin/sh\necho "ast-grep 0.50.0"\n' > "$1"
+    chmod +x "$1"
+}
+
+@test "cleanup_ast_grep_sg_launcher: moves the launcher aside when ~/.cargo/bin/ast-grep exists" {
+    write_fake_sg_launcher "$HOME/.local/bin/ast-grep"
+    write_fake_ast_grep "$HOME/.cargo/bin/ast-grep"
+    update_runtime_shell_home() { printf '%s\n' "$HOME"; }
+
+    run cleanup_ast_grep_sg_launcher
+    assert_success
+
+    [[ ! -e "$HOME/.local/bin/ast-grep" ]]
+    local -a backups=("$HOME"/.local/bin/ast-grep.acfs-backup.*)
+    [[ ${#backups[@]} -eq 1 && -f "${backups[0]}" ]]
+    run grep -c 'is deprecated. Use `ast-grep` instead' "${backups[0]}"
+    assert_output "1"
+    [[ ! -e "$HOME/launcher-ran" ]]
+}
+
+@test "cleanup_ast_grep_sg_launcher: moves a symlink to the launcher without touching its target" {
+    write_fake_sg_launcher "$HOME/.cargo/bin/sg"
+    write_fake_ast_grep "$HOME/.cargo/bin/ast-grep"
+    mkdir -p "$HOME/.local/bin"
+    ln -s "$HOME/.cargo/bin/sg" "$HOME/.local/bin/ast-grep"
+    update_runtime_shell_home() { printf '%s\n' "$HOME"; }
+
+    run cleanup_ast_grep_sg_launcher
+    assert_success
+
+    [[ ! -e "$HOME/.local/bin/ast-grep" && ! -L "$HOME/.local/bin/ast-grep" ]]
+    local -a backups=("$HOME"/.local/bin/ast-grep.acfs-backup.*)
+    [[ ${#backups[@]} -eq 1 && -L "${backups[0]}" ]]
+    [[ -x "$HOME/.cargo/bin/sg" ]]
+}
+
+@test "cleanup_ast_grep_sg_launcher: leaves a real ast-grep in ~/.local/bin alone" {
+    write_fake_ast_grep "$HOME/.local/bin/ast-grep"
+    write_fake_ast_grep "$HOME/.cargo/bin/ast-grep"
+    update_runtime_shell_home() { printf '%s\n' "$HOME"; }
+
+    run cleanup_ast_grep_sg_launcher
+    assert_success
+    [[ -x "$HOME/.local/bin/ast-grep" ]]
+    run compgen -G "$HOME/.local/bin/ast-grep.acfs-backup.*"
+    assert_failure
+}
+
+@test "cleanup_ast_grep_sg_launcher: keeps the launcher and warns without ~/.cargo/bin/ast-grep" {
+    write_fake_sg_launcher "$HOME/.local/bin/ast-grep"
+    update_runtime_shell_home() { printf '%s\n' "$HOME"; }
+
+    run cleanup_ast_grep_sg_launcher
+    assert_success
+    assert_output --partial "sg launcher"
+    assert_output --partial "cargo install ast-grep --locked"
+    [[ -x "$HOME/.local/bin/ast-grep" ]]
+    [[ ! -e "$HOME/launcher-ran" ]]
+}
+
+@test "cleanup_ast_grep_sg_launcher: dry-run only reports" {
+    write_fake_sg_launcher "$HOME/.local/bin/ast-grep"
+    write_fake_ast_grep "$HOME/.cargo/bin/ast-grep"
+    update_runtime_shell_home() { printf '%s\n' "$HOME"; }
+    DRY_RUN=true
+
+    run cleanup_ast_grep_sg_launcher
+    assert_success
+    assert_output --partial "dry-run"
+    [[ -x "$HOME/.local/bin/ast-grep" ]]
+    run compgen -G "$HOME/.local/bin/ast-grep.acfs-backup.*"
+    assert_failure
+}
+
+@test "update main runs cleanup_ast_grep_sg_launcher before anything probes sg" {
+    local main_body
+    main_body="$(declare -f main)"
+    [[ "$main_body" == *cleanup_ast_grep_sg_launcher*update_cargo_tools* ]]
+}
+
+# ============================================================
 # Unmanaged atuin init cleanup (issue #359 item 3)
 # ============================================================
 

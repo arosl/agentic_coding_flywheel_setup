@@ -2082,7 +2082,10 @@ install_ubs() {
 
     # UBS uses --easy-mode for simplified setup
     # Also add --yes for non-interactive installs if needed by UBS installer
-    local -a args=(--easy-mode)
+    # --skip-hooks and --skip-ast-grep match stack.ubs in the manifest:
+    # tools.ast_grep provides ast-grep, and UBS's own fetch could install the
+    # sg launcher as ~/.local/bin/ast-grep, which execs itself (acfs-zbrk).
+    local -a args=(--easy-mode --skip-hooks --skip-ast-grep)
     if ! _stack_is_interactive; then
         args+=(--yes)
     fi

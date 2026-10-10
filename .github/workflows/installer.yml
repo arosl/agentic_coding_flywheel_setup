@@ -120,6 +120,9 @@ jobs:
       - name: Run Claude Code on the web setup script tests
         run: bash tests/unit/test_claude_code_web_setup.sh
 
+      - name: Run doctor ast-grep launcher check tests
+        run: bash tests/unit/test_doctor_ast_grep_launcher.sh
+
       - name: Run Ubuntu upgrade rehearsal tests
         run: bash scripts/tests/ubuntu_upgrade_test.sh
 

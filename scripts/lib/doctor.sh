@@ -2609,9 +2609,25 @@ check_core_tools() {
     check_command "tool.minisign" "minisign (Agent Mail/CAAM release verification)" "minisign" "$(doctor_pkg_install_hint minisign)"
     check_command "tool.dig" "dig (dnsutils)" "dig" "sudo apt-get -o DPkg::Lock::Timeout=120 install -y dnsutils"
     check_command "tool.nc" "nc (netcat-openbsd)" "nc" "sudo apt-get -o DPkg::Lock::Timeout=120 install -y netcat-openbsd"
-    check_command "tool.sg" "ast-grep" "sg" "cargo install ast-grep --locked"
+    check_ast_grep
 
     blank_line
+}
+
+# ast-grep, unless the `ast-grep` that resolves first is ast-grep's sg
+# launcher: older UBS installs left it at ~/.local/bin/ast-grep, and it runs
+# `ast-grep` from PATH, itself, until fork fails. Probing `sg --version` then
+# starts that storm, so recognise the launcher by its banner instead
+# (acfs-zbrk).
+check_ast_grep() {
+    local ast_grep_path=""
+
+    ast_grep_path="$(doctor_binary_path ast-grep 2>/dev/null || true)"
+    if [[ -n "$ast_grep_path" ]] && LC_ALL=C grep -aqF 'is deprecated. Use `ast-grep` instead' "$ast_grep_path" 2>/dev/null; then
+        check "tool.sg" "ast-grep" "fail" "$ast_grep_path is ast-grep's sg launcher, which execs itself" "acfs update (moves it aside once ~/.cargo/bin/ast-grep exists; else: cargo install ast-grep --locked)"
+        return 0
+    fi
+    check_command "tool.sg" "ast-grep" "sg" "cargo install ast-grep --locked"
 }
 
 # Check coding agents
