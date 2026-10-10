@@ -11049,8 +11049,25 @@ acfs_smoke_install_fix_command() {
     printf 'curl -fsSL %s | bash -s -- %s\n' "$install_url_q" "$flags"
 }
 
+# True when the resolved module selection includes this module, so the smoke
+# test checks only what this run installed. Without a resolved selection,
+# every module counts as selected and every check runs.
+_smoke_module_selected() {
+    [[ "${ACFS_GENERATED_SELECTION_READY:-false}" == "true" ]] || return 0
+    should_run_module "$1"
+}
+
+# Prints its arguments joined by ", ".
+_smoke_join() {
+    local joined=""
+    printf -v joined '%s, ' "$@"
+    printf '%s\n' "${joined%, }"
+}
+
 run_smoke_test() {
-    local critical_total=8
+    # Each critical check that runs adds 1, whatever its outcome; a check
+    # whose modules were all left out of the selection doesn't run.
+    local critical_total=0
     local critical_passed=0
     local critical_failed=0
     local warnings=0
@@ -11059,6 +11076,7 @@ run_smoke_test() {
     echo "[Smoke Test]" >&2
 
     # 1) Target user exists
+    ((critical_total += 1))
     local smoke_id_bin=""
     local target_shell=""
     local target_shell_entry=""
@@ -11073,6 +11091,7 @@ run_smoke_test() {
     fi
 
     # 2) Shell is zsh
+    ((critical_total += 1))
     target_shell_entry="$(acfs_early_getent_passwd_entry "$TARGET_USER" 2>/dev/null || true)"
     if [[ -n "$target_shell_entry" ]]; then
         IFS=: read -r _ _ _ _ _ _ target_shell <<< "$target_shell_entry"
@@ -11098,6 +11117,7 @@ run_smoke_test() {
     # 3) Sudo configuration
     # - vibe mode: passwordless sudo is required
     # - safe mode: sudo must exist, but may require a password
+    ((critical_total += 1))
     if [[ "$MODE" == "vibe" ]]; then
         if _smoke_run_as_target "sudo -n true" &>/dev/null; then
             echo "✅ Sudo: passwordless (vibe mode)" >&2
@@ -11127,6 +11147,7 @@ run_smoke_test() {
     fi
 
     # 4) /data/projects exists
+    ((critical_total += 1))
     if _smoke_run_as_target "[[ -d /data/projects && -w /data/projects ]]" &>/dev/null; then
         echo "✅ Workspace: /data/projects exists" >&2
         ((critical_passed += 1))
@@ -11136,39 +11157,101 @@ run_smoke_test() {
         ((critical_failed += 1))
     fi
 
-    # 5) bun, uv, cargo, go available
+    # 5) bun, uv, cargo, go available (each one whose module is selected)
+    local checked_lang=()
+    local skipped_lang=()
     local missing_lang=()
-    [[ -x "$TARGET_HOME/.bun/bin/bun" ]] || missing_lang+=("bun")
-    [[ -x "$ACFS_BIN_DIR/uv" || -x "$TARGET_HOME/.cargo/bin/uv" ]] || missing_lang+=("uv")
-    [[ -x "$TARGET_HOME/.cargo/bin/cargo" ]] || missing_lang+=("cargo")
-    binary_installed "go" || missing_lang+=("go")
-    if [[ ${#missing_lang[@]} -eq 0 ]]; then
-        echo "✅ Languages: bun, uv, cargo, go available" >&2
+    local missing_lang_modules=()
+    if _smoke_module_selected lang.bun; then
+        checked_lang+=("bun")
+        [[ -x "$TARGET_HOME/.bun/bin/bun" ]] || { missing_lang+=("bun"); missing_lang_modules+=(lang.bun); }
+    else
+        skipped_lang+=("bun")
+    fi
+    if _smoke_module_selected lang.uv; then
+        checked_lang+=("uv")
+        [[ -x "$ACFS_BIN_DIR/uv" || -x "$TARGET_HOME/.cargo/bin/uv" ]] || { missing_lang+=("uv"); missing_lang_modules+=(lang.uv); }
+    else
+        skipped_lang+=("uv")
+    fi
+    if _smoke_module_selected lang.rust; then
+        checked_lang+=("cargo")
+        [[ -x "$TARGET_HOME/.cargo/bin/cargo" ]] || { missing_lang+=("cargo"); missing_lang_modules+=(lang.rust); }
+    else
+        skipped_lang+=("cargo")
+    fi
+    if _smoke_module_selected lang.go; then
+        checked_lang+=("go")
+        binary_installed "go" || { missing_lang+=("go"); missing_lang_modules+=(lang.go); }
+    else
+        skipped_lang+=("go")
+    fi
+    if [[ ${#skipped_lang[@]} -gt 0 ]]; then
+        echo "⚠️ Languages: $(_smoke_join "${skipped_lang[@]}") skipped (not selected)" >&2
+        ((warnings += 1))
+    fi
+    [[ ${#checked_lang[@]} -eq 0 ]] || ((critical_total += 1))
+    if [[ ${#checked_lang[@]} -eq 0 ]]; then
+        :
+    elif [[ ${#missing_lang[@]} -eq 0 ]]; then
+        echo "✅ Languages: $(_smoke_join "${checked_lang[@]}") available" >&2
         ((critical_passed += 1))
     else
         echo "✖ Languages: missing ${missing_lang[*]}" >&2
-        echo "    Fix: $(acfs_smoke_install_fix_command lang.bun lang.uv lang.rust lang.go)" >&2
+        echo "    Fix: $(acfs_smoke_install_fix_command "${missing_lang_modules[@]}")" >&2
         ((critical_failed += 1))
     fi
 
-    # 6) claude, codex, agy commands exist
+    # 6) claude, codex, agy commands exist (each one whose module is selected)
+    local checked_agents=()
+    local skipped_agents=()
     local missing_agents=()
-    [[ -x "$ACFS_BIN_DIR/claude" || -x "$TARGET_HOME/.bun/bin/claude" ]] || missing_agents+=("claude")
-    [[ -x "$TARGET_HOME/.bun/bin/codex" || -x "$ACFS_BIN_DIR/codex" ]] || missing_agents+=("codex")
-    [[ -x "$ACFS_BIN_DIR/agy" || -x "$TARGET_HOME/.local/bin/agy" ]] || missing_agents+=("agy")
-    [[ -x "$ACFS_BIN_DIR/agy-locked" || -x "$TARGET_HOME/.local/bin/agy-locked" ]] || missing_agents+=("agy-locked")
-    [[ -x "$ACFS_BIN_DIR/agy-real" || -x "$TARGET_HOME/.local/bin/agy-real" ]] || missing_agents+=("agy-real")
-    if [[ ${#missing_agents[@]} -eq 0 ]]; then
-        echo "✅ Agents: claude, codex, agy" >&2
+    local missing_agent_modules=()
+    local missing_before=0
+    if _smoke_module_selected agents.claude; then
+        checked_agents+=("claude")
+        [[ -x "$ACFS_BIN_DIR/claude" || -x "$TARGET_HOME/.bun/bin/claude" ]] || { missing_agents+=("claude"); missing_agent_modules+=(agents.claude); }
+    else
+        skipped_agents+=("claude")
+    fi
+    if _smoke_module_selected agents.codex; then
+        checked_agents+=("codex")
+        [[ -x "$TARGET_HOME/.bun/bin/codex" || -x "$ACFS_BIN_DIR/codex" ]] || { missing_agents+=("codex"); missing_agent_modules+=(agents.codex); }
+    else
+        skipped_agents+=("codex")
+    fi
+    if _smoke_module_selected agents.antigravity; then
+        checked_agents+=("agy")
+        missing_before=${#missing_agents[@]}
+        [[ -x "$ACFS_BIN_DIR/agy" || -x "$TARGET_HOME/.local/bin/agy" ]] || missing_agents+=("agy")
+        [[ -x "$ACFS_BIN_DIR/agy-locked" || -x "$TARGET_HOME/.local/bin/agy-locked" ]] || missing_agents+=("agy-locked")
+        [[ -x "$ACFS_BIN_DIR/agy-real" || -x "$TARGET_HOME/.local/bin/agy-real" ]] || missing_agents+=("agy-real")
+        [[ ${#missing_agents[@]} -eq $missing_before ]] || missing_agent_modules+=(agents.antigravity)
+    else
+        skipped_agents+=("agy")
+    fi
+    if [[ ${#skipped_agents[@]} -gt 0 ]]; then
+        echo "⚠️ Agents: $(_smoke_join "${skipped_agents[@]}") skipped (not selected)" >&2
+        ((warnings += 1))
+    fi
+    [[ ${#checked_agents[@]} -eq 0 ]] || ((critical_total += 1))
+    if [[ ${#checked_agents[@]} -eq 0 ]]; then
+        :
+    elif [[ ${#missing_agents[@]} -eq 0 ]]; then
+        echo "✅ Agents: $(_smoke_join "${checked_agents[@]}")" >&2
         ((critical_passed += 1))
     else
         echo "✖ Agents: missing ${missing_agents[*]}" >&2
-        echo "    Fix: $(acfs_smoke_install_fix_command agents.claude agents.codex agents.antigravity)" >&2
+        echo "    Fix: $(acfs_smoke_install_fix_command "${missing_agent_modules[@]}")" >&2
         ((critical_failed += 1))
     fi
 
     # 7) herdr command works
-    if _smoke_run_as_target "command -v herdr >/dev/null && herdr --version >/dev/null 2>&1"; then
+    ! _smoke_module_selected tools.herdr || ((critical_total += 1))
+    if ! _smoke_module_selected tools.herdr; then
+        echo "⚠️ herdr: skipped (not selected)" >&2
+        ((warnings += 1))
+    elif _smoke_run_as_target "command -v herdr >/dev/null && herdr --version >/dev/null 2>&1"; then
         echo "✅ herdr: working" >&2
         ((critical_passed += 1))
     else
@@ -11178,7 +11261,11 @@ run_smoke_test() {
     fi
 
     # 8) onboard command exists
-    if [[ -x "$ACFS_BIN_DIR/onboard" ]]; then
+    ! _smoke_module_selected acfs.onboard || ((critical_total += 1))
+    if ! _smoke_module_selected acfs.onboard; then
+        echo "⚠️ Onboard: skipped (not selected)" >&2
+        ((warnings += 1))
+    elif [[ -x "$ACFS_BIN_DIR/onboard" ]]; then
         echo "✅ Onboard: installed" >&2
         ((critical_passed += 1))
     else
