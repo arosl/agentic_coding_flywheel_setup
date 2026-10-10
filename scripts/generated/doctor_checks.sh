@@ -375,6 +375,8 @@ declare -a MANIFEST_CHECKS=(
     "cli.modern.10	Modern CLI tools referenced by the zshrc intent	command -v nc	required	root"
     "cli.modern.11	Modern CLI tools referenced by the zshrc intent	command -v lsd || command -v eza	optional	root"
     "tools.lazygit	Lazygit (apt or binary fallback)	lazygit --version	required	root"
+    "tools.docker.1	Docker Engine and the Compose plugin, opt-in (Incus is the default)	docker --version	optional	root"
+    "tools.docker.2	Docker Engine and the Compose plugin, opt-in (Incus is the default)	docker compose version	optional	root"
     "network.tailscale.1	Zero-config mesh VPN for secure remote VPS access	tailscale version	required	root"
     "network.tailscale.2	Zero-config mesh VPN for secure remote VPS access	systemctl is-enabled tailscaled	required	root"
     "network.ssh_keepalive.1	Configure SSH server keepalive to prevent VPN/NAT disconnects	grep -E '^ClientAliveInterval[[:space:]]+60' /etc/ssh/sshd_config	optional	root"

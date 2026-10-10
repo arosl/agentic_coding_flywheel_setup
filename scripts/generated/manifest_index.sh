@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="16814f678df39aa24f7db19a5f5713a29382a1b2d2d4b65cc1e35559b2cb068b"
+ACFS_MANIFEST_SHA256="fc3be4ad4badf5a17aa035243f15fa3e5114e6cddd8b867dbcea6cf3530aec07"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -16,6 +16,7 @@ ACFS_MODULES_IN_ORDER=(
   "shell.omz"
   "cli.modern"
   "tools.lazygit"
+  "tools.docker"
   "network.tailscale"
   "network.ssh_keepalive"
   "lang.bun"
@@ -107,6 +108,7 @@ declare -gA ACFS_MODULE_PHASE=(
   ['shell.omz']="4"
   ['cli.modern']="5"
   ['tools.lazygit']="5"
+  ['tools.docker']="5"
   ['network.tailscale']="5"
   ['network.ssh_keepalive']="5"
   ['lang.bun']="6"
@@ -182,6 +184,7 @@ declare -gA ACFS_MODULE_DEPS=(
   ['shell.omz']="shell.zsh,users.ubuntu"
   ['cli.modern']="base.system"
   ['tools.lazygit']="base.system"
+  ['tools.docker']="base.system"
   ['network.tailscale']="base.system"
   ['network.ssh_keepalive']="base.system"
   ['lang.bun']="base.system,users.ubuntu"
@@ -225,7 +228,7 @@ declare -gA ACFS_MODULE_DEPS=(
   ['stack.frankensearch']="lang.rust,users.ubuntu"
   ['stack.storage_ballast_helper']="lang.rust,users.ubuntu"
   ['stack.cross_agent_session_resumer']="lang.rust,users.ubuntu"
-  ['stack.doodlestein_self_releaser']="cli.modern,users.ubuntu"
+  ['stack.doodlestein_self_releaser']="cli.modern,tools.docker,users.ubuntu"
   ['stack.agent_settings_backup']="base.system,users.ubuntu"
   ['stack.pcr']="agents.claude,users.ubuntu"
   ['stack.eidetic_engine_cli']="lang.rust,users.ubuntu"
@@ -256,6 +259,7 @@ declare -gA ACFS_MODULE_FUNC=(
   ['shell.omz']="acfs_generated_install_shell_omz"
   ['cli.modern']="acfs_generated_install_cli_modern"
   ['tools.lazygit']="acfs_generated_install_tools_lazygit"
+  ['tools.docker']="acfs_generated_install_tools_docker"
   ['network.tailscale']="acfs_generated_install_network_tailscale"
   ['network.ssh_keepalive']="acfs_generated_install_network_ssh_keepalive"
   ['lang.bun']="acfs_generated_install_lang_bun"
@@ -331,6 +335,7 @@ declare -gA ACFS_MODULE_GENERATED=(
   ['shell.omz']="1"
   ['cli.modern']="1"
   ['tools.lazygit']="1"
+  ['tools.docker']="1"
   ['network.tailscale']="1"
   ['network.ssh_keepalive']="1"
   ['lang.bun']="1"
@@ -406,6 +411,7 @@ declare -gA ACFS_MODULE_CATEGORY=(
   ['shell.omz']="shell"
   ['cli.modern']="cli"
   ['tools.lazygit']="tools"
+  ['tools.docker']="tools"
   ['network.tailscale']="network"
   ['network.ssh_keepalive']="network"
   ['lang.bun']="lang"
@@ -481,6 +487,7 @@ declare -gA ACFS_MODULE_TAGS=(
   ['shell.omz']="critical,shell-ux"
   ['cli.modern']="recommended,cli-modern"
   ['tools.lazygit']="recommended,cli-modern"
+  ['tools.docker']="optional,containers"
   ['network.tailscale']="networking,vpn,security,google-sso"
   ['network.ssh_keepalive']="networking,remote-dev,ssh"
   ['lang.bun']="critical,runtime"
@@ -556,6 +563,7 @@ declare -gA ACFS_MODULE_DEFAULT=(
   ['shell.omz']="1"
   ['cli.modern']="1"
   ['tools.lazygit']="1"
+  ['tools.docker']="0"
   ['network.tailscale']="1"
   ['network.ssh_keepalive']="1"
   ['lang.bun']="1"
@@ -631,6 +639,7 @@ declare -gA ACFS_MODULE_DESC=(
   ['shell.omz']="Oh My Zsh + Powerlevel10k + plugins + ACFS config"
   ['cli.modern']="Modern CLI tools referenced by the zshrc intent"
   ['tools.lazygit']="Lazygit (apt or binary fallback)"
+  ['tools.docker']="Docker Engine and the Compose plugin, opt-in (Incus is the default)"
   ['network.tailscale']="Zero-config mesh VPN for secure remote VPS access"
   ['network.ssh_keepalive']="Configure SSH server keepalive to prevent VPN/NAT disconnects"
   ['lang.bun']="Bun runtime for JS tooling and global CLIs"
@@ -705,6 +714,7 @@ declare -gA ACFS_MODULE_INSTALLED_CHECK=(
   ['shell.omz']='test -d ~/.oh-my-zsh && test -f ~/.acfs/zsh/acfs.zshrc'
   ['cli.modern']='command -v rg && command -v fzf'
   ['tools.lazygit']='command -v lazygit'
+  ['tools.docker']='command -v docker && docker compose version'
   ['network.tailscale']='command -v tailscale'
   ['network.ssh_keepalive']='# Check if ClientAliveInterval is configured (non-zero)
 grep -qE '\''^ClientAliveInterval[[:space:]]+[1-9]'\'' /etc/ssh/sshd_config 2>/dev/null
@@ -829,6 +839,7 @@ declare -gA ACFS_MODULE_INSTALLED_CHECK_RUN_AS=(
   ['shell.omz']="target_user"
   ['cli.modern']="current"
   ['tools.lazygit']="current"
+  ['tools.docker']="current"
   ['network.tailscale']="current"
   ['network.ssh_keepalive']="current"
   ['lang.bun']="target_user"
@@ -910,6 +921,7 @@ declare -gA ACFS_MODULE_OPTIONAL=(
   ['shell.omz']="0"
   ['cli.modern']="0"
   ['tools.lazygit']="0"
+  ['tools.docker']="1"
   ['network.tailscale']="0"
   ['network.ssh_keepalive']="1"
   ['lang.bun']="0"

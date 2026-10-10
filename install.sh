@@ -8171,7 +8171,7 @@ install_cli_tools() {
         used_generated_network=true
     fi
 
-    # tools phase 5: lazygit — bug #146 audit follow-up
+    # tools phase 5: lazygit, and tools.docker when selected — bug #146 audit follow-up
     if acfs_use_generated_category "tools"; then
         log_detail "Using generated installers for tools (phase 5)"
         acfs_run_generated_category_phase "tools" "5" || cli_phase_rc=1
@@ -8310,6 +8310,27 @@ install_cli_tools() {
                 $SUDO apt-get -o DPkg::Lock::Timeout=120 install -y "$pkg" >/dev/null 2>&1 || log_detail "$pkg not available (optional)"
             done
         fi
+    fi
+
+    # Docker (tools.docker) is opt-in, because Incus is the fork's container
+    # runtime. It installs only when the resolved selection includes it.
+    if ! should_run_module "tools.docker"; then
+        log_detail "Skipping Docker (tools.docker is not selected)"
+    elif [[ "$ACFS_DISTRO_FAMILY" != "arch" ]]; then
+        acfs_legacy_run_manifest_module "tools.docker" || log_warn "Docker installation failed (see summary)"
+    elif acfs_arch_pkg_install docker docker-compose; then
+        # pacman never starts services (unlike docker.io's apt postinst), so
+        # an installed-but-dead docker would make `docker ps` fail until the
+        # user enables it by hand.
+        if command_exists systemctl && [[ -d /run/systemd/system ]]; then
+            try_step "Enabling Docker service" $SUDO systemctl enable --now docker.service || log_warn "Docker installed but its service could not be started (optional)"
+        fi
+        if getent group docker &>/dev/null; then
+            try_step "Adding $TARGET_USER to docker group" $SUDO usermod -aG docker "$TARGET_USER" || true
+        fi
+    else
+        log_warn "Docker installation failed (optional)"
+        record_skipped_tool "tools.docker" "pacman install failed"
     fi
 
     # Robust lazygit install (apt or binary fallback)
@@ -10329,8 +10350,8 @@ UNIT_EOF
     fi
 
     # Doodlestein Self-Releaser (dsr) — modular bash project with verified installer.
-    # It builds through Docker, which ACFS doesn't install, so the module is off
-    # by default and installs only when the resolved selection includes it.
+    # It builds through Docker, which is opt-in (tools.docker), so the module is
+    # off by default and installs only when the resolved selection includes it.
     if ! should_run_module "stack.doodlestein_self_releaser"; then
         log_detail "Skipping DSR (stack.doodlestein_self_releaser is not selected)"
     elif binary_installed "dsr"; then

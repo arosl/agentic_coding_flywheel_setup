@@ -41,7 +41,7 @@ export interface ManifestProvenanceMetadata {
 
 export const manifestProvenance = {
   acfsVersion: "0.10.0",
-  manifestSha256: "16814f678df39aa24f7db19a5f5713a29382a1b2d2d4b65cc1e35559b2cb068b",
+  manifestSha256: "fc3be4ad4badf5a17aa035243f15fa3e5114e6cddd8b867dbcea6cf3530aec07",
   checksumsYamlSha256: "d974f0c852bd144405e622cbf414e7bf32b89d6f2668a569e681ca61afe23651",
 } as const satisfies ManifestProvenanceMetadata;
 
@@ -146,6 +146,21 @@ export const manifestModules: ManifestModuleMetadata[] = [
     ],
     enabledByDefault: true,
     optional: false,
+  },
+  {
+    id: "tools.docker",
+    description: "Docker Engine and the Compose plugin, opt-in (Incus is the default)",
+    category: "tools",
+    phase: 5,
+    dependencies: [
+      "base.system",
+    ],
+    tags: [
+      "optional",
+      "containers",
+    ],
+    enabledByDefault: false,
+    optional: true,
   },
   {
     id: "network.tailscale",
@@ -840,6 +855,7 @@ export const manifestModules: ManifestModuleMetadata[] = [
     phase: 9,
     dependencies: [
       "cli.modern",
+      "tools.docker",
       "users.ubuntu",
     ],
     tags: [

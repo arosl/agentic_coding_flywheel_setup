@@ -350,7 +350,7 @@ acfs_security_init() {
 }
 
 # Category: tools
-# Generated modules: 16
+# Generated modules: 17
 
 # Lazygit (apt or binary fallback)
 acfs_generated_install_tools_lazygit() {
@@ -417,6 +417,129 @@ INSTALL_TOOLS_LAZYGIT
     fi
 
     log_success "tools.lazygit installed"
+}
+
+# Docker Engine and the Compose plugin, opt-in (Incus is the default)
+acfs_generated_install_tools_docker() {
+    local module_id="tools.docker"
+    acfs_require_contract "module:${module_id}" || return 1
+    acfs_generated_ensure_selection || return 1
+    if ! should_run_module "${module_id}"; then
+        log_info "Skipping tools.docker (not selected)"
+        return 0
+    fi
+    log_step "Installing tools.docker"
+
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: install: install docker.io and the Compose plugin (root)"
+    else
+        if ! run_as_root_shell <<'INSTALL_TOOLS_DOCKER'
+# acfs-summary: install docker.io and the Compose plugin
+# Ubuntu ships Compose v2 as docker-compose-v2; docker-compose-plugin
+# exists only where Docker's own apt repository is configured.
+compose_pkg="docker-compose-v2"
+if ! apt-cache policy docker-compose-v2 2>/dev/null | grep -q 'Candidate: [^(]'; then
+  compose_pkg="docker-compose-plugin"
+fi
+apt-get -o DPkg::Lock::Timeout=120 install -y docker.io "$compose_pkg"
+INSTALL_TOOLS_DOCKER
+        then
+            log_warn "tools.docker: install command failed: install docker.io and the Compose plugin"
+            # Optional-module failures are warnings on a default install, but a
+            # module the user explicitly named with --only had exactly one job:
+            # propagate the failure instead of reporting phase success (#373).
+            if declare -f acfs_module_explicitly_selected >/dev/null 2>&1 \
+                && acfs_module_explicitly_selected "tools.docker"; then
+              log_error "tools.docker: explicitly requested via --only; treating optional-module failure as fatal"
+              return 1
+            fi
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "tools.docker" "install command failed: install docker.io and the Compose plugin"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "tools.docker"
+            fi
+            return 0
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: install: add the target user to the docker group (root)"
+    else
+        if ! run_as_root_shell <<'INSTALL_TOOLS_DOCKER'
+# acfs-summary: add the target user to the docker group
+if getent group docker >/dev/null 2>&1; then
+  usermod -aG docker "${TARGET_USER:-ubuntu}"
+fi
+INSTALL_TOOLS_DOCKER
+        then
+            log_warn "tools.docker: install command failed: add the target user to the docker group"
+            # Optional-module failures are warnings on a default install, but a
+            # module the user explicitly named with --only had exactly one job:
+            # propagate the failure instead of reporting phase success (#373).
+            if declare -f acfs_module_explicitly_selected >/dev/null 2>&1 \
+                && acfs_module_explicitly_selected "tools.docker"; then
+              log_error "tools.docker: explicitly requested via --only; treating optional-module failure as fatal"
+              return 1
+            fi
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "tools.docker" "install command failed: add the target user to the docker group"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "tools.docker"
+            fi
+            return 0
+        fi
+    fi
+
+    # Verify
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: docker --version (root)"
+    else
+        if ! run_as_root_shell <<'INSTALL_TOOLS_DOCKER'
+docker --version
+INSTALL_TOOLS_DOCKER
+        then
+            log_warn "tools.docker: verify failed: docker --version"
+            # Optional-module failures are warnings on a default install, but a
+            # module the user explicitly named with --only had exactly one job:
+            # propagate the failure instead of reporting phase success (#373).
+            if declare -f acfs_module_explicitly_selected >/dev/null 2>&1 \
+                && acfs_module_explicitly_selected "tools.docker"; then
+              log_error "tools.docker: explicitly requested via --only; treating optional-module failure as fatal"
+              return 1
+            fi
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "tools.docker" "verify failed: docker --version"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "tools.docker"
+            fi
+            return 0
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: docker compose version (root)"
+    else
+        if ! run_as_root_shell <<'INSTALL_TOOLS_DOCKER'
+docker compose version
+INSTALL_TOOLS_DOCKER
+        then
+            log_warn "tools.docker: verify failed: docker compose version"
+            # Optional-module failures are warnings on a default install, but a
+            # module the user explicitly named with --only had exactly one job:
+            # propagate the failure instead of reporting phase success (#373).
+            if declare -f acfs_module_explicitly_selected >/dev/null 2>&1 \
+                && acfs_module_explicitly_selected "tools.docker"; then
+              log_error "tools.docker: explicitly requested via --only; treating optional-module failure as fatal"
+              return 1
+            fi
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "tools.docker" "verify failed: docker compose version"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "tools.docker"
+            fi
+            return 0
+        fi
+    fi
+
+    log_success "tools.docker installed"
 }
 
 # Atuin CLI with guarded agent-safe shim

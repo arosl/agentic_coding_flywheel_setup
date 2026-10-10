@@ -382,6 +382,7 @@ acfs_generated_install_all() {
     acfs_generated_install_cli_modern
     log_section "Category: tools"
     acfs_generated_install_tools_lazygit
+    acfs_generated_install_tools_docker
     log_section "Category: network"
     acfs_generated_install_network_tailscale
     acfs_generated_install_network_ssh_keepalive

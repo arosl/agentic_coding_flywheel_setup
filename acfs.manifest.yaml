@@ -507,6 +507,42 @@ modules:
     verify:
       - lazygit --version
 
+  # Upstream installs Docker in cli.modern, on by default. The fork runs
+  # containers in Incus, so Docker is its own module and off by default.
+  - id: tools.docker
+    description: Docker Engine and the Compose plugin, opt-in (Incus is the default)
+    category: tools
+    phase: 5
+    run_as: root
+    optional: true
+    enabled_by_default: false
+    tags: [optional, containers]
+    dependencies:
+      - base.system
+    installed_check:
+      run_as: current
+      command: "command -v docker && docker compose version"
+    install:
+      - |
+        # acfs-summary: install docker.io and the Compose plugin
+        # Ubuntu ships Compose v2 as docker-compose-v2; docker-compose-plugin
+        # exists only where Docker's own apt repository is configured.
+        compose_pkg="docker-compose-v2"
+        if ! apt-cache policy docker-compose-v2 2>/dev/null | grep -q 'Candidate: [^(]'; then
+          compose_pkg="docker-compose-plugin"
+        fi
+        apt-get -o DPkg::Lock::Timeout=120 install -y docker.io "$compose_pkg"
+      - |
+        # acfs-summary: add the target user to the docker group
+        if getent group docker >/dev/null 2>&1; then
+          usermod -aG docker "${TARGET_USER:-ubuntu}"
+        fi
+    verify:
+      - docker --version
+      - docker compose version
+    notes:
+      - "The docker group grants root-equivalent access; the target user joins it so `docker` works without sudo after a new login"
+
   # Network tools (still Phase 5)
   - id: network.tailscale
     description: Zero-config mesh VPN for secure remote VPS access
@@ -3031,8 +3067,8 @@ modules:
     phase: 9
     run_as: target_user
     optional: true
-    # dsr builds through nektos/act, which needs Docker, and ACFS installs no
-    # Docker. Opt in only on a host where you provide Docker yourself.
+    # dsr builds through nektos/act, which needs Docker. Docker is opt-in
+    # (tools.docker), so dsr is too, and selecting it brings Docker along.
     enabled_by_default: false
     tags: [optional, release]
     web:
@@ -3059,6 +3095,7 @@ modules:
       lesson_slug: "dsr"
     dependencies:
       - cli.modern   # for gh
+      - tools.docker # act runs the workflow jobs in Docker containers
     installed_check:
       run_as: target_user
       command: "command -v dsr"
