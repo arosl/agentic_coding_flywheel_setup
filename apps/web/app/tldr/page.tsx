@@ -7,6 +7,7 @@ import { TldrHero } from "@/components/tldr/tldr-hero";
 import { TldrSynergyDiagram } from "@/components/tldr/tldr-synergy-diagram";
 import { TldrToolGrid } from "@/components/tldr/tldr-tool-grid";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { DEFAULT_INSTALL_SCRIPT_URL } from "@/lib/commandBuilder";
 import { tldrFlywheelTools, tldrPageData } from "@/lib/tldr-content";
 import { copyTextToClipboard } from "@/lib/utils";
 
@@ -75,7 +76,7 @@ function FlywheelExplanation() {
 // FOOTER CTA WITH COPY BUTTON
 // =============================================================================
 
-const INSTALL_COMMAND = `curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --mode vibe`;
+const INSTALL_COMMAND = `curl -fsSL ${DEFAULT_INSTALL_SCRIPT_URL} | bash -s -- --yes --mode vibe`;
 
 function FooterCTA({ id }: { id?: string }) {
   const [copied, setCopied] = useState(false);

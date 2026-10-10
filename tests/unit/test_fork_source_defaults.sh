@@ -95,7 +95,6 @@ ALLOWED=(
     'scripts/templates/acfs-checksum-monitor.service|Dicklesworthstone/agentic_coding_flywheel_setup|upstream'"'"'s maintainer checksum monitor; nothing in install.sh, scripts/lib or the manifest installs it'
     'scripts/templates/acfs-checksum-monitor.timer|Dicklesworthstone/agentic_coding_flywheel_setup|upstream'"'"'s maintainer checksum monitor; nothing in install.sh, scripts/lib or the manifest installs it'
     'apps/web/app/complete-guide/page.tsx|href="https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues"|upstream'"'"'s author offers there, by name, to answer questions in person'
-    'docs/operations/provider-provisioning-packet.md|raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh|an example of the packet apps/web builds, whose commandBuilder still names upstream'
 )
 
 # The fork's own one-liner must be there, so the docs check can't
@@ -172,6 +171,15 @@ mapfile -t web_issue_files < <(grep -rlE --include='*.ts' --include='*.tsx' \
     "$WEB_ISSUES_PATTERN" apps/web/app apps/web/components apps/web/lib)
 if [[ "${#web_issue_files[@]}" -gt 0 ]]; then
     check_matches "$WEB_ISSUES_PATTERN" "${web_issue_files[@]}"
+fi
+
+# The website's install and preflight commands fetch the fork too
+# (acfs-co0): no raw fetch from upstream and no short URL that serves
+# upstream's installer.
+mapfile -t web_fetch_files < <(grep -rlE --include='*.ts' --include='*.tsx' \
+    "$DOCS_PATTERN" apps/web/app apps/web/components apps/web/lib)
+if [[ "${#web_fetch_files[@]}" -gt 0 ]]; then
+    check_matches "$DOCS_PATTERN" "${web_fetch_files[@]}"
 fi
 
 for i in "${!ALLOWED[@]}"; do

@@ -18,7 +18,11 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { CommandCard } from "@/components/command-card";
 import { Card } from "@/components/ui/card";
-import { buildRootKeyRepairCommand, buildUserKeyRepairCommand } from "@/lib/commandBuilder";
+import {
+  buildRootKeyRepairCommand,
+  buildUserKeyRepairCommand,
+  DEFAULT_INSTALL_SCRIPT_URL,
+} from "@/lib/commandBuilder";
 
 type TroubleshootingCategory = "all" | "ssh" | "installation" | "agents" | "network";
 type CommandRunLocation = "vps" | "local";
@@ -578,8 +582,7 @@ const ISSUES: Omit<TroubleshootingIssue, "searchable">[] = [
           "The installer is checkpointed and idempotent",
           "Simply re-run the one-liner command; it will resume from the last completed phase",
         ],
-        command:
-          "curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --mode vibe",
+        command: `curl -fsSL ${DEFAULT_INSTALL_SCRIPT_URL} | bash -s -- --yes --mode vibe`,
         runLocation: "vps",
       },
       {
@@ -599,8 +602,7 @@ const ISSUES: Omit<TroubleshootingIssue, "searchable">[] = [
           "Run install.sh with --verified-installer-cache flag pointing to the transferred directory",
           "Note: VPS still requires basic internet access for APT packages and Cargo crates",
         ],
-        command:
-          "curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --verified-installer-cache /tmp/acfs-installer-cache --yes --mode vibe",
+        command: `curl -fsSL ${DEFAULT_INSTALL_SCRIPT_URL} | bash -s -- --verified-installer-cache /tmp/acfs-installer-cache --yes --mode vibe`,
         runLocation: "vps",
       },
     ],

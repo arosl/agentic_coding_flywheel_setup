@@ -27,9 +27,12 @@ import {
 import type { InstallMode, OperatingSystem, VPSReadinessSelection } from "./userPreferences";
 import { ACFS_RECOMMENDED_UBUNTU, VPS_UBUNTU_IMAGE_OPTIONS } from "./vpsProviders";
 
-const INSTALL_SCRIPT_BASE_URL =
-  "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup";
+// The repository the site's commands fetch from: the fork (acfs-co0). Every
+// page that shows an install or preflight command takes it from here.
+export const INSTALL_SCRIPT_BASE_URL =
+  "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup";
 const DEFAULT_INSTALL_REF = "main";
+export const DEFAULT_INSTALL_SCRIPT_URL = `${INSTALL_SCRIPT_BASE_URL}/${DEFAULT_INSTALL_REF}/install.sh`;
 export const SSH_KEY_PATH_UNIX = "~/.ssh/acfs_ed25519";
 export const SSH_PUBLIC_KEY_PATH_UNIX = `${SSH_KEY_PATH_UNIX}.pub`;
 // Two Windows spellings of the same key path, because the two places we show

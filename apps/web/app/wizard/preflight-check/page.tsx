@@ -16,15 +16,13 @@ import {
 } from "@/components/simpler-guide";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { formatSshTarget } from "@/lib/commandBuilder";
+import { formatSshTarget, INSTALL_SCRIPT_BASE_URL } from "@/lib/commandBuilder";
 import { useWizardAnalytics } from "@/lib/hooks/useWizardAnalytics";
 import { normalizeGitRef, useACFSRef, useVPSIP } from "@/lib/userPreferences";
 import { withCurrentSearch } from "@/lib/utils";
 import { ACFS_RECOMMENDED_UBUNTU } from "@/lib/vpsProviders";
 import { markStepComplete, useWizardForwardNav } from "@/lib/wizardSteps";
 
-const PREFLIGHT_SCRIPT_BASE_URL =
-  "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup";
 const DEFAULT_PREFLIGHT_REF = "main";
 
 const TROUBLESHOOTING = [
@@ -94,7 +92,7 @@ export default function PreflightCheckPage() {
   const ubuntuTarget = formatSshTarget("ubuntu", displayIP);
   const preflightRef = normalizeGitRef(acfsRef) ?? DEFAULT_PREFLIGHT_REF;
   const preflightCommand = useMemo(
-    () => `curl -fsSL "${PREFLIGHT_SCRIPT_BASE_URL}/${preflightRef}/scripts/preflight.sh" | bash`,
+    () => `curl -fsSL "${INSTALL_SCRIPT_BASE_URL}/${preflightRef}/scripts/preflight.sh" | bash`,
     [preflightRef],
   );
 

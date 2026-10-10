@@ -27,13 +27,15 @@ import { TldrSynergyDiagram } from "@/components/tldr/tldr-synergy-diagram";
 import { Button } from "@/components/ui/button";
 import { manifestModules } from "@/lib/generated/manifest-modules";
 import { manifestTools } from "@/lib/generated/manifest-tools";
+import { DEFAULT_INSTALL_SCRIPT_URL } from "@/lib/commandBuilder";
 import { staggerDelay } from "@/lib/hooks/useScrollReveal";
 import { tldrFlywheelTools } from "@/lib/tldr-content";
 
-// Same command the home page shows; /install 302s to the raw install.sh.
-// Without --yes the installer asks one "Proceed?" question on the TTY, which
-// is the right default for someone sitting at their own laptop.
-const INSTALL_COMMAND = "curl -fsSL https://agent-flywheel.com/install | bash";
+// Same command the home page shows: the raw install.sh (agent-flywheel.com's
+// short URL serves upstream's). Without --yes the installer asks one
+// "Proceed?" question on the TTY, which is the right default for someone
+// sitting at their own laptop.
+const INSTALL_COMMAND = `curl -fsSL ${DEFAULT_INSTALL_SCRIPT_URL} | bash`;
 const ARCH_NOTES_URL =
   "https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup#omarchy-arch-support";
 const GITHUB_URL = "https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup";

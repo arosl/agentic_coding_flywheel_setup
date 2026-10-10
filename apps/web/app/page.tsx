@@ -33,6 +33,7 @@ import { fadeScale, fadeUp, motion, springs, staggerContainer } from "@/componen
 import { Button } from "@/components/ui/button";
 import { manifestTools } from "@/lib/generated/manifest-tools";
 import { useReducedMotion } from "@/lib/hooks/useReducedMotion";
+import { DEFAULT_INSTALL_SCRIPT_URL } from "@/lib/commandBuilder";
 import { staggerDelay, useScrollReveal } from "@/lib/hooks/useScrollReveal";
 import { VPS_TOP_PICK } from "@/lib/vpsProviders";
 
@@ -43,7 +44,7 @@ const TOOL_COUNT_LABEL = `${Math.floor(TOOL_COUNT / 5) * 5}+`;
 
 // Animated terminal lines
 const TERMINAL_LINES = [
-  { type: "command", text: "curl -fsSL https://agent-flywheel.com/install | bash" },
+  { type: "command", text: `curl -fsSL ${DEFAULT_INSTALL_SCRIPT_URL} | bash` },
   { type: "output", text: "▸ Detecting OS... ✓" },
   { type: "output", text: "▸ Installing zsh + shell prompt..." },
   { type: "output", text: "▸ Installing bun, uv, rust, go..." },
