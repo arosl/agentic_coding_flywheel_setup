@@ -41,6 +41,20 @@ export interface GitHubReleaseFixture {
   publishedAt?: string;
   htmlUrl?: string;
   detail?: string;
+  /** Release asset file names; absent when the asset list is unknown. */
+  assetNames?: string[];
+}
+
+export interface LinuxArchitectureCoverage {
+  x86_64: boolean;
+  aarch64: boolean;
+}
+
+export interface ArchitectureResult {
+  status: ReportStatus;
+  detail: string;
+  tagName?: string;
+  linux?: LinuxArchitectureCoverage;
 }
 
 export interface ReleaseFetchResponse {
@@ -99,6 +113,7 @@ export interface StackToolReport {
   local: LocalProvenanceResult;
   candidate: CandidateResult;
   release: ReleaseResult;
+  architecture: ArchitectureResult;
   advisories: string[];
 }
 
@@ -186,6 +201,7 @@ function summarizeStatus(
     summary[tool.local.status] += 1;
     summary[tool.candidate.status] += 1;
     summary[tool.release.status] += 1;
+    summary[tool.architecture.status] += 1;
   }
 
   if (unrelatedDiffs.length > 0) {
@@ -482,6 +498,11 @@ async function fetchLatestRelease(
       tagName: asString(body.tag_name),
       publishedAt: asString(body.published_at) ?? asString(body.created_at),
       htmlUrl: asString(body.html_url),
+      assetNames: Array.isArray(body.assets)
+        ? body.assets
+            .map((asset) => asString(asRecord(asset).name))
+            .filter((name): name is string => Boolean(name))
+        : undefined,
     };
   } catch (error) {
     return {
@@ -583,11 +604,114 @@ function evaluateRelease(
   };
 }
 
+const SIDECAR_ASSET = /\.(sha256|sha512|sha256sum|sha512sum|sig|minisig|asc|pem|crt|sbom\.json|intoto\.jsonl)$/i;
+const X86_64_TOKEN = /(?:^|[-_.])(?:x86_64|amd64|x64)(?:[-_.]|$)/;
+const AARCH64_TOKEN = /(?:^|[-_.])(?:aarch64|arm64)(?:[-_.]|$)/;
+
+const OS_TOKEN = /linux|darwin|apple|macos|windows|freebsd|netbsd|openbsd|android|\.exe$/;
+
+/** Which Linux CPU architectures a release's asset names publish a build for. */
+export function linuxArchitectureCoverage(assetNames: string[]): LinuxArchitectureCoverage {
+  const coverage: LinuxArchitectureCoverage = { x86_64: false, aarch64: false };
+  for (const raw of assetNames) {
+    const name = raw.toLowerCase();
+    if (SIDECAR_ASSET.test(name) || !name.includes("linux")) continue;
+    if (X86_64_TOKEN.test(name)) coverage.x86_64 = true;
+    if (AARCH64_TOKEN.test(name)) coverage.aarch64 = true;
+  }
+  return coverage;
+}
+
+/** Assets that name a CPU architecture but no operating system cannot be classified. */
+function osUnlabeledArchitectureAssets(assetNames: string[]): string[] {
+  return assetNames.filter((raw) => {
+    const name = raw.toLowerCase();
+    return (
+      !SIDECAR_ASSET.test(name) &&
+      !OS_TOKEN.test(name) &&
+      (X86_64_TOKEN.test(name) || AARCH64_TOKEN.test(name))
+    );
+  });
+}
+
+// A release that ships Linux binaries for one architecture only leaves the
+// other to a source build or a failure (RCH ships no aarch64 Linux build, so
+// every ARM64 install compiles it; meta_skill v0.2.1/v0.2.2 had the same gap).
+function evaluateArchitecture(
+  tool: StackToolSource,
+  latest: GitHubReleaseFixture,
+  network: NetworkMode,
+): ArchitectureResult {
+  if (network === "skip" || tool.repositoryResolution !== "github") {
+    return { status: "skip", detail: "release assets not checked" };
+  }
+  if (latest.status !== "ok") {
+    return { status: "skip", detail: "no latest release to inspect" };
+  }
+  if (!latest.assetNames) {
+    return {
+      status: "unknown",
+      detail: "release asset list unavailable",
+      tagName: latest.tagName,
+    };
+  }
+
+  const linux = linuxArchitectureCoverage(latest.assetNames);
+  const tag = latest.tagName ?? "latest release";
+  if (linux.x86_64 && linux.aarch64) {
+    return {
+      status: "pass",
+      detail: `${tag} publishes x86_64 and aarch64 Linux builds`,
+      tagName: latest.tagName,
+      linux,
+    };
+  }
+  if (!linux.x86_64 && !linux.aarch64) {
+    const unlabeled = osUnlabeledArchitectureAssets(latest.assetNames);
+    if (unlabeled.length > 0) {
+      return {
+        status: "unknown",
+        detail: `${tag} has architecture-specific assets with no operating system in their names (${unlabeled.slice(0, 3).join(", ")})`,
+        tagName: latest.tagName,
+        linux,
+      };
+    }
+    return {
+      status: "pass",
+      detail: `${tag} publishes no architecture-specific Linux binaries (script or source release)`,
+      tagName: latest.tagName,
+      linux,
+    };
+  }
+  const present = linux.x86_64 ? "x86_64" : "aarch64";
+  const absent = linux.x86_64 ? "aarch64" : "x86_64";
+  const absentToken = absent === "aarch64" ? AARCH64_TOKEN : X86_64_TOKEN;
+  const maybeAbsent = osUnlabeledArchitectureAssets(latest.assetNames).filter((name) =>
+    absentToken.test(name.toLowerCase()),
+  );
+  if (maybeAbsent.length > 0) {
+    // An unlabeled asset may be the missing Linux build; do not claim it is absent.
+    return {
+      status: "unknown",
+      detail: `${tag} publishes an ${present} Linux build; ${maybeAbsent.slice(0, 3).join(", ")} may be the ${absent} one but names no operating system`,
+      tagName: latest.tagName,
+      linux,
+    };
+  }
+  return {
+    status: "warn",
+    detail: `${tag} publishes an ${present} Linux build but no ${absent} one; ${absent} installs build from source or fail`,
+    tagName: latest.tagName,
+    linux,
+  };
+}
+
 function buildAdvisories(
   tool: StackToolSource,
   local: LocalProvenanceResult,
   candidate: CandidateResult,
   release: ReleaseResult,
+  architecture: ArchitectureResult,
 ): string[] {
   const advisories: string[] = [];
 
@@ -602,6 +726,12 @@ function buildAdvisories(
   }
   if (candidate.status === "fail") {
     advisories.push("do not replace checksums.yaml until this diff is reviewed");
+  }
+  if (architecture.status === "warn" && architecture.linux) {
+    const absent = architecture.linux.aarch64 ? "x86_64" : "aarch64";
+    advisories.push(
+      `ask upstream (${tool.repo ?? tool.displayName}) to publish an ${absent} Linux build in its release matrix`,
+    );
   }
 
   return advisories;
@@ -667,8 +797,14 @@ export async function buildStackProvenanceReport(
       options.currentChecksums.generatedAt,
       options.network,
     );
-    const advisories = buildAdvisories(tool, local, candidate, release);
-    const status = combinedToolStatus([local.status, candidate.status, release.status]);
+    const architecture = evaluateArchitecture(tool, latest, options.network);
+    const advisories = buildAdvisories(tool, local, candidate, release, architecture);
+    const status = combinedToolStatus([
+      local.status,
+      candidate.status,
+      release.status,
+      architecture.status,
+    ]);
 
     reports.push({
       moduleId: tool.module.id,
@@ -687,6 +823,7 @@ export async function buildStackProvenanceReport(
       local,
       candidate,
       release,
+      architecture,
       advisories,
     });
   }
@@ -869,6 +1006,7 @@ function printHumanReport(report: StackProvenanceReport, quiet: boolean): void {
     console.log(`  local: [${tool.local.status}] ${tool.local.detail}`);
     console.log(`  candidate: [${tool.candidate.status}] ${tool.candidate.detail}`);
     console.log(`  release: [${tool.release.status}] ${tool.release.detail}`);
+    console.log(`  architectures: [${tool.architecture.status}] ${tool.architecture.detail}`);
     for (const advisory of tool.advisories) {
       console.log(`  advisory: ${advisory}`);
     }

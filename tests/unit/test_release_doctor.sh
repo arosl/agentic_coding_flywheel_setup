@@ -39,6 +39,15 @@ reset_fakes() {
     TEST_REPO_ROOT="$REPO_ROOT"
 }
 
+# Fixture repos need the files the real version-consistency gate reads
+# (VERSION and install.sh's ACFS_VERSION), added after these fixtures.
+write_fixture_base() {
+    local fixture="$1"
+    mkdir -p "$fixture/scripts/lib"
+    printf '9.9.9\n' > "$fixture/VERSION"
+    printf '#!/usr/bin/env bash\nACFS_VERSION="9.9.9"\n' > "$fixture/install.sh"
+}
+
 run_release_doctor() {
     set +e
     LAST_OUTPUT="$(
@@ -183,21 +192,9 @@ test_version_consistency_mismatch_fails() {
     '
 }
 
-test_version_consistency_missing_installer_fails() {
-    TEST_REPO_ROOT="$(write_version_fixture version-no-installer 1.2.3 "")"
-    TEST_VERSION_STATUS=""
-    run_release_doctor --network=skip --web=never
-    [[ "$LAST_STATUS" -eq 1 ]] || return 1
-    assert_jq '
-      .ok == false and
-      (.checks[] | select(.id == "version_consistency").status) == "fail" and
-      (.checks[] | select(.id == "version_consistency").detail | contains("could not read ACFS_VERSION"))
-    '
-}
-
 test_checksum_candidate_ignores_progress_stderr() {
     local fixture="$ARTIFACT_DIR/checksum-progress"
-    mkdir -p "$fixture/scripts/lib"
+    write_fixture_base "$fixture"
     cat > "$fixture/checksums.yaml" <<'YAML'
 # checksums.yaml - Auto-generated original timestamp
 # Run: ./scripts/lib/security.sh --update-checksums
@@ -240,7 +237,7 @@ BASH
 
 test_checksum_candidate_target_diff_fails() {
     local fixture="$ARTIFACT_DIR/checksum-target-diff"
-    mkdir -p "$fixture/scripts/lib"
+    write_fixture_base "$fixture"
     cat > "$fixture/checksums.yaml" <<'YAML'
 # checksums.yaml - Auto-generated original timestamp
 # Run: ./scripts/lib/security.sh --update-checksums
@@ -282,7 +279,7 @@ BASH
 
 test_checksum_candidate_unrelated_diff_fails() {
     local fixture="$ARTIFACT_DIR/checksum-unrelated-diff"
-    mkdir -p "$fixture/scripts/lib"
+    write_fixture_base "$fixture"
     cat > "$fixture/checksums.yaml" <<'YAML'
 # checksums.yaml - Auto-generated original timestamp
 # Run: ./scripts/lib/security.sh --update-checksums
@@ -325,6 +322,24 @@ BASH
       .ok == false and
       (.checks[] | select(.id == "checksum_candidate").status) == "fail" and
       (.checks[] | select(.id == "checksum_candidate").detail | contains("checksum candidate differs"))
+    '
+}
+
+test_missing_installer_records_failed_version_check() {
+    # With install.sh absent the doctor used to die under set -e/pipefail
+    # (status 2, no report) instead of failing its version-consistency check.
+    local fixture="$ARTIFACT_DIR/missing-installer"
+    mkdir -p "$fixture"
+    printf '9.9.9\n' > "$fixture/VERSION"
+
+    TEST_REPO_ROOT="$fixture"
+    TEST_VERSION_STATUS=""
+    run_release_doctor --network=skip --web=never
+    [[ "$LAST_STATUS" -eq 1 ]] || return 1
+    assert_jq '
+      .ok == false and
+      (.checks[] | select(.id == "version_consistency").status) == "fail" and
+      (.checks[] | select(.id == "version_consistency").detail | contains("could not read ACFS_VERSION"))
     '
 }
 
@@ -368,10 +383,10 @@ run_test "warning report" test_warning_report
 run_test "skipped network check" test_skipped_network_check
 run_test "version consistency match passes" test_version_consistency_match_passes
 run_test "version consistency mismatch fails" test_version_consistency_mismatch_fails
-run_test "version consistency missing install.sh fails" test_version_consistency_missing_installer_fails
 run_test "checksum candidate ignores progress stderr" test_checksum_candidate_ignores_progress_stderr
 run_test "checksum candidate target diff fails" test_checksum_candidate_target_diff_fails
 run_test "checksum candidate unrelated diff fails" test_checksum_candidate_unrelated_diff_fails
+run_test "missing installer records a failed version check" test_missing_installer_records_failed_version_check
 run_test "web check gating" test_web_check_gating
 run_test "help mentions release workflow" test_help_mentions_release_workflow
 run_test "human output reports governance checks" test_human_output_reports_governance_checks

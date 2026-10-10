@@ -318,40 +318,40 @@ test_warn_checks_have_fix_hints() {
 }
 
 test_fix_hint_uses_module_id() {
-    harness_section "Test: Fix hints use correct module IDs"
+    harness_section "Test: Fix hints name real manifest modules"
 
     local output
     ensure_doctor_json_output
     output="$DOCTOR_JSON_OUTPUT"
 
-    # Sample a few installer-backed checks and verify fix hints reference
-    # their module. Some modules intentionally return bespoke prose guidance
-    # instead of an ACFS reinstall command, so skip those here.
-    local samples
-    samples=$(echo "$output" | jq -r '.checks[] | select(.fix and .id and (.fix | test("raw\\.githubusercontent\\.com/[^ ]+/install\\.sh"))) | "\(.id)|\(.fix)"' 2>/dev/null | head -5)
+    # Check IDs and module IDs differ by design (shell.ohmyzsh -> shell.omz,
+    # tool.bun -> lang.bun, agent.claude -> agents.claude), so deriving the
+    # module from the check ID was wrong. What a user needs is that every
+    # reinstall hint's --only target is a real manifest module.
+    local modules
+    modules="$(bash -c 'source "$1"; printf "%s\n" "${ACFS_MODULES_IN_ORDER[@]}"' _ \
+        "$REPO_ROOT/scripts/generated/manifest_index.sh")"
 
-    local checks_passed=0
-    local checks_total=0
+    local hints check_id fix_hint target checks_passed=0 checks_total=0
+    hints=$(echo "$output" | jq -r '.checks[] | select(.fix and .id and (.fix | contains("--only "))) | "\(.id)|\(.fix)"' 2>/dev/null)
 
     while IFS='|' read -r check_id fix_hint; do
         [[ -z "$check_id" ]] && continue
-        ((checks_total++))
-
-        # Extract module ID from check ID (strip trailing .N suffix)
-        local module_id
-        module_id=$(echo "$check_id" | sed 's/\.[0-9]*$//')
-
-        if echo "$fix_hint" | grep -q "\-\-only $module_id"; then
-            ((checks_passed++))
+        checks_total=$((checks_total + 1))
+        target="$(sed -n 's/.*--only \([^ ]*\).*/\1/p' <<< "$fix_hint")"
+        if grep -qxF -- "$target" <<< "$modules"; then
+            checks_passed=$((checks_passed + 1))
+        else
+            harness_capture_output "unknown_module_fix_hint_$checks_total" "$check_id => $fix_hint"
         fi
-    done <<< "$samples"
+    done <<< "$hints"
 
     if [[ "$checks_total" -eq 0 ]]; then
-        harness_pass "No checks with fix hints to verify"
+        harness_pass "No checks with --only fix hints to verify"
     elif [[ "$checks_passed" -eq "$checks_total" ]]; then
-        harness_pass "All $checks_total sampled fix hints use correct module IDs"
+        harness_pass "All $checks_total --only fix hints name real manifest modules"
     else
-        harness_fail "Only $checks_passed of $checks_total fix hints use correct module IDs"
+        harness_fail "Only $checks_passed of $checks_total --only fix hints name real manifest modules"
     fi
 }
 
@@ -719,29 +719,32 @@ test_generated_target_home_fallbacks_are_dynamic() {
 }
 
 test_meta_skill_arm64_linux_guidance() {
-    harness_section "Test: meta_skill ARM64 Linux guidance is specific"
+    harness_section "Test: meta_skill ARM64 Linux gets the verified re-run guidance"
 
+    # meta_skill v0.2.3 publishes a checksummed aarch64 Linux archive and its
+    # pinned installer fails closed without one; the old "not yet available"
+    # warning (citing an unrelated issue #1) sent ARM64 users away from it.
     local doctor_file arm64_branch
     doctor_file="$REPO_ROOT/scripts/lib/doctor.sh"
-    arm64_branch="$(sed -n '/aarch64-Linux|arm64-Linux)/,/;;/p' "$doctor_file")"
+    arm64_branch="$(sed -n '/aarch64-Linux|arm64-Linux|/,/;;/p' "$doctor_file")"
 
     if [[ -z "$arm64_branch" ]]; then
         harness_fail "meta_skill ARM64 Linux branch is missing from doctor.sh"
         return 1
     fi
 
-    if echo "$arm64_branch" | grep -q 'ARM64 Linux binary not yet available (see https://github.com/Dicklesworthstone/meta_skill/issues/1)'; then
-        harness_pass "meta_skill ARM64 Linux warning includes the upstream issue link"
+    if echo "$arm64_branch" | grep -q 'x86_64-Linux|aarch64-Linux|arm64-Linux|' \
+        && echo "$arm64_branch" | grep -qF '"$_ms_fix"'; then
+        harness_pass "meta_skill ARM64 Linux shares the verified re-run guidance"
     else
-        harness_fail "meta_skill ARM64 Linux warning is missing the specific upstream guidance"
+        harness_fail "meta_skill ARM64 Linux does not get the verified re-run guidance"
         harness_capture_output "meta_skill_arm64_branch" "$arm64_branch"
     fi
 
-    if echo "$arm64_branch" | grep -q 'No checksum-anchored Linux ARM64 installer is available; wait for a verified release artifact'; then
-        harness_pass "meta_skill ARM64 Linux guidance fails closed without an anchored source"
+    if grep -qE 'ARM64 Linux binary not yet available|meta_skill/issues/1' "$doctor_file"; then
+        harness_fail "doctor.sh still claims meta_skill has no ARM64 Linux binary"
     else
-        harness_fail "meta_skill ARM64 Linux guidance does not explain the anchored-source requirement"
-        harness_capture_output "meta_skill_arm64_branch" "$arm64_branch"
+        harness_pass "doctor.sh no longer claims meta_skill has no ARM64 Linux binary"
     fi
 
     if echo "$arm64_branch" | grep -q 'curl -fsSL'; then

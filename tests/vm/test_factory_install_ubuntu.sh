@@ -849,6 +849,10 @@ printf "%s\n" "$doctor_json" | jq -e ".summary.fail == 0 and .summary.warn == 0"
 }
 '
     run_target_step "post.stack_bins" 'for cmd in am herdr dcg ru cass cm caam slb ubs bv br; do command -v "$cmd" >/dev/null; done'
+    # The installed tree must run the shipped audit (bin/acfs ->
+    # scripts/agent-readiness-audit.sh -> packages/manifest/src). Agents are not
+    # signed in on a fresh host, so only the report shape is asserted.
+    run_target_step "post.agent_readiness" 'acfs agent-readiness --json --no-version | jq -e "[.tools[].id] == [\"claude\",\"codex\",\"agy\",\"caam\"]" >/dev/null'
     run_target_step "post.dcg_guard" 'dcg test "git reset --hard" 2>&1 | grep -Eqi "deny|block"'
     assert_agent_mail_systemd
     run_target_step "post.nightly_timer" '
@@ -905,13 +909,32 @@ collect_artifacts() {
     pass "artifacts.remote_archive" "$archive"
 }
 
+upgrade_recovery_failed() {
+    # The continuation is a transient --collect unit, so once it fails only
+    # this boot's journal remembers it. Either failure is final until a human
+    # intervenes; without this check the wait burns the whole timeout.
+    systemctl is-failed --quiet acfs-upgrade-resume.service && return 0
+    systemctl is-active --quiet acfs-continue-install.service && return 1
+    local last=""
+    last=$(journalctl -b -u acfs-continue-install.service -o cat --no-pager 2>/dev/null \
+        | grep -E "Failed with result|Deactivated successfully|^Started " | tail -n 1 || true)
+    [[ "$last" == *"Failed with result"* ]]
+}
+
 wait_for_post_install_ready() {
     local deadline=$((SECONDS + ACFS_FACTORY_POST_REBOOT_TIMEOUT_SECONDS))
     local target_home="/home/$ACFS_FACTORY_TARGET_USERNAME"
     local target_path="$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.cargo/bin:$target_home/.bun/bin:$target_home/.atuin/bin:$target_home/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
 
     while [[ "$SECONDS" -lt "$deadline" ]]; do
-        if id "$ACFS_FACTORY_TARGET_USERNAME" >/dev/null 2>&1 \
+        if upgrade_recovery_failed; then
+            journalctl -b -u acfs-upgrade-resume.service -u acfs-continue-install.service -n 80 --no-pager || true
+            fail "post.wait_ready" "upgrade resume or installer continuation failed; see journal above"
+        fi
+        # The continuation writes ~/.acfs/VERSION and installs acfs before it
+        # finishes; asserting while it still runs would race the installer.
+        if ! systemctl is-active --quiet acfs-continue-install.service \
+            && id "$ACFS_FACTORY_TARGET_USERNAME" >/dev/null 2>&1 \
             && [[ -f "$target_home/.acfs/VERSION" ]] \
             && sudo -n -u "$ACFS_FACTORY_TARGET_USERNAME" env ACFS_DOCTOR_CI=true HOME="$target_home" PATH="$target_path" bash -lc 'command -v acfs >/dev/null' >/dev/null 2>&1; then
             pass "post.wait_ready" "ACFS files and target user are present"
@@ -1029,6 +1052,27 @@ wait_for_ssh_ready() {
     return 1
 }
 
+remote_boot_id() {
+    ssh "${ssh_args[@]}" "$SSH_TARGET" cat /proc/sys/kernel/random/boot_id 2>/dev/null
+}
+
+# A failed first run is a reboot handoff only if the guest goes down, comes
+# back with a new boot ID, or has a shutdown scheduled. An installer that just
+# failed would otherwise be waited on for the whole post-reboot timeout.
+installer_reboot_started() {
+    local deadline=$((SECONDS + 300)) current=""
+    while [[ "$SECONDS" -lt "$deadline" ]]; do
+        if ! current="$(remote_boot_id)" || [[ "$current" != "$initial_boot_id" ]]; then
+            return 0
+        fi
+        if ssh "${ssh_args[@]}" "$SSH_TARGET" test -e /run/systemd/shutdown/scheduled 2>/dev/null; then
+            return 0
+        fi
+        sleep 15
+    done
+    return 1
+}
+
 collect_remote_artifacts() {
     echo "[factory-e2e] Collecting remote artifacts from $remote_dir" >&2
     scp "${scp_args[@]}" "$SSH_TARGET:$remote_dir/factory-e2e.log" "$ARTIFACTS_DIR/" 2>/dev/null || true
@@ -1039,13 +1083,17 @@ collect_remote_artifacts() {
     redact_local_factory_artifacts
 }
 
+initial_boot_id="$(remote_boot_id || true)"
 remote_status=0
 set +e
 run_remote_runner "full"
 remote_status=$?
 set -e
 
-if [[ "$remote_status" -ne 0 && "$ALLOW_INSTALL_REBOOT" == "true" ]]; then
+if [[ "$remote_status" -ne 0 && "$ALLOW_INSTALL_REBOOT" == "true" ]] \
+    && [[ -n "$initial_boot_id" ]] && ! installer_reboot_started; then
+    echo "[factory-e2e] Initial SSH run exited $remote_status and the guest neither rebooted nor scheduled a reboot; reporting the installer failure." >&2
+elif [[ "$remote_status" -ne 0 && "$ALLOW_INSTALL_REBOOT" == "true" ]]; then
     echo "[factory-e2e] Initial SSH run exited $remote_status; treating as possible installer reboot." >&2
     if wait_for_ssh_ready; then
         post_deadline=$((SECONDS + POST_REBOOT_TIMEOUT_SECONDS))

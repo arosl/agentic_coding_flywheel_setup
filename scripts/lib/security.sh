@@ -185,27 +185,17 @@ _acfs_is_interactive() {
 # curl defaults: enforce HTTPS (including redirects) when supported
 ACFS_CURL_BIN=""
 ACFS_CURL_BASE_ARGS=()
-# Content-decoding args for acfs_download_to_file. Some CDNs (Google Frontend,
-# for antigravity.google) answer from a gzip cache entry with
-# "Content-Encoding: gzip" even when the request asked for no encoding; without
-# --compressed curl saves the gzip bytes, and the checksum fails at random.
-ACFS_CURL_DECODE_ARGS=()
 
 acfs_security_configure_curl() {
     local curl_help=""
-    local curl_version=""
 
     ACFS_CURL_BIN="$(acfs_security_curl_binary_path 2>/dev/null || true)"
-    ACFS_CURL_BASE_ARGS=(-q --connect-timeout 30 --max-time 300 -fsSL)
-    ACFS_CURL_DECODE_ARGS=()
+    # Pin executable bytes, not an HTTP compression envelope. Asking for the
+    # identity representation also keeps download-size limits on those bytes.
+    ACFS_CURL_BASE_ARGS=(-q -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -H 'Accept-Encoding: identity' --connect-timeout 30 --max-time 300 -fsSL)
 
     if [[ -n "$ACFS_CURL_BIN" ]] && curl_help="$("$ACFS_CURL_BIN" --help all 2>/dev/null)" && [[ "$curl_help" == *"--proto"* ]]; then
-        ACFS_CURL_BASE_ARGS=(-q --proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 300 -fsSL)
-    fi
-
-    # --compressed needs a curl built with zlib ("libz" in its Features line).
-    if [[ -n "$ACFS_CURL_BIN" ]] && curl_version="$("$ACFS_CURL_BIN" -V 2>/dev/null)" && [[ "$curl_version" == *" libz"* ]]; then
-        ACFS_CURL_DECODE_ARGS=(--compressed)
+        ACFS_CURL_BASE_ARGS=(-q -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -H 'Accept-Encoding: identity' --proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 300 -fsSL)
     fi
 }
 
@@ -315,6 +305,23 @@ acfs_download_to_file() {
     # Ensure parent dir exists
     acfs_security_mkdir_p "$output_dir" || return $?
 
+    # Metadata maintenance can retain all evidence without loading the normal
+    # GitHub retry helper (which has its own cleanup). A failed single attempt
+    # stays failed, and both response headers and any partial body survive.
+    if [[ "${ACFS_SECURITY_RETAIN_TEMP_FILES:-false}" == "true" ]]; then
+        local retained_headers
+        retained_headers="$(acfs_security_mktemp "${TMPDIR:-/tmp}/acfs-hdr.XXXXXX")" || return 1
+        printf 'Retaining download headers: %s\n' "$retained_headers" >&2
+        if acfs_curl -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' \
+            --proto '=https' --proto-redir '=https' \
+            --connect-timeout 15 --max-time 45 --max-filesize 1048576 \
+            "$url" -o "$output_path" -D "$retained_headers"; then
+            return 0
+        else
+            return $?
+        fi
+    fi
+
     # Use GitHub-specific backoff only for an exact approved GitHub origin.
     if acfs_is_github_download_url "$url"; then
         # Load github_api.sh if not already loaded
@@ -349,18 +356,16 @@ acfs_download_to_file() {
         local hdr_file=""
         hdr_file="$(mktemp "${TMPDIR:-/tmp}/acfs-hdr.XXXXXX" 2>/dev/null || true)"
 
-        # Decode any Content-Encoding, so the file holds the same bytes the
-        # checksum refresh hashed, whichever cache entry answered.
         if [[ -n "$hdr_file" ]]; then
-            acfs_curl "${ACFS_CURL_DECODE_ARGS[@]}" "$url" -o "$output_path" -D "$hdr_file"
+            acfs_curl "$url" -o "$output_path" -D "$hdr_file"
         else
-            acfs_curl "${ACFS_CURL_DECODE_ARGS[@]}" "$url" -o "$output_path"
+            acfs_curl "$url" -o "$output_path"
         fi
         status=$?
 
         if (( status == 0 )); then
             (( attempt > 0 )) && log_info "Succeeded on retry ${attempt} for fetching ${name}"
-            [[ -n "$hdr_file" ]] && rm -f "$hdr_file" 2>/dev/null
+            [[ -n "$hdr_file" ]] && _acfs_remove_temp_files "$hdr_file"
             return 0
         fi
 
@@ -382,7 +387,7 @@ acfs_download_to_file() {
             fi
         fi
 
-        [[ -n "$hdr_file" ]] && rm -f "$hdr_file" 2>/dev/null
+        [[ -n "$hdr_file" ]] && _acfs_remove_temp_files "$hdr_file"
 
         if (( retryable != 0 )); then
             return "$status"
@@ -608,6 +613,13 @@ _acfs_remove_temp_files() {
     local path
     local rm_bin=""
 
+    if [[ "${ACFS_SECURITY_RETAIN_TEMP_FILES:-false}" == "true" ]]; then
+        for path in "$@"; do
+            [[ -z "$path" ]] || printf 'Retaining security metadata file: %s\n' "$path" >&2
+        done
+        return 0
+    fi
+
     rm_bin="$(acfs_security_system_binary_path rm 2>/dev/null || true)"
     [[ -n "$rm_bin" ]] || return 0
 
@@ -641,7 +653,9 @@ acfs_security_close_fd() {
     local fd="${1:-}"
 
     [[ "$fd" =~ ^[0-9]+$ ]] || return 0
-    exec {fd}<&- 2>/dev/null || true
+    # Scope error suppression to this close; a bare exec redirection would
+    # permanently disconnect the caller's stderr.
+    { exec {fd}<&-; } 2>/dev/null || true
 }
 
 acfs_security_release_bound_snapshot() {
@@ -683,6 +697,36 @@ acfs_security_copy_fd_bounded() {
     (( copied_size <= max_bytes )) || return 1
 }
 
+# BSD fdescfs exposes /dev/fd entries with their own inode identity.  Compare
+# the actual open handles with fstat there instead of treating those entries
+# as Linux's symlinks.  Keep the native Bash path on hosts where it works.
+acfs_security_fd_matches_path() {
+    local source_file="$1"
+    local identity_fd="$2"
+    local comparison_fd="${3:-$2}"
+    local perl_bin=""
+
+    [[ "$identity_fd" =~ ^[0-9]+$ && "$comparison_fd" =~ ^[0-9]+$ ]] || return 1
+    [[ -f "$source_file" && ! -L "$source_file" && -r "$source_file" ]] || return 1
+    if [[ -f "/dev/fd/$identity_fd" && -f "/dev/fd/$comparison_fd" ]] \
+        && [[ "$source_file" -ef "/dev/fd/$identity_fd" ]] \
+        && [[ "/dev/fd/$comparison_fd" -ef "/dev/fd/$identity_fd" ]]; then
+        return 0
+    fi
+
+    perl_bin="$(acfs_security_system_binary_path perl)" || return 1
+    "$perl_bin" -MFcntl=:mode -e '
+        my @held = stat(STDIN);
+        open my $other, "<&=3" or exit 1;
+        my @other = stat($other);
+        my @path = lstat($ARGV[0]);
+        exit 1 unless @held && @other && @path;
+        exit 1 unless S_ISREG($held[2]) && S_ISREG($other[2]) && S_ISREG($path[2]);
+        exit 1 unless $held[0] == $path[0] && $held[1] == $path[1];
+        exit 1 unless $held[0] == $other[0] && $held[1] == $other[1];
+    ' "$source_file" <&"$identity_fd" 3<&"$comparison_fd"
+}
+
 # Snapshot a regular, non-symlink policy file while retaining an identity file
 # descriptor.  Output variables are assigned only after every check succeeds.
 acfs_security_open_bound_snapshot() {
@@ -713,7 +757,7 @@ acfs_security_open_bound_snapshot() {
         log_error "Unable to open $label: $source_file"
         return 1
     fi
-    if [[ ! -f "/dev/fd/$identity_fd" || -L "$source_file" || ! "$source_file" -ef "/dev/fd/$identity_fd" ]]; then
+    if ! acfs_security_fd_matches_path "$source_file" "$identity_fd"; then
         log_error "$label changed identity while it was opened: $source_file"
         acfs_security_close_fd "$identity_fd"
         return 1
@@ -736,7 +780,7 @@ acfs_security_open_bound_snapshot() {
         acfs_security_release_bound_snapshot "$snapshot" "$identity_fd"
         return 1
     fi
-    if [[ ! -f "$source_file" || -L "$source_file" || ! "$source_file" -ef "/dev/fd/$identity_fd" ]]; then
+    if ! acfs_security_fd_matches_path "$source_file" "$identity_fd"; then
         log_error "$label changed identity while it was snapshotted: $source_file"
         acfs_security_release_bound_snapshot "$snapshot" "$identity_fd"
         return 1
@@ -770,9 +814,7 @@ acfs_security_bound_snapshot_is_current() {
         log_error "Unable to reopen $label: $source_file"
         return 1
     fi
-    if [[ ! -f "/dev/fd/$verification_fd" ]] \
-        || [[ ! "$source_file" -ef "/dev/fd/$identity_fd" ]] \
-        || [[ ! "/dev/fd/$verification_fd" -ef "/dev/fd/$identity_fd" ]]; then
+    if ! acfs_security_fd_matches_path "$source_file" "$identity_fd" "$verification_fd"; then
         log_error "$label changed identity during validation: $source_file"
         acfs_security_close_fd "$verification_fd"
         return 1
@@ -790,9 +832,7 @@ acfs_security_bound_snapshot_is_current() {
     _acfs_remove_temp_files "$verification_snapshot"
 
     if [[ "$verification_digest" != "$expected_digest" ]] \
-        || [[ ! -f "$source_file" || -L "$source_file" ]] \
-        || [[ ! "$source_file" -ef "/dev/fd/$identity_fd" ]] \
-        || [[ ! "/dev/fd/$verification_fd" -ef "/dev/fd/$identity_fd" ]]; then
+        || ! acfs_security_fd_matches_path "$source_file" "$identity_fd" "$verification_fd"; then
         log_error "$label changed bytes or identity during validation: $source_file"
         acfs_security_close_fd "$verification_fd"
         return 1
@@ -1981,7 +2021,7 @@ print_current_checksums() {
         local sha256
 
         printf "  Fetching %s... " "$name" >&2
-        sha256=$(fetch_checksum "$url" 2>/dev/null) || {
+        sha256=$(fetch_checksum "$url") || {
             echo "FAILED" >&2
             had_failure=true
             continue
@@ -2011,8 +2051,10 @@ print_current_checksums() {
         return 1
     fi
 
-    acfs_security_cat_file "$tmp_output"
+    local emit_status=0
+    acfs_security_cat_file "$tmp_output" || emit_status=$?
     _acfs_remove_temp_files "$tmp_output"
+    return "$emit_status"
 }
 
 # ============================================================
@@ -2060,14 +2102,13 @@ acfs_load_checksums_strict() {
     local tail_bin=""
     local last_byte=""
     local nul_stripped=""
-    # The working arrays and namerefs carry a prefix no caller uses: a nameref
-    # resolves to the innermost variable of that name, so a caller passing
-    # "parsed_urls" would otherwise bind to this function's own local and
-    # never see the result.
-    local -A _acfs_strict_urls=()
-    local -A _acfs_strict_checksums=()
-    local -n _acfs_strict_out_urls="$urls_var"
-    local -n _acfs_strict_out_checksums="$checksums_var"
+    # Callers commonly name their result arrays parsed_urls/parsed_checksums.
+    # Bash namerefs resolve dynamically: staging under those same names would
+    # shadow the caller and erase the result during the transactional commit.
+    local -A _acfs_strict_staged_urls=()
+    local -A _acfs_strict_staged_checksums=()
+    local -n output_urls="$urls_var"
+    local -n output_checksums="$checksums_var"
 
     if [[ ! -f "$file" || -L "$file" || ! -r "$file" ]]; then
         acfs_strict_checksums_error "$file" 0 "expected a readable regular non-symlink file"
@@ -2163,7 +2204,7 @@ acfs_load_checksums_strict() {
                     acfs_strict_checksums_error "$file" "$line_number" "installer URLs must be unambiguous HTTPS scalars"
                     return 1
                 fi
-                _acfs_strict_urls["$current_tool"]="$url"
+                _acfs_strict_staged_urls["$current_tool"]="$url"
                 state="sha256"
                 ;;
             sha256)
@@ -2177,7 +2218,7 @@ acfs_load_checksums_strict() {
                     acfs_strict_checksums_error "$file" "$line_number" "sha256 must be exactly 64 lowercase hexadecimal characters"
                     return 1
                 fi
-                _acfs_strict_checksums["$current_tool"]="$checksum"
+                _acfs_strict_staged_checksums["$current_tool"]="$checksum"
                 state="separator_or_eof"
                 ;;
             separator_or_eof)
@@ -2200,12 +2241,12 @@ acfs_load_checksums_strict() {
     fi
 
     expected_count="${#ACFS_SECURITY_REQUIRED_INSTALLERS[@]}"
-    if (( ${#_acfs_strict_urls[@]} != expected_count || ${#_acfs_strict_checksums[@]} != expected_count )); then
+    if (( ${#_acfs_strict_staged_urls[@]} != expected_count || ${#_acfs_strict_staged_checksums[@]} != expected_count )); then
         acfs_strict_checksums_error "$file" 0 "installer set does not exactly match the required security-policy set"
         return 1
     fi
     for tool in "${ACFS_SECURITY_REQUIRED_INSTALLERS[@]}"; do
-        if [[ -z "${_acfs_strict_urls[$tool]:-}" || -z "${_acfs_strict_checksums[$tool]:-}" ]]; then
+        if [[ -z "${_acfs_strict_staged_urls[$tool]:-}" || -z "${_acfs_strict_staged_checksums[$tool]:-}" ]]; then
             acfs_strict_checksums_error "$file" 0 "required installer is missing: $tool"
             return 1
         fi
@@ -2213,11 +2254,11 @@ acfs_load_checksums_strict() {
 
     # Transactional commit: malformed input never partially replaces caller
     # state that may already contain a previously trusted policy.
-    _acfs_strict_out_urls=()
-    _acfs_strict_out_checksums=()
-    for tool in "${!_acfs_strict_urls[@]}"; do
-        _acfs_strict_out_urls["$tool"]="${_acfs_strict_urls[$tool]}"
-        _acfs_strict_out_checksums["$tool"]="${_acfs_strict_checksums[$tool]}"
+    output_urls=()
+    output_checksums=()
+    for tool in "${!_acfs_strict_staged_urls[@]}"; do
+        output_urls["$tool"]="${_acfs_strict_staged_urls[$tool]}"
+        output_checksums["$tool"]="${_acfs_strict_staged_checksums[$tool]}"
     done
     return 0
 }
@@ -3488,6 +3529,9 @@ Commands:
 
 Options:
   --json               Output in JSON format (use with --verify)
+  --retain-temp-files  Retain metadata downloads, headers and snapshots for this
+                       invocation; one bounded fetch attempt per installer.
+                       Supported with checksum/update/verify/candidate commands.
 
 Examples:
   ./security.sh --print
@@ -3498,11 +3542,38 @@ Examples:
   ./security.sh --verify --json
   ./security.sh --validate-checksum-candidate checksums.yaml /tmp/candidate.yaml /tmp/verification.json > /tmp/validated.yaml
   ./security.sh --checksum https://bun.sh/install
+  ./security.sh --update-checksums --retain-temp-files > /tmp/acfs-checksums.retained.candidate.yaml
 EOF
 }
 
 main() {
     local json_output=false
+    local ACFS_SECURITY_RETAIN_TEMP_FILES=false
+    local -a command_args=()
+    local arg
+
+    for arg in "$@"; do
+        if [[ "$arg" == "--retain-temp-files" ]]; then
+            if [[ "$ACFS_SECURITY_RETAIN_TEMP_FILES" == "true" ]]; then
+                echo "Duplicate --retain-temp-files option" >&2
+                return 1
+            fi
+            ACFS_SECURITY_RETAIN_TEMP_FILES=true
+        else
+            command_args+=("$arg")
+        fi
+    done
+    set -- "${command_args[@]}"
+
+    if [[ "$ACFS_SECURITY_RETAIN_TEMP_FILES" == "true" ]]; then
+        case "${1:-}" in
+            --update-checksums|--verify|--validate-checksum-candidate|--checksum) ;;
+            *)
+                echo "--retain-temp-files requires a checksum metadata command" >&2
+                return 1
+                ;;
+        esac
+    fi
 
     # Parse --json flag if present
     for arg in "$@"; do
@@ -3516,6 +3587,10 @@ main() {
             print_upstream_urls
             ;;
         --update-checksums)
+            if [[ "$#" -ne 1 ]]; then
+                echo "Usage: security.sh --update-checksums [--retain-temp-files]" >&2
+                return 1
+            fi
             print_current_checksums
             ;;
         --verify)

@@ -1023,13 +1023,6 @@ doctor_fix_run_verified_installer_with_env() {
     local bash_bin=""
     local verified_installer_file=""
     local status=0
-    local ms_arch=""
-    ms_arch="$(uname -m 2>/dev/null || true)"
-
-    if [[ "$tool" == "ms" ]] && [[ "$(uname -s 2>/dev/null)" == "Linux" ]] && [[ "$ms_arch" == "aarch64" || "$ms_arch" == "arm64" ]]; then
-        doctor_fix_log WARN "meta_skill has no checksum-anchored Linux ARM64 install source; refusing an unpinned source checkout"
-        return 1
-    fi
 
     if ! doctor_fix_require_security; then
         return 1
@@ -2214,6 +2207,11 @@ fix_verified_install() {
 # Fixer: SSH Server (fix.ssh.server)
 # ============================================================
 
+# True when the host booted with systemd as init (sd_booted semantics).
+doctor_fix_systemd_booted() {
+    [[ -d /run/systemd/system ]]
+}
+
 # Install and enable SSH server
 fix_ssh_server() {
     local check_id="$1"
@@ -2232,7 +2230,7 @@ fix_ssh_server() {
     # Guard: Check if already installed
     if [[ -n "$sshd_bin" ]] || [[ -f "$sshd_config" ]]; then
         # Check if running
-        if [[ -n "$systemctl_bin" && -d /run/systemd/system ]]; then
+        if [[ -n "$systemctl_bin" ]] && doctor_fix_systemd_booted; then
             if "$systemctl_bin" is-active --quiet ssh 2>/dev/null || "$systemctl_bin" is-active --quiet sshd 2>/dev/null; then
                 doctor_fix_log INFO "SSH server already installed and running"
                 return 0

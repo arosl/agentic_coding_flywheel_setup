@@ -910,7 +910,9 @@ cat > "$target_home/.local/bin/bun" <<'SCRIPT'
 exit 0
 SCRIPT
 chmod +x "$target_home/.local/bin/bun"
-export TARGET_USER="ubuntu"
+# init_target_context honors an explicit TARGET_HOME only for the calling
+# user, so name the caller instead of assuming the tests run as `ubuntu`.
+export TARGET_USER="$(id -un)"
 export TARGET_HOME="$target_home"
 export ACFS_BIN_DIR="$target_home/.local/bin"
 export BUN_BIN="$target_home/.bun/bin/bun"
@@ -7723,10 +7725,7 @@ EOF
 test_smoke_bootstrap_uses_system_state_target_home_when_getent_unavailable() {
     setup_system_state_target_home_only_env
 
-    local current_user=""
     local output=""
-
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
 
     output=$(
         HOME="$TEST_ROOT_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
@@ -7735,7 +7734,10 @@ test_smoke_bootstrap_uses_system_state_target_home_when_getent_unavailable() {
             _ "$SMOKE_TEST_SH"
     )
 
-    if [[ "$output" == *"target_user=$current_user"* ]] \
+    # The state names a home but no user, and no passwd entry claims that home.
+    # Since 1f18b751 the owner of the directory (here, the caller) is not
+    # trusted as the target user, so the documented default stands.
+    if [[ "$output" == *$'target_user=ubuntu\n'* ]] \
         && [[ "$output" == *"target_home=$TEST_TARGET_HOME"* ]] \
         && [[ "$output" == *"binary=$TEST_TARGET_HOME/.local/bin/claude"* ]]; then
         harness_pass "smoke bootstrap uses system state target_home when getent is unavailable"
@@ -11153,11 +11155,18 @@ JSON
 
     write_fake_command "$TEST_TARGET_HOME/.local/bin/gemini" "gemini 1.2.3"
 
+    # The shared fixture installs agy. Legacy Gemini credentials must not
+    # sign it in (1 = installed, not authenticated); once agy is gone the
+    # check must report it missing (2) rather than fall back to Gemini.
     local output=""
+    local status_cmd='source "'"$ONBOARD_SH"'" help >/dev/null; check_auth_status antigravity && status=0 || status=$?; printf "%s\n" "$status"'
     output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_INSTALLED_ACFS" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
-        bash -lc 'source "'"$ONBOARD_SH"'" help >/dev/null; check_auth_status antigravity && status=0 || status=$?; printf "%s\n" "$status"')
+        bash -lc "$status_cmd")
+    rm -f "$TEST_TARGET_HOME/.local/bin/agy"
+    output+=" $(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_INSTALLED_ACFS" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash -lc "$status_cmd")"
 
-    if [[ "$output" == "2" ]]; then
+    if [[ "$output" == "1 2" ]]; then
         harness_pass "onboard antigravity auth rejects legacy Gemini credentials without agy"
     else
         harness_fail "onboard antigravity auth rejects legacy Gemini credentials without agy" "$output"
@@ -11978,6 +11987,7 @@ main() {
     test_smoke_test_can_be_sourced_without_leaking_install_context || true
     test_smoke_test_run_preserves_caller_path_when_sourced || true
     test_smoke_binary_path_prefers_persisted_bin_dir_over_poisoned_env_bin_dir || true
+    test_smoke_binary_path_ignores_other_user_home_bin_dir_from_state || true
     test_smoke_installed_script_ignores_poisoned_explicit_acfs_home || true
     test_smoke_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_smoke_prefers_explicit_acfs_home_over_stale_system_state_for_target_context || true
@@ -11994,6 +12004,8 @@ main() {
     test_cheatsheet_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home || true
     test_cheatsheet_can_be_sourced_without_running_main || true
     test_cheatsheet_copy_install_ignores_relative_home_trap || true
+    test_cheatsheet_uses_explicit_target_home_when_state_is_missing || true
+    test_cheatsheet_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved || true
 
     harness_section "Info / Support / Onboard"
     test_state_driven_helpers_reject_invalid_target_home_from_state || true
@@ -12016,6 +12028,7 @@ main() {
     test_info_uses_target_user_path_under_root_home || true
     test_info_summary_ignores_current_shell_only_binaries || true
     test_info_binary_path_prefers_persisted_bin_dir_over_poisoned_env_bin_dir || true
+    test_info_binary_path_ignores_other_user_home_bin_dir_from_state || true
     test_info_zero_lessons_hides_onboard_prompt_and_explains_state || true
     test_info_reads_skipped_tools_without_jq || true
     test_support_bundle_uses_installed_layout_under_root_home || true
@@ -12039,8 +12052,8 @@ main() {
     test_onboard_auth_checks_ignore_other_user_home_bin_dir_from_state || true
     test_onboard_auth_checks_use_explicit_target_user_when_no_authoritative_runtime_home_exists || true
     test_onboard_auth_checks_do_not_fall_back_to_current_home_when_explicit_target_user_is_unresolved || true
-    test_onboard_gemini_vertex_auth_finds_target_google_cloud_sdk_bin_outside_current_path || true
-    test_onboard_gemini_vertex_auth_finds_target_gcloud_outside_current_path || true
+    test_onboard_antigravity_auth_respects_antigravity_home_override || true
+    test_onboard_antigravity_auth_rejects_legacy_gemini_credentials_without_agy || true
     test_onboard_copy_install_uses_system_state_under_root_home || true
     test_onboard_copy_install_uses_target_home_only_system_state_under_root_home || true
     test_onboard_repo_local_prefers_system_state_target_user_over_stale_installed_state || true

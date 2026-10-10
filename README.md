@@ -55,6 +55,8 @@ Swarm launch, packet delivery and capacity's launch recommendations still target
 
 The installer is **idempotent**—if interrupted, simply re-run it. It will automatically resume from the last completed phase without prompts.
 
+> **Using a cloud agent instead of a VPS?** The [cloud agent guide](https://agent-flywheel.com/cloud-agents) has tested Claude Code / Codex setups and researched recipes for other Linux agents. See [cloud environments](#cloud-agent-environments).
+
 > **Production environments:** For stable, reproducible installs, pin to a tagged release or specific commit:
 > ```bash
 > # Preferred: use a tagged release (e.g., v0.9.0)
@@ -470,6 +472,137 @@ Omarchy (and Arch Linux generally) is supported by the **same one-liner** — no
 Everything else — language runtimes, AI agents, and the flywheel tool stack — installs identically to Ubuntu.
 
 ---
+
+## Cloud agent environments
+
+The public [cloud agent setup guide](https://agent-flywheel.com/cloud-agents) selects the right recipe for your provider. Claude Code and ChatGPT / Codex have hosted test evidence; Amp Orbs, Devin and Grok Bot have documentation-based recipes awaiting hosted acceptance. Meta Muse needs shell/runtime and persistence checks before an installation recipe can be accepted. The installer retains its original filename and supports `claude`, `codex` and provider-neutral `generic` modes.
+
+### Claude Code on the web
+
+[Claude Code on the web](https://code.claude.com/docs/en/claude-code-on-the-web) runs cloud sessions on a disposable Ubuntu 24.04 VM. ACFS uses [`scripts/claude-code-web-setup.sh`](scripts/claude-code-web-setup.sh) to install prebuilt agent-facing tools during setup, without provisioning users, upgrading the OS or starting background services. The [cloud guide](https://agent-flywheel.com/cloud-agents#claude) walks through it with copy buttons.
+
+**Set it up:** in claude.ai/code open the environment menu, choose **Add cloud environment** (or edit one), set **Network access** to **Full** (recommended), and paste this as the **Setup script**:
+
+```bash
+#!/bin/bash
+(
+acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 0; }
+printf '%s\n' "$acfs_cloud_setup" | bash
+)
+```
+
+The bootstrap downloads completely before it runs, with a 20-second transfer limit. If that download fails, Claude reports the failure and still starts the session. Full access enables the public binary mirror. Custom and restricted-mode behavior are described below. Pasting the whole script into the field works too.
+
+| Tool | Command | In a cloud session |
+|------|---------|--------------------|
+| BeadsRust | `br` | Issue tracking in the repo's `.beads/` |
+| Beads Viewer | `bv` | `bv --robot-*` triage from a prebuilt release |
+| MCP Agent Mail | `am`, `mcp-agent-mail` | Registers `am serve-stdio` with Claude Code, so no daemon has to survive the snapshot |
+| Ultimate Bug Scanner | `ubs` | Scanner with bundled modules/helpers; no hooks installed |
+| Coding Agent Session Search | `cass` | Search this VM's agent history |
+| CASS Memory System | `cm` | Procedural memory |
+| Meta Skill | `ms` | Skill search and management |
+| ast-grep | `ast-grep` | Structural search and UBS dependency |
+| Jeffrey's Skills | `jsm` | Skill manager for jeffreys-skills.md |
+| JeffreysPrompts | `jfp` | Prompt library CLI |
+
+**How it behaves:**
+- Every prebuilt bundle is checked against the repository's `cloud-mirror.json` before extraction. A mismatch skips the tool. All tools, including JSM, are hash-pinned.
+- Tool jobs run in parallel with a maximum 180-second deadline covering downloads and both existing/final binary checks, plus up to two seconds for termination. This keeps setup inside the roughly five-minute caching window under normal VM operation. No compiler is invoked. Later sessions start from the snapshot with the tools already installed.
+- The script always exits 0, because a failing setup script stops the session from starting. Anything that did not install is listed in the summary, in `~/.acfs/cloud/setup.log`, and in the guide below.
+- It writes a managed block into `~/.claude/CLAUDE.md` (or `$CLAUDE_CONFIG_DIR/CLAUDE.md`), which cloud sessions load as user instructions, so Claude knows which flywheel tools exist and how to call them. Content outside the block is preserved. If existing managed markers are incomplete, setup leaves the file untouched and logs the retained replacement guide's location.
+- Re-runs repair the exact old ACFS Agent Mail entry that launched `mcp-agent-mail` without arguments, retaining a private config backup. Custom MCP registrations remain unchanged.
+
+**Left out on purpose:** everything in `install.sh` that provisions a long-lived machine (users, zsh theming, the Ubuntu upgrade, systemd services, Tailscale, PostgreSQL, Vault, cloud CLIs), plus `ntm` (no interactive terminal to drive), `dcg` (it installs a user-level Claude Code hook, and cloud sessions only run hooks from the repository's `.claude/settings.json`), `rch` (needs SSH build workers), and `caam`, `ru`, `slb`.
+
+**Options**, set inline so the setup script itself sees them (for example `curl -fsSL … | ACFS_CLOUD_TOOLS="br bv am ubs" bash`):
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `ACFS_CLOUD_TOOLS` | `br bv am ubs cass cm ms ast-grep jsm jfp` | Which tools to install |
+| `ACFS_CLOUD_TIMEOUT` | `180` | Deadline for each tool's job (download, install and version checks) in seconds; 1–180 |
+| `ACFS_CLOUD_REINSTALL` | `0` | `1` reinstalls tools that are already on PATH (to update inside a running session) |
+| `ACFS_CLOUD_AGENT` | `claude` | `codex` writes a Codex instruction guide and skips Claude MCP registration |
+| `ACFS_CLOUD_ROOT` | `$HOME` | Writable absolute data root for binaries/logs; Codex's custom-root guide lives there too |
+| `ACFS_CLOUD_SKILL_DIR` | Unset | Optional absolute Codex repository skill directory; existing skills are retained |
+| `ACFS_REF` | `main` | ACFS ref that supplies `cloud-mirror.json` |
+
+**Public prebuilt mirror:** every default tool, including `ast-grep`, JSM and JFP, comes from `https://downloads.agent-flywheel.com/acfs-cloud/v1`. No login, GitHub token or repository ownership is needed. Select **Full** network access, or **Custom** allowing `raw.githubusercontent.com` and `downloads.agent-flywheel.com`. Bundles are pinned by SHA256 in [`cloud-mirror.json`](cloud-mirror.json), use content-addressed URLs, and are checked before extraction and executable verification. Setup never runs upstream installers or builds from source.
+
+**Trusted/degraded mode:** when the mirror cannot be reached, setup tries the exact public artifact pinned in the same manifest. JSM uses a vendor-verified copy on public GitHub, with its original checksum and upstream URL retained. UBS uses a complete public copy of the mirror bundle, including its release-pinned modules and helpers, so scans need no module downloads after setup. The environment's GitHub proxy may block these downloads too, so Trusted does **not** guarantee all tools. Existing working tools remain available, failures explain the Full/Custom setting in the summary, and session startup continues.
+
+The bundles target Linux x86_64. Each executable must successfully return its version before installation. JFP uses the baseline x64 release asset, verified on both Ivy Bridge without AVX2 and EPYC with AVX2. The publisher requires that asset and refuses to substitute a modern-only build.
+
+**Maintainer refresh:** `python3 scripts/cloud-mirror-publish.py --stage /path/on/large-disk/acfs-cloud --output /path/to/new-candidate.json --publish` discovers latest releases with authenticated `gh`, verifies release checksums and pinned Minisign signatures where published, bundles Linux x86_64 executables, uploads with authenticated Wrangler, and verifies each public download. It requires Python 3.10+, `gh`, `minisign`, and `wrangler`; these credentials are needed only by the maintainer. Review the candidate, smoke-test on Ubuntu 24.04, and commit it as `cloud-mirror.json`. Repeated runs reuse downloaded artifacts and skip matching remote bundles. Staging is retained for inspection. A failed tool aborts manifest publication; it cannot silently disappear from the install set.
+
+Use `--tools br bv` to refresh a subset while retaining every other entry from the committed manifest. Partial refreshes require its existing base URL. Refreshing JSM also publishes its verified vendor archive to the public `cloud-binaries-v1` prerelease. Assets include the source checksum in their names, are never replaced, and must pass both GitHub's digest check and anonymous download verification before the candidate manifest is written. This carrier does not change ACFS's normal latest release. When mirroring to another R2 bucket/domain, `--base-url` supplies the public prefix and `--bucket` supplies the destination bucket; the URL path becomes the object prefix.
+
+---
+
+## ChatGPT / Codex cloud environments
+
+The same public bundles work in a Linux x86_64 Codex cloud environment. In **Work in → Cloud**, create or edit an environment and put this in its **Install script**:
+
+```bash
+#!/bin/bash
+set -o pipefail
+acfs_cloud_root="$(git rev-parse --show-toplevel)" || exit 1
+acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 1; }
+printf '%s\n' "$acfs_cloud_setup" | ACFS_CLOUD_SKILL_DIR="$acfs_cloud_root/.agents/skills/acfs-cloud-tools" ACFS_CLOUD_AGENT=codex ACFS_CLOUD_ROOT="$acfs_cloud_root/.acfs-cloud" bash || exit 1
+acfs_cloud_exclude="$(git rev-parse --git-path info/exclude)" || exit 1
+mkdir -p "$(dirname "$acfs_cloud_exclude")" || exit 1
+printf '/.acfs-cloud/\n/.agents/skills/acfs-cloud-tools/\n' >> "$acfs_cloud_exclude"
+```
+
+Enable internet access and add `raw.githubusercontent.com` and `downloads.agent-flywheel.com` to **Additional allowed domains**. These public downloads need no secrets or ownership of the tool repositories. The recipe installs into the writable repository workspace because hosted home/config paths can be read-only, and excludes its data directory through local Git metadata. It preserves `HOME` and `CODEX_HOME`. Review `<repo>/.acfs-cloud/.acfs/cloud/setup.log`, then **Publish** the prepared environment. After changing its setup, **Republish** for new tasks. See OpenAI's [current cloud environment guide](https://learn.chatgpt.com/docs/environments/cloud-environments).
+
+Save these instructions in the environment's **Start skill** and include them at the start of each new task. Our hosted checks reused all eleven executables but did not automatically load the saved Start skill or generated repository skill; explicitly loading the guide and setting PATH works:
+
+```text
+Find the repository root with git rev-parse --show-toplevel.
+Read <repo>/.acfs-cloud/.codex/AGENTS.md for the installed flywheel tools and <repo>/.acfs-cloud/.acfs/cloud/setup.log for failures.
+In each task shell, run acfs_cloud_root="$(git rev-parse --show-toplevel)/.acfs-cloud"; export PATH="$acfs_cloud_root/.local/bin:$PATH" before using the tools.
+Follow the guide's CASS_DATA_DIR, CASS_MEMORY_HOME and JFP_HOME exports in each task shell so search data, memory and prompt caches use the writable workspace; preserve existing overrides and keep any XDG_DATA_HOME/XDG_CONFIG_HOME writable.
+Check br --version, bv --version, ubs --version and jsm --version before starting work.
+Use br ready --json and bv --robot-triage; never open their interactive TUIs.
+```
+
+Codex mode preserves existing instructions outside its managed block. Without a custom root it uses `$CODEX_HOME/AGENTS.md` or `~/.codex/AGENTS.md`; a nonempty `AGENTS.override.md` takes precedence, so setup warns. The workspace recipe also creates `.agents/skills/acfs-cloud-tools/SKILL.md` in [Codex's documented repository skill location](https://learn.chatgpt.com/docs/build-skills); an existing skill at that path is preserved. Reading that skill loads the separate guide and configures PATH. Automatic hosted catalog discovery failed in our checks: a fresh task still omitted it after removing its Git exclusion, so changing exclusions is not a proven fix. Use the explicit startup instructions above. See [OpenAI's instruction discovery rules](https://learn.chatgpt.com/docs/agent-configuration/agents-md). Agent Mail is available as a CLI; this setup does not configure or claim hosted MCP support. Local Codex MCP configuration and ChatGPT's remote MCP connections are different surfaces; see [OpenAI's MCP guide](https://learn.chatgpt.com/docs/extend/mcp).
+
+If your UI instead has **Setup script** and **Maintenance script**, it uses the [legacy environment workflow](https://learn.chatgpt.com/docs/environments/cloud-environment). Put the install command in Setup script; avoid reinstalling in Maintenance script on every cached resume. Configure task-phase internet separately if tools need online access after setup.
+
+**Verification boundary:** both installer modes are tested on Ubuntu 24.04, including real public downloads. On 2026-10-08, a fresh Claude-hosted Full session pinned to `4a0e6bfa792ce73ad4c69847755ecd64384288c2` installed all ten tools in 12 seconds; all eleven versions passed, the guide loaded automatically, and Agent Mail's stdio MCP health check passed. On 2026-10-09, a cold default-Trusted Claude session pinned to `31c8180860f9ed461d9843d6ed298939a5b3ea74` installed all ten tools through public fallbacks in 53 seconds; all eleven versions, automatic instructions and actual Agent Mail MCP health passed. That run's first UBS helper download failed TLS; its release-hash-verified recovery was tested separately. The later complete UBS fallback removes that lazy module download, but has not been rerun in that hosted session. Codex hosted installation took 6 seconds at `140a845d`; fresh published tasks reused all eleven executables, including after the repository-skill update at `4bdbf5a7`. A task that explicitly loaded the guide configured PATH and passed all eleven probes. Automatic Codex skill loading remains open. These times describe the pinned earlier recipes, not a fresh hosted acceptance of later changes. The script reports individual failures but exits zero; successful session startup alone does not prove every tool installed. Default UBS exit 0 can include warnings; inspect its report or use `--ci --fail-on-warning` for a warning-strict check.
+
+### Other Linux cloud agents
+
+The provider-neutral template writes `$HOME/.acfs/cloud/AGENTS.md` and does not change agent configuration or register MCP servers:
+
+```bash
+#!/bin/bash
+set -o pipefail
+acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 1; }
+printf '%s\n' "$acfs_cloud_setup" | ACFS_CLOUD_AGENT=generic bash
+```
+
+Include these instructions in each task:
+
+```text
+Read $HOME/.acfs/cloud/AGENTS.md and $HOME/.acfs/cloud/setup.log before starting work.
+In each task shell, run export PATH="$HOME/.local/bin:$PATH".
+If using a custom writable data root, follow the guide's CASS_DATA_DIR, CASS_MEMORY_HOME and JFP_HOME exports in each task shell; preserve existing overrides and keep any XDG_DATA_HOME/XDG_CONFIG_HOME writable.
+Check br --version, bv --version, ubs --version and jsm --version; report missing tools from the setup log.
+Use the existing repository tracker with br ready --json and bv --robot-triage. Never open their interactive TUIs.
+Agent Mail is available as a CLI. This setup does not configure this agent's MCP servers.
+```
+
+Requirements: Linux x86_64 with compatible runtime libraries, Bash, Python 3, curl, tar and GNU timeout, plus a writable data root. Ubuntu 24.04 is the tested OS. If you set `ACFS_CLOUD_ROOT`, use that root instead of `$HOME` in these instructions. Inspect the setup log and each version command to confirm the installed tools work.
+
+For a custom data root, follow the generated guide's `CASS_DATA_DIR` and `CASS_MEMORY_HOME` exports so search data and memory also use the writable workspace, and its `JFP_HOME` export for prompt caching. These preserve existing overrides and an explicit `XDG_DATA_HOME`; configured state directories must be writable. JFP also honors `XDG_CONFIG_HOME`, which takes precedence and must be writable. Provider HOME and configuration are preserved.
+
+- **[Amp Orbs](https://ampcode.com/docs/orbs/customizing):** merge the command into executable `.agents/setup`, or use the project's Pre-setup Script. Do not install dependencies in `.agents/resume`. Amp documents Debian 12; binary compatibility and hosted persistence remain unverified.
+- **[Devin](https://docs.devin.ai/onboard-devin/environment/blueprint-reference):** add a Linux blueprint `run` step to `initialize` or `maintenance` and task instructions to `knowledge`. Verify a fresh snapshot. PATH exports do not persist between blueprint steps unless written to `$ENVRC`; explicit task-shell exports avoid assuming persistence.
+- **[Grok Bot](https://docs.x.ai/grok-bot/private-networks):** Enterprise Team Setup runs shell-script manifest entries as the computer user on every Linux team computer. Consumer setup access, binary compatibility and hosted persistence remain unverified. Grok Build CLI and chat Build Mode are different products.
+- **[Meta Muse](https://about.fb.com/news/2026/09/introducing-muse-personal-ai-agent/amp/):** Meta documents a persistent Linux VM with Sentinel-controlled access. A usable startup hook, CPU/runtime compatibility and hosted installation have not been verified. [Muse Code](https://dev.meta.ai/docs/muse-code) is the separate terminal/CI agent.
 
 ## The Installer
 The installer is the heart of ACFS—a modular Bash script that transforms a fresh Ubuntu or Arch-based machine into a fully-configured development environment.
@@ -2623,22 +2756,28 @@ bash scripts/stack-provenance-report.sh --network=check --json
 
 Offline mode reports local manifest/checksum consistency for stack tools. Network mode also checks GitHub latest release metadata and generates a checksum candidate without writing `checksums.yaml`. Changed stack installer hashes fail the report, unrelated checksum diffs are called out separately, and `rch` release changes are flagged as mandatory checksum-refresh review items.
 
+Network mode also records, per tool, which Linux architectures the latest release ships a build for (`architecture.linux`). A release with an x86_64 Linux build but no aarch64 one is a warning, because ARM64 installs then compile from source or fail. As of 2026-10-09, `rch` is the only such stack tool (upstream issue [remote_compilation_helper#96](https://github.com/Dicklesworthstone/remote_compilation_helper/issues/96)).
+
 ### Agent Readiness Audit (`scripts/agent-readiness-audit.sh`)
 
-Run the local agent readiness audit before launching a swarm on a freshly installed VPS:
+Run the local agent readiness audit before launching a swarm on a freshly installed VPS (the installer ships it; from a checkout, `bash scripts/agent-readiness-audit.sh` is equivalent):
 
 ```bash
-bash scripts/agent-readiness-audit.sh
-bash scripts/agent-readiness-audit.sh --json
+acfs agent-readiness
+acfs agent-readiness --json
+acfs agent-readiness --rehearse --profile claude:work --profile codex:main        # plan only
+acfs agent-readiness --rehearse --profile claude:work --profile codex:main --run  # run local CAAM status/--version checks
 ```
+
+Rehearsal uses isolated profiles from `caam profile ls`, never activates, logs in or rotates accounts, and only proves local startup, not live authentication (see `acfs agent-readiness --rehearse --help` for the opt-in live check).
 
 The audit checks Claude Code, Codex CLI, Antigravity CLI, and `caam` without printing token values or auth file contents. It reports CLI presence, version availability, parseable auth/config files, CAAM default profile consistency, and stale CAAM defaults that point at missing profiles.
 
 Useful options:
 
 ```bash
-bash scripts/agent-readiness-audit.sh --no-version  # Skip CLI --version probes
-bash scripts/agent-readiness-audit.sh --home /home/ubuntu --path "$PATH"
+acfs agent-readiness --no-version  # Skip CLI --version probes
+acfs agent-readiness --home /home/ubuntu --path "$PATH"
 ```
 
 Treat failures as launch blockers. Warnings usually mean the CLI is installed but needs a user sign-in or CAAM default profile selection.
@@ -2659,7 +2798,7 @@ jobs:
 
 ### Automated Checksum + Drift Repair (`scripts/checksum-monitor-local.sh`)
 
-ACFS monitors upstream installers for changes and repairs generated-artifact checksum drift from a local systemd timer (every 15 minutes, in a dedicated clone on a maintainer box), not from GitHub Actions; the retired `checksum-monitor.yml` did the same job and is kept only for reference.
+ACFS checks upstream installer changes from a local systemd timer (every 15 minutes, in a dedicated clone on a maintainer box). The retired GitHub Actions monitor is kept for reference; it is not the publication path.
 
 ```text
 scripts/checksum-monitor-local.sh      # the monitor
@@ -2668,11 +2807,13 @@ scripts/templates/acfs-checksum-monitor.* # timer + service templates
 
 **How It Works:**
 
-1. **Verify Generated Artifact Drift**: Runs `scripts/check-manifest-drift.sh --json` to detect:
-   - `ACFS_MANIFEST_SHA256` mismatches
-   - internal script checksum drift (`scripts/generated/internal_checksums.sh`)
-   - generated installer and web metadata drift via `bun run generate:diff`
-   - semantic manifest contract drift across `scripts/generated/doctor_checks.sh`, `apps/web/lib/generated`, `acfs/onboard/lessons`, README snippets, and `checksums.yaml`
+1. **Bind a clean base**: Requires a clean `main` checkout matching both remote compatibility refs. Installs manifest dependencies with `--frozen-lockfile --ignore-scripts` and checks generated artifacts with `scripts/check-manifest-drift.sh --json`. Existing drift stops the run and must be repaired separately.
+2. **Observe the complete installer set**: Downloads every required installer and binds its URL and SHA256 to the exact existing `checksums.yaml`. Any fetch error, skipped entry, malformed report, or repository change stops publication.
+3. **Validate the candidate**: Runs the canonical checksum generator, then requires the candidate to change exactly the mismatches in the first observation. A second fetch that changes a previously matching installer is rejected.
+4. **Require prior external review**: For any changed URL outside `https://raw.githubusercontent.com/Dicklesworthstone/`, records a GitHub issue before modifying repository files. A human must review the upstream bytes and authorize the exact digest printed in that issue. The authorization file must be owner-only, regular, non-symlink, and contain only `authorize:<digest>`. Without authorization, the entire candidate waits, including any first-party changes.
+5. **Generate and publish**: Places the validated candidate, regenerates its installer ledger and web metadata, checks the complete generated contract, and commits only the declared publication paths. Pushes both compatibility refs atomically and reads them back before recording a healthy run.
+
+The drift check combines `bun run generate:diff` with semantic checks across `scripts/generated/doctor_checks.sh`, `apps/web/lib/generated`, `acfs/onboard/lessons`, README snippets, and installer checksum coverage.
 
 The internal ledger is inert data: exactly `ACFS_INTERNAL_CHECKSUMS_SCHEMA=1`,
 one associative checksum map, and its exact entry count. The installer parses
@@ -2680,28 +2821,8 @@ that closed grammar without sourcing the ledger, enforces its checksum-controlle
 membership, and verifies regular non-symlink files before sourcing them. This
 is an internal consistency boundary, not an independent signature or archive
 provenance claim.
-2. **Auto-Repair Drift**: If drift is detected, runs `--fix` (regenerate + commit + push)
-3. **Verify Current Upstream Checksums**: Downloads all upstream installers, calculates SHA256
-4. **Detect Upstream Changes**: Compares against `checksums.yaml`
-5. **Categorize Tools**: Separates "trusted" tools (can auto-update) from others
-6. **Auto-Update Upstream Checksums**: Commits updated `checksums.yaml` when safe
-7. **Alert**: For non-trusted tool changes, creates GitHub issue for manual review
 
-The monitor **fails closed** when verification returns fetch errors or skipped entries; it will not emit partial/placeholder checksum updates.
-
-**What gets auto-updated:** every changed installer hash — first-party and third-party alike — is regenerated with the canonical updater, committed, and pushed. The monitor fails closed (no partial update) if any fetch fails or any entry is skipped.
-
-**What gets flagged for review:** when the changed set includes a third-party installer (anything whose URL is not under the Dicklesworthstone GitHub org: bun, uv, rustup, oh-my-zsh, atuin, zoxide, nvm, claude, antigravity, opencode, omp, grok), the monitor opens a GitHub issue with the diff after the update lands, so a human reviews the new upstream script post-hoc. First-party tool changes are committed without an issue.
-
-This gives:
-- **Velocity**: a fresh install is never broken by a stale hash for long
-- **Auditability**: every hash change is a git commit, and third-party changes get an issue for review
-- **Fail-closed behavior**: on fetch errors nothing is committed
-
-**Upstream Repo Dispatch (Fast Path):**
-- ACFS-owned tool repos emit a `repository_dispatch` event (`upstream-changed`) when their `install.sh` changes or a release is published.
-- Requires a PAT secret named `ACFS_REPO_DISPATCH_TOKEN` in each tool repo (repo scope for this org/user).
-- If dispatch fails, the 15-minute scheduled monitor still catches drift (but slower).
+First-party changes can publish automatically after these checks. External changes require review **before publication**, rather than a post-publication alert. Repeated failures are logged and escalated through deduplicated GitHub issues and optional `ACFS_NTFY_TOPIC` notifications. Check the deployed timer's logs for its current health; the existence of workflow or timer files does not prove that monitoring is running.
 
 ### Production Smoke Tests (`production-smoke.yml`)
 
@@ -2763,7 +2884,7 @@ The target host must be freshly provisioned. By default the harness fails if the
 
 For current release qualification, provision a fresh Ubuntu 24.04 LTS host and pass `--expect-ubuntu 24.04 --expect-final-ubuntu 24.04` to the factory script. This verifies that an ordinary install preserves the host release. The historical workflow inputs above describe the disabled workflow's 25.10 defaults.
 
-The separate upgrade/resume gate must explicitly pass `--target-ubuntu=26.04` to the installer on a disposable reboot-capable host. The factory harness's `--expect-final-ubuntu` and `--allow-install-reboot` options only control verification and reboot tolerance; they do not request an OS upgrade. The current harness does not forward `--target-ubuntu`, so those options alone cannot qualify the opt-in upgrade path.
+The separate upgrade/resume gate must explicitly request the upgrade on a disposable reboot-capable host. The factory harness's `--expect-final-ubuntu` and `--allow-install-reboot` options only control verification and reboot tolerance; `--target-ubuntu 26.04` is what passes `--target-ubuntu=26.04` to the installer, on both the first run and the idempotency rerun. For example, `tests/vm/test_factory_install_qemu.sh --ubuntu 24.04 --target-ubuntu 26.04 --allow-install-reboot` (the final-release expectation defaults to the target). On 2026-10-09 this passed for 24.04, 22.04 (two hops) and 25.10 (EOL recovery) sources, and for a fresh 26.04 image.
 
 The disabled workflow previously accepted provider-specific real VPS sentinels through an `acfs-factory-host-ready` dispatch from an external provisioning job. This historical payload included the fresh host address instead of storing a long-lived VPS as `ACFS_FACTORY_SSH_TARGET`; current release checks run the factory script directly:
 
@@ -3104,6 +3225,12 @@ harness_summary  # Outputs: 15 passed, 0 failed, 2 skipped
 
 # Docker integration matrix across the supported LTS releases (22.04, 24.04, 26.04)
 ./tests/vm/test_install_ubuntu.sh --all
+
+# Interrupted install (SIGHUP after cli_tools) that --resume must finish
+./tests/vm/test_install_ubuntu.sh --interrupt-resume
+
+# arm64 container install (needs binfmt emulation on x86_64 hosts)
+./tests/vm/test_install_ubuntu.sh --platform linux/arm64
 
 # Real factory-host integration test preserving Ubuntu 24.04 LTS
 ./tests/vm/test_factory_install_ubuntu.sh --ssh-target root@203.0.113.10 --expect-ubuntu 24.04 --expect-final-ubuntu 24.04
@@ -4564,8 +4691,11 @@ For maximum security, you can:
 ```bash
 curl -fsSL "https://..." -o install.sh
 less install.sh
-bash install.sh --yes --mode vibe
+bash -s -- --yes --mode vibe < install.sh
 ```
+
+Feed the reviewed file to `bash -s` exactly as `curl | bash` would. Run by path
+(`bash install.sh`), the installer expects a full repository checkout beside it.
 
 ### Checksum Verification Deep Dive
 
@@ -4927,7 +5057,8 @@ ACFS is actively developed. Here's what's coming:
 
 ### Mid-Term (Q2 2025)
 
-- [ ] **ARM64 optimization**: Native Apple Silicon and ARM VPS support
+- [x] **ARM64 (aarch64) Linux VPS**: of the 29 stack tools, 20 publish native aarch64 Linux builds and 5 ship scripts; `rch` compiles from source; `pcr`, `pfr` and `jfp` have no release the provenance report can inspect. An emulated full arm64 install completes, its only smoke failures caused by the emulator's missing setuid support (not yet run on native ARM hardware) ✓
+- [ ] **Apple Silicon (macOS) hosts**
 - [ ] **Offline mode**: Pre-downloaded package bundles
 - [ ] **Team mode**: Shared configurations across team members
 - [ ] **Plugin system**: Third-party tool integrations

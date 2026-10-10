@@ -2849,9 +2849,15 @@ detect_environment() {
             abs_lib_dir="$(pwd)/${ACFS_LIB_DIR#./}"
         fi
         echo "ERROR: Library directory not found: $abs_lib_dir" >&2
-        echo "This typically means bootstrap failed or the script is being run from an unexpected location." >&2
-        echo "For curl|bash installation, ensure network connectivity to GitHub." >&2
-        echo "For local installation, run from the repository root directory." >&2
+        if [[ -n "${SCRIPT_DIR:-}" && ! -e "$SCRIPT_DIR/scripts" ]]; then
+            # A downloaded install.sh run by path is treated as a checkout.
+            echo "install.sh was run as a standalone file, which needs a full repository checkout beside it." >&2
+            echo "To run a downloaded copy, stream it like curl|bash: bash -s -- [options] < install.sh" >&2
+        else
+            echo "This typically means bootstrap failed or the script is being run from an unexpected location." >&2
+            echo "For curl|bash installation, ensure network connectivity to GitHub." >&2
+            echo "For a local checkout, run the install.sh at the repository root." >&2
+        fi
         exit 1
     fi
 
@@ -3886,6 +3892,10 @@ acfs_load_internal_checksums_data() {
         scripts/lib/swarm_simulation.sh
         scripts/lib/swarm_status.sh
         scripts/services-setup.sh
+        scripts/agent-readiness-audit.sh
+        packages/manifest/src/agent-readiness-audit.ts
+        packages/manifest/src/agent-profile-rehearsal.ts
+        packages/manifest/src/binary-architecture.ts
         scripts/generated/manifest_index.sh
         scripts/generated/doctor_checks.sh
         scripts/generated/install_all.sh
@@ -4167,6 +4177,9 @@ bootstrap_repo_archive() {
         --wildcards --wildcards-match-slash \
         "*/scripts/**" \
         "*/packages/onboard/**" \
+        "*/packages/manifest/src/agent-readiness-audit.ts" \
+        "*/packages/manifest/src/agent-profile-rehearsal.ts" \
+        "*/packages/manifest/src/binary-architecture.ts" \
         "*/acfs/**" \
         "*/install.sh" \
         "*/checksums.yaml" \
@@ -4282,6 +4295,20 @@ bootstrap_repo_archive() {
     return 0
 }
 
+# Print the first env executable whose --help offers --default-signal.
+acfs_signal_capable_env() {
+    local candidate="" help=""
+    for candidate in "$@"; do
+        [[ -n "$candidate" ]] || continue
+        if help="$(LC_ALL=C "$candidate" --help 2>&1)" \
+            && [[ "$help" == *"--default-signal"* ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 acfs_run_verified_bootstrap_installer() {
     local verified_installer="${ACFS_BOOTSTRAP_DIR:-}/install.sh"
     local bash_bin=""
@@ -4304,9 +4331,10 @@ acfs_run_verified_bootstrap_installer() {
     # Give both handoff paths known signal dispositions. This is essential for
     # the asynchronous path (Bash otherwise starts it with SIGINT/SIGQUIT
     # ignored) and also closes inherited-ignore edge cases on the foreground path.
-    local env_help=""
-    if ! env_help="$(LC_ALL=C "$env_bin" --help 2>&1)" \
-        || [[ "$env_help" != *"--default-signal"* ]]; then
+    # Ubuntu 25.10's default env is uutils 0.2, which lacks --default-signal;
+    # GNU env stays installed there as gnuenv (26.04's uutils env supports it).
+    if ! env_bin="$(acfs_signal_capable_env "$env_bin" \
+        "$(acfs_early_system_binary_path gnuenv 2>/dev/null || true)")"; then
         log_error "Verified bootstrap handoff requires env --default-signal support"
         return 1
     fi
@@ -10249,6 +10277,11 @@ UNIT_EOF
     # RCH (Remote Compilation Helper)
     if binary_installed "rch"; then
         log_detail "RCH already installed"
+    elif [[ "$(uname -m 2>/dev/null)" == aarch64 || "$(uname -m 2>/dev/null)" == arm64 ]]; then
+        # RCH releases (v2.1.16) have no aarch64 Linux build, so its installer
+        # compiles from source; the step is long and quiet, not hung.
+        log_detail "Installing RCH: no ARM64 Linux release yet, building from source (the slowest step on ARM64)"
+        try_step "Installing RCH" acfs_run_verified_upstream_script_as_target "rch" "bash" || acfs_optional_module_install_failed "rch" "RCH"
     else
         log_detail "Installing RCH"
         try_step "Installing RCH" acfs_run_verified_upstream_script_as_target "rch" "bash" || acfs_optional_module_install_failed "rch" "RCH"
@@ -10558,7 +10591,10 @@ UNIT_EOF
         log_detail "Brenner Bot already installed"
     else
         log_detail "Installing Brenner Bot"
-        try_step "Installing Brenner Bot" acfs_run_verified_upstream_script_as_target "brenner_bot" "bash" --skip-ntm --skip-cass || acfs_optional_module_install_failed "brenner_bot" "Brenner Bot"
+        # ACFS installs cass and cm itself, and uses herdr, not ntm; brenner's
+        # pinned copies would overwrite them in the same bin dir (same flags as
+        # acfs update, GH #210).
+        try_step "Installing Brenner Bot" acfs_run_verified_upstream_script_as_target "brenner_bot" "bash" --skip-ntm --skip-cass --skip-cm || acfs_optional_module_install_failed "brenner_bot" "Brenner Bot"
     fi
 
     # Required modules that acfs_optional_module_install_failed recorded above
@@ -10814,6 +10850,15 @@ finalize() {
     # Install services-setup wizard
     try_step "Installing services-setup.sh" install_asset "scripts/services-setup.sh" "$ACFS_HOME/scripts/services-setup.sh" || return 1
     try_step "Setting scripts permissions" $SUDO chmod 755 "$ACFS_HOME/scripts/services-setup.sh" || return 1
+
+    # Agent readiness audit and profile rehearsal (`acfs agent-readiness`). The
+    # TypeScript sources keep their checkout layout so the wrapper runs as-is.
+    try_step "Installing agent readiness audit" install_asset "scripts/agent-readiness-audit.sh" "$ACFS_HOME/scripts/agent-readiness-audit.sh" || return 1
+    try_step "Setting agent readiness audit permissions" $SUDO chmod 755 "$ACFS_HOME/scripts/agent-readiness-audit.sh" || return 1
+    try_step "Installing agent-readiness-audit.ts" install_asset "packages/manifest/src/agent-readiness-audit.ts" "$ACFS_HOME/packages/manifest/src/agent-readiness-audit.ts" || return 1
+    try_step "Installing agent-profile-rehearsal.ts" install_asset "packages/manifest/src/agent-profile-rehearsal.ts" "$ACFS_HOME/packages/manifest/src/agent-profile-rehearsal.ts" || return 1
+    try_step "Installing binary-architecture.ts" install_asset "packages/manifest/src/binary-architecture.ts" "$ACFS_HOME/packages/manifest/src/binary-architecture.ts" || return 1
+    try_step "Setting agent readiness ownership" acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/packages" || return 1
     try_step "Setting lib scripts permissions" $SUDO chmod 755 "$ACFS_HOME/scripts/lib/"*.sh "$ACFS_HOME/scripts/nightly-update.sh" || return 1
     try_step "Setting generated scripts permissions" $SUDO find "$ACFS_HOME/scripts/generated" -maxdepth 1 -type f -name '*.sh' -exec chmod 755 {} + || return 1
     try_step "Setting scripts ownership" acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/scripts" || return 1
@@ -11769,6 +11814,10 @@ acfs_guard_ubuntu_install_checkpoint() {
 }
 
 main() {
+    # The fleet tools refuse group/other-writable runtime files, and a login
+    # user's per-user-group umask (0002 on Ubuntu) would make every installed
+    # file 664. Nothing ACFS writes is meant to be group-writable.
+    umask 022
     parse_args "$@"
     acfs_require_ref_arg_value "ACFS_REF" "${ACFS_REF:-}" "main"
     acfs_require_ref_arg_value "ACFS_CHECKSUMS_REF" "${ACFS_CHECKSUMS_REF:-}" "main"

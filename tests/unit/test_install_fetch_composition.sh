@@ -53,8 +53,14 @@ fi
 head -n "$((total_lines - 1))" "$REPO_ROOT/install.sh" > "$SOURCEABLE"
 ln -sfn "$REPO_ROOT/scripts" "$TMPROOT/scripts"
 ln -sfn "$REPO_ROOT/acfs" "$TMPROOT/acfs"
-ln -sfn "$REPO_ROOT/checksums.yaml" "$TMPROOT/checksums.yaml"
-ln -sfn "$REPO_ROOT/acfs.manifest.yaml" "$TMPROOT/acfs.manifest.yaml"
+# detect_environment verifies the internal checksum ledger, which refuses
+# symlinked top-level files; byte-identical regular copies satisfy it.
+mkdir -p "$TMPROOT/packages/onboard" "$TMPROOT/packages/manifest/src"
+for ledger_file in install.sh VERSION checksums.yaml acfs.manifest.yaml packages/onboard/onboard.sh \
+    packages/manifest/src/agent-readiness-audit.ts packages/manifest/src/agent-profile-rehearsal.ts \
+    packages/manifest/src/binary-architecture.ts; do
+    cp -p "$REPO_ROOT/$ledger_file" "$TMPROOT/$ledger_file"
+done
 
 TARGET_USER="$(whoami)"
 TARGET_HOME="$HOME"
@@ -63,16 +69,13 @@ HAS_GUM=false
 YES_MODE=true
 # shellcheck disable=SC1090
 source "$SOURCEABLE"
-# Sourcing install.sh replaced the EXIT trap with its cleanup(), which reports
-# an install failure, and removed every function defined before it, so the
-# trap is set again here and the test's helpers are defined only below.
+# install.sh removes every shell function that exists when it starts and
+# installs its own EXIT/INT/TERM traps. Helpers defined earlier silently
+# vanished (each assert became "command not found" and FAIL stayed 0), and
+# the installer's cleanup ran at test exit. Define them, and reclaim the
+# traps, only after sourcing.
 trap 'rm -rf "$TMPROOT"' EXIT
-# Sourcing the truncated copy also sets SCRIPT_DIR to $TMPROOT. detect_environment
-# verifies the internal checksum ledger against SCRIPT_DIR, and the ledger
-# covers install.sh itself (here truncated), VERSION and packages/ (absent),
-# and refuses symlinked files, so point it at the real checkout instead.
-SCRIPT_DIR="$(cd "$REPO_ROOT" && pwd -P)"
-detect_environment
+trap - INT TERM
 assert() {
     local desc="$1" cond="$2"
     if [[ "$cond" == "true" ]]; then
@@ -83,6 +86,7 @@ assert() {
     fi
 }
 note() { echo "NOTE: $1"; }
+detect_environment
 # install.sh's own `set -euo pipefail` is now active in this shell (it leaks
 # in via sourcing above). Every step below intentionally exercises failure
 # paths and checks their real, nonzero exit codes — under -e a bare

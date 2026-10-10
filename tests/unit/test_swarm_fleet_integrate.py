@@ -122,6 +122,8 @@ class Fixture:
 
 class IntegrationTests(unittest.TestCase):
     def setUp(self):
+        # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
+        self.addCleanup(os.umask, os.umask(0o022))
         self.assertNotEqual(os.geteuid(), 0, "Run this test script as an unprivileged user")
 
     def branches(self, fmt="sha1", files=None, changes=None):
@@ -307,6 +309,10 @@ class IntegrationTests(unittest.TestCase):
 
 
 class CandidatePublicationTests(unittest.TestCase):
+    def setUp(self):
+        # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
+        self.addCleanup(os.umask, os.umask(0o022))
+
     def branches(self, **options):
         return IntegrationTests().branches(**options)
 
@@ -492,6 +498,10 @@ class CandidatePublicationTests(unittest.TestCase):
 
 
 class IntegrationRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
+        self.addCleanup(os.umask, os.umask(0o022))
+
     def fixture(self, **options):
         return IntegrationTests().branches(**options)
 

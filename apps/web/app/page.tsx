@@ -1315,6 +1315,30 @@ export default function HomePage() {
                   </Link>
                 </p>
               </motion.div>
+
+              {/* Cloud agent setup callout */}
+              <motion.div
+                className="mt-4 flex items-start gap-3 rounded-xl border border-border/50 bg-card/50 p-4 backdrop-blur-sm"
+                variants={fadeUp}
+              >
+                <div className="inline-flex shrink-0 rounded-lg bg-primary/10 p-2 text-primary">
+                  <Cloud className="h-4 w-4" />
+                </div>
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  <span className="font-semibold text-foreground">
+                    Working with a cloud agent?
+                  </span>{" "}
+                  A lightweight setup script puts br, bv, Agent Mail, ubs, and cass into every cloud
+                  session.{" "}
+                  <Link
+                    href="/cloud-agents"
+                    className="inline-flex min-h-11 items-center gap-1 text-primary hover:underline focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    Choose your agent
+                    <ArrowRight className="h-3 w-3" />
+                  </Link>
+                </p>
+              </motion.div>
             </motion.div>
 
             {/* Right column - Terminal */}

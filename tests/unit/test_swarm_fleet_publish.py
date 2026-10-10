@@ -102,6 +102,8 @@ class Fixture:
 
 class PublicationTests(unittest.TestCase):
     def setUp(self):
+        # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
+        self.addCleanup(os.umask, os.umask(0o022))
         self.assertNotEqual(os.geteuid(), 0, "Run unprivileged")
 
     def test_preview_uses_real_remote_and_changes_nothing(self):
@@ -404,6 +406,10 @@ class PublicationTests(unittest.TestCase):
 
 
 class PublicationRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
+        self.addCleanup(os.umask, os.umask(0o022))
+
     def test_check_queries_remote_without_replaying_or_writing(self):
         fx = Fixture()
         result = fx.apply()
