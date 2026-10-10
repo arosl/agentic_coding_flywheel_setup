@@ -143,15 +143,15 @@ reset_state
 inbox 1 50
 echo IcyKnoll >"$STUB_DIR/label_w1:t3"
 out="$(event | HERDR_TAB_ID=w1:t3 run_stop)"
-check "name from the herdr tab label (HERDR_TAB_ID)" \
-    test "$out" = '{"decision":"block","reason":"You have 1 unread Agent Mail messages; read them before you stop."}'
+check "name from the herdr tab label (HERDR_TAB_ID), one message in the singular" \
+    test "$out" = '{"decision":"block","reason":"You have 1 unread Agent Mail message; read them before you stop."}'
 
 reset_state
 inbox 1 50
 echo IcyKnoll >"$STUB_DIR/label_w1:t7"
 out="$(event false sess-codex-7 | run_stop)"
 check "name from the herdr agent with the hook's session (Codex daemon)" \
-    test "$out" = '{"decision":"block","reason":"You have 1 unread Agent Mail messages; read them before you stop."}'
+    test "$out" = '{"decision":"block","reason":"You have 1 unread Agent Mail message; read them before you stop."}'
 check "session lookup asked am for that tab's label" \
     grep -q -- "--agent IcyKnoll" "$STUB_DIR/calls"
 
@@ -166,6 +166,12 @@ inbox 1 50
 out="$(event | AGENT_NAME=IcyKnoll AGENT_MAIL_PROJECT=/srv/proj run_stop)"
 check "AGENT_NAME and AGENT_MAIL_PROJECT are used" \
     grep -qxF "am check-inbox --agent IcyKnoll --project /srv/proj --rate-limit 0 --json" "$STUB_DIR/calls"
+
+reset_state
+inbox 1 50
+out="$(event | AGENT_NAME='../../escaped' run_stop)"
+check "a name from the environment that isn't an Agent Mail name: silent" test -z "$out"
+check "such a name writes no state file anywhere" test ! -e "$HOME/.acfs"
 
 reset_state
 out="$(printf 'not json' | AGENT_MAIL_AGENT=IcyKnoll run_stop)"

@@ -57,17 +57,20 @@ agent_mail_hook_agent_name() {
     local name="${AGENT_MAIL_AGENT:-${AGENT_NAME:-}}"
     local tab_id="${HERDR_TAB_ID:-}"
 
+    # The name also names the state file, so it must be an Agent Mail name
+    # wherever it comes from.
     if [[ -n "$name" ]]; then
+        [[ "$name" =~ $AGENT_MAIL_HOOK_NAME_PATTERN ]] || return 1
         printf '%s\n' "$name"
         return 0
     fi
     command -v herdr >/dev/null 2>&1 || return 1
     if [[ -z "$tab_id" && -n "$session_id" ]]; then
-        tab_id="$(timeout 3 herdr agent list 2>/dev/null | jq -r --arg s "$session_id" \
+        tab_id="$(timeout 2 herdr agent list 2>/dev/null | jq -r --arg s "$session_id" \
             '[.result.agents[]? | select(.agent_session.value? == $s) | .tab_id] | first // empty' 2>/dev/null)"
     fi
     [[ -n "$tab_id" ]] || return 1
-    name="$(timeout 3 herdr tab get "$tab_id" 2>/dev/null | jq -r '.result.tab.label // empty' 2>/dev/null)"
+    name="$(timeout 2 herdr tab get "$tab_id" 2>/dev/null | jq -r '.result.tab.label // empty' 2>/dev/null)"
     [[ "$name" =~ $AGENT_MAIL_HOOK_NAME_PATTERN ]] || return 1
     printf '%s\n' "$name"
 }
@@ -104,6 +107,7 @@ agent_mail_hook_stop() {
     [[ -n "$agent" ]] || return 0
     project="$(agent_mail_hook_project "$cwd")" || return 0
 
+    # 2 + 2 + 5 seconds at worst stays inside the registered 10 s timeout.
     inbox="$(timeout 5 am check-inbox --agent "$agent" --project "$project" --rate-limit 0 --json 2>/dev/null)" || return 0
     [[ -n "$inbox" ]] || return 0
     unread="$(jq -r '.unread_count // 0 | floor' <<<"$inbox" 2>/dev/null)" || return 0
@@ -121,7 +125,9 @@ agent_mail_hook_stop() {
     (( newest > reported )) || return 0
     mkdir -p "$state_dir" 2>/dev/null && printf '%s\n' "$newest" >"$state_file" 2>/dev/null || return 0
 
-    jq -cn --arg reason "You have $unread unread Agent Mail messages; read them before you stop." \
+    local noun="messages"
+    (( unread != 1 )) || noun="message"
+    jq -cn --arg reason "You have $unread unread Agent Mail $noun; read them before you stop." \
         '{decision: "block", reason: $reason}'
 }
 
@@ -185,10 +191,15 @@ agent_mail_hook_register() {
     fi
     [[ -n "${current//[[:space:]]/}" ]] || current='{}'
 
+    # jq's stderr is kept apart, so nothing it prints can reach the file.
+    local jq_error=""
     if ! updated="$(jq --arg cmd "$cmd" --arg pattern "$AGENT_MAIL_HOOK_COMMAND_PATTERN" \
             --argjson timeout "$AGENT_MAIL_HOOK_TIMEOUT_SECONDS" \
-            "$(agent_mail_hook_register_filter)" <<<"$current" 2>&1)"; then
-        agent_mail_hook_note "left $file unchanged: ${updated##*: }"
+            "$(agent_mail_hook_register_filter)" <<<"$current" 2>/dev/null)"; then
+        jq_error="$(jq --arg cmd "$cmd" --arg pattern "$AGENT_MAIL_HOOK_COMMAND_PATTERN" \
+            --argjson timeout "$AGENT_MAIL_HOOK_TIMEOUT_SECONDS" \
+            "$(agent_mail_hook_register_filter)" <<<"$current" 2>&1 >/dev/null)"
+        agent_mail_hook_note "left $file unchanged: ${jq_error##*: }"
         return 1
     fi
     if [[ -e "$target" ]] && [[ "$(jq -c . <<<"$current")" == "$(jq -c . <<<"$updated")" ]]; then
