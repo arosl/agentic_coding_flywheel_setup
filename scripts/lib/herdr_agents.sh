@@ -5,7 +5,8 @@
 # What ntm spawn/send did, over herdr 0.9's own commands. herdr has no
 # multi-agent spawn and no broadcast: each agent is a tab plus
 # `herdr agent start`, and a broadcast is a loop over `herdr agent list`
-# and `herdr agent prompt`. This wraps exactly that and keeps no state.
+# and `herdr agent prompt`. This wraps exactly that and keeps no state, but
+# for wake's per-agent mail cursors under ~/.acfs/state/wake/.
 #
 # Names come from Agent Mail first (`am agents create`); the herdr name is
 # that name lowercased, and the tab label is the Agent Mail name.
@@ -15,6 +16,7 @@
 #   acfs agents send (--all | --kind K | --name N)... <prompt>
 #   acfs agents list [--workspace ID] [--kind K] [--json]
 #   acfs agents inbox [--agent NAME] [--project KEY] [--keep-unread]
+#   acfs agents wake [--workspace ID] [--project KEY] [--loop [--interval SEC]] [--dry-run]
 #   acfs agents codex-daemon (status [--json] | start | restart)
 #   acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token T] [--dry-run]
 # ============================================================
@@ -30,6 +32,9 @@ HERDR_AGENTS_PROMPT_TIMEOUT_MS=15000
 # The --limit inbox passes to am: far above any real mailbox. An answer this
 # long could be a truncated one, so inbox refuses it.
 HERDR_AGENTS_INBOX_LIMIT=1000000
+# wake: what an agent is sent, and the fewest seconds between two wakes of one agent.
+HERDR_AGENTS_WAKE_PROMPT="Check your Agent Mail inbox."
+HERDR_AGENTS_WAKE_GAP=120
 
 herdr_agents_usage() {
     cat <<'EOF'
@@ -41,6 +46,7 @@ Usage:
                     [--wait] [--timeout MS] <prompt>
   acfs agents list  [--workspace ID] [--kind KIND] [--json]
   acfs agents inbox [--agent NAME] [--project KEY] [--keep-unread]
+  acfs agents wake  [--workspace ID] [--project KEY] [--loop [--interval SEC]] [--dry-run]
   acfs agents codex-daemon (status [--json] | start | restart)
   acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token TOKEN] [--dry-run]
 
@@ -80,6 +86,17 @@ inbox  Print every unread Agent Mail message sent to the agent (To or bcc,
        yourself). --keep-unread lists without marking. The agent is --agent,
        else $AGENT_MAIL_AGENT, else $AGENT_NAME; the project key is
        --project, else $AGENT_MAIL_PROJECT, else the git top level.
+wake   Send "Check your Agent Mail inbox." to each idle agent of the workspace
+       that got mail (To, cc or bcc) since it was last woken, or whose ack is
+       newly overdue, through send's checked prompt. An agent's mailbox is its
+       tab label, which spawn sets to its Agent Mail name. A working or
+       blocked agent is left until it settles, an agent is woken at most once
+       every 120 s, and the pane running wake is never prompted. Mail older
+       than an agent's first wake cycle wakes nobody; each overdue ack wakes
+       it once. One line per wake goes to stderr. --loop repeats every --interval seconds (default 60); run
+       it in its own pane, or with --workspace from a user unit. The project
+       key is --project, else $AGENT_MAIL_PROJECT, else the git top level;
+       per-agent cursors live in ~/.acfs/state/wake/.
 codex-daemon
        Codex runs its hooks through one shared app-server daemon. Started from
        inside a herdr pane, the daemon keeps that pane's HERDR_* variables, and
@@ -836,14 +853,8 @@ herdr_agents_send() {
     herdr_agents_require herdr jq
     timeout="${timeout:-$HERDR_AGENTS_PROMPT_TIMEOUT_MS}"
 
-    local agents count i target name pane state missing
+    local agents count i target name pane missing
     local sent=0 skipped=0
-    # Always wait, so a prompt that was not submitted is a failure. Without
-    # --wait, only until the agent is seen working (or blocked at a dialog
-    # the prompt raised); a prompt to an agent already working is queued.
-    local -a prompt_args=(--wait)
-    [[ "$wait" == true ]] || prompt_args+=(--until working --until blocked)
-    prompt_args+=(--timeout "$timeout")
     agents="$(herdr_agents_select "$workspace" "$kinds" "$names")"
     count="$(jq 'length' <<<"$agents")"
     # A --name herdr does not list is a failure, not a quiet no-op: an
@@ -868,33 +879,51 @@ herdr_agents_send() {
             herdr_agents_note "skipped $target: that is this pane"
             continue
         fi
-        if herdr_agents_herdr agent prompt "$target" "$prompt" "${prompt_args[@]}"; then
+        if herdr_agents_prompt_one "$target" "$prompt" "$timeout" "$wait"; then
             sent=$((sent + 1))
-            state="$(jq -r '.result.agent.agent_status // empty' <<<"$HERDR_AGENTS_OUT")"
-            if [[ "$state" == blocked ]]; then
-                herdr_agents_note "sent: $target, which is now blocked at an approval or question"
-            else
-                herdr_agents_note "sent: $target${state:+ ($state)}"
-            fi
         else
             skipped=$((skipped + 1))
-            case "$HERDR_AGENTS_ERR_CODE" in
-                agent_blocked)
-                    herdr_agents_note "skipped $target: blocked at an approval or question; answer it in its pane first" ;;
-                agent_not_found)
-                    herdr_agents_note "skipped $target (agent_not_found): herdr no longer knows that name (see 'acfs agents list')" ;;
-                agent_prompt_stalled)
-                    herdr_agents_note "not submitted to $target (agent_prompt_stalled): it did not start working after the prompt"
-                    herdr_agents_explain_stall "$target" ;;
-                timeout)
-                    herdr_agents_note "unconfirmed for $target (timeout): it did not reach the awaited state within $timeout ms" ;;
-                *)
-                    herdr_agents_note "skipped $target ($HERDR_AGENTS_ERR_CODE): $HERDR_AGENTS_ERR_MESSAGE" ;;
-            esac
         fi
     done
     herdr_agents_note "sent $sent, skipped $skipped"
     (( skipped == 0 ))
+}
+
+# Prompt one agent ($1, its herdr name or pane id) with $2 and report how it
+# went. Always waits, so a prompt that was not submitted is a failure: with
+# $4 = true until the turn ends, otherwise only until the agent is seen
+# working (or blocked at a dialog the prompt raised; a prompt to an agent
+# already working is queued), for at most $3 ms. $5 = quiet reports only a
+# failure. Returns non-zero when the prompt was not taken.
+herdr_agents_prompt_one() {
+    local target="$1" prompt="$2" timeout="$3" wait="$4" quiet="${5:-}" state
+    local -a prompt_args=(--wait)
+    [[ "$wait" == true ]] || prompt_args+=(--until working --until blocked)
+    prompt_args+=(--timeout "$timeout")
+    if herdr_agents_herdr agent prompt "$target" "$prompt" "${prompt_args[@]}"; then
+        [[ "$quiet" != quiet ]] || return 0
+        state="$(jq -r '.result.agent.agent_status // empty' <<<"$HERDR_AGENTS_OUT")"
+        if [[ "$state" == blocked ]]; then
+            herdr_agents_note "sent: $target, which is now blocked at an approval or question"
+        else
+            herdr_agents_note "sent: $target${state:+ ($state)}"
+        fi
+        return 0
+    fi
+    case "$HERDR_AGENTS_ERR_CODE" in
+        agent_blocked)
+            herdr_agents_note "skipped $target: blocked at an approval or question; answer it in its pane first" ;;
+        agent_not_found)
+            herdr_agents_note "skipped $target (agent_not_found): herdr no longer knows that name (see 'acfs agents list')" ;;
+        agent_prompt_stalled)
+            herdr_agents_note "not submitted to $target (agent_prompt_stalled): it did not start working after the prompt"
+            herdr_agents_explain_stall "$target" ;;
+        timeout)
+            herdr_agents_note "unconfirmed for $target (timeout): it did not reach the awaited state within $timeout ms" ;;
+        *)
+            herdr_agents_note "skipped $target ($HERDR_AGENTS_ERR_CODE): $HERDR_AGENTS_ERR_MESSAGE" ;;
+    esac
+    return 1
 }
 
 # List every unread message sent To (or bcc) the agent, oldest first and
@@ -974,6 +1003,153 @@ herdr_agents_inbox() {
     [[ -z "$ack_pending" ]] || printf '; ack pending: %s' "$ack_pending"
     printf '\n'
     (( failed == 0 )) || return 1
+}
+
+# ------------------------------------------------------------
+# wake
+# ------------------------------------------------------------
+
+# One wake cycle over the agents of workspace $1, for Agent Mail project $2,
+# keeping each agent's state in $3; $4 = true only says what it would do.
+# Fails when any wake failed. herdr names an agent by its Agent Mail name
+# lowercased, and its tab label is that name (spawn sets both), so the label
+# maps a herdr agent to its mailbox; an agent whose tab carries no such
+# label is not one ACFS started, and is left alone.
+herdr_agents_wake_cycle() {
+    local workspace="$1" project="$2" state_dir="$3" dry_run="$4"
+    local agents tabs count i name pane tab status mail_name failed=0
+    agents="$(herdr_agents_select "$workspace" "[]" "[]")"
+    herdr_agents_herdr tab list --workspace "$workspace" \
+        || herdr_agents_die "herdr tab list failed: $HERDR_AGENTS_ERR_MESSAGE"
+    tabs="$HERDR_AGENTS_OUT"
+    count="$(jq 'length' <<<"$agents")"
+    for ((i = 0; i < count; i++)); do
+        name="$(jq -r ".[$i].name // empty" <<<"$agents")"
+        pane="$(jq -r ".[$i].pane_id" <<<"$agents")"
+        tab="$(jq -r ".[$i].tab_id // empty" <<<"$agents")"
+        status="$(jq -r ".[$i].agent_status // \"unknown\"" <<<"$agents")"
+        # Never prompt the pane running the loop.
+        [[ -z "${HERDR_PANE_ID:-}" || "$pane" != "$HERDR_PANE_ID" ]] || continue
+        mail_name="$(jq -r --arg t "$tab" 'first(.result.tabs[]? | select(.tab_id == $t) | .label // empty) // empty' <<<"$tabs")"
+        [[ "$mail_name" =~ ^[A-Za-z][A-Za-z0-9_-]{0,63}$ ]] || continue
+        # herdr can drop an agent's name (acfs-i7p); its pane still answers.
+        [[ -z "$name" || "$name" == "${mail_name,,}" ]] || continue
+        herdr_agents_wake_one "$mail_name" "${name:-$pane}" "$status" "$project" "$state_dir" "$dry_run" \
+            || failed=$((failed + 1))
+    done
+    (( failed == 0 ))
+}
+
+# Write agent state $2 (JSON) to file $1, whole or not at all.
+herdr_agents_wake_save() {
+    printf '%s\n' "$2" >"$1.tmp" && mv -f "$1.tmp" "$1"
+}
+
+# Wake agent $1 (Agent Mail name; herdr target $2, herdr status $3) when
+# mail reached it since its last wake. Its state file holds the Agent Mail
+# delivery cursor it was last woken at, when that was, and the overdue acks
+# it was already woken for. Mail older than the agent's first cycle wakes
+# nobody, but each overdue ack wakes it once, however old.
+herdr_agents_wake_one() {
+    local mail_name="$1" target="$2" status="$3" project="$4" state_dir="$5" dry_run="$6"
+    local file="$state_dir/$mail_name.json" state cursor scan last now page events=0 has_more
+    local overdue new_overdue reason
+    now="$(date +%s)"
+    # A missing or unreadable state file counts as the agent's first cycle.
+    state="$(jq -c 'select((.cursor | type) == "number" and (.last_wake | type) == "number" and (.overdue | type) == "array")' \
+        "$file" 2>/dev/null || true)"
+    if [[ -z "$state" ]]; then
+        page="$(am inbox-events --agent "$mail_name" --project "$project" --position-now --json </dev/null)" \
+            || { herdr_agents_note "wake: am inbox-events failed for $mail_name"; return 1; }
+        state="$(jq -c '{cursor: .next_cursor, last_wake: 0, overdue: []}' <<<"$page")" \
+            || { herdr_agents_note "wake: could not read am's inbox events for $mail_name"; return 1; }
+        [[ "$dry_run" == true ]] || herdr_agents_wake_save "$file" "$state"
+    fi
+    # A working agent reads its mail when its turn ends, and a blocked one
+    # waits for a person; both are looked at again next cycle.
+    case "$status" in
+        idle|done) ;;
+        *) return 0 ;;
+    esac
+    last="$(jq -r '.last_wake' <<<"$state")"
+    (( now - last >= HERDR_AGENTS_WAKE_GAP )) || return 0
+
+    cursor="$(jq -r '.cursor' <<<"$state")"
+    scan="$cursor"
+    while :; do
+        page="$(am inbox-events --agent "$mail_name" --project "$project" --after "$scan" --limit 1000 --json </dev/null)" \
+            || { herdr_agents_note "wake: am inbox-events failed for $mail_name"; return 1; }
+        events=$((events + $(jq '[.events[]? | select(.kind == "to" or .kind == "cc" or .kind == "bcc")] | length' <<<"$page")))
+        scan="$(jq -r '.next_cursor' <<<"$page")"
+        has_more="$(jq -r '.has_more' <<<"$page")"
+        [[ "$has_more" == true ]] || break
+    done
+    # am prints overdue acks as a table only: an ID column of message ids.
+    overdue="$(am acks overdue "$project" "$mail_name" </dev/null \
+        | awk 'NR > 1 && $1 ~ /^[0-9]+$/ { print $1 }' | jq -Rsc 'split("\n") | map(select(length > 0) | tonumber)')" \
+        || { herdr_agents_note "wake: am acks overdue failed for $mail_name"; return 1; }
+    new_overdue="$(jq -n --argjson now "$overdue" --argjson seen "$(jq -c '.overdue' <<<"$state")" '$now - $seen | length')"
+
+    if (( events == 0 && new_overdue == 0 )); then
+        [[ "$dry_run" == true ]] || herdr_agents_wake_save "$file" \
+            "$(jq -c --argjson c "$scan" --argjson o "$overdue" '.cursor = $c | .overdue = $o' <<<"$state")"
+        return 0
+    fi
+    reason="$events new message(s)"
+    (( new_overdue == 0 )) || reason+=", $new_overdue newly overdue ack(s)"
+    if [[ "$dry_run" == true ]]; then
+        herdr_agents_note "would wake $target ($mail_name): $reason"
+        return 0
+    fi
+    if herdr_agents_prompt_one "$target" "$HERDR_AGENTS_WAKE_PROMPT" "$HERDR_AGENTS_PROMPT_TIMEOUT_MS" false quiet; then
+        herdr_agents_note "$(date -u +%Y-%m-%dT%H:%M:%SZ) woke $target ($mail_name): $reason"
+        herdr_agents_wake_save "$file" \
+            "$(jq -c --argjson c "$scan" --argjson o "$overdue" --argjson t "$now" '.cursor = $c | .overdue = $o | .last_wake = $t' <<<"$state")"
+        return 0
+    fi
+    # The cursor stays, so the next cycle after the gap tries again.
+    herdr_agents_note "$(date -u +%Y-%m-%dT%H:%M:%SZ) could not wake $target ($mail_name): $reason"
+    herdr_agents_wake_save "$file" "$(jq -c --argjson t "$now" '.last_wake = $t' <<<"$state")"
+    return 1
+}
+
+herdr_agents_wake() {
+    local workspace="" project="${AGENT_MAIL_PROJECT:-}" loop=false interval=60 dry_run=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --workspace) [[ $# -ge 2 ]] || herdr_agents_die "--workspace needs a value"; workspace="$2"; shift 2 ;;
+            --project) [[ $# -ge 2 ]] || herdr_agents_die "--project needs a value"; project="$2"; shift 2 ;;
+            --loop) loop=true; shift ;;
+            --interval) [[ $# -ge 2 && "$2" =~ ^[1-9][0-9]*$ ]] || herdr_agents_die "--interval needs whole seconds"; interval="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            -h|--help) herdr_agents_usage; return 0 ;;
+            *) herdr_agents_die "unknown wake option: $1" ;;
+        esac
+    done
+    herdr_agents_require herdr am jq flock sha256sum
+    workspace="$(herdr_agents_resolve_workspace "$workspace")"
+    if [[ -z "$project" ]]; then
+        project="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    fi
+
+    local state_dir lock_fd
+    state_dir="${ACFS_HOME:-$HOME/.acfs}/state/wake/$(printf '%s' "$project" | sha256sum | cut -c1-16)"
+    mkdir -p "$state_dir"
+    printf '%s\n' "$project" >"$state_dir/project"
+    # Two loops over one project would wake each agent twice.
+    exec {lock_fd}>"$state_dir/lock"
+    flock -n "$lock_fd" || herdr_agents_die "another acfs agents wake is running for $project"
+
+    if [[ "$loop" == false ]]; then
+        herdr_agents_wake_cycle "$workspace" "$project" "$state_dir" "$dry_run"
+        return
+    fi
+    herdr_agents_note "waking idle agents in workspace $workspace on new mail, every ${interval}s"
+    while :; do
+        # A failed cycle (herdr or am unreachable) ends only that cycle.
+        ( herdr_agents_wake_cycle "$workspace" "$project" "$state_dir" "$dry_run" ) || true
+        sleep "$interval"
+    done
 }
 
 # The repo's files with uncommitted changes, one path per line.
@@ -1169,6 +1345,7 @@ herdr_agents_main() {
         send) herdr_agents_send "$@" ;;
         list|ls) herdr_agents_list "$@" ;;
         inbox) herdr_agents_inbox "$@" ;;
+        wake) herdr_agents_wake "$@" ;;
         codex-daemon) herdr_agents_codex_daemon "$@" ;;
         retire) herdr_agents_retire "$@" ;;
         help|-h|--help) herdr_agents_usage ;;

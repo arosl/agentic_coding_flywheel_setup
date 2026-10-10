@@ -157,6 +157,37 @@ case "$1 ${2:-}" in
         printf 'ID   PATTERN              AGENT       EXPIRES               REASON\n'
         cat "$STUB_DIR/reserved_ever" 2>/dev/null || true
         exit 0 ;;
+    # wake's reads: events_<Agent>.json holds an agent's deliveries
+    # ({cursor, kind}); overdue_<Agent> the rows of `am acks overdue`.
+    "inbox-events "*)
+        agent="" after="" position_now=false
+        for ((i = 0; i < ${#args[@]}; i++)); do
+            case "${args[i]}" in
+                --agent) agent="${args[i + 1]}" ;;
+                --after) after="${args[i + 1]}" ;;
+                --position-now) position_now=true ;;
+            esac
+        done
+        [[ ! -e "$STUB_DIR/events_fail_$agent" ]] || { echo "stub: no such agent $agent" >&2; exit 1; }
+        events="$STUB_DIR/events_$agent.json"
+        [[ -s "$events" ]] || printf '[]\n' >"$events"
+        if [[ "$position_now" == true ]]; then
+            jq -c '{events: [], next_cursor: ((map(.cursor) | max) // 0), has_more: false}' "$events"
+        else
+            jq -c --argjson after "$after" --argjson limit "$limit" '
+                [.[] | select(.cursor > $after)] | sort_by(.cursor) as $new
+                | ($new[:$limit]) as $page
+                | {events: $page, next_cursor: (($page | map(.cursor) | max) // $after), has_more: (($new | length) > $limit)}' "$events"
+        fi
+        exit 0 ;;
+    "acks overdue")
+        if [[ -s "$STUB_DIR/overdue_$4" ]]; then
+            printf 'OVERDUE acks (>60min TTL):\nID   FROM            SUBJECT       OVERDUE\n'
+            cat "$STUB_DIR/overdue_$4"
+        else
+            printf 'No overdue acks.\n'
+        fi
+        exit 0 ;;
 esac
 n=$(( $(cat "$STUB_DIR/am_count" 2>/dev/null || echo 0) + 1 ))
 echo "$n" >"$STUB_DIR/am_count"
@@ -233,14 +264,16 @@ fake_daemon() {
 
 # Run the helper with the stubs first on PATH; stdout, stderr and the
 # exit code land in $OUT, $ERR and $RC. The environment is a herdr pane's:
-# every HERDR_* variable the pane's shell exports is set.
+# every HERDR_* variable the pane's shell exports is set. RUN_WRAPPER, when
+# set, is a command the helper runs under (such as timeout for wake --loop).
+RUN_WRAPPER=()
 run_helper() {
     RC=0
     PATH="$WORK/bin:$PATH" HOME="$WORK/home" ACFS_HOME="$WORK/acfs-home" \
         CODEX_HOME="$STUB_DIR/codex-home" HERDR_AGENTS_PROC_ROOT="$STUB_DIR/proc" \
         HERDR_AGENTS_DAEMON_WAIT_TRIES=3 HERDR_AGENTS_DAEMON_WAIT_INTERVAL=0 \
         HERDR_ENV=1 HERDR_PANE_ID=w9:p9 HERDR_TAB_ID=w9:t9 HERDR_SOCKET_PATH=/stub.sock HERDR_BIN_PATH=/stub/herdr \
-        bash "$HELPER" "$@" >"$STUB_DIR/out" 2>"$STUB_DIR/err" || RC=$?
+        "${RUN_WRAPPER[@]}" bash "$HELPER" "$@" >"$STUB_DIR/out" 2>"$STUB_DIR/err" || RC=$?
     OUT="$(cat "$STUB_DIR/out")"
     ERR="$(cat "$STUB_DIR/err")"
 }
@@ -927,6 +960,158 @@ touch "$STUB_DIR/am_unknown_NoSuch"
 run_helper retire NoSuch --cwd "$REPO"
 check "retire refuses a name Agent Mail doesn't have, before touching herdr" \
     bash -c '[[ "$1" -ne 0 ]] && ! grep -q "^herdr" "$2"' _ "$RC" "$STUB_DIR/calls"
+
+echo "wake"
+# Three agents in workspace w9, each in a tab labelled with its Agent Mail
+# name: AlphaFox idle, BetaOwl done, GammaYak blocked. Each case uses its
+# own project key, so its own state directory.
+wake_case() {
+    reset_stub "$1"
+    WAKE_PROJECT="/proj/$1"
+    cat >"$STUB_DIR/list.json" <<'EOF'
+{"id":"cli:agent:list","result":{"agents":[
+ {"agent":"claude","agent_status":"idle","name":"alphafox","pane_id":"w9:p1","tab_id":"w9:t1","workspace_id":"w9"},
+ {"agent":"codex","agent_status":"done","name":"betaowl","pane_id":"w9:p2","tab_id":"w9:t2","workspace_id":"w9"},
+ {"agent":"codex","agent_status":"blocked","name":"gammayak","pane_id":"w9:p3","tab_id":"w9:t3","workspace_id":"w9"}
+]}}
+EOF
+    printf '{"result":{"tabs":[{"label":"AlphaFox","tab_id":"w9:t1"},{"label":"BetaOwl","tab_id":"w9:t2"},{"label":"GammaYak","tab_id":"w9:t3"}]}}\n' \
+        >"$STUB_DIR/tabs.json"
+}
+# Deliver message cursor $2 (kind $3, default to) to agent $1.
+deliver() {
+    local file="$STUB_DIR/events_$1.json"
+    [[ -s "$file" ]] || printf '[]\n' >"$file"
+    jq -c --argjson c "$2" --arg k "${3:-to}" '. + [{cursor: $c, message_id: $c, kind: $k}]' "$file" >"$file.new"
+    mv "$file.new" "$file"
+}
+set_status() { sed -i "s/\"agent_status\":\"[a-z]*\",\"name\":\"$1\"/\"agent_status\":\"$2\",\"name\":\"$1\"/" "$STUB_DIR/list.json"; }
+wake_state() { printf '%s/acfs-home/state/wake/%s/%s.json' "$WORK" "$(printf '%s' "$WAKE_PROJECT" | sha256sum | cut -c1-16)" "$1"; }
+# Let agent $1's 120 s gap pass.
+gap_passes() { local f; f="$(wake_state "$1")"; jq -c '.last_wake = 0' "$f" >"$f.new" && mv "$f.new" "$f"; }
+run_wake() { run_helper wake --workspace w9 --project "$WAKE_PROJECT" "$@"; }
+
+wake_case wakeidle
+deliver AlphaFox 1
+run_wake
+check "mail older than the first cycle wakes nobody" \
+    bash -c '[[ "$1" -eq 0 && "$2" -eq 0 ]]' _ "$RC" "$(count_calls '^herdr agent prompt')"
+deliver AlphaFox 5
+deliver BetaOwl 6 cc
+deliver GammaYak 7
+run_wake
+check "new mail to an idle and a done agent wakes both through the checked prompt" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qx -- "herdr agent prompt alphafox Check your Agent Mail inbox. --wait --until working --until blocked --timeout 15000" "$2" && grep -q "^herdr agent prompt betaowl " "$2"' \
+    _ "$RC" "$STUB_DIR/calls"
+check "a blocked agent is not prompted" bash -c '! grep -q "^herdr agent prompt gammayak" "$1"' _ "$STUB_DIR/calls"
+check "each wake is one line on stderr, with the time in UTC" \
+    grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z woke alphafox \(AlphaFox\): 1 new message\(s\)$' <<<"$ERR"
+deliver AlphaFox 8
+run_wake
+check "an agent is not woken twice within 120 s" test "$(count_calls '^herdr agent prompt alphafox')" = 1
+gap_passes AlphaFox
+run_wake
+check "after the gap, the mail that came meanwhile wakes it" test "$(count_calls '^herdr agent prompt alphafox')" = 2
+set_status gammayak idle
+run_wake
+check "the blocked agent is woken on the cycle after it settles" test "$(count_calls '^herdr agent prompt gammayak')" = 1
+run_wake
+check "with no new mail, nobody is woken" test "$(count_calls '^herdr agent prompt')" = 4
+
+wake_case wakeworking
+run_wake
+set_status alphafox working
+deliver AlphaFox 3
+run_wake
+check "a working agent is not prompted" test "$(count_calls '^herdr agent prompt')" = 0
+set_status alphafox idle
+run_wake
+check "it is prompted on the next cycle after it settles" test "$(count_calls '^herdr agent prompt alphafox')" = 1
+
+wake_case wakeself
+sed -i 's/"pane_id":"w9:p1"/"pane_id":"w9:p9"/' "$STUB_DIR/list.json"
+run_wake
+deliver AlphaFox 2
+run_wake
+check "the pane running wake is never prompted" test "$(count_calls '^herdr agent prompt')" = 0
+
+wake_case wakeoverdue
+run_wake
+printf '62   VioletFortress  Re: [main-sync] Stop  993min\n' >"$STUB_DIR/overdue_BetaOwl"
+run_wake
+check "a newly overdue ack wakes its agent and says so" \
+    bash -c 'grep -q "^herdr agent prompt betaowl " "$1" && grep -q "woke betaowl (BetaOwl): 0 new message(s), 1 newly overdue ack(s)" <<<"$2"' _ "$STUB_DIR/calls" "$ERR"
+gap_passes BetaOwl
+run_wake
+check "the same overdue ack does not wake it again" test "$(count_calls '^herdr agent prompt betaowl')" = 1
+
+wake_case wakestall
+run_wake
+deliver AlphaFox 4
+touch "$STUB_DIR/agent_prompt_stalled_alphafox"
+printf '\e[0m\xe2\x9d\xaf\xc2\xa0\e[0m\e[2mCheck your Agent Mail inbox.\e[0m\r\n' >"$STUB_DIR/screen_alphafox"
+run_wake
+check "a wake whose prompt stalled fails the cycle and says why" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "could not wake alphafox (AlphaFox): 1 new message(s)" <<<"$2" && grep -q "agent_prompt_stalled" <<<"$2"' _ "$RC" "$ERR"
+rm -f "$STUB_DIR/agent_prompt_stalled_alphafox"
+gap_passes AlphaFox
+run_wake
+check "the failed wake's mail is retried after the gap" \
+    bash -c '[[ "$1" -eq 0 && "$2" -eq 2 ]]' _ "$RC" "$(count_calls '^herdr agent prompt alphafox')"
+
+wake_case wakedropped
+run_wake
+sed -i 's/"name":"alphafox",//' "$STUB_DIR/list.json"
+sed -i 's/"label":"BetaOwl"/"label":"SomeoneElse"/' "$STUB_DIR/tabs.json"
+deliver AlphaFox 2
+deliver BetaOwl 3
+run_wake
+check "an agent whose herdr name dropped is woken by its pane, found by its tab label" \
+    grep -q "^herdr agent prompt w9:p1 " "$STUB_DIR/calls"
+check "an agent whose tab label is another name is left alone" bash -c '! grep -q "^herdr agent prompt betaowl" "$1"' _ "$STUB_DIR/calls"
+
+wake_case wakedry
+run_wake
+deliver AlphaFox 2
+run_wake --dry-run
+check "--dry-run says whom it would wake and prompts nobody" \
+    bash -c 'grep -q "would wake alphafox (AlphaFox): 1 new message(s)" <<<"$1" && [[ "$2" -eq 0 ]]' _ "$ERR" "$(count_calls '^herdr agent prompt')"
+run_wake
+check "a dry run moves no cursor" test "$(count_calls '^herdr agent prompt alphafox')" = 1
+
+wake_case wakecorrupt
+run_wake
+deliver AlphaFox 2
+printf 'not json\n' >"$(wake_state AlphaFox)"
+run_wake
+check "an unreadable state file counts as a first cycle, and the cycle still runs" \
+    bash -c '[[ "$1" -eq 0 && "$2" -eq 0 ]] && jq -e ".cursor == 2" "$3" >/dev/null' _ "$RC" "$(count_calls '^herdr agent prompt')" "$(wake_state AlphaFox)"
+
+wake_case wakelock
+run_wake
+exec {wake_lock_fd}>"$(dirname "$(wake_state AlphaFox)")/lock"
+flock -n "$wake_lock_fd"
+run_wake
+exec {wake_lock_fd}>&-
+check "a second wake for the same project refuses to run" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "another acfs agents wake is running for /proj/wakelock" <<<"$2"' _ "$RC" "$ERR"
+
+wake_case wakeloop
+run_wake
+( sleep 1.5; deliver AlphaFox 2 ) &
+RUN_WRAPPER=(timeout 4)
+run_wake --loop --interval 1
+RUN_WRAPPER=()
+wait
+check "with the loop running, mail to an idle agent wakes it within one interval" \
+    bash -c '[[ "$1" -eq 124 && "$2" -eq 1 ]] && grep -q "woke alphafox (AlphaFox)" <<<"$3"' _ "$RC" "$(count_calls '^herdr agent prompt alphafox')" "$ERR"
+check "the loop keeps cycling: herdr is listed once per interval" \
+    bash -c '[[ "$1" -ge 3 ]]' _ "$(count_calls '^herdr agent list')"
+
+wake_case wakeinterval
+run_wake --loop --interval 0
+check "--interval takes only whole seconds above zero" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q -- "--interval needs whole seconds" <<<"$2"' _ "$RC" "$ERR"
 
 echo
 echo "passed: $PASS, failed: $FAIL"
