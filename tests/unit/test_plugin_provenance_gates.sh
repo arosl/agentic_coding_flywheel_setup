@@ -11,6 +11,11 @@ ARTIFACT_DIR="${ACFS_PLUGIN_GATES_TEST_ARTIFACTS_DIR:-${TMPDIR:-/tmp}/acfs-plugi
 
 mkdir -p "$ARTIFACT_DIR"
 
+# A directory this run made is removed once every test passed. A failed run
+# keeps it for the fail messages, and a caller-supplied one is never removed.
+ARTIFACT_DIR_OWNED=false
+[[ -n "${ACFS_PLUGIN_GATES_TEST_ARTIFACTS_DIR:-}" ]] || ARTIFACT_DIR_OWNED=true
+
 TESTS_PASSED=0
 TESTS_FAILED=0
 
@@ -28,10 +33,12 @@ fail() {
 }
 
 cleanup() {
-    # Non-destructive test artifact directory notification
-    if [[ -d "$ARTIFACT_DIR" ]]; then
-        :
+    local rc=$?
+    if [[ $rc -eq 0 && $TESTS_FAILED -eq 0 && "$ARTIFACT_DIR_OWNED" == true && -d "$ARTIFACT_DIR" ]]; then
+        chmod -R u+rwX -- "$ARTIFACT_DIR" 2>/dev/null || true
+        rm -rf -- "$ARTIFACT_DIR"
     fi
+    return "$rc"
 }
 trap cleanup EXIT
 

@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Real Git collection/merge tests. Fixtures and scratch repositories are retained."""
+"""Real Git collection/merge tests. Each fixture, and the scratch repository the
+collector keeps under its TMPDIR, is removed when the test that made it ends."""
 import importlib.util
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,11 +18,23 @@ SCRIPT = ROOT / "scripts/swarm-fleet-collect.py"
 spec = importlib.util.spec_from_file_location("fleet_collect", SCRIPT)
 collect = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(collect)
+FIXTURE_ROOTS = []
+
+
+def remove_fixtures():
+    """Remove every fixture made so far; a test registers this as a cleanup."""
+    while FIXTURE_ROOTS:
+        shutil.rmtree(FIXTURE_ROOTS.pop(), ignore_errors=True)
 
 
 class Fixture:
     def __init__(self, fmt="sha1", files=None):
         self.root = Path(tempfile.mkdtemp(prefix="acfs-integration-test-"))
+        FIXTURE_ROOTS.append(self.root)
+        # The collector keeps its scratch repository on purpose; keep it inside
+        # the fixture, so the fixture's removal takes it too.
+        self.tmp = self.root / "tmp"
+        self.tmp.mkdir(mode=0o700)
         self.source = self.root / "source"
         self.repo = self.root / "destination"
         self.collection = self.root / "collection"
@@ -27,7 +42,8 @@ class Fixture:
                     "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
                     "GIT_AUTHOR_NAME": "Fixture", "GIT_COMMITTER_NAME": "Fixture",
                     "GIT_AUTHOR_EMAIL": "fixture@example.invalid", "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
-                    "GIT_AUTHOR_DATE": "1700000000 +0000", "GIT_COMMITTER_DATE": "1700000000 +0000"}
+                    "GIT_AUTHOR_DATE": "1700000000 +0000", "GIT_COMMITTER_DATE": "1700000000 +0000",
+                    "TMPDIR": str(self.tmp)}
         self.fmt = fmt
         for repo in (self.source, self.repo):
             repo.mkdir(mode=0o700)
@@ -106,7 +122,8 @@ class Fixture:
         options = dict(path=self.collection, repository=self.repo, onto=self.base,
                        name="wave1", hosts=[], timeout=90)
         options.update(kwargs)
-        return collect.integrate_collection(**options)
+        with patch.object(tempfile, "tempdir", str(self.tmp)):
+            return collect.integrate_collection(**options)
 
     def cli(self, *extra):
         return subprocess.run([sys.executable, "-I", str(SCRIPT), "--integrate", str(self.collection),
@@ -124,6 +141,7 @@ class IntegrationTests(unittest.TestCase):
     def setUp(self):
         # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
         self.addCleanup(os.umask, os.umask(0o022))
+        self.addCleanup(remove_fixtures)
         self.assertNotEqual(os.geteuid(), 0, "Run this test script as an unprivileged user")
 
     def branches(self, fmt="sha1", files=None, changes=None):
@@ -312,6 +330,7 @@ class CandidatePublicationTests(unittest.TestCase):
     def setUp(self):
         # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
         self.addCleanup(os.umask, os.umask(0o022))
+        self.addCleanup(remove_fixtures)
 
     def branches(self, **options):
         return IntegrationTests().branches(**options)
@@ -501,6 +520,7 @@ class IntegrationRecoveryTests(unittest.TestCase):
     def setUp(self):
         # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
         self.addCleanup(os.umask, os.umask(0o022))
+        self.addCleanup(remove_fixtures)
 
     def fixture(self, **options):
         return IntegrationTests().branches(**options)

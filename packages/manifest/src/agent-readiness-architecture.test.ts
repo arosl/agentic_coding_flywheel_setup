@@ -1,13 +1,16 @@
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { buildAgentReadinessReport, type CommandRunResult } from "./agent-readiness-audit.js";
 import { normalizeArchitecture } from "./binary-architecture.js";
 
+const homes: string[] = [];
+afterEach(() => { for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
 function fixture() {
   const home = mkdtempSync(join(tmpdir(), "acfs-readiness-arch-"));
+  homes.push(home);
   const bin = join(home, ".local/bin"); mkdirSync(bin, { recursive: true });
   return { home, bin };
 }

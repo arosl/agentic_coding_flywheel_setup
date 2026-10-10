@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, chownSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
@@ -11,8 +11,27 @@ import {
   type ProbeRequest, type ProbeResult, type RehearsalPorts,
 } from "./agent-profile-rehearsal.js";
 
-// Named fixtures are retained. No test invokes an installed provider or sends a request.
+// No test invokes an installed provider or sends a request. Fixtures live under
+// ROOT, removed once the file's tests finish. The rehearsal keeps every live
+// workspace it makes under /tmp, so each test removes the ones it caused.
 const ROOT = mkdtempSync(join(tmpdir(), "acfs-live-tests-"));
+const LIVE_PARENT = realpathSync("/tmp");
+const removeAfterTest: string[] = [];
+const fixtureCallLogs: string[] = [];
+function trackLiveWorkspace(cwd: unknown): void {
+  if (typeof cwd === "string" && dirname(cwd) === LIVE_PARENT && basename(cwd).startsWith("acfs-live-rehearsal-"))
+    removeAfterTest.push(cwd);
+}
+test.afterEach(() => {
+  for (const log of fixtureCallLogs.splice(0)) {
+    if (!existsSync(log)) continue;
+    for (const line of readFileSync(log, "utf8").split("\n")) {
+      try { trackLiveWorkspace(JSON.parse(line).cwd); } catch { /* a partial line names no workspace */ }
+    }
+  }
+  for (const path of removeAfterTest.splice(0)) rmSync(path, { recursive: true, force: true });
+});
+test.after(() => rmSync(ROOT, { recursive: true, force: true }));
 const TOKEN = "ACFS_LIVE_" + "ab".repeat(16);
 const ENV = { PATH: "/usr/bin:/bin", OPENAI_API_KEY: "sk-never-inherit", NODE_OPTIONS: "--require=secret" };
 const plan = () => buildRehearsalPlan(["claude:private@example.com"]);
@@ -40,6 +59,7 @@ function harness(change?: (request: ProbeRequest, normal: ProbeResult, index: nu
     findCaam: () => "/usr/bin/caam",
     run: async (request) => {
       calls.push(request);
+      trackLiveWorkspace(request.cwd);
       const normal = request.args[0] === "profile" ? ok(status(request.args[2]!, request.args[3]!)) :
         isLive(request) ? ok(request.args[1] === "codex" ? jsonl(codexEvents(request.args.at(-1)!)) : JSON.stringify(response(request.args.at(-1)!))) :
         request.args.includes("--version") ? ok("CLI 2.1.300\n") :
@@ -295,6 +315,7 @@ test("real unprivileged CLI executes fixture CAAM live path and saves redacted e
   chmodSync(ROOT, 0o755); chmodSync(directory, 0o777);
   const bin = join(directory, "bin"); mkdirSync(bin, { mode: 0o755 });
   const record = join(directory, "calls.jsonl");
+  fixtureCallLogs.push(record);
   const fake = join(bin, "caam");
   writeFileSync(fake, `#!${process.execPath}\nconst fs=require('fs');
 const args=process.argv.slice(2);
@@ -307,6 +328,7 @@ else process.exitCode=98;
   const identity = process.getuid?.() === 0 ? { uid: 65534, gid: 65534 } : {};
   // A private evidence parent is separate from the world-writable fixture log.
   const evidenceDir = mkdtempSync(join(tmpdir(), "acfs-live-evidence-"));
+  removeAfterTest.push(evidenceDir);
   if (identity.uid !== undefined) chownSync(evidenceDir, identity.uid, identity.gid!);
   const evidence = join(evidenceDir, "report.json");
   const result = spawnSync(process.execPath, [cli, "--profile", "claude:private@example.com", "--live-model", "claude:sonnet", "--run", "--json", "--output", evidence], {
@@ -466,6 +488,7 @@ test("real Codex fixture CLI emits JSONL under an unprivileged isolated executio
   chmodSync(ROOT, 0o755); chmodSync(directory, 0o777);
   const bin = join(directory, "bin"); mkdirSync(bin, { mode: 0o755 });
   const record = join(directory, "calls.jsonl");
+  fixtureCallLogs.push(record);
   writeFileSync(join(bin, "caam"), `#!${process.execPath}
 const fs=require('fs'), args=process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(record)},JSON.stringify({args,uid:process.getuid(),cwd:process.cwd(),secret:!!process.env.OPENAI_API_KEY})+'\\n');

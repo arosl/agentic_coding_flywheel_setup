@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Real Git snapshots and unprivileged test subprocesses; fixtures are retained."""
+"""Real Git snapshots and unprivileged test subprocesses; each fixture is removed
+when the test that made it ends."""
 import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -17,11 +19,19 @@ spec = importlib.util.spec_from_file_location("candidate_tests", SCRIPT)
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 PYTHON = "/usr/bin/python3"
+FIXTURE_ROOTS = []
+
+
+def remove_fixtures():
+    """Remove every fixture made so far; a test registers this as a cleanup."""
+    while FIXTURE_ROOTS:
+        shutil.rmtree(FIXTURE_ROOTS.pop(), ignore_errors=True)
 
 
 class Fixture:
     def __init__(self, program="print('tested exact source')\n", fmt="sha1", files=None):
         self.root = Path(tempfile.mkdtemp(prefix="acfs-candidate-tests-"))
+        FIXTURE_ROOTS.append(self.root)
         self.repo = self.root / "repo"
         self.repo.mkdir(mode=0o700)
         self.output = self.root / "results"
@@ -84,6 +94,7 @@ class CandidateTestTests(unittest.TestCase):
     def setUp(self):
         # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
         self.addCleanup(os.umask, os.umask(0o022))
+        self.addCleanup(remove_fixtures)
         self.assertNotEqual(os.geteuid(), 0, "Run unprivileged")
 
     def test_preview_is_repeatable_and_executes_nothing(self):
@@ -318,6 +329,7 @@ class CandidateTestTests(unittest.TestCase):
                         Path(__file__).with_name("test_swarm_fleet_integrate.py"))
         support = importlib.util.module_from_spec(support_spec)
         support_spec.loader.exec_module(support)
+        self.addCleanup(support.remove_fixtures)
         code = ("import unittest\nfrom pathlib import Path\nclass T(unittest.TestCase):\n"
                 " def test_combined(self):\n"
                 "  self.assertEqual(Path('left').read_text() + Path('right').read_text(), 'leftright')\n"

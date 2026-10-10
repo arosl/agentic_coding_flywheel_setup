@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Exercise the real frontend and installer; controller peers never contact hosts."""
+import contextlib
 import fcntl
 import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -17,12 +19,24 @@ runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
 
 
+def remove_tree(path):
+    """Remove a fixture tree, first giving back owner access to the read-only
+    release directories the installer and the tests leave in it."""
+    for parent, directories, _files in os.walk(path):
+        for name in directories:
+            child = os.path.join(parent, name)
+            if not os.path.islink(child):
+                with contextlib.suppress(OSError):
+                    os.chmod(child, 0o700)
+    shutil.rmtree(path, ignore_errors=True)
+
+
 class RuntimeTests(unittest.TestCase):
     def setUp(self):
         # Fixtures inherit the umask; a login user's 0002 makes them group-writable.
         self.addCleanup(os.umask, os.umask(0o022))
-        # Fixtures intentionally retained. Never run cleanup against user data.
         self.root = Path(tempfile.mkdtemp(prefix="acfs-runtime-test-"))
+        self.addCleanup(remove_tree, self.root)
         self.root.chmod(0o755)
         self.uid = 65534 if os.geteuid() == 0 else os.geteuid()
         self.gid = 65534 if os.geteuid() == 0 else os.getegid()

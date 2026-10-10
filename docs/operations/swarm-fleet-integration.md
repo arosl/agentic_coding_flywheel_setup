@@ -139,7 +139,7 @@ writers are not blocked, so observations are not an atomic repository snapshot.
 
 ## Isolation and limits
 
-Preview writes a new private bare repository under `/tmp/acfs-fleet-integration-*`.
+Preview writes a new private bare repository under `$TMPDIR/acfs-fleet-integration-*` (`/tmp` when `TMPDIR` is unset).
 The path is reported as `scratch_directory` (or `integration_scratch` on an error).
 It is retained for inspection, including after conflicts or interruption. Do not
 share it blindly: it contains unredacted committed history and may contain

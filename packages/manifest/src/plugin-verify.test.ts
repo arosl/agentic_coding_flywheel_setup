@@ -1,10 +1,10 @@
 import { strict as assert } from "node:assert";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { loadReviewedPluginPackage, parsePluginVerifyArguments } from "./plugin-verify.js";
 import type { Manifest } from "./types.js";
@@ -93,8 +93,13 @@ function plugin() {
     extensions: {},
   };
 }
+const directories: string[] = [];
+afterEach(() => {
+  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
 function fixture(value = plugin()) {
   const directory = mkdtempSync(join(tmpdir(), "acfs-plugin-verify-"));
+  directories.push(directory);
   const packageDir = join(directory, "acfs-plugin-package");
   mkdirSync(packageDir);
   writeFileSync(join(packageDir, "plugin.json"), JSON.stringify(value));

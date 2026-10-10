@@ -34,12 +34,26 @@ test_fail() {
     ((++TESTS_FAILED))
 }
 
-# Create temp directory for test fixtures
+# Every fixture directory this run creates, removed on exit unless
+# ACFS_SECURITY_RETAIN_TEMP_FILES=true asks to keep the evidence. Each
+# setup_fixtures call makes a fresh one, so one path in the trap would leak
+# all but the last.
+TEST_TMP_DIRS=()
+
+cleanup_fixtures() {
+    if [[ ${#TEST_TMP_DIRS[@]} -gt 0 ]]; then
+        rm -rf -- "${TEST_TMP_DIRS[@]}"
+    fi
+}
+
+if [[ "${ACFS_SECURITY_RETAIN_TEMP_FILES:-false}" != "true" ]]; then
+    trap cleanup_fixtures EXIT
+fi
+
+# Create a fresh temp directory for test fixtures
 setup_fixtures() {
     TEST_TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/acfs_test_security.XXXXXX")
-    if [[ "${ACFS_SECURITY_RETAIN_TEMP_FILES:-false}" != "true" ]]; then
-        trap 'rm -rf "$TEST_TMP_DIR"' EXIT
-    fi
+    TEST_TMP_DIRS+=("$TEST_TMP_DIR")
 
     # Create a simple test script
     echo '#!/bin/bash
@@ -876,7 +890,10 @@ test_known_installers_all_https() {
 
 test_https_download_preserves_executable_bytes() {
     local name="HTTPS download preserves executable bytes across content negotiation"
-    if python3 - "$SCRIPT_DIR/security.sh" "$(command -v bash)" <<'PY'
+    # The TLS evidence directory and the download's retained headers land in
+    # a fixture directory, so the exit trap removes them with the rest.
+    setup_fixtures
+    if TMPDIR="$TEST_TMP_DIR" python3 - "$SCRIPT_DIR/security.sh" "$(command -v bash)" <<'PY'
 import gzip
 import hashlib
 import http.server
@@ -1021,7 +1038,10 @@ test_checksum_report_rejects_duplicate_keys_and_policy_digest_drift
 test_configure_curl_compressed_when_curl_has_zlib
 test_download_to_file_decodes_unrequested_gzip
 
-if bash "$PROJECT_ROOT/tests/unit/test_security_fd_identity.sh"; then
+# That test runs with ACFS_SECURITY_RETAIN_TEMP_FILES=true and keeps its
+# fixtures and metadata files, so give it a fixture directory as TMPDIR.
+setup_fixtures
+if TMPDIR="$TEST_TMP_DIR" bash "$PROJECT_ROOT/tests/unit/test_security_fd_identity.sh"; then
     test_pass "retained descriptor identity and diagnostic stream regression"
 else
     test_fail "retained descriptor identity and diagnostic stream regression"

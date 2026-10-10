@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -26,8 +27,11 @@ POLICY = Path(os.environ.get('ACFS_UPGRADE_POLICY_TEST_SOURCE', ROOT / 'scripts/
 
 @contextmanager
 def fixture_directory():
-    # Retain fixture evidence; this suite never deletes directories or files.
-    yield tempfile.mkdtemp(prefix='acfs-upgrade-test-')
+    directory = tempfile.mkdtemp(prefix='acfs-upgrade-test-')
+    try:
+        yield directory
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 def definition(source: str, name: str) -> str:

@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   truncateSync,
   utimesSync,
@@ -17,7 +18,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { gunzipSync } from "node:zlib";
 import {
   PLUGIN_ARCHIVE_LIMITS,
@@ -33,8 +34,17 @@ import {
 } from "./plugin-pack.js";
 
 const hash = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
+const temporaryDirectories: string[] = [];
+function temporaryDirectory(prefix: string): string {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
 function fixture(extra: Record<string, Buffer | string> = {}, reverse = false) {
-  const directory = mkdtempSync(join(tmpdir(), "acfs-package-author-"));
+  const directory = temporaryDirectory("acfs-package-author-");
   const source = join(directory, "source");
   mkdirSync(source, { mode: 0o700 });
   const manifest = {
@@ -214,7 +224,7 @@ for (const [name, expected] of [
 }
 for (const missing of ["plugin.json", "README.md", "LICENSE"]) {
   test(`refuses missing required ${missing}`, () => {
-    const directory = mkdtempSync(join(tmpdir(), "acfs-missing-package-"));
+    const directory = temporaryDirectory("acfs-missing-package-");
     for (const [name, bytes] of Object.entries({
       "plugin.json": "{}",
       "README.md": "Docs",
@@ -242,7 +252,7 @@ for (const [json, expected] of [
 
 test("refuses symlinked files, directories and source ancestors before following them", () => {
   const item = fixture();
-  const outside = mkdtempSync(join(tmpdir(), "acfs-package-outside-"));
+  const outside = temporaryDirectory("acfs-package-outside-");
   const other = join(outside, "other");
   writeFileSync(other, "private");
   symlinkSync(other, join(item.source, "linked"));

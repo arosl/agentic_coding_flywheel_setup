@@ -46,7 +46,12 @@ HARNESS_SECTION_START=""
 HARNESS_PASS_COUNT=0
 HARNESS_FAIL_COUNT=0
 HARNESS_SKIP_COUNT=0
-HARNESS_ARTIFACT_DIR=""
+# A caller-chosen artifact directory (set before harness_init) is always
+# kept. One harness_init creates is removed by harness_summary when every
+# test passed, unless HARNESS_KEEP_ARTIFACTS=true; a failed or interrupted
+# run keeps it for inspection.
+HARNESS_ARTIFACT_DIR="${HARNESS_ARTIFACT_DIR:-}"
+HARNESS_ARTIFACT_DIR_CREATED=false
 HARNESS_CURRENT_SECTION=""
 
 # ============================================================
@@ -85,8 +90,12 @@ harness_init() {
     HARNESS_SKIP_COUNT=0
 
     # Create artifact directory
-    HARNESS_ARTIFACT_DIR="${HARNESS_ARTIFACT_DIR:-/tmp/acfs-test-artifacts-$(date +%Y%m%d-%H%M%S)}"
-    mkdir -p "$HARNESS_ARTIFACT_DIR"
+    if [[ -n "$HARNESS_ARTIFACT_DIR" ]]; then
+        mkdir -p "$HARNESS_ARTIFACT_DIR"
+    else
+        HARNESS_ARTIFACT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/acfs-test-artifacts-$(date +%Y%m%d-%H%M%S).XXXXXX")"
+        HARNESS_ARTIFACT_DIR_CREATED=true
+    fi
 
     {
         echo ""
@@ -397,6 +406,13 @@ harness_summary() {
 
     local total_duration=$((now - HARNESS_START_TIME))
     local total_tests=$((HARNESS_PASS_COUNT + HARNESS_FAIL_COUNT + HARNESS_SKIP_COUNT))
+    local remove_artifacts=false
+    local artifacts_note="${HARNESS_ARTIFACT_DIR}"
+    if [[ $HARNESS_FAIL_COUNT -eq 0 ]] && [[ "$HARNESS_ARTIFACT_DIR_CREATED" == "true" ]] &&
+        [[ "${HARNESS_KEEP_ARTIFACTS:-false}" != "true" ]]; then
+        remove_artifacts=true
+        artifacts_note="${HARNESS_ARTIFACT_DIR} (removed: all passed; HARNESS_KEEP_ARTIFACTS=true keeps it)"
+    fi
 
     {
         echo "${HARNESS_BOLD}============================================================${HARNESS_NC}"
@@ -409,7 +425,7 @@ harness_summary() {
         echo "  ${HARNESS_YELLOW}Skipped:      ${HARNESS_SKIP_COUNT}${HARNESS_NC}"
         echo ""
         echo "  Duration:     $(harness_duration_human $total_duration)"
-        echo "  Artifacts:    ${HARNESS_ARTIFACT_DIR}"
+        echo "  Artifacts:    ${artifacts_note}"
         echo ""
 
         if [[ $HARNESS_FAIL_COUNT -eq 0 ]]; then
@@ -432,6 +448,10 @@ harness_summary() {
   "success": $([[ $HARNESS_FAIL_COUNT -eq 0 ]] && echo true || echo false)
 }
 EOF
+
+    if [[ "$remove_artifacts" == "true" ]] && [[ -d "$HARNESS_ARTIFACT_DIR" ]]; then
+        rm -rf -- "$HARNESS_ARTIFACT_DIR"
+    fi
 
     # Return appropriate exit code
     [[ $HARNESS_FAIL_COUNT -eq 0 ]]

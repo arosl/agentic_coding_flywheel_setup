@@ -5,7 +5,7 @@ Defaults to this checkout's complete install.sh. Explicit partial-checkout
 ACFS_INSTALLER_MAIN_TEST_SOURCE and ACFS_INSTALLER_LOADER_TEST_SOURCE overrides
 must be reported as snapshot tests, never whole-installer execution. No package
 manager, reboot, or live release discovery is invoked. Temporary lock files are
-real; their directories and all evidence are retained.
+real; each test removes their directories when it ends.
 """
 from __future__ import annotations
 import os
@@ -13,6 +13,7 @@ import hashlib
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -45,6 +46,7 @@ class MainUpgradeOrderTests(unittest.TestCase):
 
     def run_main(self, *, overrides=None, arguments=(), extra='', uid=None):
         root = Path(tempfile.mkdtemp(prefix='acfs-main-order-'))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         root.chmod(0o755)
         home = root / 'home'
         home.mkdir(mode=0o700)
@@ -518,6 +520,7 @@ class PolicyLoadingTests(unittest.TestCase):
 
     def load(self, body='printf "POLICY_LOADED\\n"\nreturn 0\n', *, marker='', mismatch=False, symlink=False, conditional=True):
         root = Path(tempfile.mkdtemp(prefix='acfs-policy-load-'))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         lib = root / 'scripts/lib'
         lib.mkdir(parents=True)
         target = lib / 'ubuntu_upgrade.sh'
@@ -594,8 +597,8 @@ class ActualUpgradeArgumentsTests(MainUpgradeOrderTests):
 class PrivilegedCheckpointReadTests(unittest.TestCase):
     """Real sudo/stat/jq and root-only files in a disposable Linux container.
 
-    The fixture adapter changes only the fixed system path to a fresh retained
-    directory. Run as root with passwordless sudo for UID 1000 in that container.
+    The fixture adapter changes only the fixed system path to a fresh
+    directory that the test removes when it ends. Run as root with passwordless sudo for UID 1000 in that container.
     Never configure sudo or install packages on the test runner's live host.
     """
 
@@ -610,6 +613,7 @@ class PrivilegedCheckpointReadTests(unittest.TestCase):
 
     def read_as_sudo_user(self, stage=None, *, kind='regular', hidden=True, guard=False):
         root = Path(tempfile.mkdtemp(prefix='acfs-sudo-checkpoint-'))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         root.chmod(0o755)
         parent = root / 'state'
         parent.mkdir(mode=0o700 if hidden else 0o755)

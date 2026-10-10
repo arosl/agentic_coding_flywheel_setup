@@ -6,7 +6,7 @@
  * Uses actual acfs.manifest.yaml and validates against generated outputs.
  */
 
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -16,6 +16,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -56,6 +57,17 @@ const MANIFEST_PATH = resolve(PROJECT_ROOT, "acfs.manifest.yaml");
 const GENERATED_DIR = resolve(PROJECT_ROOT, "scripts/generated");
 const WEB_GENERATED_DIR = resolve(PROJECT_ROOT, "apps/web/lib/generated");
 const MANIFEST_INDEX_PATH = resolve(GENERATED_DIR, "manifest_index.sh");
+
+// Throwaway homes made by a test, removed after it whether it passed or not.
+const temporaryHomes: string[] = [];
+function temporaryHome(prefix: string): string {
+  const home = mkdtempSync(resolve(tmpdir(), prefix));
+  temporaryHomes.push(home);
+  return home;
+}
+afterEach(() => {
+  for (const home of temporaryHomes.splice(0)) rmSync(home, { recursive: true, force: true });
+});
 
 describe("Generator optional verify parsing", () => {
   test("reports stale generated paths without deleting them", () => {
@@ -2063,7 +2075,7 @@ describe("agents.claude post-install link step", () => {
   // Lay out what `claude install` (the native installer) publishes:
   // ~/.local/bin/claude -> ~/.local/share/claude/versions/<ver>.
   function nativeLayoutHome(): string {
-    const home = mkdtempSync(resolve(tmpdir(), "acfs-claude-link-"));
+    const home = temporaryHome("acfs-claude-link-");
     const versions = resolve(home, ".local/share/claude/versions");
     mkdirSync(versions, { recursive: true });
     mkdirSync(resolve(home, ".local/bin"), { recursive: true });
@@ -2120,7 +2132,7 @@ describe("agents.claude post-install link step", () => {
   });
 
   test("links the legacy layout into the default bin dir when no native launcher exists", () => {
-    const home = mkdtempSync(resolve(tmpdir(), "acfs-claude-link-"));
+    const home = temporaryHome("acfs-claude-link-");
     const legacy = resolve(home, ".claude/local/bin");
     mkdirSync(legacy, { recursive: true });
     writeFileSync(resolve(legacy, "claude"), "#!/bin/sh\necho old\n");
@@ -2129,7 +2141,7 @@ describe("agents.claude post-install link step", () => {
   });
 
   test("still fails when no runnable claude exists anywhere", () => {
-    const home = mkdtempSync(resolve(tmpdir(), "acfs-claude-link-"));
+    const home = temporaryHome("acfs-claude-link-");
     expect(runStep(home).status).not.toBe(0);
   });
 });
@@ -2191,7 +2203,7 @@ describe("stack.cass per-run installer TMPDIR cleanup", () => {
   ].join("\n");
 
   function runCass(scenario: string) {
-    const home = mkdtempSync(resolve(tmpdir(), "acfs-cass-tmpdir-"));
+    const home = temporaryHome("acfs-cass-tmpdir-");
     const parent = resolve(home, ".cache/acfs/installer-tmp");
     const sibling = resolve(parent, "cass.KEEP01");
     mkdirSync(sibling, { recursive: true });

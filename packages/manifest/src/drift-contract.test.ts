@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { checkManifestDriftContract, type DriftContractCode } from "./drift-contract.js";
@@ -24,8 +24,15 @@ function writeFixtureFile(root: string, relPath: string, content: string): void 
   write(join(root, relPath), content);
 }
 
+const fixtureRoots: string[] = [];
+
+afterEach(() => {
+  for (const root of fixtureRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
 function cleanFixture(): string {
   const root = mkdtempSync(join(tmpdir(), "acfs-manifest-drift-contract-"));
+  fixtureRoots.push(root);
 
   writeFixtureFile(
     root,

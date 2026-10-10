@@ -100,6 +100,7 @@ class FleetTests(unittest.TestCase):
         # user's 0002 umask they would be 664, which the probe rightly refuses.
         self.addCleanup(os.umask, os.umask(0o022))
         self.directory = Path(tempfile.mkdtemp(prefix="acfs-fleet-test-"))
+        self.addCleanup(shutil.rmtree, self.directory, True)
 
     def file(self, name, data, mode=0o600):
         path = self.directory / name

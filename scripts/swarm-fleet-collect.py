@@ -1294,8 +1294,9 @@ def integrate_collection(path, repository, onto, name, hosts, timeout, approval=
                     git.verify_bundle(bundles[artifact["file"]])
             guard()
             # All writes before approval are confined to a new private scratch
-            # repository. Retain it for inspection, including on interruption.
-            root = Path(tempfile.mkdtemp(prefix="acfs-fleet-integration-", dir="/tmp"))
+            # repository under TMPDIR. Retain it for inspection, including on
+            # interruption.
+            root = Path(tempfile.mkdtemp(prefix="acfs-fleet-integration-"))
             INTEGRATION_SCRATCH = str(root)
             scratch = LocalGit(root, timeout)
             scratch.deadline = git.deadline

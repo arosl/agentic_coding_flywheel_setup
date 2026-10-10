@@ -6,6 +6,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import stat
 import struct
@@ -79,8 +80,8 @@ class FixtureTransport:
 
 class FleetTests(unittest.TestCase):
     def setUp(self):
-        # Retain fixtures on failure/success for inspection; no destructive cleanup.
         self.directory = Path(tempfile.mkdtemp(prefix="acfs-fleet-launch-test-"))
+        self.addCleanup(shutil.rmtree, self.directory, ignore_errors=True)
         self.state = self.directory / "launch"
         self.spec = specification()
         self.plan = fleet.build_plan(self.spec, b"reviewed host keys\n", b"private key\n", self.state, 360)
@@ -368,6 +369,7 @@ class ValidationTests(unittest.TestCase):
 class FilesAndProcessTests(unittest.TestCase):
     def setUp(self):
         self.directory = Path(tempfile.mkdtemp(prefix="acfs-fleet-io-test-"))
+        self.addCleanup(shutil.rmtree, self.directory, ignore_errors=True)
 
     def test_input_limits_no_follow_and_private_permissions(self):
         file = self.directory / "data"
@@ -554,6 +556,7 @@ class AccessAclTests(unittest.TestCase):
 
     def test_private_group_write_with_an_access_acl_is_refused(self):
         directory = Path(tempfile.mkdtemp(prefix="acfs-fleet-acl-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
         directory.chmod(0o775)
         fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
         self.addCleanup(os.close, fd)

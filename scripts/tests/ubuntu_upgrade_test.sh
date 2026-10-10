@@ -18,6 +18,10 @@ TESTS_PASSED=0
 TESTS_FAILED=0
 TESTS_SKIPPED=0
 
+# Parent of the per-test scratch directories; run_all_tests sets it and
+# removes it on exit.
+TEST_TMP_ROOT="${TMPDIR:-/tmp}"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -505,7 +509,7 @@ test_upgrade_rehearsal_state_machine_multi_hop() {
 
     local test_dir=""
     local state_file=""
-    test_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-upgrade-rehearsal.XXXXXX")"
+    test_dir="$(mktemp -d "$TEST_TMP_ROOT/acfs-upgrade-rehearsal.XXXXXX")"
     state_file="$test_dir/state.json"
     _write_base_state_fixture "$state_file"
 
@@ -557,7 +561,7 @@ test_upgrade_rehearsal_reboot_marker_context() {
     local state_file=""
     local args_line=""
 
-    test_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-upgrade-reboot-marker.XXXXXX")"
+    test_dir="$(mktemp -d "$TEST_TMP_ROOT/acfs-upgrade-reboot-marker.XXXXXX")"
     state_file="$test_dir/pre/state.json"
     _write_upgrade_stage_fixture "$state_file" "pre_upgrade_reboot"
     if args_line="$(
@@ -727,7 +731,7 @@ test_upgrade_setup_infrastructure_persists_resolved_target_home() {
 
     local test_dir=""
     local result=""
-    test_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-ubuntu-upgrade-test.XXXXXX")"
+    test_dir="$(mktemp -d "$TEST_TMP_ROOT/resume.XXXXXX")"
 
     if result="$(
         ACFS_RESUME_DIR="$test_dir/resume"
@@ -771,7 +775,7 @@ test_upgrade_setup_infrastructure_persists_explicit_new_user_home_for_root() {
 
     local test_dir=""
     local result=""
-    test_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-ubuntu-upgrade-test.XXXXXX")"
+    test_dir="$(mktemp -d "$TEST_TMP_ROOT/resume.XXXXXX")"
 
     if result="$(
         ACFS_RESUME_DIR="$test_dir/resume"
@@ -810,7 +814,7 @@ test_upgrade_setup_infrastructure_rejects_unresolved_target_home() {
     log_test "Resume Infrastructure Rejects Unresolved Target Home"
 
     local test_dir=""
-    test_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-ubuntu-upgrade-test.XXXXXX")"
+    test_dir="$(mktemp -d "$TEST_TMP_ROOT/resume.XXXXXX")"
 
     if (
         ACFS_RESUME_DIR="$test_dir/resume"
@@ -836,7 +840,7 @@ test_upgrade_lock_rejects_contender_without_truncating_pid() {
     local lockfile=""
     local first_pid=""
     local after_contender_pid=""
-    test_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-ubuntu-upgrade-lock.XXXXXX")"
+    test_dir="$(mktemp -d "$TEST_TMP_ROOT/acfs-ubuntu-upgrade-lock.XXXXXX")"
     lockfile="$test_dir/acfs-upgrade.lock"
 
     ACFS_UPGRADE_LOCK="$lockfile"
@@ -1029,6 +1033,10 @@ run_all_tests() {
     echo "  ACFS Ubuntu Upgrade Unit Tests"
     echo "=============================================="
     echo ""
+
+    # Every test's scratch directory lives under one root, removed on exit.
+    TEST_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/acfs-ubuntu-upgrade-test.XXXXXX")"
+    trap 'rm -rf -- "$TEST_TMP_ROOT"' EXIT
 
     # Source the library
     if ! source_upgrade_lib; then

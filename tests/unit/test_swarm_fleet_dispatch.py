@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -68,6 +69,7 @@ class Peer:
 class DispatchTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="acfs-fleet-dispatch-test-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.launch_dir, self.state = self.root / "launch", self.root / "dispatch"
         self.known, self.identity = b"fixture independently verified host keys", b"fixture private identity"
         hosts = []

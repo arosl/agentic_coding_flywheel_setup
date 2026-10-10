@@ -7,11 +7,12 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { readVerifiedPluginArchive } from "./plugin-archive.js";
 import { buildPluginArchive } from "./plugin-pack.js";
@@ -31,8 +32,13 @@ import {
 const targetText = "ubuntu/26.04/x86_64/glibc";
 const target = parsePluginTarget(targetText);
 const digest = (bytes: Buffer): string => createHash("sha256").update(bytes).digest("hex");
+const directories: string[] = [];
+afterEach(() => {
+  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "acfs-pack-command-"));
+  directories.push(directory);
   const source = join(directory, "source");
   mkdirSync(source, { mode: 0o700 });
   const manifest = {

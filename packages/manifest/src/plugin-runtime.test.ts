@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   renameSync,
+  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -15,7 +16,7 @@ import {
 import { createServer } from "node:https";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   buildPluginInstallPlan,
@@ -32,8 +33,17 @@ import {
 
 const digest = (value: Buffer): string => createHash("sha256").update(value).digest("hex");
 const nonRoot = process.getuid!() !== 0;
+const temporaryDirectories: string[] = [];
+function temporaryDirectory(prefix: string): string {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
 function fixture(sources: string[], verify?: string[]) {
-  const home = mkdtempSync(join(tmpdir(), "acfs-plugin-execution-"));
+  const home = temporaryDirectory("acfs-plugin-execution-");
   const bytes = sources.map((source) => Buffer.from(source));
   const modules: PlannablePluginModule[] = sources.map((_, index) => ({
     id: `plugin.example.tool${index}`,
@@ -259,7 +269,7 @@ test(
   integration,
   async () => {
     const item = fixture([installer(0)]);
-    const other = mkdtempSync(join(tmpdir(), "acfs-other-"));
+    const other = temporaryDirectory("acfs-other-");
     symlinkSync(other, join(item.home, ".acfs"));
     await assert.rejects(
       executePluginInstallPlan(item.plan, item),
@@ -430,7 +440,7 @@ for (const url of [
 }
 
 test("real TLS transport verifies bytes and refuses downgrade, bad certificates, loops, truncation and oversized data", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "acfs-plugin-tls-"));
+  const directory = temporaryDirectory("acfs-plugin-tls-");
   const key = join(directory, "key.pem");
   const cert = join(directory, "cert.pem");
   execFileSync(

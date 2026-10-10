@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -11,8 +11,9 @@ import {
   type ProbeRequest, type ProbeResult, type RehearsalPorts,
 } from "./agent-profile-rehearsal.js";
 
-// Retain named fixtures so a failure is inspectable; never invoke a real provider.
+// Fixtures live under one root, removed once the file's tests finish; never invoke a real provider.
 const ROOT = mkdtempSync(join(tmpdir(), "acfs-profile-rehearsal-tests-"));
+test.after(() => rmSync(ROOT, { recursive: true, force: true }));
 const ok = (text: string, stderr = ""): ProbeResult => ({
   outcome: "ok", exitCode: 0, stdout: Buffer.from(text), stderr: Buffer.from(stderr),
 });

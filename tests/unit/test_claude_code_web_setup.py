@@ -1,6 +1,6 @@
 """Real entrypoint tests with controlled downloads, not live-cloud evidence.
 
-Each case retains its scratch directory; there is no automatic deletion.
+Each case removes its scratch directory when it ends.
 """
 import hashlib
 import importlib.util
@@ -29,9 +29,24 @@ publisher = importlib.util.module_from_spec(publisher_spec)
 publisher_spec.loader.exec_module(publisher)
 
 
+def remove_tree(path):
+    """Remove a scratch tree, first giving back owner access to the directories
+    a case made read-only."""
+    for parent, directories, _files in os.walk(path):
+        for name in directories:
+            child = os.path.join(parent, name)
+            if not os.path.islink(child):
+                try:
+                    os.chmod(child, 0o700)
+                except OSError:
+                    pass
+    shutil.rmtree(path, ignore_errors=True)
+
+
 class MirrorPublisher(unittest.TestCase):
     def setUp(self):
         self.stage = Path(tempfile.mkdtemp(prefix="acfs-publisher-test-"))
+        self.addCleanup(remove_tree, self.stage)
 
     def tar(self, names):
         out = io.BytesIO()
@@ -385,6 +400,7 @@ class MirrorPublisher(unittest.TestCase):
 class CloudSetup(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="acfs-cloud-test-")).resolve()
+        self.addCleanup(remove_tree, self.root)
         self.home = self.root / "home"
         self.bin = self.root / "bin"
         for path in (self.home, self.bin, self.root / "tmp"):

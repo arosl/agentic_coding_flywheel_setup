@@ -1,6 +1,6 @@
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildArchitectureAudit, runArchitectureAudit, type ArchitectureCatalogue } from "./architecture-audit.js";
@@ -13,8 +13,11 @@ const catalogue: ArchitectureCatalogue = {
   commands: [{ moduleId: "agents.claude", cliName: "claude" }, { moduleId: "stack.rch", cliName: "rch" }],
   provenance: { acfsVersion: "fixture", manifestSha256: "a".repeat(64), checksumsYamlSha256: "b".repeat(64) },
 };
+const homes: string[] = [];
+afterEach(() => { for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
 function fixture() {
   const home = mkdtempSync(join(tmpdir(), "acfs-architecture-audit-"));
+  homes.push(home);
   const bin = join(home, ".local/bin");
   mkdirSync(bin, { recursive: true });
   return { home, bin };

@@ -15,6 +15,21 @@ ARTIFACT_DIR="${ACFS_RESCUE_TEST_ARTIFACTS_DIR:-${TMPDIR:-/tmp}/acfs-rescue-test
 
 mkdir -p "$ARTIFACT_DIR"
 
+# A directory this run made is removed once every test passed. A failed run
+# keeps it for the fail messages, and a caller-supplied one is never removed.
+ARTIFACT_DIR_OWNED=false
+[[ -n "${ACFS_RESCUE_TEST_ARTIFACTS_DIR:-}" ]] || ARTIFACT_DIR_OWNED=true
+
+cleanup_artifact_dir() {
+    local rc=$?
+    if [[ $rc -eq 0 && $TESTS_FAILED -eq 0 && "$ARTIFACT_DIR_OWNED" == true ]]; then
+        chmod -R u+rwX -- "$ARTIFACT_DIR" 2>/dev/null || true
+        rm -rf -- "$ARTIFACT_DIR"
+    fi
+    return "$rc"
+}
+trap cleanup_artifact_dir EXIT
+
 pass() {
     TESTS_PASSED=$((TESTS_PASSED + 1))
     echo "PASS: $1"

@@ -7,12 +7,13 @@ import {
   mkdtempSync,
   readFileSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { buildPluginInstallPlan, type PlannablePluginModule } from "./plugin-plan.js";
 import {
   checkPluginInstallPlan,
@@ -29,8 +30,14 @@ const integration = {
 const rejected = (code: string) => (error: unknown): boolean =>
   error instanceof PluginInstallError && error.code === code;
 
+const homes: string[] = [];
+afterEach(() => {
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+});
+
 function fixture(check = "command -v bash") {
   const home = mkdtempSync(join(tmpdir(), "acfs-plugin-health-"));
+  homes.push(home);
   const sources = [0, 1].map((index) => Buffer.from(
     `set -eu\nmkdir -p "$HOME/.local/bin"\n` +
     `printf '#!/bin/sh\\ntouch "$HOME/binary-was-executed"\\n' > "$HOME/.local/bin/acfs_health_${index}"\n` +

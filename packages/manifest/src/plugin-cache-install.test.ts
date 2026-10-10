@@ -1,11 +1,11 @@
 import { strict as assert } from "node:assert";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:https";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   executeCachedPluginInstallPlan,
@@ -41,9 +41,15 @@ function script(index: number): Buffer {
     `set -eu\nmkdir -p "$HOME/.local/bin"\nprintf '#!/bin/sh\\nexit 0\\n' > "$HOME/.local/bin/cache_fixture_${index}"\nchmod 755 "$HOME/.local/bin/cache_fixture_${index}"\nprintf '${index}\\n' >> "$HOME/install-order"\n`,
   );
 }
+const directories: string[] = [];
+afterEach(() => {
+  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
 function fixture(scripts = [script(0), script(1)]) {
   const parent = mkdtempSync(join(tmpdir(), "acfs-cache-command-"));
+  directories.push(parent);
   const home = mkdtempSync(join(tmpdir(), "acfs-cache-user-"));
+  directories.push(home);
   const cacheDir = join(parent, "entrypoints");
   const target = linux
     ? detectPluginInstallTarget()

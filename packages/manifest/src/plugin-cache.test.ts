@@ -11,6 +11,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   statSync,
   symlinkSync,
   truncateSync,
@@ -18,7 +19,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import {
   loadPluginInstallerCache,
   PLUGIN_CACHE_LIMITS,
@@ -29,8 +30,13 @@ import { buildPluginInstallPlan, type PluginPlanInput } from "./plugin-plan.js";
 
 const NOW = Date.parse("2026-09-17T12:00:00.000Z");
 const hash = (bytes: Buffer): string => createHash("sha256").update(bytes).digest("hex");
+const parents: string[] = [];
+afterEach(() => {
+  for (const parent of parents.splice(0)) rmSync(parent, { recursive: true, force: true });
+});
 function fixture(sources = [Buffer.from("echo one\n"), Buffer.from("echo two\n")]) {
   const parent = mkdtempSync(join(tmpdir(), "acfs-plugin-cache-"));
+  parents.push(parent);
   const output = join(parent, "portable-cache");
   const provenance = {
     packageId: "example",

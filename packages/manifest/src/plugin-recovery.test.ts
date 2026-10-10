@@ -9,13 +9,14 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { PluginInstallPlan } from "./plugin-plan.js";
 import {
@@ -33,8 +34,13 @@ const refused =
   (code: string) =>
   (error: unknown): boolean =>
     error instanceof PluginInstallError && error.code === code;
+const homes: string[] = [];
+afterEach(() => {
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+});
 function fixture() {
   const home = mkdtempSync(join(tmpdir(), "acfs-recovery-"));
+  homes.push(home);
   const sources = ["lib", "app"].map((name) =>
     Buffer.from(
       `set -eu\necho ${name} >> "$HOME/runs"\n` +

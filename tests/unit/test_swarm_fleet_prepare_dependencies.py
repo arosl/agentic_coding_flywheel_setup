@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,7 +20,7 @@ fleet = prepare.fleet
 
 
 class Fixture:
-    """Real private launch journals and native-format packet bundles, retained."""
+    """Real private launch journals and native-format packet bundles."""
     def __init__(self):
         self.root = Path(tempfile.mkdtemp(prefix="acfs-prepare-recovery-"))
         self.launch_dir = self.root / "launch"
@@ -120,6 +121,7 @@ class Fixture:
 class DependencyTests(unittest.TestCase):
     def setUp(self):
         self.f = Fixture()
+        self.addCleanup(shutil.rmtree, self.f.root, ignore_errors=True)
 
     def edge(self, source, target):
         source["dependencies"] = [{"depends_on_id": target, "type": "blocks"}]

@@ -7,11 +7,12 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   type PluginInstallCommandServices,
@@ -42,6 +43,10 @@ const base = [
   "plugin.example.cli",
 ];
 const receiptDigest = "f".repeat(64);
+const homes: string[] = [];
+afterEach(() => {
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+});
 function fixture() {
   const plan = buildPluginInstallPlan({
     modules: [
@@ -335,6 +340,7 @@ test("CLI status and recovery use the real receipt store, preserving evidence be
 }, async () => {
   const item = fixture();
   const home = mkdtempSync(join(tmpdir(), "acfs-recovery-cli-"));
+  homes.push(home);
   const payload = { ...item.plan, target: detectPluginInstallTarget() };
   const { planSha256: _oldDigest, ...data } = payload;
   const plan = {

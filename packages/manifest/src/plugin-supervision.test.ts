@@ -1,10 +1,10 @@
 import { strict as assert } from "node:assert";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { PluginInstallPlan } from "./plugin-plan.js";
 import {
@@ -21,8 +21,13 @@ const runtimeUrl = new URL(
 ).href;
 const installed =
   'mkdir -p "$HOME/.local/bin"\nprintf "#!/bin/sh\\nexit 0\\n" > "$HOME/.local/bin/acfs_supervised"\nchmod 755 "$HOME/.local/bin/acfs_supervised"\n';
+const homes: string[] = [];
+afterEach(() => {
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+});
 function fixture(source = installed) {
   const home = mkdtempSync(join(tmpdir(), "acfs-supervision-"));
+  homes.push(home);
   const script = Buffer.from("set -eu\n" + source);
   const payload = {
     schema: "acfs.plugin-install-plan.v1" as const,
