@@ -499,8 +499,11 @@ $status as $s
 | (if $plan_status == "fail" then 2 elif $plan_status == "warn" then 1 else 0 end) as $exit_code
 # Resolve the admission decision once, before constructing any launch advice.
 # A warning can require waiting; it does not automatically authorize a command.
+# Quiesce advice reflects load only: a warning within the recommended count
+# proceeds, and the recommendation (launch_with_review) and swarm launch's
+# --accept-warnings carry the review (acfs-zic).
 | (if ($plan_status == "fail" or ($host_evidence_known | not) or $host_pressure_high or $stale_work_count > 0 or $recommended_agents < 1) then "wait"
-   elif ($requested_agents > $recommended_agents or $plan_status == "warn") then "scale_down"
+   elif $requested_agents > $recommended_agents then "scale_down"
    else "proceed" end) as $quiesce_recommendation
 | (if $plan_status == "fail" then "block"
    elif $quiesce_recommendation == "wait" or $requested_agents > $recommended_agents then "defer_or_reduce"

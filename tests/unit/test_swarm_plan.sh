@@ -256,6 +256,30 @@ test_busy_rch_warns_and_scales_down() {
     pass "busy_rch_warns_and_scales_down"
 }
 
+# A warning with no pressure, within the recommended count, still proceeds
+# (acfs-zic): swarm launch admits it only with --accept-warnings, which
+# needs the quiesce advice to say proceed.
+test_warning_within_capacity_proceeds_with_review() {
+    local fixture output status
+    fixture="$(healthy_status_fixture)"
+    ACFS_TEST_CAPACITY_SCRIPT="$(capacity_script_with_safe_count 64 44 pass "Requested count is within the recommended tier")"
+    export ACFS_TEST_CAPACITY_SCRIPT
+
+    output="$(run_plan_json warning_within_capacity "$fixture" --agents 2 --profile balanced --workload standard)"
+    status="$(cat "$ARTIFACT_DIR/warning_within_capacity.exit")"
+
+    [[ "$status" -eq 1 ]] || return 1
+    jq -e '
+      .status == "warn" and
+      .recommendation == "launch_with_review" and
+      (.checks[] | select(.id == "active_agents" and .status == "warn")) and
+      .quiesce_advisory.recommendation == "proceed" and
+      .quiesce_advisory.recommended_agents == 2
+    ' <<<"$output" >/dev/null || return 1
+
+    pass "warning_within_capacity_proceeds_with_review"
+}
+
 test_low_capacity_blocks_large_profile() {
     local fixture output status
     fixture="$(healthy_status_fixture)"
@@ -398,6 +422,7 @@ main() {
 
     run_test test_healthy_ten_agents_passes_with_launch_command
     run_test test_busy_rch_warns_and_scales_down
+    run_test test_warning_within_capacity_proceeds_with_review
     run_test test_low_capacity_blocks_large_profile
     run_test test_missing_agent_mail_blocks_launch_command
     run_test test_high_load_quiesce_waits

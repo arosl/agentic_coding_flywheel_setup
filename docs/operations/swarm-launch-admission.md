@@ -145,9 +145,12 @@ Recommendations:
 | `wait` | Do not add agents until pressure, hard blockers, or stale work are inspected. |
 
 `wait` is used for hard blockers, high host load, very low available memory, or
-stale in-progress work. `scale_down` is used for warnings such as RCH queue
-pressure, active non-stale work, or counts above the pressure-adjusted
-recommendation.
+stale in-progress work. `scale_down` is used for counts above the
+pressure-adjusted recommendation; RCH queue or worker pressure lowers that
+recommendation to the free RCH slots. A warning within the recommendation, such
+as active non-stale work, proceeds: the plan's `recommendation` is
+`launch_with_review`, and `acfs swarm launch` admits it only with
+`--accept-warnings`.
 
 ## Check Objects
 
