@@ -14,16 +14,20 @@
 #   check_generated.sh --hook
 #       Pre-commit check. Snapshots the commit's index (git's temp index
 #       for `git commit -- <paths>`), runs the generator there, and
-#       refuses the commit if a generated file differs. It names the
-#       command that fixes it.
+#       refuses the commit if a generated file's content or mode differs.
+#       It names the command that fixes it.
 #   check_generated.sh --regenerate [-- <path>...]
 #       Regenerates from HEAD plus the working-tree copies of <path>
 #       (what `git commit -- <path>...` would commit), or from the index
 #       without paths, and writes the generated files that change into
-#       the working tree. Without paths it also stages them.
+#       the working tree. Without paths it also stages them. It never
+#       overwrites a working-tree file that holds changes outside the
+#       snapshot (another agent's work); it names it and fails instead.
 #   check_generated.sh --install
 #       Installs the hook: into Agent Mail's hooks.d/pre-commit chain when
 #       that exists, otherwise as the pre-commit hook.
+#
+# Runs under bash 3.2 (macOS) too: no associative arrays or mapfile.
 # ============================================================
 
 set -euo pipefail
@@ -31,6 +35,7 @@ set -euo pipefail
 LEDGER_PATH="scripts/generated/internal_checksums.sh"
 HOOK_NAME="40-acfs-check-generated"
 INSTALL_MARK="Installed by check_generated.sh --install"
+WORK=""
 
 die() {
     printf 'check_generated: %s\n' "$1" >&2
@@ -38,23 +43,40 @@ die() {
 }
 
 usage() {
-    sed -n '/^# Usage:/,/^# =====/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'
+    sed -n '/^# Usage:/,/^# Runs under/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'
 }
 
-# Paths the ledger covers, read from the given index (or HEAD's tree).
+make_work() {
+    WORK="$(mktemp -d "${TMPDIR:-/tmp}/acfs-check-generated.XXXXXX")"
+}
+cleanup() {
+    if [[ -n "$WORK" ]]; then rm -rf -- "$WORK"; fi
+}
+trap cleanup EXIT
+
+sha256_stdin() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum | cut -d' ' -f1
+    else
+        shasum -a 256 | cut -d' ' -f1
+    fi
+}
+
+# Paths the ledger covers, read from the given tree-ish (or the index).
 ledger_keys() {
     git show "$1:$LEDGER_PATH" 2>/dev/null \
         | sed -n 's/^[[:space:]]*\[\([^]]*\)\]="[0-9a-f]\{64\}"$/\1/p' || true
 }
 
-# True when a changed path is something the generator reads or writes.
+# True when a changed path is something the generator reads or writes,
+# or that decides which generator runs.
 is_generator_input() {
-    local path="$1"
+    local path="$1" ledgered="$2"
     case "$path" in
-        acfs.manifest.yaml|checksums.yaml|VERSION|README.md) return 0 ;;
+        acfs.manifest.yaml|checksums.yaml|VERSION|README.md|package.json|bun.lock) return 0 ;;
         packages/manifest/*|scripts/generated/*|apps/web/lib/generated/*) return 0 ;;
     esac
-    [[ -n "${LEDGERED[$path]+present}" ]]
+    printf '%s\n' "$ledgered" | grep -Fxq -- "$path"
 }
 
 # The manifest package's node_modules: this checkout's, or the main
@@ -73,20 +95,26 @@ find_node_modules() {
     return 1
 }
 
-# Hash every file in the snapshot, so the generator's changes show up as
-# differing lines. shasum covers macOS, which has no sha256sum.
-snapshot_hashes() {
+# One line per file in the snapshot: its hash and path, and an "x" line
+# for each executable, so the generator's content and mode changes both
+# show up as differing lines.
+snapshot_listing() {
     local -a hasher=(sha256sum)
     command -v sha256sum >/dev/null 2>&1 || hasher=(shasum -a 256)
-    (cd "$1" && find . -path ./packages/manifest/node_modules -prune -o -type f -print0 \
-        | LC_ALL=C sort -z | xargs -0 "${hasher[@]}")
+    (
+        cd "$1" || exit 1
+        find . -path ./packages/manifest/node_modules -prune -o -type f -print0 \
+            | LC_ALL=C sort -z | xargs -0 "${hasher[@]}"
+        find . -path ./packages/manifest/node_modules -prune -o -type f -perm -u+x -print \
+            | LC_ALL=C sort | sed 's/^/x  /'
+    )
 }
 
 # Checks out the index named by $GIT_INDEX_FILE (git's default when unset)
-# into $WORK/tree, runs the generator there, and lists the paths it
-# changed in $WORK/changed.
+# into $WORK/tree, runs the generator there, and lists the paths whose
+# content or mode it changed in $WORK/changed.
 generate_in_snapshot() {
-    local top="$1" node_modules=""
+    local top="$1" node_modules="" rc=0
 
     command -v bun >/dev/null 2>&1 \
         || die "bun is not on PATH, so the generated files can't be checked. Install bun, then commit again."
@@ -95,52 +123,68 @@ generate_in_snapshot() {
 
     git checkout-index -a --prefix="$WORK/tree/"
     ln -s "$node_modules" "$WORK/tree/packages/manifest/node_modules"
-    snapshot_hashes "$WORK/tree" > "$WORK/before"
+    snapshot_listing "$WORK/tree" > "$WORK/before"
     if ! (cd "$WORK/tree/packages/manifest" && bun run src/generate.ts) > "$WORK/generate.log" 2>&1; then
         tail -n 20 "$WORK/generate.log" >&2
-        die "the generator failed on this commit's files; fix that first."
+        die "the generator failed on this commit's files. Fix what the log names (a generated file it no longer produces needs git rm), then commit again."
     fi
-    snapshot_hashes "$WORK/tree" > "$WORK/after"
-    diff "$WORK/before" "$WORK/after" | sed -n 's/^[<>] [0-9a-f]\{64\}  \.\///p' \
-        | LC_ALL=C sort -u > "$WORK/changed" || true
+    snapshot_listing "$WORK/tree" > "$WORK/after"
+    diff "$WORK/before" "$WORK/after" > "$WORK/diff" || rc=$?
+    [[ "$rc" -le 1 ]] || die "could not compare the snapshot before and after generating"
+    sed -n 's/^[<>] [0-9a-fx]\{1,64\}  \.\///p' "$WORK/diff" | LC_ALL=C sort -u > "$WORK/changed"
+}
+
+# The hash of the snapshot's own copy of a path, before generating.
+before_hash() {
+    awk -v path="$1" 'substr($0, 65, 4) == "  ./" && substr($0, 69) == path { print substr($0, 1, 64) }' \
+        "$WORK/before"
 }
 
 run_hook() {
-    local top="$1" base="" path="" relevant=false
+    local top="$1" base="" path="" relevant=false ledgered="" index_name="" merging=false
     local -a changed_inputs=()
 
     git cat-file -e ":packages/manifest/src/generate.ts" 2>/dev/null || exit 0
     if base="$(git rev-parse --verify -q HEAD)"; then
-        while IFS= read -r path; do LEDGERED["$path"]=1; done < <(ledger_keys "$base")
+        ledgered="$(ledger_keys "$base")"
     fi
-    while IFS= read -r path; do LEDGERED["$path"]=1; done < <(ledger_keys "")
+    ledgered="$ledgered"$'\n'"$(ledger_keys "")"
 
     while IFS= read -r path; do
         [[ -n "$path" ]] || continue
         changed_inputs+=("$path")
-        is_generator_input "$path" && relevant=true
+        if is_generator_input "$path" "$ledgered"; then relevant=true; fi
     done < <(git diff --cached --name-only --no-renames)
     [[ "$relevant" == true ]] || exit 0
 
+    make_work
     generate_in_snapshot "$top"
     [[ -s "$WORK/changed" ]] || exit 0
 
+    index_name="$(basename "${GIT_INDEX_FILE:-index}")"
+    if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then merging=true; fi
     {
         echo "check_generated: this commit's generated files don't match what its own files generate:"
         sed 's/^/  /' "$WORK/changed"
         echo "Regenerate from exactly what you commit (not the shared working tree), then commit again with the files it lists:"
-        printf '  bash scripts/hooks/check_generated.sh --regenerate --'
-        printf ' %q' "${changed_inputs[@]}"
-        printf '\n'
+        if [[ "$index_name" == next-index-* && "$merging" == false ]]; then
+            printf '  bash scripts/hooks/check_generated.sh --regenerate --'
+            printf ' %q' "${changed_inputs[@]}"
+            printf '\n'
+        else
+            echo "  bash scripts/hooks/check_generated.sh --regenerate"
+            echo "  (it regenerates from the index and stages what it writes)"
+        fi
     } >&2
     exit 1
 }
 
 run_regenerate() {
-    local top="$1" path=""
+    local top="$1" path="" want="" have=""
     shift
-    local -a paths=("$@") written=()
+    local -a paths=("$@") written=() blocked=()
 
+    make_work
     if [[ ${#paths[@]} -gt 0 ]]; then
         export GIT_INDEX_FILE="$WORK/index"
         if git rev-parse --verify -q HEAD >/dev/null; then
@@ -157,14 +201,32 @@ run_regenerate() {
         echo "check_generated: the generated files are already up to date."
         return 0
     fi
+
+    # Write back only over a working-tree copy that is the snapshot's own
+    # (or absent): anything else holds work that isn't in this commit.
     while IFS= read -r path; do
-        if [[ -f "$WORK/tree/$path" ]]; then
-            mkdir -p "$(dirname "$top/$path")"
-            cp -p "$WORK/tree/$path" "$top/$path"
-            written+=("$path")
-        else
-            printf 'check_generated: the generator removed %s; remove it yourself if that is intended.\n' "$path" >&2
+        [[ -f "$WORK/tree/$path" ]] || {
+            printf 'check_generated: the generator removed %s; git rm it if that is intended.\n' "$path" >&2
+            continue
+        }
+        want="$(before_hash "$path")"
+        have=""
+        [[ -f "$top/$path" ]] && have="$(sha256_stdin < "$top/$path")"
+        if [[ -n "$have" && "$have" != "$want" ]]; then
+            blocked+=("$path")
         fi
+    done < "$WORK/changed"
+    if [[ ${#blocked[@]} -gt 0 ]]; then
+        echo "check_generated: these working-tree files hold changes that aren't in this commit, so nothing was written:" >&2
+        printf '  %s\n' "${blocked[@]}" >&2
+        die "commit or settle those changes with whoever made them, then run this again."
+    fi
+
+    while IFS= read -r path; do
+        [[ -f "$WORK/tree/$path" ]] || continue
+        mkdir -p "$(dirname "$top/$path")"
+        cp -p "$WORK/tree/$path" "$top/$path"
+        written+=("$path")
     done < "$WORK/changed"
     [[ ${#written[@]} -gt 0 ]] || return 0
 
@@ -185,12 +247,15 @@ run_install() {
 
     hooks_dir="$(git rev-parse --path-format=absolute --git-path hooks)"
     if [[ -d "$hooks_dir/hooks.d/pre-commit" ]]; then
+        grep -q "chain-runner" "$hooks_dir/pre-commit" 2>/dev/null \
+            || die "$hooks_dir/hooks.d/pre-commit exists, but $hooks_dir/pre-commit isn't Agent Mail's chain-runner, so nothing would run it. Run 'am guard install' first."
         target="$hooks_dir/hooks.d/pre-commit/$HOOK_NAME"
-    elif [[ ! -e "$hooks_dir/pre-commit" ]] || grep -qF "$INSTALL_MARK" "$hooks_dir/pre-commit"; then
+    else
         mkdir -p "$hooks_dir"
         target="$hooks_dir/pre-commit"
-    else
-        die "$hooks_dir/pre-commit is another hook. Add 'bash scripts/hooks/check_generated.sh --hook' to it."
+    fi
+    if [[ -e "$target" ]] && ! grep -qF "$INSTALL_MARK" "$target"; then
+        die "$target is another hook. Add 'bash scripts/hooks/check_generated.sh --hook' to it."
     fi
 
     tmp="$(mktemp "$target.XXXXXX")"
@@ -223,17 +288,9 @@ fi
 
 TOP="$(git rev-parse --show-toplevel)" || die "not inside a git checkout"
 cd "$TOP" || exit 1
-if [[ "$MODE" == install ]]; then
-    run_install
-    exit 0
-fi
-
-declare -A LEDGERED=()
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/acfs-check-generated.XXXXXX")"
-cleanup() { rm -rf -- "$WORK"; }
-trap cleanup EXIT
 
 case "$MODE" in
+    install) run_install ;;
     hook) run_hook "$TOP" ;;
     regenerate) run_regenerate "$TOP" "$@" ;;
 esac

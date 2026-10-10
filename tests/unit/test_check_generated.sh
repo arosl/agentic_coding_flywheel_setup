@@ -43,12 +43,14 @@ CALLS="$WORK/bun-calls"
 mkdir -p "$BIN"
 
 # The stub generator: a ledger of the two ledgered fixture files, hashed
-# from the tree it runs in.
+# from the tree it runs in, and an executable script, as the real one
+# sets its outputs' modes. STUB_BUN_FAIL makes it fail.
 cat > "$BIN/bun" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "$PWD $*" >> "$STUB_BUN_CALLS"
 [[ "$*" == "run src/generate.ts" ]] || exit 2
+[[ -z "${STUB_BUN_FAIL:-}" ]] || { echo "stub generator failed" >&2; exit 1; }
 root="$(cd ../.. && pwd)"
 {
     echo "ACFS_INTERNAL_CHECKSUMS_COUNT=2"
@@ -56,6 +58,8 @@ root="$(cd ../.. && pwd)"
         printf '  [%s]="%s"\n' "$f" "$(sha256sum < "$root/$f" | cut -d' ' -f1)"
     done
 } > "$root/scripts/generated/internal_checksums.sh"
+echo "echo generated" > "$root/scripts/generated/run.sh"
+chmod 0755 "$root/scripts/generated/run.sh"
 EOF
 chmod +x "$BIN/bun"
 export STUB_BUN_CALLS="$CALLS"
@@ -99,7 +103,10 @@ ledger_matches_commit() {
     want="$(git_fixture show HEAD:scripts/lib/a.sh | sha256sum | cut -d' ' -f1)"
     git_fixture show HEAD:scripts/generated/internal_checksums.sh | grep -qF "[scripts/lib/a.sh]=\"$want\""
 }
-committed() { [[ "$(git_fixture log -1 --format=%s)" == change ]]; }
+err_lacks() { ! grep -qF -- "$1" "$ERR"; }
+# Another hook, as `git -c core.hooksPath=` would bypass ours: the stale
+# commits upstream or an older checkout make.
+commit_unchecked() { git_fixture -c core.hooksPath=/dev/null commit -q "$@"; }
 
 echo "unrelated commit"
 make_repo
@@ -147,6 +154,9 @@ echo "echo a4" > "$REPO/scripts/lib/a.sh"
 git_fixture add scripts/lib/a.sh
 check "a plain commit of a staged ledgered change is refused" \
     bash -c "cd '$REPO' && ! git commit -q -m change 2> '$ERR'"
+check "its fix command regenerates from the index" \
+    err_has "  bash scripts/hooks/check_generated.sh --regenerate"
+check "and names no paths, so unstaged hunks stay out" err_lacks "--regenerate --"
 (cd "$REPO" && bash scripts/hooks/check_generated.sh --regenerate) > "$OUT" 2> "$ERR"
 check "--regenerate without paths stages the ledger" \
     [ "$(git_fixture diff --cached --name-only | tr '\n' ' ')" == "scripts/generated/internal_checksums.sh scripts/lib/a.sh " ]
@@ -155,9 +165,62 @@ check "and its ledger matches" ledger_matches_commit
 
 echo "hand-edited generated file"
 make_repo
-sed -i 's/="[0-9a-f]*"$/="0000000000000000000000000000000000000000000000000000000000000000"/' \
-    "$REPO/scripts/generated/internal_checksums.sh"
+ledger="$REPO/scripts/generated/internal_checksums.sh"
+sed 's/="[0-9a-f]*"$/="0000000000000000000000000000000000000000000000000000000000000000"/' \
+    "$ledger" > "$WORK/ledger" && cat "$WORK/ledger" > "$ledger"
 check "a hand-edited ledger is refused" refused scripts/generated/internal_checksums.sh
+
+echo "mode drift"
+make_repo
+chmod 0644 "$REPO/scripts/generated/run.sh"
+check "a generated script that lost its exec bit is refused" refused scripts/generated/run.sh
+check "the refusal names it" err_has "  scripts/generated/run.sh"
+(cd "$REPO" && bash scripts/hooks/check_generated.sh --regenerate -- scripts/generated/run.sh) > "$OUT" 2> "$ERR"
+check "--regenerate restores the mode" test -x "$REPO/scripts/generated/run.sh"
+check "which undoes the drift" git_fixture diff --quiet HEAD -- scripts/generated/run.sh
+
+echo "another agent's uncommitted work"
+make_repo
+echo "# another agent's regeneration" >> "$REPO/scripts/generated/internal_checksums.sh"
+cp "$REPO/scripts/generated/internal_checksums.sh" "$WORK/theirs"
+echo "echo a6" > "$REPO/scripts/lib/a.sh"
+check "--regenerate refuses to overwrite it" \
+    bash -c "cd '$REPO' && ! bash scripts/hooks/check_generated.sh --regenerate -- scripts/lib/a.sh > '$OUT' 2> '$ERR'"
+check "it names the file" err_has "  scripts/generated/internal_checksums.sh"
+check "and leaves the other agent's copy alone" cmp -s "$WORK/theirs" "$REPO/scripts/generated/internal_checksums.sh"
+
+echo "a merge"
+make_repo
+git_fixture checkout -q -b side
+echo "echo side" > "$REPO/scripts/lib/a.sh"
+commit_unchecked -m side -- scripts/lib/a.sh
+git_fixture checkout -q main
+echo "main" >> "$REPO/docs/notes.md"
+commit_unchecked -m main -- docs/notes.md
+git_fixture merge -q --no-commit --no-ff side > /dev/null 2>&1 || true
+check "a merge commit that brings a stale ledger is refused" \
+    bash -c "cd '$REPO' && ! git commit -q -m merge 2> '$ERR'"
+check "its fix command regenerates from the index, not HEAD" err_lacks "--regenerate --"
+(cd "$REPO" && bash scripts/hooks/check_generated.sh --regenerate) > "$OUT" 2> "$ERR"
+check "the merge commit then passes" bash -c "cd '$REPO' && git commit -q -m merge"
+check "with two parents" [ "$(git_fixture rev-list --parents -n 1 HEAD | wc -w)" -eq 3 ]
+check "and a ledger that hashes the merged file" ledger_matches_commit
+
+echo "a linked worktree"
+make_repo
+git_fixture worktree add -q "$WORK/wt" > /dev/null 2>&1
+echo "echo wt" > "$WORK/wt/scripts/lib/a.sh"
+check "a stale commit in a worktree without node_modules is refused" \
+    bash -c "cd '$WORK/wt' && ! git commit -q -m change -- scripts/lib/a.sh 2> '$ERR'"
+check "for its ledger, using the main checkout's node_modules" \
+    err_has "  scripts/generated/internal_checksums.sh"
+
+echo "a failing generator"
+make_repo
+echo "echo a7" > "$REPO/scripts/lib/a.sh"
+check "a relevant commit is refused when the generator fails" \
+    bash -c "cd '$REPO' && ! STUB_BUN_FAIL=1 git commit -q -m change -- scripts/lib/a.sh 2> '$ERR'"
+check "the refusal shows the generator's log" err_has "stub generator failed"
 
 echo "no bun"
 make_repo
@@ -177,6 +240,10 @@ mkdir -p "$hooks/hooks.d/pre-commit"
 (cd "$REPO" && bash scripts/hooks/check_generated.sh --install) > "$OUT"
 check "--install joins Agent Mail's chain" test -x "$hooks/hooks.d/pre-commit/40-acfs-check-generated"
 check "--install leaves Agent Mail's runner alone" grep -qF "chain-runner" "$hooks/pre-commit"
+mv "$hooks/pre-commit" "$WORK/runner"
+check "--install refuses a hooks.d that no chain-runner runs" \
+    bash -c "cd '$REPO' && ! bash scripts/hooks/check_generated.sh --install 2> '$ERR'"
+mv "$WORK/runner" "$hooks/pre-commit"
 rm -rf "$hooks/hooks.d"
 check "--install refuses to replace another hook" \
     bash -c "cd '$REPO' && ! bash scripts/hooks/check_generated.sh --install 2> '$ERR'"
