@@ -132,6 +132,7 @@ case "$1 $2" in
             | {id: "cli:agent:get", result: {agent: ., type: "agent"}}' "$STUB_DIR/list.json"
         ;;
     "tab list") cat "$STUB_DIR/tabs.json" ;;
+    "workspace list") cat "$STUB_DIR/workspaces.json" ;;
     "pane close") printf '{"id":"cli:pane:close","result":{"type":"ok"}}\n' ;;
     *) fail_with unexpected "stub herdr got: $*" ;;
 esac
@@ -373,6 +374,16 @@ Read AGENTS.md, register with Agent Mail, then work your beads.
 
 ### fresh_review | Fresh Review
 Not part of the kickoff.
+
+## Templates
+
+### nudge | Nudge
+Hello {{agent}} ({{herdr}}) in {{session}}.
+
+Thread: {{thread}}
+
+### bad_placeholder | Bad
+Hi {{whoami}} and {{ agent }}.
 EOF
 
 export HERDR_WORKSPACE_ID=w9
@@ -948,6 +959,81 @@ write_list
 run_helper send hello
 check "send without a selector refuses and prompts nobody" \
     test "$RC/$(count_calls '^herdr agent prompt')" = "1/0"
+
+# acfs-gen.8: send --template fills a palette prompt or a file per agent.
+write_templates() {
+    write_list
+    cat >"$STUB_DIR/tabs.json" <<'EOF'
+{"id":"cli:tab:list","result":{"tabs":[
+ {"tab_id":"w9:t1","label":"AlphaFox","workspace_id":"w9"},
+ {"tab_id":"w9:t2","label":"BetaOwl opus","workspace_id":"w9"},
+ {"tab_id":"w9:t3","label":"GammaYak","workspace_id":"w9"},
+ {"tab_id":"w2:t1","label":"DeltaElk","workspace_id":"w2"}
+]}}
+EOF
+    printf '%s\n' '{"id":"cli:workspace:list","result":{"workspaces":[{"workspace_id":"w9","label":"proj & co"},{"workspace_id":"w2","label":""}]}}' \
+        >"$STUB_DIR/workspaces.json"
+}
+
+reset_stub tplpalette
+write_templates
+run_helper send --name alphafox --template fresh_review
+check "--template KEY sends the palette prompt under that heading, and stops at a category heading" \
+    test "$RC/$(cat "$STUB_DIR/prompt_alphafox")" = "0/Not part of the kickoff."
+check "a template without placeholders asks herdr for no workspace or tab list" \
+    test "$(count_calls '^herdr workspace list')/$(count_calls '^herdr tab list')" = "0/0"
+
+reset_stub tplfill
+write_templates
+run_helper send --name alphafox --name betaowl --template nudge --thread 'acfs-1&2'
+check "--template fills {{agent}}, {{herdr}}, {{session}} and {{thread}} per agent, keeping blank lines and literal &" \
+    bash -c '[[ "$1" -eq 0 ]] && [[ "$(cat "$2/prompt_alphafox")" == "$(printf "Hello AlphaFox (alphafox) in proj & co.\n\nThread: acfs-1&2")" ]] \
+        && [[ "$(cat "$2/prompt_betaowl")" == "$(printf "Hello BetaOwl (betaowl) in proj & co.\n\nThread: acfs-1&2")" ]]' _ "$RC" "$STUB_DIR"
+check "the workspace and tab lists are read once for both agents" \
+    test "$(count_calls '^herdr workspace list')/$(count_calls '^herdr tab list')" = "1/1"
+
+reset_stub tplunknown
+write_templates
+run_helper send --all --template bad_placeholder
+check "an unknown placeholder refuses the send, naming each one, before any herdr call" \
+    bash -c '[[ "$1" -ne 0 && -z "$(cat "$2/calls")" ]] && grep -q "unknown placeholders: {{ agent }}, {{whoami}}" <<<"$3"' _ "$RC" "$STUB_DIR" "$ERR"
+
+reset_stub tplnothread
+write_templates
+run_helper send --all --template nudge
+check "{{thread}} without --thread refuses before any herdr call" \
+    bash -c '[[ "$1" -ne 0 && -z "$(cat "$2/calls")" ]] && grep -q "uses {{thread}}: pass --thread" <<<"$3"' _ "$RC" "$STUB_DIR" "$ERR"
+
+reset_stub tplmissing
+write_templates
+run_helper send --all --template no_such_key
+check "a palette key no heading has refuses the send" \
+    bash -c '[[ "$1" -ne 0 && -z "$(cat "$2/calls")" ]] && grep -q "no command palette prompt has that heading key" <<<"$3"' _ "$RC" "$STUB_DIR" "$ERR"
+run_helper send --all --template "$WORK/no/such.md"
+check "a template file that isn't there refuses the send" \
+    bash -c '[[ "$1" -ne 0 && -z "$(cat "$2/calls")" ]] && grep -q "no such readable file" <<<"$3"' _ "$RC" "$STUB_DIR" "$ERR"
+run_helper send --all --template fresh_review hello
+check "a prompt and --template together refuse" test "$RC/$(count_calls '^herdr')" = "1/0"
+run_helper send --all --thread t1 hello
+check "--thread without --template refuses" test "$RC/$(count_calls '^herdr')" = "1/0"
+
+reset_stub tplfile
+write_templates
+printf 'Ping {{herdr}}.\n' >"$STUB_DIR/ping.md"
+run_helper send --all --workspace w2 --template "$STUB_DIR/ping.md"
+check "--template FILE sends the file; an agent herdr dropped the name of gets {{herdr}} from its tab label" \
+    test "$RC/$(cat "$STUB_DIR/prompt_w2:p1")" = "0/Ping deltaelk."
+
+reset_stub tplskip
+write_templates
+sed -i 's/"label":"AlphaFox"/"label":"Someone"/' "$STUB_DIR/tabs.json"
+run_helper send --name alphafox --name betaowl --template nudge --thread t
+check "an agent whose tab label isn't its Agent Mail name is skipped, the rest sent, and send exits nonzero" \
+    bash -c '[[ "$1" -ne 0 && ! -e "$2/prompt_alphafox" && -e "$2/prompt_betaowl" ]] \
+        && grep -q "skipped alphafox: its tab label does not start with its Agent Mail name" <<<"$3"' _ "$RC" "$STUB_DIR" "$ERR"
+run_helper send --all --workspace w2 --template nudge --thread t
+check "an agent whose workspace has no label is skipped for {{session}}" \
+    bash -c '[[ "$1" -ne 0 && ! -e "$2/prompt_w2:p1" ]] && grep -q "skipped w2:p1: its workspace w2 has no label" <<<"$3"' _ "$RC" "$STUB_DIR" "$ERR"
 
 reset_stub list
 write_list

@@ -8,6 +8,8 @@
 #   - One agent: `herdr agent prompt <herdr name> "<prompt text>"`. The herdr name
 #     is the agent's Agent Mail name in lowercase (`herdr agent list` shows them).
 #   - Several agents: `acfs agents send (--all | --kind K | --name N) "<prompt text>"`.
+#   - A prompt from this file by its key: `acfs agents send --all --template fresh_review`.
+#     `{{session}}`, `{{agent}}`, `{{herdr}}` and `{{thread}}` (from `--thread`) are filled in per agent.
 #   - New agents: `acfs agents spawn` sends `default_new_agent` as their first prompt.
 #   - Or open this file, copy a prompt and paste it into an agent's pane.
 #

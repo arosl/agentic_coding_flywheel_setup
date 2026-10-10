@@ -14,7 +14,7 @@
 #
 # Usage:
 #   acfs agents spawn [--claude N] [--codex N] [--agy N] [--pi N] [--kind K [--count N]]...
-#   acfs agents send (--all | --kind K | --name N)... <prompt>
+#   acfs agents send (--all | --kind K | --name N)... (<prompt> | --template KEY|FILE [--thread ID])
 #   acfs agents list [--workspace ID] [--kind K] [--json]
 #   acfs agents inbox [--agent NAME] [--project KEY] [--keep-unread]
 #   acfs agents wake [--workspace ID] [--project KEY] [--loop [--interval SEC]] [--dry-run]
@@ -57,7 +57,8 @@ Usage:
                     [--workspace ID] [--cwd DIR] [--model MODEL]
                     [--prompt TEXT | --no-prompt] [--trust-folder] [--force] [--dry-run] [--json]
   acfs agents send  (--all | --kind KIND | --name NAME)... [--workspace ID]
-                    [--wait] [--timeout MS] <prompt>
+                    [--wait] [--timeout MS]
+                    (<prompt> | --template KEY|FILE [--thread ID])
   acfs agents list  [--workspace ID] [--kind KIND] [--json]
   acfs agents inbox [--agent NAME] [--project KEY] [--keep-unread]
   acfs agents wake  [--workspace ID] [--project KEY] [--loop [--interval SEC]] [--dry-run]
@@ -106,6 +107,14 @@ send   Prompt every matching agent, and wait until each is seen working, which
        stalled because nothing started working. For a stall, send reads the
        agent's screen and says whether a dialog or undimmed typed text is on
        it; it never presses a key there.
+       --template sends a prompt from the command palette, by its heading
+       key (fresh_review for "### fresh_review | Fresh Review"), or from a
+       file (any path with a /), filled in per agent: {{session}} is its
+       workspace's label, {{agent}} its Agent Mail name (its tab label's
+       first word), {{herdr}} its herdr name and {{thread}} the --thread
+       value. Any other {{...}}, or {{thread}} without --thread, refuses
+       the send before anything is sent; an agent whose value can't be
+       found is skipped.
 list   Show the agents herdr knows about.
 inbox  Print every unread Agent Mail message sent to the agent (To or bcc,
        not cc), oldest first and grouped by thread, with bodies, then mark
@@ -306,22 +315,42 @@ herdr_agents_herdr_name() {
     printf '%s\n' "$name"
 }
 
-# The command palette's default_new_agent prompt: the paragraph after its
-# heading. The installed copy first, then this checkout's.
-herdr_agents_default_prompt() {
+# The command palette's prompt under heading key $1 ("### $1 | Label"): the
+# lines up to the next heading of any level, blank lines inside kept,
+# leading and trailing ones dropped. The installed copy first, then this
+# checkout's; the first that has the key wins. Fails when none has it.
+herdr_agents_palette_prompt() {
     local candidate
     for candidate in \
         "${ACFS_HOME:-$HOME/.acfs}/onboard/docs/ntm/command_palette.md" \
         "$HERDR_AGENTS_SCRIPT_DIR/../../acfs/onboard/docs/ntm/command_palette.md"; do
         [[ -r "$candidate" ]] || continue
-        awk '
-            /^### default_new_agent[[:space:]]*\|/ { found = 1; next }
-            found && /^### / { exit }
-            found && NF { printf "%s%s", sep, $0; sep = "\n" }
-        ' "$candidate"
-        return 0
+        awk -v key="$1" '
+            /^##/ {
+                if (found) exit
+                heading = $0
+                if (sub(/^###[[:space:]]+/, "", heading)) {
+                    sub(/[[:space:]]*\|.*$/, "", heading)
+                    found = (heading == key)
+                }
+                next
+            }
+            found { lines[++n] = $0 }
+            END {
+                if (!found) exit 1
+                first = 1; last = n
+                while (first <= last && lines[first] !~ /[^[:space:]]/) first++
+                while (last >= first && lines[last] !~ /[^[:space:]]/) last--
+                for (i = first; i <= last; i++) print lines[i]
+            }
+        ' "$candidate" && return 0
     done
     return 1
+}
+
+# The command palette's default_new_agent prompt.
+herdr_agents_default_prompt() {
+    herdr_agents_palette_prompt default_new_agent
 }
 
 # ------------------------------------------------------------
@@ -980,8 +1009,37 @@ herdr_agents_list() {
             }'
 }
 
+# The text of send --template $1: the file $1 when it names a path (it
+# holds a /), else the command palette's prompt under heading key $1.
+herdr_agents_template_text() {
+    local text
+    if [[ "$1" == */* ]]; then
+        [[ -f "$1" && -r "$1" ]] || herdr_agents_die "--template $1: no such readable file"
+        text="$(cat "$1")"
+    else
+        text="$(herdr_agents_palette_prompt "$1")" \
+            || herdr_agents_die "--template $1: no command palette prompt has that heading key (### $1 | ...)"
+    fi
+    [[ -n "${text//[[:space:]]/}" ]] || herdr_agents_die "--template $1 is empty"
+    printf '%s\n' "$text"
+}
+
+# Fill send's template $1 for one agent: {{session}} (its workspace's
+# label, $2), {{agent}} (its Agent Mail name, $3), {{herdr}} (its herdr
+# name, $4) and {{thread}} ($5). The replacements are quoted, so an & in
+# them stays literal under patsub_replacement.
+herdr_agents_fill_template() {
+    local text="$1"
+    text="${text//\{\{session\}\}/"$2"}"
+    text="${text//\{\{agent\}\}/"$3"}"
+    text="${text//\{\{herdr\}\}/"$4"}"
+    text="${text//\{\{thread\}\}/"$5"}"
+    printf '%s\n' "$text"
+}
+
 herdr_agents_send() {
     local workspace="" all=false wait=false timeout="" kinds="[]" names="[]"
+    local template="" thread="" thread_set=false
     local -a prompt_words=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -991,6 +1049,8 @@ herdr_agents_send() {
             --workspace) [[ $# -ge 2 ]] || herdr_agents_die "--workspace needs a value"; workspace="$2"; shift 2 ;;
             --wait) wait=true; shift ;;
             --timeout) [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || herdr_agents_die "--timeout needs milliseconds"; timeout="$2"; shift 2 ;;
+            --template) [[ $# -ge 2 && -n "$2" ]] || herdr_agents_die "--template needs a palette key or a file"; template="$2"; shift 2 ;;
+            --thread) [[ $# -ge 2 && -n "$2" ]] || herdr_agents_die "--thread needs a value"; thread="$2"; thread_set=true; shift 2 ;;
             -h|--help) herdr_agents_usage; return 0 ;;
             --) shift; prompt_words+=("$@"); break ;;
             -*) herdr_agents_die "unknown send option: $1" ;;
@@ -998,14 +1058,44 @@ herdr_agents_send() {
         esac
     done
     local prompt="${prompt_words[*]:-}"
-    [[ -n "$prompt" ]] || herdr_agents_die "send needs a prompt"
+    if [[ -n "$template" ]]; then
+        [[ -z "$prompt" ]] || herdr_agents_die "send takes a prompt or --template, not both"
+    else
+        [[ -n "$prompt" ]] || herdr_agents_die "send needs a prompt (or --template)"
+        [[ "$thread_set" == false ]] || herdr_agents_die "--thread only fills a --template's {{thread}}"
+    fi
     if [[ "$all" == false && "$kinds" == "[]" && "$names" == "[]" ]]; then
         herdr_agents_die "send needs --all, --kind KIND or --name NAME"
     fi
     herdr_agents_require herdr jq
     timeout="${timeout:-$HERDR_AGENTS_PROMPT_TIMEOUT_MS}"
 
-    local agents count i target name pane missing
+    # A template is checked whole before anything is sent: a placeholder it
+    # cannot fill would otherwise reach every agent as literal braces.
+    local placeholder unknown="" uses_session=false uses_agent=false uses_herdr=false
+    if [[ -n "$template" ]]; then
+        prompt="$(herdr_agents_template_text "$template")"
+        while IFS= read -r placeholder; do
+            case "$placeholder" in
+                "") ;;
+                "{{session}}") uses_session=true ;;
+                "{{agent}}") uses_agent=true ;;
+                "{{herdr}}") uses_herdr=true ;;
+                "{{thread}}") [[ "$thread_set" == true ]] || herdr_agents_die "--template $template uses {{thread}}: pass --thread ID" ;;
+                *) unknown+="${unknown:+, }$placeholder" ;;
+            esac
+        done < <(grep -o '{{[^{}]*}}' <<<"$prompt" | sort -u)
+        [[ -z "$unknown" ]] \
+            || herdr_agents_die "--template $template has unknown placeholders: $unknown (known: {{session}}, {{agent}}, {{herdr}}, {{thread}})"
+    fi
+    local workspaces_json='{}'
+    if [[ "$uses_session" == true ]]; then
+        herdr_agents_herdr workspace list || herdr_agents_die "herdr workspace list failed: $HERDR_AGENTS_ERR_MESSAGE"
+        workspaces_json="$(jq -c '[.result.workspaces[]? | {key: .workspace_id, value: (.label // "")}] | from_entries' <<<"$HERDR_AGENTS_OUT")"
+    fi
+    local -A tab_labels=()
+
+    local agents count i target name pane missing ws tab session mail_name text
     local sent=0 skipped=0
     agents="$(herdr_agents_select "$workspace" "$kinds" "$names")"
     count="$(jq 'length' <<<"$agents")"
@@ -1031,7 +1121,43 @@ herdr_agents_send() {
             herdr_agents_note "skipped $target: that is this pane"
             continue
         fi
-        if herdr_agents_prompt_one "$target" "$prompt" "$timeout" "$wait"; then
+        text="$prompt"
+        if [[ -n "$template" ]]; then
+            ws="$(jq -r ".[$i].workspace_id // empty" <<<"$agents")"
+            session="" mail_name=""
+            if [[ "$uses_session" == true ]]; then
+                session="$(jq -r --arg w "$ws" '.[$w] // empty' <<<"$workspaces_json")"
+                if [[ -z "$session" ]]; then
+                    skipped=$((skipped + 1))
+                    herdr_agents_note "skipped $target: its workspace ${ws:-?} has no label for {{session}}"
+                    continue
+                fi
+            fi
+            # herdr can drop an agent's name (acfs-i7p); then {{herdr}} comes
+            # from its Agent Mail name too.
+            if [[ "$uses_agent" == true || ( "$uses_herdr" == true && -z "$name" ) ]]; then
+                # The Agent Mail name is the tab label's first word: spawn
+                # sets the label to the name, and people append a model.
+                if [[ -z "${tab_labels[$ws]+set}" ]]; then
+                    if herdr_agents_herdr tab list --workspace "$ws"; then
+                        tab_labels[$ws]="$(jq -c '[.result.tabs[]? | {key: .tab_id, value: (.label // "")}] | from_entries' <<<"$HERDR_AGENTS_OUT")"
+                    else
+                        herdr_agents_note "herdr tab list failed for workspace $ws: $HERDR_AGENTS_ERR_MESSAGE"
+                        tab_labels[$ws]="{}"
+                    fi
+                fi
+                tab="$(jq -r ".[$i].tab_id // empty" <<<"$agents")"
+                mail_name="$(jq -r --arg t "$tab" '.[$t] // empty' <<<"${tab_labels[$ws]}")"
+                mail_name="${mail_name%% *}"
+                if [[ ! "$mail_name" =~ ^[A-Za-z][A-Za-z0-9_-]{0,63}$ || ( -n "$name" && "${mail_name,,}" != "$name" ) ]]; then
+                    skipped=$((skipped + 1))
+                    herdr_agents_note "skipped $target: its tab label does not start with its Agent Mail name, which the template needs"
+                    continue
+                fi
+            fi
+            text="$(herdr_agents_fill_template "$prompt" "$session" "$mail_name" "${name:-${mail_name,,}}" "$thread")"
+        fi
+        if herdr_agents_prompt_one "$target" "$text" "$timeout" "$wait"; then
             sent=$((sent + 1))
         else
             skipped=$((skipped + 1))
