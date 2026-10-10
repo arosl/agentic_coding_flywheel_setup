@@ -1,0 +1,15 @@
+{
+  "api_extensions": [
+    "storage",
+    "projects",
+    "network_acl",
+    "container_syscall_intercept_sysinfo",
+    "projects_networks_restricted_access",
+    "instance_limits_oom",
+    "container_disk_tmpfs",
+    "disk_volume_subpath"
+  ],
+  "environment": {
+    "server_version": "6.0.6"
+  }
+}

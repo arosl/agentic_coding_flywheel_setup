@@ -1,16 +1,25 @@
 #!/usr/bin/env bash
 # ============================================================
-# ACFS on an Incus VM or system container
+# ACFS in an Incus system container or VM
 #
-# Creates an Ubuntu VM (or, with --container, an unprivileged system
-# container) with Incus, runs the ACFS installer inside it from this
-# checkout, and prints the ssh_config entry and the `herdr machine add`
-# command for attaching to it. The guide is scripts/providers/incus.md.
+# Creates an unprivileged Ubuntu system container (or, with --vm, a VM) with
+# Incus, runs the ACFS installer inside it from this checkout, and prints
+# the ssh_config entry and the `herdr machine add` command for attaching to
+# it. The guide is scripts/providers/incus.md.
+#
+# A container is a swarm machine: it gets the policy profile acfs-swarm
+# (pins, limits, sysinfo intercept) that `host-setup` created, the egress
+# ACL acfs-swarm-egress, and two volumes of its own on the pool host-setup
+# recorded: acfs-state-<name>, which holds the home and the host identities
+# so logins survive a rebuild, and <name>-data for /data. Both are attached
+# before the first boot, so cloud-init and the installer land on the final
+# layout. A VM keeps the launcher's earlier shape, until --vm goes.
 #
 # Re-running it is safe: an absent instance is created, an instance where it
 # started an install that never completed resumes it, an instance that is
 # installed is never changed (the block is printed again), and any other
-# instance is refused untouched. It never deletes an instance, image or ACL.
+# instance is refused untouched. An existing volume is reused as it is. It
+# never deletes an instance, volume, image, profile or ACL.
 #
 # Progress goes to stderr; stdout carries only the attach block.
 # ============================================================
@@ -23,19 +32,38 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../lib/logging.sh
 source "$REPO_ROOT/scripts/lib/logging.sh"
 
-# The one place the instance types and sizes are decided. A container pins
-# the security keys a profile could loosen: unprivileged, no nesting, and
-# its own uid/gid range, so root in one ACFS container is no uid of another.
 IMAGE="images:ubuntu/26.04/cloud"
-SIZE_ARGS=(-c limits.cpu=4 -c limits.memory=8GiB -d "root,size=40GiB")
-VM_LAUNCH_ARGS=(--vm "${SIZE_ARGS[@]}")
-CONTAINER_LAUNCH_ARGS=("${SIZE_ARGS[@]}"
+# The VM's shape: its limits are its own, since the swarm profile is for
+# containers. A container pins the security keys a profile could loosen:
+# unprivileged, no nesting, and its own uid/gid range, so root in one ACFS
+# container is no uid of another. Its limits come from the profile.
+VM_LAUNCH_ARGS=(--vm -c limits.cpu=4 -c limits.memory=8GiB)
+CONTAINER_LAUNCH_ARGS=(-p default -p acfs-swarm
     -c security.privileged=false -c security.nesting=false -c security.idmap.isolated=true)
+SWARM_PROFILE="acfs-swarm"
+# Defaults for what is per machine, not policy; --root-size, --state-size
+# and --data-size change them at creation.
+ROOT_SIZE="40GiB"
+STATE_SIZE="20GiB"
+DATA_SIZE="60GiB"
+# The container target needs the state layer's sub-path mounts, the sysinfo
+# intercept and the restricted test project; the two optional extensions
+# only add knobs the profile may use.
+MIN_CONTAINER_SERVER_VERSION="6.0.6"
+REQUIRED_API_EXTENSIONS=(disk_volume_subpath container_syscall_intercept_sysinfo projects_networks_restricted_access)
+OPTIONAL_API_EXTENSIONS=(instance_limits_oom container_disk_tmpfs)
+# Written by `host-setup`; every run reads it.
+INCUS_ENV_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/acfs/incus.env"
 
 REPO_OWNER="arosl"
 REPO_NAME="agentic_coding_flywheel_setup"
 TARGET_USER="ubuntu"
-ACL_NAME="acfs-vm-egress"
+TARGET_UID=1000
+TARGET_GID=1000
+# The ACLs: host-setup creates both; the launcher creates only the VM's,
+# which needs no address of the host.
+VM_ACL_NAME="acfs-vm-egress"
+SWARM_ACL_NAME="acfs-swarm-egress"
 # Private, CGNAT (tailnet) and link-local ranges: the host's LAN and tailnet,
 # and the host and other instances over the bridge's IPv6 link-local.
 ACL_REJECT_DESTINATIONS="10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16,fc00::/7,fe80::/10"
@@ -50,19 +78,30 @@ REMOTE_GROUP_WRAPPER='set -m; "$@" & p=$!; trap "kill -INT -- -$p" INT TERM HUP;
 
 usage() {
     cat <<'EOF'
-Usage: scripts/providers/incus.sh [<remote>:]<name> --ssh-key FILE [--ssh-key FILE]... [--jump SSH_HOST] [--container]
+Usage: scripts/providers/incus.sh [<remote>:]<name> --ssh-key FILE [--ssh-key FILE]... [--jump SSH_HOST]
+                                  [--vm] [--acl NAME] [--root-size SIZE] [--state-size SIZE] [--data-size SIZE]
+       scripts/providers/incus.sh host-setup --storage <path|pool> [...]
 
-Creates the Incus VM <name>, installs ACFS in it from this checkout's
-committed HEAD, and prints the ssh_config entry and `herdr machine add`
-command for the machine you attach from.
+Creates the unprivileged Incus system container <name>, installs ACFS in it
+from this checkout's committed HEAD, and prints the ssh_config entry and
+`herdr machine add` command for the machine you attach from.
 
-  --ssh-key FILE   Public key of the machine you'll attach from (repeatable).
-                   Required when the instance doesn't exist yet.
-  --jump SSH_HOST  How that machine reaches the Incus host over SSH. Without
-                   it, the entry works only on the Incus host itself.
-  --container      Create an unprivileged system container instead of a VM.
-                   It shares the host's kernel. It applies only when the
-                   instance is created; an existing one keeps its type.
+  --ssh-key FILE     Public key of the machine you'll attach from (repeatable).
+                     Required when the instance doesn't exist yet.
+  --jump SSH_HOST    How that machine reaches the Incus host over SSH. Without
+                     it, the entry works only on the Incus host itself.
+  --vm               Create a VM instead: its own kernel behind KVM, with the
+                     launcher's fixed limits and no state or data volume.
+  --acl NAME         The egress ACL on the instance's NIC. Default:
+                     acfs-swarm-egress for a container, acfs-vm-egress for a VM.
+  --root-size SIZE   Root disk size (default 40GiB).
+  --state-size SIZE  Size of the volume acfs-state-<name> (default 20GiB):
+                     the home, the SSH host keys and Tailscale's state.
+  --data-size SIZE   Size of the volume <name>-data, mounted at /data (default 60GiB).
+
+The type, the ACL and the sizes apply only when the instance is created; an
+existing one keeps them. Every run needs the file host-setup writes
+(~/.config/acfs/incus.env), which names the storage pool.
 
 Re-running is safe: an unfinished install resumes, and an installed instance
 is left as it is. See scripts/providers/incus.md.
@@ -83,10 +122,13 @@ incus_run() {
 remote=""
 name=""
 jump=""
-container=""
+vm=""
+acl_name=""
 ssh_key_files=()
+# Set when the caller gave an option that applies only at creation.
+creation_options=""
 # What the messages call the instance: "VM" or "container".
-kind="VM"
+kind="container"
 
 parse_args() {
     local target=""
@@ -102,9 +144,26 @@ parse_args() {
                 jump="$2"
                 shift 2
                 ;;
-            --container)
-                container=1
+            --vm)
+                vm=1
+                creation_options=1
                 shift
+                ;;
+            --acl)
+                [[ "${2:-}" =~ ^[A-Za-z0-9_.-]+$ ]] || die "--acl needs an ACL name" 2
+                acl_name="$2"
+                creation_options=1
+                shift 2
+                ;;
+            --root-size|--state-size|--data-size)
+                [[ "${2:-}" =~ ^[0-9]+[KMGT]i?B$ ]] || die "$1 needs a size such as 100GiB" 2
+                case "$1" in
+                    --root-size) ROOT_SIZE="$2" ;;
+                    --state-size) STATE_SIZE="$2" ;;
+                    --data-size) DATA_SIZE="$2" ;;
+                esac
+                creation_options=1
+                shift 2
                 ;;
             -h|--help)
                 usage
@@ -133,6 +192,9 @@ parse_args() {
     [[ "$name" =~ ^[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]] \
         || die "invalid instance name '$name': letters, digits and dashes, starting with a letter and not ending with a dash" 2
     [[ "$jump" =~ ^[^[:space:]]*$ ]] || die "--jump must not contain whitespace" 2
+    if [[ -z "$acl_name" ]]; then
+        if [[ -n "$vm" ]]; then acl_name="$VM_ACL_NAME"; else acl_name="$SWARM_ACL_NAME"; fi
+    fi
 }
 
 # The remote-qualified name of an Incus object, e.g. "r:dev" or "dev".
@@ -145,6 +207,22 @@ require_commands() {
     for cmd in incus git jq ssh-keygen; do
         command -v "$cmd" >/dev/null 2>&1 || die "$cmd is required on this host" 2
     done
+}
+
+# One KEY=value line of host-setup's file, without the quotes host-setup
+# may have put around the value. The file is never sourced.
+incus_env_value() {
+    sed -n "s/^$1=//p" "$INCUS_ENV_FILE" | tail -n 1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
+}
+
+# The storage pool every instance and volume goes on. host-setup chose it
+# with the operator, so a run without the file has nowhere to put them.
+read_incus_env() {
+    [[ -f "$INCUS_ENV_FILE" ]] \
+        || die "$INCUS_ENV_FILE is missing: run 'scripts/providers/incus.sh host-setup --storage <path|pool>' on the Incus host first; it records the storage pool every instance uses" 2
+    ACFS_INCUS_POOL="$(incus_env_value ACFS_INCUS_POOL)"
+    [[ "$ACFS_INCUS_POOL" =~ ^[A-Za-z0-9_.-]+$ ]] \
+        || die "$INCUS_ENV_FILE sets no usable ACFS_INCUS_POOL; re-run 'scripts/providers/incus.sh host-setup --storage <path|pool>'" 2
 }
 
 # Prints the instance's `incus list` JSON object, or nothing when it doesn't exist.
@@ -185,6 +263,49 @@ user_data() {
     jq -r '.[] | "  - " + (. | tojson)' <<<"$keys_json"
 }
 
+# True when $1 is at least version $2: dotted numbers, a missing part is 0,
+# and a part's suffix after its digits (6.0.6-1) is ignored.
+version_at_least() {
+    local -a have want
+    IFS=. read -r -a have <<<"$1"
+    IFS=. read -r -a want <<<"$2"
+    local i h w
+    for i in 0 1 2; do
+        h="${have[i]:-0}"
+        h="${h%%[^0-9]*}"
+        w="${want[i]:-0}"
+        [[ -n "$h" ]] || return 1
+        if ((h > w)); then return 0; fi
+        if ((h < w)); then return 1; fi
+    done
+    return 0
+}
+
+# A container needs what the state layer and the swarm profile use; a
+# server that lacks it is refused by name, before anything is created.
+check_server() {
+    local server_json version ext
+    server_json="$(incus_run query "$(qualified /1.0)")" || die "could not query the Incus server" 1
+    version="$(jq -r '.environment.server_version // empty' <<<"$server_json")"
+    [[ -n "$version" ]] || die "the Incus server reports no version (incus query /1.0)" 1
+    version_at_least "$version" "$MIN_CONTAINER_SERVER_VERSION" \
+        || die "Incus $version is too old for a container: the container target needs $MIN_CONTAINER_SERVER_VERSION or later (sub-path volume mounts and the CVE-2025-64507 fix); see scripts/providers/incus.md" 1
+    for ext in "${REQUIRED_API_EXTENSIONS[@]}"; do
+        jq -e --arg ext "$ext" '.api_extensions | index($ext) != null' <<<"$server_json" >/dev/null \
+            || die "Incus $version lacks the API extension $ext, which a container needs; see scripts/providers/incus.md" 1
+    done
+    for ext in "${OPTIONAL_API_EXTENSIONS[@]}"; do
+        jq -e --arg ext "$ext" '.api_extensions | index($ext) != null' <<<"$server_json" >/dev/null \
+            || log_info "Incus $version lacks the optional API extension $ext; the profile's keys that need it have no effect"
+    done
+    log_info "Incus $version has what a container needs"
+}
+
+check_swarm_profile() {
+    incus_run profile show "$(qualified "$SWARM_PROFILE")" >/dev/null 2>&1 \
+        || die "profile $SWARM_PROFILE doesn't exist: run 'scripts/providers/incus.sh host-setup' on the Incus host; it creates the policy profile every container gets" 1
+}
+
 # The ACL needs a managed bridge; a NIC on anything else can't carry it.
 check_managed_bridge() {
     local profile_nic network network_json
@@ -199,16 +320,20 @@ check_managed_bridge() {
     printf '%s\n' "${profile_nic%% *}"
 }
 
-# Creates the ACL when it's absent. An existing ACL is never changed.
+# An existing ACL is never changed. The VM's ACL is created when absent;
+# any other must exist already: the swarm ACL allows the host's API and
+# the test bridge by address, which host-setup knows and this doesn't.
 ensure_acl() {
-    if incus_run network acl show "$(qualified "$ACL_NAME")" >/dev/null 2>&1; then
-        log_info "Using the existing network ACL $ACL_NAME as it is (its rules aren't checked)"
+    if incus_run network acl show "$(qualified "$acl_name")" >/dev/null 2>&1; then
+        log_info "Using the existing network ACL $acl_name as it is (its rules aren't checked)"
         return 0
     fi
-    log_info "Creating network ACL $ACL_NAME (rejects egress to $ACL_REJECT_DESTINATIONS)"
+    [[ "$acl_name" == "$VM_ACL_NAME" ]] \
+        || die "network ACL $acl_name doesn't exist; host-setup creates $SWARM_ACL_NAME and $VM_ACL_NAME, and this launcher creates only $VM_ACL_NAME" 1
+    log_info "Creating network ACL $acl_name (rejects egress to $ACL_REJECT_DESTINATIONS)"
     # The one incus call whose stdin is meant: the ACL's YAML.
     # --quiet: the client reports the creation on stdout, which is the block's.
-    incus network acl create --quiet "$(qualified "$ACL_NAME")" <<EOF || die "could not create network ACL $ACL_NAME" 1
+    incus network acl create --quiet "$(qualified "$acl_name")" <<EOF || die "could not create network ACL $acl_name" 1
 description: "ACFS instances: no egress to private, CGNAT or link-local ranges"
 egress:
   - action: reject
@@ -217,25 +342,92 @@ egress:
 EOF
 }
 
-launch() {
+# Creates the custom volume $1 of size $2 on the pool, unless it exists: a
+# volume left by an earlier instance of this name is the state a rebuild
+# is meant to keep, so it is reused, and its size is never changed.
+ensure_volume() {
+    local volume="$1" size="$2"
+    if incus_run storage volume show "$(qualified "$ACFS_INCUS_POOL")" "$volume" >/dev/null 2>&1; then
+        log_info "Using the existing volume $volume on pool $ACFS_INCUS_POOL as it is (its size isn't changed)"
+        return 0
+    fi
+    log_info "Creating volume $volume on pool $ACFS_INCUS_POOL (size=$size)"
+    incus_run storage volume create "$(qualified "$ACFS_INCUS_POOL")" "$volume" "size=$size" >/dev/null \
+        || die "could not create volume $volume on pool $ACFS_INCUS_POOL" 1
+}
+
+# Adds the disk device $1 mounting $2 (a volume, or volume/sub-path) at $3,
+# owned by $4:$5 with mode $6 when Incus first creates the sub-path.
+add_volume_device() {
+    local device="$1" source="$2" path="$3" uid="$4" gid="$5" mode="$6"
+    incus_run config device add "$(qualified "$name")" "$device" disk \
+        "pool=$ACFS_INCUS_POOL" "source=$source" "path=$path" \
+        "initial.uid=$uid" "initial.gid=$gid" "initial.mode=$mode" >/dev/null \
+        || die "could not add the disk device $device ($source at $path)" 1
+}
+
+# The state layer and /data, on before the first boot so cloud-init makes
+# the user's home on the volume and the installer lands on the final layout.
+# .acfs/ holds the volume's lease, lock and journal for the guest's
+# `acfs state` and its boot-time lease check.
+attach_volumes() {
+    local state="acfs-state-$name" data="$name-data"
+    log_step "Attaching $state (home, SSH host keys, Tailscale, lease) and $data (/data)"
+    add_volume_device state-home "$state/home" "/home/$TARGET_USER" "$TARGET_UID" "$TARGET_GID" 0700
+    add_volume_device state-ssh-host "$state/root/ssh-host" /etc/ssh/acfs-host-keys 0 0 0700
+    add_volume_device state-tailscale "$state/root/tailscale" /var/lib/tailscale 0 0 0700
+    add_volume_device state-acfs "$state/.acfs" /etc/acfs/state 0 0 0700
+    add_volume_device data "$data" /data "$TARGET_UID" "$TARGET_GID" 0755
+}
+
+# The lease that binds the state volume to this one instance: the guest
+# claims it into the volume on first boot and refuses to start the user
+# manager when the volume holds another instance's. The launcher only sets
+# the key; it never writes into the volume, and it never prints the token.
+set_lease() {
+    local token
+    token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    [[ "$token" =~ ^[0-9a-f]{32}$ ]] || die "could not make a lease token" 1
+    incus_run config set "$(qualified "$name")" "user.acfs.lease=$token" \
+        || die "could not record user.acfs.lease" 1
+}
+
+# Creates the instance stopped, attaches what is per machine, marks it and
+# starts it. The install-started mark comes last, so an instance this
+# stopped halfway through is refused on a re-run rather than booted
+# without its volumes.
+create_instance() {
     local keys_json="$1" sha="$2" nic launch_args
     nic="$(check_managed_bridge)"
     ensure_acl
-    if [[ -n "$container" ]]; then
-        launch_args=("${CONTAINER_LAUNCH_ARGS[@]}")
-        log_step "Creating unprivileged container $(qualified "$name") from $IMAGE (4 CPUs, 8 GiB RAM, 40 GiB disk where the storage pool enforces it)"
-    else
+    if [[ -n "$vm" ]]; then
         launch_args=("${VM_LAUNCH_ARGS[@]}")
-        log_step "Creating VM $(qualified "$name") from $IMAGE (4 vCPU, 8 GiB RAM, 40 GiB disk)"
+        log_step "Creating VM $(qualified "$name") from $IMAGE (4 vCPU, 8 GiB RAM, $ROOT_SIZE disk on pool $ACFS_INCUS_POOL)"
+    else
+        check_server
+        check_swarm_profile
+        ensure_volume "acfs-state-$name" "$STATE_SIZE"
+        ensure_volume "$name-data" "$DATA_SIZE"
+        launch_args=("${CONTAINER_LAUNCH_ARGS[@]}")
+        log_step "Creating unprivileged container $(qualified "$name") from $IMAGE with profile $SWARM_PROFILE ($ROOT_SIZE root on pool $ACFS_INCUS_POOL, where the pool enforces it)"
     fi
-    incus_run launch "$IMAGE" "$(qualified "$name")" "${launch_args[@]}" \
+    incus_run init "$IMAGE" "$(qualified "$name")" "${launch_args[@]}" \
         -c user.acfs.provider=incus \
-        -c "user.acfs.install-started=$sha" \
         -c "cloud-init.user-data=$(user_data "$keys_json")" \
-        -d "$nic,security.acls=$ACL_NAME" \
+        -d "root,pool=$ACFS_INCUS_POOL" \
+        -d "root,size=$ROOT_SIZE" \
+        -d "$nic,security.acls=$acl_name" \
         -d "$nic,security.acls.default.egress.action=allow" \
         -d "$nic,security.acls.default.ingress.action=allow" \
-        >/dev/null || die "incus launch failed" 1
+        >/dev/null || die "incus init failed" 1
+    if [[ -z "$vm" ]]; then
+        attach_volumes
+        set_lease
+    fi
+    incus_run config set "$(qualified "$name")" "user.acfs.install-started=$sha" \
+        || die "could not record user.acfs.install-started" 1
+    log_step "Starting $(qualified "$name")"
+    incus_run start "$(qualified "$name")" || die "incus start failed" 1
 }
 
 wait_agent() {
@@ -345,19 +537,24 @@ report_authorized_keys() {
 }
 
 main() {
+    if [[ "${1:-}" == host-setup ]]; then
+        [[ -x "$SCRIPT_DIR/incus_host.sh" ]] || die "host-setup isn't in this checkout yet" 2
+        exec "$SCRIPT_DIR/incus_host.sh" "${@:2}"
+    fi
     parse_args "$@"
     require_commands
+    read_incus_env
 
     local json sha keys_json installed="" status=0
     sha="$(git -C "$REPO_ROOT" rev-parse HEAD)"
     json="$(instance_json)"
 
     if [[ -z "$json" ]]; then
-        [[ -z "$container" ]] || kind="container"
+        [[ -z "$vm" ]] || kind="VM"
         ((${#ssh_key_files[@]} > 0)) \
             || die "--ssh-key is required: pass the public key of the machine you'll attach from" 2
         keys_json="$(read_public_keys | jq -R . | jq -s -c .)"
-        launch "$keys_json" "$sha"
+        create_instance "$keys_json" "$sha"
     else
         # Decided before anything touches the instance, and only by the install
         # keys: user.acfs.provider is a label, which an instance marked by hand can
@@ -367,11 +564,12 @@ main() {
             log_error "instance $(qualified "$name") exists, and this launcher didn't start an install in it; refusing to touch it."
             log_error "If ACFS is already installed there and you only want the attach block, mark it installed:"
             log_error "  incus config set $(qualified "$name") user.acfs.installed=<commit>"
-            die "The launcher then never touches that instance's install, so set it only for an install you made." 2
+            log_error "The launcher then never touches that instance's install, so set it only for an install you made."
+            die "If this launcher created it and stopped before starting it, delete it and re-run; its volumes are kept and reused." 2
         fi
-        [[ "$(jq -r '.type' <<<"$json")" != "container" ]] || kind="container"
-        [[ -z "$container" || "$kind" == "container" ]] \
-            || log_warn "--container is ignored: $(qualified "$name") exists as a VM, and an instance keeps the type it was created with"
+        [[ "$(jq -r '.type' <<<"$json")" != "virtual-machine" ]] || kind="VM"
+        [[ -z "$creation_options" ]] \
+            || log_warn "--vm, --acl and the sizes are ignored: $(qualified "$name") exists as a $kind, and an instance keeps the type, ACL and sizes it was created with"
         ((${#ssh_key_files[@]} == 0)) \
             || log_warn "--ssh-key is ignored for an existing $kind; add keys with ssh-copy-id from a machine that can already log in, or here with: incus exec $(qualified "$name") -- bash -c 'cat >> /home/$TARGET_USER/.ssh/authorized_keys' < KEY.pub"
         if [[ "$(jq -r '.status' <<<"$json")" != "Running" ]]; then

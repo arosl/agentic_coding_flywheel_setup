@@ -7,10 +7,12 @@
 # launcher printed. It needs Incus (on a KVM-capable host, for a VM) and
 # network access to images: and GitHub, and it runs the full ACFS install.
 #
-# Usage: tests/vm/test_incus_provider.sh [--container] <instance-name>
+# Usage: tests/vm/test_incus_provider.sh [--vm] <instance-name>
 #
-# With --container it creates the launcher's unprivileged system container
-# instead, and needs no KVM. Either way it ends by measuring the instance:
+# Without --vm it creates the launcher's default, an unprivileged system
+# container, which needs no KVM but does need the host-setup of
+# scripts/providers/incus.md (the profile, the ACLs and the pool in
+# ~/.config/acfs/incus.env). Either way it ends by measuring the instance:
 # disk and memory once installed, and a cold start from stopped to an SSH
 # login. Run it once in each mode to compare the two.
 #
@@ -24,8 +26,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LAUNCHER="$ROOT/scripts/providers/incus.sh"
 MODE_ARGS=()
-if [[ "${1:-}" == "--container" ]]; then
-    MODE_ARGS=(--container)
+if [[ "${1:-}" == "--vm" ]]; then
+    MODE_ARGS=(--vm)
     shift
 fi
 NAME="${1:-}"
@@ -42,11 +44,11 @@ check() {
 }
 not() { ! "$@"; }
 
-[[ -n "$NAME" ]] || { echo "Usage: $0 [--container] <instance-name>" >&2; exit 2; }
+[[ -n "$NAME" ]] || { echo "Usage: $0 [--vm] <instance-name>" >&2; exit 2; }
 
 command -v incus >/dev/null 2>&1 || skip "incus is not installed"
 incus info </dev/null >/dev/null 2>&1 || skip "this user can't reach the Incus daemon (not in incus-admin?)"
-[[ ${#MODE_ARGS[@]} -gt 0 || -e /dev/kvm ]] || skip "/dev/kvm is missing, so Incus can't run VMs here"
+[[ ${#MODE_ARGS[@]} -eq 0 || -e /dev/kvm ]] || skip "/dev/kvm is missing, so Incus can't run VMs here"
 incus image info images:ubuntu/26.04/cloud </dev/null >/dev/null 2>&1 || skip "the images: remote isn't reachable"
 if incus info "$NAME" </dev/null >/dev/null 2>&1; then
     echo "instance $NAME already exists; pass a fresh name" >&2
@@ -78,7 +80,7 @@ check "the block has a known_hosts line" grep -q "^$NAME ssh-ed25519 " "$WORK/kn
 
 echo "== instance type"
 instance_type="$(incus query "/1.0/instances/$NAME" </dev/null | jq -r '.type' || true)"
-if [[ ${#MODE_ARGS[@]} -gt 0 ]]; then
+if [[ ${#MODE_ARGS[@]} -eq 0 ]]; then
     check "the instance is a container" test "$instance_type" = container
     for setting in security.privileged=false security.nesting=false security.idmap.isolated=true; do
         check "it carries $setting" test "$(incus config get "$NAME" "${setting%%=*}" </dev/null)" = "${setting#*=}"
