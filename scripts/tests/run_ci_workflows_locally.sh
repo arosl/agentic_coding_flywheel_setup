@@ -17,7 +17,9 @@
 #     gate runs on its own under the browser lock;
 #   - jobs in a container: or with a job-level if:;
 #   - steps that need root or a package manager (sudo, apt-get, pip
-#     install), a container engine, or a browser install;
+#     install, or a script known to run sudo itself, such as the
+#     fleet probe's --live-ssh test, which starts sshd), a container
+#     engine, or a browser install;
 #   - steps that would run install.sh or acfs update on this host;
 #   - steps that install a tool (cargo install, curl | bash), and the
 #     rest of that job, which uses it;
@@ -125,6 +127,8 @@ EXCLUDED = {
 }
 STEP_DENY = [
     (re.compile(r"\bsudo\b|\bapt(-get)?\s|\bpip3?\s+install\b"), "needs root or a package manager"),
+    # Scripts whose step text shows no sudo but that run it themselves.
+    (re.compile(r"test_swarm_fleet_probe\.py\b[^\n]*--live-ssh"), "needs root (runs sudo sshd itself)"),
     (re.compile(r"\b(docker|podman|incus)\b"), "needs a container engine"),
     (re.compile(r"playwright\s+install"), "installs browsers"),
     (re.compile(r"(^|[\s;&|(])acfs\s+update\b|(^|[\s;&|(])(\S*/)?acfs-update(\s|$)"), "runs acfs update on this host"),

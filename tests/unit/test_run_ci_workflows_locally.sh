@@ -131,6 +131,8 @@ jobs:
         run: acfs update --yes; touch ran-update
       - name: Uses a container engine
         run: docker ps; touch ran-docker
+      - name: Starts sshd through sudo inside the script
+        run: python3 -B tests/unit/test_swarm_fleet_probe.py --live-ssh; touch ran-live-ssh
       - name: Needs a secret
         run: echo "${{ secrets.TOKEN }}"; touch ran-secret
       - name: Conditional
@@ -222,13 +224,14 @@ check "bash install.sh is skipped" out_has "Runs the installer: runs install.sh 
 check "./install.sh is skipped" out_has "Runs the installer directly: runs install.sh on this host"
 check "acfs update is skipped" out_has "Updates the host: runs acfs update on this host"
 check "docker is skipped" out_has "Uses a container engine: needs a container engine"
+check "the fleet probe's live-SSH test is skipped" out_has "Starts sshd through sudo inside the script: needs root (runs sudo sshd itself)"
 check "an unknown expression is skipped" out_has 'Needs a secret: needs ${{ secrets.TOKEN }}'
 check "a step if: is skipped" out_has "Conditional: if: github.event_name == 'workflow_dispatch'"
 check "a tool install is skipped" out_has "Installs a tool: installs a tool on this host"
 check "the steps after a tool install are skipped" out_has "Uses the tool: step 1 installs a tool the job then uses"
 check "a container job is skipped" out_has "SKIP  danger.yml › boxed: runs in a container"
 check "a job if: is skipped" out_has "SKIP  danger.yml › gated: job if:"
-for marker in sudo install update docker secret conditional cargo tool-user container gated; do
+for marker in sudo install update docker live-ssh secret conditional cargo tool-user container gated; do
     check "never ran: $marker" no_marker "$marker"
 done
 
