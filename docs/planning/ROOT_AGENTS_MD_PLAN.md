@@ -1,5 +1,11 @@
 # Root AGENTS.md Plan (Flywheel VPS)
 
+> Upstream's plan. This fork has no ntm: `scripts/generate-root-agents-md.sh`
+> writes a herdr section where the plan below has ntm (`herdr workspace create`,
+> `herdr agent list`, `read`, `prompt` and `wait`), and agents are started and
+> prompted with `acfs agents spawn` and `send`. ntm's activity, health and
+> robot bulk-assign commands have no counterpart.
+
 ## Goal
 Define the structure and content outline for a root `/AGENTS.md` on the Flywheel VPS.
 The doc should be short, skimmable, and focused on the core toolchain and workflows

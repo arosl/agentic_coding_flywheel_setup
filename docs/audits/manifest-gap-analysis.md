@@ -192,7 +192,7 @@ verify:
 
 | Tool | Method | Manifest Module |
 |------|--------|-----------------|
-| NTM | Verified upstream script | `stack.ntm` ✓ |
+| herdr | Verified upstream script | `tools.herdr` ✓ |
 | MCP Agent Mail | Verified upstream script | `stack.mcp_agent_mail` ✓ |
 | UBS | Verified upstream script (--easy-mode) | `stack.ultimate_bug_scanner` ✓ |
 | Beads Viewer (bv) | Verified upstream script | `stack.beads_viewer` ✓ |
@@ -490,10 +490,10 @@ acfs_curl -o "$dest_path" "$ACFS_RAW/$rel_path"
 | `acfs/onboard/lessons/00_welcome.md` | Welcome message |
 | `acfs/onboard/lessons/01_linux_basics.md` | Linux fundamentals |
 | `acfs/onboard/lessons/02_ssh_basics.md` | SSH tutorial |
-| `acfs/onboard/lessons/03_tmux_basics.md` | Tmux primer |
+| `acfs/onboard/lessons/03_herdr_basics.md` | herdr primer |
 | `acfs/onboard/lessons/04_agents_login.md` | Agent authentication |
-| `acfs/onboard/lessons/05_ntm_core.md` | NTM basics |
-| `acfs/onboard/lessons/06_ntm_command_palette.md` | NTM commands |
+| `acfs/onboard/lessons/05_herdr_core.md` | Agents in herdr |
+| `acfs/onboard/lessons/06_command_palette.md` | The command palette |
 | `acfs/onboard/lessons/07_flywheel_loop.md` | Workflow loop |
 
 ### Scripts Not Downloaded (embedded/generated)

@@ -3,7 +3,8 @@
 > **Historical implementation plan — superseded.** This document preserves the
 > original migration reasoning and legacy function sketches; it is not the
 > current API contract. Use the manifest section in `README.md` and
-> `docs/reference/MANIFEST_SCHEMA_VNEXT.md` for current behavior.
+> `docs/reference/MANIFEST_SCHEMA_VNEXT.md` for current behavior. Its
+> `stack.ntm` is upstream's; this fork's manifest has `tools.herdr` instead.
 
 ## Executive Summary
 

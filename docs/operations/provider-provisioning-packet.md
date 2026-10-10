@@ -38,7 +38,7 @@ The v1 packet is designed to line up with the existing web and support surfaces:
 - No hosted checkout, payment, account creation, or credential storage.
 - No raw target host address in the support-safe projection.
 - No private SSH key material or private-key path in the packet.
-- No automatic Beads, Agent Mail, NTM, RU, or RCH mutation.
+- No automatic Beads, Agent Mail, herdr, RU, or RCH mutation.
 - No cloud provider lock-in; provider adapters must target the same shape.
 
 ## Canonical Type Contract

@@ -1208,7 +1208,7 @@ If you are just getting started, you do not need to master all of this immediate
 
 - large-scale session memory systems like CASS and CM
 - big prompt libraries
-- advanced launch tooling like `ntm`
+- advanced launch tooling like `acfs agents`
 - the full exhaustive planning doctrine
 - every supporting tool in ACFS
 

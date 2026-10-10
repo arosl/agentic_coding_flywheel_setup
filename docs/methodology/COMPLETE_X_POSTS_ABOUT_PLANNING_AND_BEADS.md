@@ -1,6 +1,8 @@
 # Complete X Posts About Planning and Beads
 
 > A comprehensive collection of [@doodlestein](https://x.com/doodlestein) (Jeffrey Emanuel)'s X posts about his planning methodology, beads workflow, and agent swarm orchestration. Posts are organized chronologically by thread, with each thread containing the original post followed by self-replies and replies to others.
+>
+> The posts are quoted as written. Where they name ntm or tmux, this fork runs agents in herdr instead, through `acfs agents` (see `README.md`, "About this fork").
 
 ---
 

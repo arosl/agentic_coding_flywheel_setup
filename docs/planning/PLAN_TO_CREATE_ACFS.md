@@ -2,6 +2,11 @@
 
 ## Agentic Coding Flywheel Setup - Comprehensive Implementation Plan
 
+> Upstream's original plan. Where it names ntm (and tmux), this fork installs
+> herdr instead (`tools.herdr`), starts and prompts agents with `acfs agents
+> spawn` and `send`, and keeps the command palette as a file,
+> `~/.acfs/onboard/docs/ntm/command_palette.md`. See `README.md`, "About this fork".
+
 ---
 
 ## Executive Summary

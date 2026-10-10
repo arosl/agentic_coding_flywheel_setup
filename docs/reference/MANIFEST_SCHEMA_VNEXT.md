@@ -60,7 +60,7 @@ modules:
 - Phase 6: Language runtimes + shell tools (atuin, zoxide, ast-grep)
 - Phase 7: AI agents (Claude, Codex, Gemini)
 - Phase 8: Cloud tools + databases (Vault, PostgreSQL, Wrangler, Supabase, Vercel)
-- Phase 9: Stack tools (ntm, mcp_agent_mail, cass, etc.)
+- Phase 9: Stack tools (herdr, mcp_agent_mail, cass, etc.)
 - Phase 10: ACFS utilities (onboard, doctor)
 
 ### Installation Fields
@@ -213,7 +213,7 @@ lang.uv
 agents.claude
 agents.codex
 agents.gemini
-stack.ntm
+tools.herdr
 stack.mcp_agent_mail
 stack.ultimate_bug_scanner
 stack.beads_rust
@@ -447,8 +447,8 @@ disagree with what the installer actually does.
   enabled_by_default: true
   tags: [stack, recommended, agent-infra]
   dependencies:
+    - lang.bun
     - lang.uv
-    - stack.ntm
   verified_installer:
     tool: mcp_agent_mail
     runner: bash

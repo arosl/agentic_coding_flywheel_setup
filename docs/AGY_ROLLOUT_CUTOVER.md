@@ -3,6 +3,10 @@
 > Bead `bd-47kjh.11`. Companion to [`AGY_MIGRATION_REFERENCE.md`](./AGY_MIGRATION_REFERENCE.md).
 > Status as of the 2026-06-18 cutover; ecosystem E2E + stack-binary refresh + repo
 > sweep closed out 2026-06-20.
+>
+> This is upstream's record. Its ntm rows say what was verified in ntm at the time.
+> This fork doesn't install ntm: it starts agy agents in herdr with
+> `acfs agents spawn --agy N`.
 
 ## What happened
 

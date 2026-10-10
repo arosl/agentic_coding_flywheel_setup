@@ -365,20 +365,20 @@ This audit traces through the entire user journey from visiting agent-flywheel.c
 - **Fix:** Add a "Your Daily Workflow" section:
   1. Open terminal
   2. SSH to VPS
-  3. Run `ntm list` to see sessions
-  4. `ntm attach <project>` to resume
+  3. Run `herdr` to get your workspaces back
+  4. `acfs agents list` shows each agent and its state
   5. Continue working with `cc`
 
-**Issue 15.2: What is a tmux session? Why do I need it?**
-- **Where:** ntm commands
+**Issue 15.2: What is a herdr workspace? Why do I need it?**
+- **Where:** herdr commands
 - **Problem:** Users don't understand why they can't just SSH in and start typing
-- **Fix:** Explain the "engine room" metaphor more: "tmux is like having multiple desktops on your VPS. Each session persists even if your SSH connection drops. NTM helps manage these sessions."
+- **Fix:** Explain the "engine room" metaphor more: "herdr is like having multiple desktops on your VPS. Each workspace persists even if your SSH connection drops, and herdr shows what each agent in it is doing."
 
 **Issue 15.3: How do I create a new project?**
 - **Where:** Post-wizard
 - **Problem:** User finished the wizard, now what? How do they start their OWN project?
 - **Fix:** Add a "Starting Your First Real Project" guide:
-  1. Create session: `ntm new myproject`
+  1. Create a workspace: `herdr workspace create --cwd ~/myproject`
   2. Clone or init repo
   3. Start Claude: `cc`
   4. Describe what you want to build
@@ -411,7 +411,7 @@ This audit traces through the entire user journey from visiting agent-flywheel.c
 3. Password not appearing while typing - mentioned but needs emphasis
 4. SSH disconnection during install - panic scenario not addressed
 5. Powerlevel10k wizard appearing unexpectedly
-6. tmux/ntm conceptual understanding missing
+6. herdr conceptual understanding missing
 
 ### Medium Priority
 1. Provider account vs VPS instance confusion

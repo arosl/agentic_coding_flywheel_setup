@@ -207,7 +207,7 @@ The key supporting pieces:
 - **AGENTS.md** is the shared operating manual every agent can reload after compaction.
 - **Agent Mail** is the coordination layer.
 - **`bv`** is the graph-theoretic routing layer.
-- **[NTM](https://github.com/Dicklesworthstone/ntm)** is the launch and lifecycle layer.
+- **[herdr](https://herdr.dev)**, with `acfs agents`, is the launch and lifecycle layer.
 - **CASS / CM / UBS** are the memory, pattern-extraction, and quality-feedback layers.
 
 > "More agents -> more sessions -> better memory -> better coordination -> safer speed -> better output -> more sessions."
@@ -343,7 +343,7 @@ myproject/
 └── .gitignore         # Standard ignores
 ```
 
-`acfs newproj` prepares the project structure; `ntm spawn` starts agents.
+`acfs newproj` prepares the project structure; `acfs agents spawn` starts agents in herdr.
 
 ---
 
@@ -943,55 +943,52 @@ More content in AGENTS.md means more frequent compactions, but it saves time and
 
 Once beads are polished, it's time to unleash the swarm.
 
-### [NTM](https://github.com/Dicklesworthstone/ntm): The Agent Cockpit
+### [herdr](https://herdr.dev): The Agent Cockpit
 
-NTM (Named Tmux Manager) is the command center for orchestrating multiple agents:
+herdr is a terminal workspace manager for coding agents: workspaces, tabs and panes that survive a dropped SSH connection, and each agent's state (working, blocked, done or idle). ACFS's `acfs agents` commands use it to orchestrate several agents:
 
 ```bash
-# Spawn a multi-agent session
-ntm spawn myproject --cc=2 --cod=1 --agy=1
-
-# This creates:
-# - A tmux session named "myproject"
-# - 2 Claude Code panes
-# - 1 Codex pane
-# - 1 Gemini pane
+# Spawn agents, each in its own tab of the current herdr workspace
+# (--workspace ID from outside herdr). Each gets an Agent Mail identity;
+# its tab is labelled with that name.
+acfs agents spawn --claude 2 --codex 1 --agy 1
 
 # Send a prompt to ALL agents
-ntm send myproject "Your marching orders prompt here"
+acfs agents send --all "Your marching orders prompt here"
 
-# Send to specific agent type
-ntm send myproject --cc "Focus on the API layer"
-ntm send myproject --cod "Focus on the frontend"
+# Send to one kind of agent, or to one agent by name
+acfs agents send --kind claude "Focus on the API layer"
+acfs agents send --kind codex "Focus on the frontend"
 
-# List active sessions
-ntm list
+# List the agents and their state
+acfs agents list
 
 # Attach to watch progress
-ntm attach myproject
+herdr
 
-# Open the command palette (battle-tested prompts)
-ntm palette
+# The command palette (battle-tested prompts) is a file;
+# send one of its prompts with acfs agents send
+less ~/.acfs/onboard/docs/ntm/command_palette.md
 ```
 
-NTM is useful, but it is not mandatory. The methodology needs a way to run multiple agents, send them prompts quickly, and keep them coordinated. It does not require tmux specifically.
+herdr is useful, but it is not mandatory. The methodology needs a way to run multiple agents, send them prompts quickly, and keep them coordinated. It does not require tmux specifically.
 
 ### What a Mux Is, and What tmux Is
 
 A **mux** is a terminal multiplexer: a layer that lets you manage multiple shell sessions inside one higher-level session manager. In practice, that usually means some combination of tabs, panes, detached sessions, and reconnection to work that is still running on a local or remote machine.
 
-**tmux** is the classic Unix terminal multiplexer. It is powerful, battle-tested, and widely available on remote Linux machines. NTM is built on top of tmux, which is why NTM is such a natural fit for multi-agent work.
+**tmux** is the classic Unix terminal multiplexer. It is powerful, battle-tested, and widely available on remote Linux machines. herdr is a mux of its own, built for agents: it knows which pane holds which agent and what state that agent is in, which is why it is such a natural fit for multi-agent work.
 
-But tmux is only one mux. WezTerm has its own built-in mux. Zellij is another mux. The method cares that you have a workable orchestration layer, not that you picked one specific brand of multiplexer.
+But tmux and herdr are only two muxes. WezTerm has its own built-in mux. Zellij is another mux. The method cares that you have a workable orchestration layer, not that you picked one specific brand of multiplexer.
 
-One common alternative to NTM is to use WezTerm because native scrollback and text selection are more convenient there than in tmux. A very workable setup is:
+One common alternative to herdr is to use WezTerm because native scrollback and text selection are more convenient there than in a terminal mux. A very workable setup is:
 
 - run agents in separate tabs using WezTerm and its built-in mux, often across remote machines
 - trigger your most common prompts from a Stream Deck with the prompts preconfigured
 - keep a large prompt file open in Zed and paste rarer prompts manually
 - in Claude Code, use the project-specific `Ctrl-r` prompt history search when you want to recall something you already used recently
 
-There is no single correct operator interface for this part. NTM is one good cockpit. WezTerm tabs plus mux is another. The important thing is that you can launch agents, get prompts into them quickly, monitor them, and keep the coordination layer (`AGENTS.md`, Agent Mail, beads, `bv`) intact.
+There is no single correct operator interface for this part. herdr is one good cockpit. WezTerm tabs plus mux is another. The important thing is that you can launch agents, get prompts into them quickly, monitor them, and keep the coordination layer (`AGENTS.md`, Agent Mail, beads, `bv`) intact.
 
 [FrankenTerm](https://github.com/Dicklesworthstone/frankenterm), which is built on WezTerm, is aimed more explicitly at this style of workflow, but it is not ready yet.
 
@@ -1032,7 +1029,7 @@ First read ALL of the AGENTS.md file and README.md file super carefully and unde
 
 Newcomers often understand each individual tool but still do not have a clean picture of the first live operating loop. In practice, the first 10 minutes usually look like this:
 
-1. Your session manager creates the agent terminals, whether that is `ntm spawn`, WezTerm mux, or something equivalent.
+1. Your session manager creates the agent terminals, whether that is `acfs agents spawn` in herdr, WezTerm mux, or something equivalent.
 2. You send the marching-orders prompt above.
 3. Each agent reads `AGENTS.md` and the repo docs, inspects the codebase, and joins Agent Mail.
 4. Each agent checks who else is active, acknowledges any waiting messages, and learns the bead-thread naming conventions.
@@ -1196,9 +1193,11 @@ When multiple agents each independently query bv for priority, the result is **e
 
 > "The best solution is to add this to the mix and have the agents use the bv robot priority mode and then you get sort of emergent coordination."
 
-Taken to its endpoint, this design supports full autonomy: one puppet master agent controlling ntm via robot mode and replacing the human for routine machine-tending:
+Taken to its endpoint, this design supports full autonomy: one puppet master agent driving the other agents from the command line and replacing the human for routine machine-tending:
 
 > "I might be building towards having one puppet master agent that replaces me completely by controlling ntm via robot mode..."
+
+In this fork, herdr's agent commands (`herdr agent prompt`, `wait` and `read`) and `acfs agents` play the part of ntm's robot mode.
 
 ### bv Graph Metrics: A Decision Framework
 
@@ -1658,7 +1657,7 @@ That last point matters. A Flywheel session is only truly landable when a future
 
 | Tool | Command | Purpose | Key Feature |
 |------|---------|---------|-------------|
-| **[NTM](https://github.com/Dicklesworthstone/ntm)** | `ntm` | Named Tmux Manager | Agent cockpit: spawn/send/broadcast/palette |
+| **[herdr](https://herdr.dev)** | `herdr`, `acfs agents` | Agent workspace manager | Agent cockpit: spawn/send/list, each agent's state |
 | **[MCP Agent Mail](https://github.com/Dicklesworthstone/mcp_agent_mail)** | `am` | Agent coordination | Identities, inbox/outbox, file reservations |
 | **[UBS](https://github.com/Dicklesworthstone/ultimate_bug_scanner)** | `ubs` | Ultimate Bug Scanner | 1000+ patterns, pre-commit guardrails |
 | **[Beads](https://github.com/Dicklesworthstone/beads_rust)** | `br` | Issue tracking | Dependency-aware, JSONL+SQLite hybrid |
@@ -1681,7 +1680,7 @@ Not every entry is used the same way. `br`, `bv`, `ubs`, and `rch` are ordinary 
 | **Markdown plan files** | Source-of-truth planning documents |
 | **`acfs newproj`** | Bootstraps projects with full tooling |
 | **`acfs doctor`** | Single command to verify entire installation |
-| **NTM command palette** | Battle-tested prompt library |
+| **Command palette** (`~/.acfs/onboard/docs/ntm/command_palette.md`) | Battle-tested prompt library |
 | **Claude Code Skills** | Each tool has a dedicated skill for automated workflows |
 
 ### The Skills Ecosystem
@@ -1703,7 +1702,7 @@ Skills provide the prompts, procedures, anti-pattern guidance, and tool-specific
 ### The Flywheel Interactions
 
 ```
-NTM spawns agents --> Agents read AGENTS.md
+acfs agents spawn --> Agents read AGENTS.md
                   --> Agents register with Agent Mail
                   --> Agents query bv for task priority
                   --> Agents claim beads via br
@@ -1768,7 +1767,7 @@ Think of it like **RaptorQ fountain codes**: beads are "blobs" in a stream, any 
 1. Bead remains marked `in_progress`
 2. Any other agent can resume it (or mark it `blocked`)
 3. No dependency on the specific dead agent
-4. Replacement: `ntm add PROJECT --cc=1`, give the standard init prompt, and continue
+4. Replacement: `acfs agents spawn --claude 1`, which gives it the standard init prompt, and continue
 
 ### 5. Shared Workspace Over Worktrees
 
@@ -1933,7 +1932,7 @@ The human's role during implementation is a repeating cycle:
 1. **Check bead progress** (`br list --status in_progress --json` or `bv --robot-triage`). Are agents making steady progress? Are any beads stuck?
 2. **Handle compactions.** When you see an agent acting confused or repeating itself, send: "Reread AGENTS.md so it's still fresh in your mind." This is the single most common intervention. It takes 5 seconds.
 3. **Run periodic reviews.** Every 30-60 minutes, pick an agent and send the "fresh eyes" review prompt. This catches bugs before they compound.
-4. **Manage rate limits.** When an agent gets rate-limited, switch its account with `caam activate claude backup-2` or start a new agent with `ntm add PROJECT --cc=1`.
+4. **Manage rate limits.** When an agent gets rate-limited, switch its account with `caam activate claude backup-2` or start a new agent with `acfs agents spawn --claude 1`.
 5. **Commit periodically.** Every 1-2 hours, designate one agent to do the organized commit prompt. This keeps the git history clean and ensures all agents see each other's work.
 6. **Handle surprises.** Occasionally something comes up during implementation that wasn't anticipated in the plan. Create a new bead for it, or if it's a plan-level issue, update the plan and create new beads.
 
@@ -2379,7 +2378,7 @@ For beginners who find the full system overwhelming, here's the recommended laye
 
 This is the recommended learning order for the toolchain, not the ideal order of operations inside a serious project. On a real project, the workflow still begins with planning, then beads, then swarm execution.
 
-There is also no single correct session-management layer. You can use NTM, tmux directly, WezTerm mux with one agent per tab, or another setup entirely. The method cares about coordination and operator ergonomics, not about one mandatory terminal multiplexer.
+There is also no single correct session-management layer. You can use herdr, tmux directly, WezTerm mux with one agent per tab, or another setup entirely. The method cares about coordination and operator ergonomics, not about one mandatory terminal multiplexer.
 
 1. **Start with**: Agent Mail + Beads (`br`) + Beads Viewer (`bv`)
 2. **Then add**: UBS for bug hunting
@@ -2447,14 +2446,14 @@ onboard
 # 6. Create your first project
 acfs newproj my-first-project --interactive
 
-# 7. Spawn agents
-ntm spawn my-first-project --cc=2 --cod=1 --agy=1
+# 7. Spawn agents (newproj's last screen offers to; or, from a pane in herdr:)
+acfs agents spawn --claude 2 --codex 1 --agy 1
 
 # 8. Start building!
-ntm send my-first-project "Let's build something awesome."
+acfs agents send --all "Let's build something awesome."
 ```
 
-For a real project, that last `ntm send` line quickly gets replaced by the canonical marching-orders prompt from Section 24 once you have an actual plan and bead graph. The short example above is just enough to get the first session moving.
+For a real project, that last `acfs agents send` line quickly gets replaced by the canonical marching-orders prompt from Section 24 once you have an actual plan and bead graph. The short example above is just enough to get the first session moving.
 
 ---
 
@@ -2586,7 +2585,7 @@ want you to very carefully review and analyze these using `br` and `bv`.
 First read ALL of the AGENTS.md file and README.md file super carefully and understand ALL of both! Then use your code investigation agent mode to fully understand the code, and technical architecture and purpose of the project. Then register with MCP Agent Mail and introduce yourself to the other agents. Be sure to check your agent mail and to promptly respond if needed to any messages; then proceed meticulously with your next assigned beads, working on the tasks systematically and meticulously and tracking your progress via beads and agent mail messages. Don't get stuck in "communication purgatory" where nothing is getting done; be proactive about starting tasks that need to be done, but inform your fellow agents via messages when you do so and mark beads appropriately. When you're not sure what to do next, us the bv tool mentioned in AGENTS.md to prioritize the best beads to work on next; pick the next one that you can usefully work on and get started. Make sure to acknowledge all communication requests from other agents and that you are aware of all active agents and their names. *CRITICAL*: All cargo builds and tests and other CPU intensive operations MUST be done using rch to offload them!!! see AGENTS.md for details on how to do this!!!
 ```
 
-**Where:** Every agent in the swarm (via `ntm send`)
+**Where:** Every agent in the swarm (via `acfs agents send`)
 
 **Why it works:** This is the closest thing to a canonical swarm kickoff packet. It front-loads the shared operating context, forces the agent to establish social presence through Agent Mail, and then immediately pivots it away from passive waiting and toward actual execution. The line about "communication purgatory" matters because swarm failure often comes from over-coordination rather than under-coordination.
 

@@ -366,7 +366,7 @@ Users are told to wait 10-15 minutes watching text scroll by.
 
 **What works:**
 - Celebratory design with confetti
-- Quick command reference (cc, ntm, rg, lazygit)
+- Quick command reference (cc, herdr, rg, lazygit)
 - Link to Learning Hub
 
 **CRITICAL Issue 9.1: No First Project Walkthrough**
@@ -427,9 +427,9 @@ If user closes their laptop or terminal, they'll be completely lost.
    ```bash
    ssh -i ~/.ssh/acfs_ed25519 ubuntu@YOUR_IP
    ```
-3. Your work is still there! If you were using NTM:
+3. Your work is still there! Your agents kept running in herdr:
    ```bash
-   ntm attach myproject
+   herdr
    ```
    This brings back your entire session exactly where you left off.
 
@@ -546,7 +546,7 @@ When you've successfully completed these, come back and click "Mark Complete".
 
 3. **Add reconnection instructions prominently**
    - Location: /wizard/launch-onboarding AND browser bookmark prompt
-   - Include: Full SSH command, NTM attach
+   - Include: Full SSH command, then `herdr` to reattach
 
 4. **Add authentication flow to wizard**
    - Location: Either /wizard/accounts or /wizard/launch-onboarding

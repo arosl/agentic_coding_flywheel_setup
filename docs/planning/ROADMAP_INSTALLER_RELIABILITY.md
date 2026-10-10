@@ -768,7 +768,7 @@ CRITICAL_TOOLS=(
 
 # Recommended tools: failure should warn but allow skip
 RECOMMENDED_TOOLS=(
-    "ntm"              # Nice to have, not blocking
+    "herdr"            # Nice to have, not blocking
     "mcp_agent_mail"   # Coordination, not essential for solo work
     "ubs"              # Bug scanner
     "bv"               # Beads viewer

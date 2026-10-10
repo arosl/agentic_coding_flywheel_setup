@@ -106,7 +106,7 @@ Each `agy --print` starts a **new** conversation (new `conversations/<uuid>.db`)
 **Enforcement contract:**
 1. **Pin**: always pass `--model "Gemini 3.8 Flash (High)"` explicitly on every spawn/`--print`/`--continue`/`--conversation` call. Do NOT rely on the `settings.json` default.
 2. **Verify** (any of, fail-closed): read `~/.gemini/antigravity-cli/settings.json → "model"`; and/or parse the transcript `<USER_SETTINGS_CHANGE>` / the model's self-report. If the effective model is not exactly `Gemini 3.8 Flash (High)`, **refuse/abort with a clear error** — never silently run on a worse model.
-3. **One definition**: keep the allowed-model string in a single shared constant/helper per tool (Go helper in ntm, etc.) — no copy-paste drift.
+3. **One definition**: keep the allowed-model string in a single shared constant/helper per tool (`AGY_REQUIRED_MODEL` in `scripts/lib/agy_model_guard.sh`, etc.) — no copy-paste drift.
 4. Every e2e test asserts the model (§9).
 
 ---
