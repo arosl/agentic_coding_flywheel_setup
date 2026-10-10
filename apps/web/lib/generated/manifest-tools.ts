@@ -387,7 +387,7 @@ export const manifestTools: ManifestWebTool[] = [
     stars: 15,
     cliName: "dsr",
     cliAliases: [],
-    commandExample: "dsr release ntm 1.2.3",
+    commandExample: "dsr release mytool 1.2.3",
     lessonSlug: "dsr",
   },
   {

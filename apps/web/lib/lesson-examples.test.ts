@@ -268,7 +268,7 @@ const ROWS: ExampleRow[] = [
     issue: "#394",
     cli: "dsr",
     wrong: /dsr (release|fallback)\b[^\n"'`]*--(tag|batch|repos)\b/,
-    right: { pattern: /dsr release ntm 1\.2\.3/, in: [O("36_dsr.md"), MANIFEST] },
+    right: { pattern: /dsr release mytool 1\.2\.3/, in: [O("36_dsr.md"), MANIFEST] },
   },
   {
     issue: "#394",

@@ -121,7 +121,7 @@ export const manifestCommands: ManifestCommand[] = [
     cliName: "dsr",
     cliAliases: [],
     description: "Fallback release infrastructure — local builds via act when GitHub Actions is throttled (dsr)",
-    commandExample: "dsr release ntm 1.2.3",
+    commandExample: "dsr release mytool 1.2.3",
     docsUrl: "https://github.com/Dicklesworthstone/doodlestein_self_releaser",
   },
   {

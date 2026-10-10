@@ -3234,7 +3234,7 @@ modules:
       language: "Bash"
       stars: 15
       cli_name: "dsr"
-      command_example: "dsr release ntm 1.2.3"
+      command_example: "dsr release mytool 1.2.3"
       lesson_slug: "dsr"
     dependencies:
       - cli.modern   # for gh

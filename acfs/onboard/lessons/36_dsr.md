@@ -67,13 +67,13 @@ GitHub Actions has rate limits and queue times. DSR provides:
 dsr check --all
 
 # Build a tool's release artifacts for the current platform
-dsr build --repo ntm
+dsr build --repo mytool
 
 # Create the v1.2.3 GitHub release for a tool from its built artifacts
-dsr release ntm 1.2.3
+dsr release mytool 1.2.3
 
 # Or stage it as a draft first
-dsr release ntm 1.2.3 --draft
+dsr release mytool 1.2.3 --draft
 ```
 
 ---
