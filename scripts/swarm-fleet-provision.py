@@ -7,12 +7,16 @@ no project code runs, and no credentials or remote configuration are cloned.
 """
 import argparse
 from contextlib import contextmanager
+import errno
 import fcntl
+import functools
+import grp
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
+import pwd
 import re
 import selectors
 import shlex
@@ -103,6 +107,44 @@ def absolute(value):
     return Path(value)
 
 
+# The same rule as swarm-fleet-launch.py's; the receiver runs this file alone,
+# so it loads no sibling.
+@functools.lru_cache(maxsize=None)
+def private_group(gid):
+    """True when gid is this user's own private group, the Ubuntu default.
+
+    It must be the user's primary group, named after the user, with no listed
+    members and no other user whose primary group it is. Any failed lookup
+    counts as shared.
+    """
+    try:
+        me = pwd.getpwuid(os.geteuid())
+        group = grp.getgrgid(gid)
+        others = [entry for entry in pwd.getpwall() if entry.pw_gid == gid and entry.pw_uid != me.pw_uid]
+    except (KeyError, OSError):
+        return False
+    return me.pw_gid == gid and group.gr_name == me.pw_name and not group.gr_mem and not others
+
+
+def has_access_acl(fd):
+    """True when fd carries a POSIX access ACL, whose mask the group bits would be."""
+    try:
+        names = os.listxattr(fd)
+    except OSError as error:
+        # No xattr support means no ACL can exist; anything else fails closed.
+        return error.errno not in (errno.ENOTSUP, errno.EOPNOTSUPP)
+    return "system.posix_acl_access" in names
+
+
+def writable_by_others(info, fd):
+    """World write, or group write that reaches anyone but this user."""
+    if info.st_mode & 0o002:
+        return True
+    if not info.st_mode & 0o020:
+        return False
+    return not private_group(info.st_gid) or has_access_acl(fd)
+
+
 @contextmanager
 def directory(path):
     path = absolute(str(path))
@@ -114,9 +156,10 @@ def directory(path):
             fd = child
             info = os.fstat(fd)
             sticky = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
-            require(info.st_uid in (0, os.geteuid()) and (not info.st_mode & 0o022 or sticky), "unsafe_directory")
+            require(info.st_uid in (0, os.geteuid()) and (not writable_by_others(info, fd) or sticky),
+                    "unsafe_directory")
         info = os.fstat(fd)
-        require(info.st_uid == os.geteuid() and not info.st_mode & 0o022, "directory_ownership_or_permissions")
+        require(info.st_uid == os.geteuid() and not writable_by_others(info, fd), "directory_ownership_or_permissions")
         yield fd
     finally:
         os.close(fd)

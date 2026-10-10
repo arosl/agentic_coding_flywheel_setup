@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import selectors
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
@@ -575,6 +576,66 @@ sys.exit(p.cli())
             result = p.decode(stdout)
             self.assertEqual(result["status"], "interrupted")
             self.assertFalse(result["writes_attempted"])
+
+
+class PrivateGroupDirectoryTests(unittest.TestCase):
+    """Repositories made under Ubuntu's umask 0002 are group-writable by the user's private group.
+
+    directory() checks every component, the repository included, so a refusal
+    is unsafe_directory wherever the write bit is.
+    """
+
+    def setUp(self):
+        self.base = Path(tempfile.mkdtemp(prefix="acfs-provision-umask-"))
+        self.middle = self.base / "projects"
+        self.repo = self.middle / "repo"
+        self.repo.mkdir(parents=True)
+        self.middle.chmod(0o755)
+        self.repo.chmod(0o755)
+
+    def opened(self, private):
+        with patch.object(p, "private_group", return_value=private), p.directory(self.repo) as fd:
+            return os.fstat(fd).st_ino
+
+    def test_private_group_write_is_accepted_and_shared_group_write_refused(self):
+        self.repo.chmod(0o775)
+        self.assertEqual(self.opened(True), self.repo.stat().st_ino)
+        with self.assertRaisesRegex(p.Refused, "unsafe_directory"):
+            self.opened(False)
+
+    def test_a_umask_0002_repository_is_provisionable_where_the_group_is_private(self):
+        self.middle.chmod(0o775)
+        self.repo.chmod(0o775)
+        if not fleet.private_group(self.repo.stat().st_gid):
+            self.skipTest("this user's primary group is not a private group")
+        with p.directory(self.repo) as fd:
+            self.assertEqual(os.fstat(fd).st_ino, self.repo.stat().st_ino)
+
+    def test_private_group_write_on_an_ancestor_follows_the_same_rule(self):
+        self.middle.chmod(0o775)
+        self.assertEqual(self.opened(True), self.repo.stat().st_ino)
+        with self.assertRaisesRegex(p.Refused, "unsafe_directory"):
+            self.opened(False)
+
+    def test_world_write_is_refused_even_for_the_private_group(self):
+        self.repo.chmod(0o777)
+        with self.assertRaisesRegex(p.Refused, "unsafe_directory"):
+            self.opened(True)
+
+    def test_private_group_write_with_an_access_acl_is_refused(self):
+        # Linux system.posix_acl_access: version 2, then (tag, perm, id) entries in tag order,
+        # granting nobody (65534) write. The group bits then show the ACL mask, rwx.
+        undefined = 0xFFFFFFFF
+        entries = ((0x01, 7, undefined), (0x02, 7, 65534), (0x04, 5, undefined),
+                   (0x10, 7, undefined), (0x20, 5, undefined))
+        blob = struct.pack("<I", 2) + b"".join(struct.pack("<HHI", *entry) for entry in entries)
+        try:
+            os.setxattr(self.repo, "system.posix_acl_access", blob)
+        except OSError as error:
+            self.skipTest(f"no POSIX ACL support here: {error.strerror}")
+        self.assertEqual(self.repo.stat().st_mode & 0o777, 0o775)
+        with self.assertRaisesRegex(p.Refused, "unsafe_directory"):
+            self.opened(True)
 
 
 if __name__ == "__main__":
