@@ -72,6 +72,18 @@ const LESSON_COMPONENTS = new Map<string, ComponentType>([
     }),
   ],
   [
+    "ntm-core",
+    dynamic(() => import("./ntm-core-lesson").then((m) => ({ default: m.NtmCoreLesson })), {
+      loading: LessonLoading,
+    }),
+  ],
+  [
+    "ntm-palette",
+    dynamic(() => import("./ntm-palette-lesson").then((m) => ({ default: m.NtmPaletteLesson })), {
+      loading: LessonLoading,
+    }),
+  ],
+  [
     "flywheel-loop",
     dynamic(
       () => import("./flywheel-loop-lesson").then((m) => ({ default: m.FlywheelLoopLesson })),

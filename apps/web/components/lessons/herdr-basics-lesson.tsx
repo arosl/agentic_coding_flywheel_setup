@@ -5,10 +5,12 @@ import {
   ArrowRight,
   Bot,
   Columns,
+  Copy,
   Keyboard,
   LayoutGrid,
   List,
   Monitor,
+  Pause,
   Play,
   PlugZap,
   Plus,
@@ -179,6 +181,33 @@ agents`}
         <Paragraph>
           A workspace usually holds one project. Its tabs and panes hold your agents and your own
           shell.
+        </Paragraph>
+      </Section>
+
+      <Divider />
+
+      {/* Copy Mode */}
+      <Section title="Copy Mode (Scrolling)" icon={<Copy className="h-5 w-5" />} delay={0.35}>
+        <KeyboardShortcutGrid
+          shortcuts={[
+            {
+              keys: ["Ctrl+b", "["],
+              action: "Enter copy mode",
+              icon: <Play className="h-4 w-4" />,
+            },
+            {
+              keys: ["PageUp/PageDown", "or j/k"],
+              action: "Scroll",
+              icon: <ArrowLeftRight className="h-4 w-4 rotate-90" />,
+            },
+            { keys: ["q"], action: "Exit copy mode", icon: <Pause className="h-4 w-4" /> },
+            { keys: ["v"], action: "Start selection", icon: <Copy className="h-4 w-4" /> },
+            { keys: ["y"], action: "Copy selection", icon: <Copy className="h-4 w-4" /> },
+          ]}
+        />
+        <Paragraph>
+          The agent keeps running while you scroll. To read a long history in your editor instead,
+          press <InlineCode>Ctrl+b</InlineCode> then <InlineCode>e</InlineCode>.
         </Paragraph>
       </Section>
 

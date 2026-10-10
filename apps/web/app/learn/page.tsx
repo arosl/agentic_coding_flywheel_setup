@@ -55,6 +55,14 @@ const QUICK_REFERENCE_ITEMS: QuickReferenceItem[] = [
     gradient: "from-violet-500/10 to-violet-500/5",
   },
   {
+    href: "/learn/ntm-core",
+    lessonSlug: "ntm-core",
+    icon: BookOpen,
+    title: "herdr Commands",
+    desc: "Agents, panes and prompts reference",
+    gradient: "from-blue-500/10 to-blue-500/5",
+  },
+  {
     href: "/learn/commands",
     icon: List,
     title: "Command Reference",

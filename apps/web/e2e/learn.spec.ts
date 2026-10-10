@@ -199,6 +199,9 @@ test.describe
       // completed any earlier lessons. The Quick Reference card plus the All
       // Lessons grid card both render a link, so each href appears twice.
       await expect(page.locator('a[href="/learn/agent-commands"]')).toHaveCount(2);
+      await expect(page.locator('a[href="/learn/ntm-core"]')).toHaveCount(2);
+      // The palette lesson is a reference lesson without a card: only its grid link.
+      await expect(page.locator('a[href="/learn/ntm-palette"]')).toHaveCount(1);
       await expect(page.locator('a[href="/learn/commands"]')).toHaveCount(1);
       await expect(page.locator('a[href="/glossary"]')).toHaveCount(1);
     });
@@ -335,6 +338,7 @@ test.describe
       await expect(page.locator('a[href="/learn/tools/beads"]').first()).toBeVisible();
 
       await expect(page.locator('a[href="/learn/agent-commands"]')).toHaveCount(0);
+      await expect(page.locator('a[href="/learn/ntm-palette"]')).toHaveCount(0);
       await expect(page.locator('a[href="/learn/beads"]')).toHaveCount(0);
       await expect(page.locator('a[href="/learn/bv"]')).toHaveCount(0);
     });

@@ -82,6 +82,22 @@ export const LESSONS: Lesson[] = [
   },
   {
     id: 7,
+    slug: "ntm-core",
+    title: "herdr Command Center",
+    description: "Orchestrate your agents from the shell",
+    duration: "8 min",
+    file: "05_herdr_core.md",
+  },
+  {
+    id: 8,
+    slug: "ntm-palette",
+    title: "Command Palette",
+    description: "Quick access to battle-tested prompts",
+    duration: "6 min",
+    file: "06_command_palette.md",
+  },
+  {
+    id: 9,
     slug: "flywheel-loop",
     title: "The Flywheel Loop",
     description: "Put it all together for maximum velocity",
@@ -89,7 +105,7 @@ export const LESSONS: Lesson[] = [
     file: "09_flywheel_loop.md",
   },
   {
-    id: 8,
+    id: 10,
     slug: "keeping-updated",
     title: "Keeping Updated",
     description: "Maintain and upgrade your environment",
@@ -97,7 +113,7 @@ export const LESSONS: Lesson[] = [
     file: "10_keeping_updated.md",
   },
   {
-    id: 9,
+    id: 11,
     slug: "ubs",
     title: "UBS: Code Quality Guardrails",
     description: "Catch bugs before they reach production",
@@ -105,7 +121,7 @@ export const LESSONS: Lesson[] = [
     file: "11_ubs.md",
   },
   {
-    id: 10,
+    id: 12,
     slug: "agent-mail",
     title: "Agent Mail Coordination",
     description: "Multi-agent messaging and file reservations",
@@ -113,7 +129,7 @@ export const LESSONS: Lesson[] = [
     file: "12_agent_mail.md",
   },
   {
-    id: 11,
+    id: 13,
     slug: "cass",
     title: "CASS: Learning from History",
     description: "Search across all past agent sessions",
@@ -121,7 +137,7 @@ export const LESSONS: Lesson[] = [
     file: "13_cass.md",
   },
   {
-    id: 12,
+    id: 14,
     slug: "cm",
     title: "The Memory System",
     description: "Build procedural memory for agents",
@@ -129,7 +145,7 @@ export const LESSONS: Lesson[] = [
     file: "14_cm.md",
   },
   {
-    id: 13,
+    id: 15,
     slug: "beads",
     title: "Beads: Issue Tracking",
     description: "Graph-aware task management with dependencies",
@@ -137,7 +153,7 @@ export const LESSONS: Lesson[] = [
     file: "15_beads.md",
   },
   {
-    id: 14,
+    id: 16,
     slug: "safety-tools",
     title: "Safety Tools: SLB & CAAM",
     description: "Two-person rule and account management",
@@ -145,7 +161,7 @@ export const LESSONS: Lesson[] = [
     file: "16_safety_tools.md",
   },
   {
-    id: 15,
+    id: 17,
     slug: "prompt-engineering",
     title: "The Art of Agent Direction",
     description: "Prompting patterns that produce excellent results",
@@ -153,7 +169,7 @@ export const LESSONS: Lesson[] = [
     file: "17_prompt_engineering.md",
   },
   {
-    id: 16,
+    id: 18,
     slug: "real-world-case-study",
     title: "Case Study: cass-memory",
     description: "Build a complex project in one day with agent swarms",
@@ -161,7 +177,7 @@ export const LESSONS: Lesson[] = [
     file: "18_real_world_case_study.md",
   },
   {
-    id: 17,
+    id: 19,
     slug: "slb-case-study",
     title: "Case Study: SLB",
     description: "From tweet to working tool in one evening",
@@ -169,7 +185,7 @@ export const LESSONS: Lesson[] = [
     file: "19_slb_case_study.md",
   },
   {
-    id: 18,
+    id: 20,
     slug: "ru",
     title: "RU: Multi-Repo Mastery",
     description: "Sync repos and automate commits with AI",
@@ -177,7 +193,7 @@ export const LESSONS: Lesson[] = [
     file: "20_ru.md",
   },
   {
-    id: 19,
+    id: 21,
     slug: "dcg",
     title: "DCG: Pre-Execution Safety",
     description: "Block dangerous commands before they cause damage",
@@ -185,7 +201,7 @@ export const LESSONS: Lesson[] = [
     file: "21_dcg.md",
   },
   {
-    id: 20,
+    id: 22,
     slug: "ms",
     title: "Meta Skill: Local Skills",
     description: "Manage and share Claude Code skills locally",
@@ -193,7 +209,7 @@ export const LESSONS: Lesson[] = [
     file: "22_meta_skill.md",
   },
   {
-    id: 21,
+    id: 23,
     slug: "srps",
     title: "SRPS: System Protection",
     description: "Keep your workstation responsive under heavy agent load",
@@ -201,7 +217,7 @@ export const LESSONS: Lesson[] = [
     file: "23_srps.md",
   },
   {
-    id: 22,
+    id: 24,
     slug: "jfp",
     title: "JFP: Prompt Library",
     description: "Discover and install curated prompts as Claude Code skills",
@@ -209,7 +225,7 @@ export const LESSONS: Lesson[] = [
     file: "24_jfp.md",
   },
   {
-    id: 23,
+    id: 25,
     slug: "apr",
     title: "APR: Automated Plan Reviser",
     description: "AI-powered iterative specification refinement",
@@ -217,7 +233,7 @@ export const LESSONS: Lesson[] = [
     file: "25_apr.md",
   },
   {
-    id: 24,
+    id: 26,
     slug: "pt",
     title: "PT: Process Triage",
     description: "Intelligent process management with Bayesian scoring",
@@ -225,7 +241,7 @@ export const LESSONS: Lesson[] = [
     file: "26_pt.md",
   },
   {
-    id: 25,
+    id: 27,
     slug: "xf",
     title: "XF: X Archive Search",
     description: "Blazingly fast search across your X/Twitter archive",
@@ -233,7 +249,7 @@ export const LESSONS: Lesson[] = [
     file: "27_xf.md",
   },
   {
-    id: 26,
+    id: 28,
     slug: "rch",
     title: "RCH: Remote Compilation",
     description: "Offload Rust builds to remote workers for faster compilation",
@@ -241,7 +257,7 @@ export const LESSONS: Lesson[] = [
     file: "28_rch.md",
   },
   {
-    id: 27,
+    id: 29,
     slug: "brenner",
     title: "Brenner Bot: Research",
     description: "Coordinate multi-agent AI research with scientific methodology",
@@ -249,7 +265,7 @@ export const LESSONS: Lesson[] = [
     file: "30_brenner.md",
   },
   {
-    id: 28,
+    id: 30,
     slug: "giil",
     title: "GIIL: Cloud Image Downloads",
     description: "Download cloud-hosted images for visual debugging",
@@ -257,7 +273,7 @@ export const LESSONS: Lesson[] = [
     file: "31_giil.md",
   },
   {
-    id: 29,
+    id: 31,
     slug: "s2p",
     title: "S2P: Source to Prompt",
     description: "Combine source code into LLM-ready prompts with token counting",
@@ -265,7 +281,7 @@ export const LESSONS: Lesson[] = [
     file: "32_s2p.md",
   },
   {
-    id: 30,
+    id: 32,
     slug: "fsfs",
     title: "FSFS: Hybrid Local Search",
     description: "Two-tier lexical + semantic search with progressive delivery",
@@ -273,7 +289,7 @@ export const LESSONS: Lesson[] = [
     file: "33_fsfs.md",
   },
   {
-    id: 31,
+    id: 33,
     slug: "sbh",
     title: "SBH: Disk Pressure Defense",
     description: "Protect against out-of-space crashes with storage ballast",
@@ -281,7 +297,7 @@ export const LESSONS: Lesson[] = [
     file: "34_sbh.md",
   },
   {
-    id: 32,
+    id: 34,
     slug: "casr",
     title: "CASR: Cross-Agent Sessions",
     description: "Resume coding sessions across AI providers seamlessly",
@@ -289,7 +305,7 @@ export const LESSONS: Lesson[] = [
     file: "35_casr.md",
   },
   {
-    id: 33,
+    id: 35,
     slug: "dsr",
     title: "DSR: Self-Releaser",
     description: "Build and publish releases locally when CI is throttled",
@@ -297,7 +313,7 @@ export const LESSONS: Lesson[] = [
     file: "36_dsr.md",
   },
   {
-    id: 34,
+    id: 36,
     slug: "asb",
     title: "ASB: Agent Settings Backup",
     description: "Back up and restore AI agent configurations across machines",
@@ -305,7 +321,7 @@ export const LESSONS: Lesson[] = [
     file: "37_asb.md",
   },
   {
-    id: 35,
+    id: 37,
     slug: "pcr",
     title: "PCR: Post-Compact Reminder",
     description: "Keep agents aligned after context compaction",
@@ -313,7 +329,7 @@ export const LESSONS: Lesson[] = [
     file: "38_pcr.md",
   },
   {
-    id: 36,
+    id: 38,
     slug: "csctf",
     title: "CSCTF: Chat Archiver",
     description: "Convert AI share links to Markdown for permanent archiving",
@@ -321,7 +337,7 @@ export const LESSONS: Lesson[] = [
     file: "39_csctf.md",
   },
   {
-    id: 37,
+    id: 39,
     slug: "tru",
     title: "TRU: JSON to TOON",
     description: "Encode structured data as TOON so it costs fewer tokens in LLM requests",
@@ -329,7 +345,7 @@ export const LESSONS: Lesson[] = [
     file: "40_tru.md",
   },
   {
-    id: 38,
+    id: 40,
     slug: "mdwb",
     title: "MDWB: Web to Markdown",
     description: "Convert web pages to clean Markdown for AI consumption",
@@ -337,7 +353,7 @@ export const LESSONS: Lesson[] = [
     file: "41_mdwb.md",
   },
   {
-    id: 39,
+    id: 41,
     slug: "rano",
     title: "RANO: Network Observer",
     description: "Monitor and debug AI CLI network traffic",
@@ -345,7 +361,7 @@ export const LESSONS: Lesson[] = [
     file: "42_rano.md",
   },
   {
-    id: 40,
+    id: 42,
     slug: "caut",
     title: "CAUT: Usage Tracker",
     description: "Track LLM provider usage and costs across agents",
@@ -353,7 +369,7 @@ export const LESSONS: Lesson[] = [
     file: "43_caut.md",
   },
   {
-    id: 41,
+    id: 43,
     slug: "aadc",
     title: "AADC: Diagram Corrector",
     description: "Fix malformed ASCII art diagrams with AI assistance",
@@ -361,7 +377,7 @@ export const LESSONS: Lesson[] = [
     file: "44_aadc.md",
   },
   {
-    id: 42,
+    id: 44,
     slug: "rust-proxy",
     title: "Rust Proxy: Traffic Inspector",
     description: "Transparent proxy for debugging network traffic",
@@ -369,7 +385,7 @@ export const LESSONS: Lesson[] = [
     file: "45_rust_proxy.md",
   },
   {
-    id: 43,
+    id: 45,
     slug: "bv",
     title: "BV: Graph-Aware Triage",
     description: "Analyze issue dependencies with graph metrics and robot mode",
@@ -377,7 +393,7 @@ export const LESSONS: Lesson[] = [
     file: "46_bv.md",
   },
   {
-    id: 44,
+    id: 46,
     slug: "caam",
     title: "CAAM: Account Rotation",
     description: "Manage multi-provider API accounts with automatic rate limit rotation",
@@ -385,7 +401,7 @@ export const LESSONS: Lesson[] = [
     file: "47_caam.md",
   },
   {
-    id: 45,
+    id: 47,
     slug: "swarm-coordination",
     title: "Agent Swarm Coordination",
     description: "Orchestrate multi-agent swarms with Agent Mail, Beads, and BV",
@@ -393,7 +409,7 @@ export const LESSONS: Lesson[] = [
     file: "48_swarm_coordination.md",
   },
   {
-    id: 46,
+    id: 48,
     slug: "debugging-agents",
     title: "Debugging Agent Issues",
     description:
@@ -402,7 +418,7 @@ export const LESSONS: Lesson[] = [
     file: "49_debugging_agents.md",
   },
   {
-    id: 47,
+    id: 49,
     slug: "context-mastery",
     title: "Context Window Mastery",
     description: "Maximize agent context efficiency with TRU, S2P, CASS, and CM",
@@ -410,7 +426,7 @@ export const LESSONS: Lesson[] = [
     file: "50_context_mastery.md",
   },
   {
-    id: 48,
+    id: 50,
     slug: "ci-cd",
     title: "CI/CD for Agent Code",
     description: "Build automated quality gates with UBS, Beads, and DSR",
@@ -418,7 +434,7 @@ export const LESSONS: Lesson[] = [
     file: "51_ci_cd.md",
   },
   {
-    id: 49,
+    id: 51,
     slug: "project-bootstrap",
     title: "Project Bootstrap",
     description: "Set up a new multi-agent project with issue tracking, safety, and coordination",
@@ -426,7 +442,7 @@ export const LESSONS: Lesson[] = [
     file: "52_project_bootstrap.md",
   },
   {
-    id: 50,
+    id: 52,
     slug: "ast-grep",
     title: "ast-grep: Structural Search",
     description: "Find and replace code by AST shape, not string matching — powers DCG and UBS",
@@ -434,7 +450,7 @@ export const LESSONS: Lesson[] = [
     file: "53_ast_grep.md",
   },
   {
-    id: 51,
+    id: 53,
     slug: "agents-md",
     title: "AGENTS.md Mastery",
     description: "Write effective AGENTS.md files that make any project agent-ready",
@@ -442,7 +458,7 @@ export const LESSONS: Lesson[] = [
     file: "54_agents_md.md",
   },
   {
-    id: 52,
+    id: 54,
     slug: "modern-cli",
     title: "Modern CLI Toolkit",
     description: "Level up with lazygit, atuin, zoxide, fzf, bat, and lsd",
@@ -450,7 +466,7 @@ export const LESSONS: Lesson[] = [
     file: "55_modern_cli.md",
   },
   {
-    id: 53,
+    id: 55,
     slug: "tailscale",
     title: "Tailscale & Network Security",
     description: "Secure your VPS with mesh VPN, SSH hardening, and firewall lockdown",
@@ -458,7 +474,7 @@ export const LESSONS: Lesson[] = [
     file: "56_tailscale.md",
   },
   {
-    id: 54,
+    id: 56,
     slug: "lang-runtimes",
     title: "Language Runtimes",
     description:
@@ -467,7 +483,7 @@ export const LESSONS: Lesson[] = [
     file: "57_lang_runtimes.md",
   },
   {
-    id: 55,
+    id: 57,
     slug: "cloud-infra",
     title: "Cloud & Database Tools",
     description: "Deploy with PostgreSQL, Supabase, Vercel, and Wrangler",
@@ -475,7 +491,7 @@ export const LESSONS: Lesson[] = [
     file: "58_cloud_infra.md",
   },
   {
-    id: 56,
+    id: 58,
     slug: "security-layers",
     title: "Security Deep Dive",
     description: "Three-layer defense with DCG, SLB, and CAAM for safe agent autonomy",
@@ -483,7 +499,7 @@ export const LESSONS: Lesson[] = [
     file: "59_security_layers.md",
   },
   {
-    id: 57,
+    id: 59,
     slug: "acfs-doctor",
     title: "ACFS Doctor & Maintenance",
     description: "Keep your environment healthy with doctor checks, nightly updates, and SRPS",
@@ -491,7 +507,7 @@ export const LESSONS: Lesson[] = [
     file: "60_acfs_doctor.md",
   },
   {
-    id: 58,
+    id: 60,
     slug: "ee",
     title: "EE: Durable Agent Memory",
     description: "Explainable local memory that packs relevant context for every task",
@@ -499,7 +515,7 @@ export const LESSONS: Lesson[] = [
     file: "61_ee.md",
   },
   {
-    id: 59,
+    id: 61,
     slug: "fmd",
     title: "FMD: Markdown to HTML & PDF",
     description: "Render polished, deterministic HTML and PDF from Markdown with one binary",
@@ -507,7 +523,7 @@ export const LESSONS: Lesson[] = [
     file: "62_fmd.md",
   },
   {
-    id: 60,
+    id: 62,
     slug: "pi",
     title: "PI: Native Coding Agent",
     description: "Single-binary Rust coding agent with local model support",
@@ -515,7 +531,7 @@ export const LESSONS: Lesson[] = [
     file: "63_pi.md",
   },
   {
-    id: 61,
+    id: 63,
     slug: "pfr",
     title: "PFR: Power Failure Recovery",
     description: "Detect and resume crashed agent sessions after a hard power cut",
@@ -532,7 +548,11 @@ export const LESSONS: Lesson[] = [
  * must be able to open them as reference at any time, so they are exempt from
  * the sequential progress lock-gating that applies to the curriculum flow.
  */
-export const REFERENCE_LESSON_SLUGS: ReadonlySet<string> = new Set(["agent-commands"]);
+export const REFERENCE_LESSON_SLUGS: ReadonlySet<string> = new Set([
+  "agent-commands",
+  "ntm-core",
+  "ntm-palette",
+]);
 
 /** Whether a lesson is an always-available reference lesson (never locked). */
 export function isReferenceLesson(lessonId: number): boolean {
