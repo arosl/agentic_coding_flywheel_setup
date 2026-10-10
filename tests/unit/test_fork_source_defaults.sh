@@ -53,10 +53,20 @@ RUNTIME_FILES=(
 )
 
 # Every file the installer and the scripts it runs fetch through
-# $ACFS_RAW and place on the user's machine.
+# $ACFS_RAW and place on the user's machine. A path that goes on with
+# a variable ("$ACFS_RAW/scripts/lib/$name") names no file this test
+# can read; it is collected apart, and fails with its own message.
 INSTALLER_SOURCES=(install.sh acfs.manifest.yaml scripts/lib/*.sh scripts/generated/*.sh)
-mapfile -t RAW_FETCHED < <(
-    grep -hoE 'ACFS_RAW\}?/[A-Za-z0-9_./-]+' "${INSTALLER_SOURCES[@]}" \
+RAW_FETCHED=()
+RAW_VARIABLE=()
+while IFS= read -r fetched; do
+    if [[ "$fetched" == *'$' ]]; then
+        RAW_VARIABLE+=("${fetched%\$}")
+    else
+        RAW_FETCHED+=("$fetched")
+    fi
+done < <(
+    grep -hoE 'ACFS_RAW\}?/[A-Za-z0-9_./-]+\$?' "${INSTALLER_SOURCES[@]}" \
         | sed -E 's#^ACFS_RAW\}?/##' | sort -u
 )
 RUNTIME_FILES+=("${RAW_FETCHED[@]}")
@@ -129,6 +139,18 @@ mapfile -t runtime_listed < <(printf '%s\n' "${RUNTIME_FILES[@]}" | sort -u)
 for path in "${runtime_listed[@]}" "${DOCS_FILES[@]}"; do
     if [[ ! -f "$path" ]]; then
         printf 'FAIL: listed path does not exist: %s\n' "$path"
+        failures=$((failures + 1))
+    fi
+done
+# A variable fetch passes once RUNTIME_FILES lists files under its
+# fixed prefix; the test can't tell which ones it fetches.
+for path in "${RAW_VARIABLE[@]}"; do
+    covered=false
+    for listed in "${runtime_listed[@]}"; do
+        [[ "$listed" == "$path"* && -f "$listed" ]] && { covered=true; break; }
+    done
+    if [[ "$covered" != true ]]; then
+        printf 'FAIL: fetched through a variable path: $ACFS_RAW/%s...; add each file it can fetch to RUNTIME_FILES\n' "$path"
         failures=$((failures + 1))
     fi
 done
