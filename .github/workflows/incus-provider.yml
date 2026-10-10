@@ -3,7 +3,8 @@ name: Incus provider (stub incus)
 # The fork's own workflow. It runs the Incus provider's fast tier, which
 # tests scripts/providers/incus.sh, its host setup and its Tailscale
 # sidecar against a stub incus, and machine.sh, the entry command in
-# front of the launcher, against a stub launcher. Upstream's
+# front of the launcher, against a stub launcher, and its verify checks
+# against stub agents, services and transports. Upstream's
 # installer.yml runs each tests/unit script by name, so a new one needs
 # its own job.
 
@@ -12,7 +13,7 @@ on:
     branches: [main]
     paths:
       - 'scripts/providers/incus*.sh'
-      - 'scripts/providers/machine.sh'
+      - 'scripts/providers/machine*.sh'
       - 'scripts/lib/logging.sh'
       - 'tests/unit/test_incus_*.sh'
       - 'tests/unit/fixtures/incus/**'
@@ -21,7 +22,7 @@ on:
     branches: [main]
     paths:
       - 'scripts/providers/incus*.sh'
-      - 'scripts/providers/machine.sh'
+      - 'scripts/providers/machine*.sh'
       - 'scripts/lib/logging.sh'
       - 'tests/unit/test_incus_*.sh'
       - 'tests/unit/fixtures/incus/**'
@@ -50,3 +51,5 @@ jobs:
         run: HOME="$(mktemp -d)" bash tests/unit/test_incus_tailscale.sh
       - name: Entry command against a stub launcher
         run: HOME="$(mktemp -d)" bash tests/unit/test_incus_machine.sh
+      - name: Machine verify against stub agents, services, incus and ssh
+        run: HOME="$(mktemp -d)" bash tests/unit/test_incus_machine_verify.sh
