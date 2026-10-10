@@ -46,6 +46,11 @@ export BUN_INSTALL="$HOME/.bun"
 # Ensure user-local binaries take precedence (e.g., native Claude install).
 export PATH="$HOME/.local/bin:$PATH"
 
+# The agent shims (claude, codex, ...) start each agent in acfs-agents.slice,
+# where memory pressure kills agents before Agent Mail and herdr
+# (service_protection.sh). They run the real binary from the rest of PATH.
+[[ -d "$HOME/.acfs/agent-scope/bin" ]] && export PATH="$HOME/.acfs/agent-scope/bin:$PATH"
+
 # User ~/bin takes highest precedence (for custom shims), so it must be the
 # final prepend — anything earlier would be outranked by the lines above.
 [[ -d "$HOME/bin" ]] && export PATH="$HOME/bin:$PATH"

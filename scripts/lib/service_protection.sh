@@ -28,6 +28,12 @@
 # takes no OOMScoreAdjust= (it is an exec setting), so the shim raises its own
 # oom_score_adj, which needs no privilege, and the agent inherits it.
 #
+# herdr's panes go there too: acfs-herdr.service sets SHELL (herdr's default
+# pane shell) to ~/.acfs/agent-scope/pane-shell, which starts each pane's
+# shell as its own scope in acfs-agents.slice at 500. Only herdr's server
+# stays protected; whatever runs in a pane, an agent of any kind or a build
+# typed by hand, is killed before the services.
+#
 # Usage:
 #   service_protection.sh apply-system <user>   as root: the system drop-ins
 #   service_protection.sh apply-user [--restart]
@@ -36,6 +42,7 @@
 #                         running services that are in the wrong slice
 #   service_protection.sh verify                 check the live layout
 #   service_protection.sh agent-exec <name> [args...]   (the shims)
+#   service_protection.sh pane-shell [args...]   (herdr's pane shell)
 #   service_protection.sh pressure-guard         (acfs-agents-pressure.service)
 #
 # ACFS_AGENT_SCOPE=off makes the shims run the agent directly.
@@ -262,14 +269,22 @@ _sp_user_units_text() {
     esac
 }
 
+_sp_pane_shell_path() { printf '%s\n' "$(_sp_acfs_home)/agent-scope/pane-shell"; }
+
+# herdr's unit. $2 = 1 sets SHELL to the pane-shell wrapper, so every pane
+# (herdr's default_shell falls back to $SHELL) leaves the services' slice.
 _sp_herdr_unit_text() {
-    local herdr="$1"
+    local herdr="$1" panes="${2:-0}"
     cat <<EOF
 $(_sp_header)
-# herdr's server holds every agent pane. Run here, it sits in
-# $SP_SERVICES_SLICE; the agents it starts move to $SP_AGENTS_SLICE.
+# herdr's server holds every agent pane. Run here, the server sits in
+# $SP_SERVICES_SLICE; each pane's shell is its own scope in $SP_AGENTS_SLICE.
 [Unit]
 Description=herdr server (ACFS)
+# Give up after 5 failed starts in 2 minutes (e.g. a server a herdr client
+# started holds the socket) instead of restarting forever.
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -280,19 +295,41 @@ Restart=on-failure
 RestartSec=5
 Environment=PATH=%h/.acfs/agent-scope/bin:%h/.acfs/bin:%h/.local/bin:%h/.cargo/bin:%h/.bun/bin:%h/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=HOME=%h
+EOF
+    [[ "$panes" != 1 ]] || printf 'Environment=SHELL=%s\n' "$(_sp_pane_shell_path)"
+    cat <<EOF
 
 [Install]
 WantedBy=default.target
 EOF
 }
 
+_sp_pane_shell_text() {
+    cat <<EOF
+#!/usr/bin/env bash
+# acfs-pane-shell: written by service_protection.sh $SP_VERSION (acfs-ioo3.5).
+# herdr's pane shell: the user's login shell, as a scope in $SP_AGENTS_SLICE.
+lib="$(_sp_installed_lib)"
+if [[ -r "\$lib" ]]; then
+    exec bash "\$lib" pane-shell "\$@"
+fi
+# ACFS's library is gone: run the login shell as it is.
+shell="\$(getent passwd "\$(id -un)" | cut -d: -f7)"
+[[ -x "\$shell" && "\$shell" != *pane-shell* ]] || shell=/bin/bash
+export SHELL="\$shell"
+exec "\$shell" "\$@"
+EOF
+}
+
 _sp_pressure_unit_text() {
     cat <<EOF
 $(_sp_header)
-# Kills the newest agent scope when $SP_AGENTS_SLICE's memory pressure stays
+# Kills the biggest agent or pane scope when $SP_AGENTS_SLICE's memory pressure stays
 # above $SP_PRESSURE_LIMIT%. Enabled only when systemd-oomd is not active.
 [Unit]
 Description=ACFS agents' memory-pressure guard (systemd-oomd fallback)
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -376,12 +413,7 @@ sp_apply_user() {
         _sp_write "$unit_dir/$unit.d/$SP_DROPIN_NAME" "$(_sp_user_units_text background-dropin)" && reload=true
     done
 
-    if herdr="$(_sp_herdr_bin)"; then
-        _sp_write "$unit_dir/$SP_HERDR_UNIT" "$(_sp_herdr_unit_text "$herdr")" && reload=true
-    else
-        _sp_note "herdr is not installed: no $SP_HERDR_UNIT"
-    fi
-
+    local panes=0
     if [[ -r "$lib" ]]; then
         _sp_write "$unit_dir/$SP_PRESSURE_UNIT" "$(_sp_pressure_unit_text)" && reload=true
         for name in "${SP_AGENT_NAMES[@]}"; do
@@ -389,8 +421,18 @@ sp_apply_user() {
                 chmod 755 "$(_sp_shim_dir)/$name"
             fi
         done
+        if _sp_write "$(_sp_pane_shell_path)" "$(_sp_pane_shell_text)"; then
+            chmod 755 "$(_sp_pane_shell_path)"
+        fi
+        panes=1
     else
-        _sp_note "$lib is not installed: no agent shims and no pressure fallback"
+        _sp_note "$lib is not installed: no agent shims, no pane shell and no pressure fallback"
+    fi
+
+    if herdr="$(_sp_herdr_bin)"; then
+        _sp_write "$unit_dir/$SP_HERDR_UNIT" "$(_sp_herdr_unit_text "$herdr" "$panes")" && reload=true
+    else
+        _sp_note "herdr is not installed: no $SP_HERDR_UNIT"
     fi
 
     if [[ "$reload" == true ]] && ! _sp_systemctl_user daemon-reload >/dev/null 2>&1; then
@@ -464,14 +506,11 @@ _sp_in_agents_slice() {
     grep -q "/$SP_AGENTS_SLICE/" "$SP_ROOT/proc/self/cgroup" 2>/dev/null
 }
 
-sp_agent_exec() {
-    local name="${1:-}" real="" run="" adj_file="$SP_ROOT/proc/self/oom_score_adj" adj=""
-    [[ "$name" =~ ^[A-Za-z0-9._+-]+$ ]] || _sp_die "agent-exec: invalid name '$name'"
+# Exec $2... at oom_score_adj 500, as scope $1 in the agents' slice: directly
+# when already there, when ACFS_AGENT_SCOPE=off, or with no user bus.
+_sp_exec_in_agents_slice() {
+    local unit="$1" run="" adj_file="$SP_ROOT/proc/self/oom_score_adj" adj=""
     shift
-    if ! real="$(_sp_real_binary "$name")"; then
-        printf '%s: command not found (outside %s)\n' "$name" "$(_sp_shim_dir)" >&2
-        exit 127
-    fi
     # Raise, never lower: raising needs no privilege, and a process already
     # above 500 keeps its score.
     adj="$(cat "$adj_file" 2>/dev/null || true)"
@@ -481,12 +520,38 @@ sp_agent_exec() {
     if [[ "${ACFS_AGENT_SCOPE:-on}" == off ]] || _sp_in_agents_slice \
         || ! run="$(_sp_system_bin systemd-run)" \
         || [[ ! -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus" ]]; then
-        exec "$real" "$@"
+        exec "$@"
     fi
     # systemd-run --scope moves this process into the scope, then execs the
-    # agent: same PID and terminal, so herdr still sees the agent it typed.
+    # command: same PID and terminal, so herdr still sees what it started.
     exec "$run" --user --scope --quiet --collect --slice="$SP_AGENTS_SLICE" \
-        --unit="acfs-agent-$name-$$" -- "$real" "$@"
+        --unit="$unit" -- "$@"
+}
+
+sp_agent_exec() {
+    local name="${1:-}" real=""
+    [[ "$name" =~ ^[A-Za-z0-9._+-]+$ ]] || _sp_die "agent-exec: invalid name '$name'"
+    shift
+    if ! real="$(_sp_real_binary "$name")"; then
+        printf '%s: command not found (outside %s)\n' "$name" "$(_sp_shim_dir)" >&2
+        exit 127
+    fi
+    _sp_exec_in_agents_slice "acfs-agent-$name-$$.scope" "$real" "$@"
+}
+
+# herdr's pane shell: the user's login shell, never this wrapper again.
+sp_pane_shell() {
+    local shell="" getent=""
+    if getent="$(_sp_system_bin getent)"; then
+        shell="$("$getent" passwd "$(id -un)" 2>/dev/null | cut -d: -f7 || true)"
+    fi
+    if [[ -z "$shell" || "$shell" != /* || ! -x "$shell" || "$shell" == *pane-shell* ]]; then
+        shell=/bin/bash
+    fi
+    # The pane and what runs in it see the real shell; herdr keeps using
+    # the wrapper for the next pane.
+    export SHELL="$shell"
+    _sp_exec_in_agents_slice "acfs-pane-$$.scope" "$shell" "$@"
 }
 
 # ============================================================
@@ -503,15 +568,27 @@ _sp_agents_pressure() {
          END { exit found ? 0 : 1 }' "$file" 2>/dev/null
 }
 
-# The agent scope that started last.
-_sp_newest_agent_scope() {
-    local unit="" ts="" best="" best_ts=-1
+# The running agent and pane scopes (agents started in a herdr pane share the
+# pane's scope), one name per line.
+_sp_agent_scopes() {
+    local unit=""
     while read -r unit _; do
-        [[ "$unit" == acfs-agent-*.scope ]] || continue
-        ts="$(_sp_systemctl_user show -p ActiveEnterTimestampMonotonic --value "$unit" 2>/dev/null || true)"
-        [[ "$ts" =~ ^[0-9]+$ ]] || continue
-        if (( ts > best_ts )); then best="$unit"; best_ts="$ts"; fi
-    done < <(_sp_systemctl_user list-units --type=scope --state=running --plain --no-legend --no-pager 'acfs-agent-*' 2>/dev/null || true)
+        [[ "$unit" == acfs-agent-*.scope || "$unit" == acfs-pane-*.scope ]] && printf '%s\n' "$unit"
+    done < <(_sp_systemctl_user list-units --type=scope --state=running --plain --no-legend --no-pager \
+        'acfs-agent-*' 'acfs-pane-*' 2>/dev/null || true)
+    return 0
+}
+
+# The scope using the most memory, as oomd would choose: the newest one is
+# often an idle shell, and killing it frees nothing.
+_sp_biggest_agent_scope() {
+    local unit="" mem="" best="" best_mem=-1
+    while read -r unit; do
+        [[ -n "$unit" ]] || continue
+        mem="$(_sp_systemctl_user show -p MemoryCurrent --value "$unit" 2>/dev/null || true)"
+        [[ "$mem" =~ ^[0-9]+$ ]] || continue
+        if (( mem > best_mem )); then best="$unit"; best_mem="$mem"; fi
+    done < <(_sp_agent_scopes)
     [[ -n "$best" ]] || return 1
     printf '%s\n' "$best"
 }
@@ -528,7 +605,7 @@ sp_pressure_guard() {
             over=$(( over + 1 ))
             if (( over >= samples )); then
                 over=0
-                if victim="$(_sp_newest_agent_scope)"; then
+                if victim="$(_sp_biggest_agent_scope)"; then
                     _sp_note "$(date -u +%Y-%m-%dT%H:%M:%SZ) $SP_AGENTS_SLICE memory pressure ${pressure}% > ${SP_PRESSURE_LIMIT}% for $samples samples: killing $victim"
                     _sp_systemctl_user kill --signal=SIGKILL "$victim" >/dev/null 2>&1 \
                         || _sp_note "could not kill $victim"
@@ -580,8 +657,8 @@ sp_verify() {
         fi
     done
 
-    while read -r scope _; do
-        [[ "$scope" == acfs-agent-*.scope ]] || continue
+    while read -r scope; do
+        [[ -n "$scope" ]] || continue
         agents=$(( agents + 1 ))
         pid="$(_sp_systemctl_user show -p MainPID --value "$scope" 2>/dev/null || true)"
         [[ "$pid" =~ ^[1-9][0-9]*$ ]] || { _sp_result SKIP "$scope" "no main PID"; continue; }
@@ -592,8 +669,8 @@ sp_verify() {
         else
             _sp_result FAIL "$scope" "$(_sp_pid_line "$pid"), want $SP_AGENTS_SLICE at $SP_AGENT_SCORE"
         fi
-    done < <(_sp_systemctl_user list-units --type=scope --state=running --plain --no-legend --no-pager 'acfs-agent-*' 2>/dev/null || true)
-    (( agents )) || _sp_result SKIP "agents" "no acfs-agent-*.scope running"
+    done < <(_sp_agent_scopes)
+    (( agents )) || _sp_result SKIP "agents" "no acfs-agent-*.scope or acfs-pane-*.scope running"
 
     path="$SP_ROOT/sys/fs/cgroup"
     for unit in user.slice "user-$uid.slice" "user@$uid.service" "$SP_PARENT_SLICE" "$SP_SERVICES_SLICE"; do
@@ -626,9 +703,10 @@ sp_main() {
         apply-user) sp_apply_user "$@" ;;
         verify) sp_verify "$@" ;;
         agent-exec) sp_agent_exec "$@" ;;
+        pane-shell) sp_pane_shell "$@" ;;
         pressure-guard) sp_pressure_guard "$@" ;;
         -h|--help|help) sed -n '2,/^# =====/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
-        *) _sp_die "usage: service_protection.sh apply-system <user> | apply-user [--restart] | verify | agent-exec <name> [args] | pressure-guard" ;;
+        *) _sp_die "usage: service_protection.sh apply-system <user> | apply-user [--restart] | verify | agent-exec <name> [args] | pane-shell [args] | pressure-guard" ;;
     esac
 }
 

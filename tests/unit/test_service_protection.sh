@@ -93,6 +93,13 @@ cat > "$SYSBIN/systemd-detect-virt" <<'EOF'
 [[ -e "$STUB_STATE/container" ]]
 EOF
 
+# The login shell getent reports is $STUB_STATE/login-shell, when it exists.
+cat > "$SYSBIN/getent" <<'EOF'
+#!/usr/bin/env bash
+[[ -e "$STUB_STATE/login-shell" ]] || exit 2
+printf '%s:x:1000:1000::/home/%s:%s\n' "$2" "$2" "$(cat "$STUB_STATE/login-shell")"
+EOF
+
 cat > "$SYSBIN/pgrep" <<'EOF'
 #!/usr/bin/env bash
 [[ -e "$STUB_STATE/herdr-running" ]]
@@ -194,6 +201,9 @@ check "cass runs at +200" has "$UNITS/acfs-cass-index.service.d/50-acfs-protecti
 check "herdr gets a user unit" has "$UNITS/acfs-herdr.service" "ExecStart=$HOMEDIR/.local/bin/herdr server"
 check "herdr's unit is in acfs-services.slice" has "$UNITS/acfs-herdr.service" "Slice=acfs-services.slice"
 check "herdr's panes find the shims first" has "$UNITS/acfs-herdr.service" "Environment=PATH=%h/.acfs/agent-scope/bin:"
+check "herdr's panes start through the pane shell" has "$UNITS/acfs-herdr.service" "Environment=SHELL=$HOMEDIR/.acfs/agent-scope/pane-shell"
+check "herdr's unit gives up after repeated failures" has "$UNITS/acfs-herdr.service" "StartLimitBurst=5"
+check "the pane shell is executable" test -x "$HOMEDIR/.acfs/agent-scope/pane-shell"
 check "herdr's unit is enabled and started" test -e "$STATE/enabled-acfs-herdr.service" -a -e "$STATE/active-acfs-herdr.service"
 for name in claude codex gemini agy pi; do
     check "shim $name is executable" test -x "$HOMEDIR/.acfs/agent-scope/bin/$name"
@@ -248,6 +258,7 @@ new_world
 mv "$HOMEDIR/.acfs/scripts/lib/service_protection.sh" "$W/sp.sh"
 OUT="$(sp apply-user)"
 check "no installed library: no shims" test ! -e "$HOMEDIR/.acfs/agent-scope/bin/claude"
+check "no installed library: herdr keeps its own SHELL" lacks "$UNITS/acfs-herdr.service" "Environment=SHELL="
 check "no installed library: slices still written" test -e "$UNITS/acfs-agents.slice"
 
 # ------------------------------------------------------------
@@ -293,6 +304,37 @@ check "a missing agent exits 127" test "$RC" -eq 127
 OUT="$(sp agent-exec '../x')"; RC=$?
 check "an invalid name is refused" test "$RC" -eq 1
 
+# herdr's pane shell: the login shell, as a scope in the agents' slice.
+cat > "$W/login-shell" <<'EOF'
+#!/usr/bin/env bash
+printf 'shell SHELL=%s adj=%s args=' "$SHELL" "$(cat /proc/self/oom_score_adj)"
+printf '[%s]' "$@"
+printf '\n'
+EOF
+chmod 755 "$W/login-shell"
+printf '%s\n' "$W/login-shell" > "$STATE/login-shell"
+printf '0::/user.slice/user-%s.slice/user@%s.service/acfs.slice/acfs-services.slice/acfs-herdr.service\n' "$UID_NUM" "$UID_NUM" > "$FAKE/proc/self/cgroup"
+rm -f "$STATE/systemd-run"
+pane() {
+    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" TERM=dumb \
+        ACFS_SP_SYSTEM_BIN_PREFIX="$SYSBIN" STUB_STATE="$STATE" XDG_RUNTIME_DIR="$W/run" \
+        "$HOMEDIR/.acfs/agent-scope/pane-shell" "$@" 2>&1
+}
+OUT="$(pane -c 'echo hi')"
+check "pane shell: runs the login shell with herdr's arguments" grep -qF "args=[-c][echo hi]" <<<"$OUT"
+check "pane shell: the shell is at oom_score_adj 500" grep -qF "adj=500" <<<"$OUT"
+check "pane shell: the pane sees its real login shell in SHELL" grep -qF "shell SHELL=$W/login-shell " <<<"$OUT"
+check "pane shell: it is a scope in acfs-agents.slice" has "$STATE/systemd-run" "--slice=acfs-agents.slice --unit=acfs-pane-"
+check "pane shell: the scope runs the login shell" has "$STATE/systemd-run" "-- $W/login-shell -c echo hi"
+rm -f "$STATE/login-shell" "$STATE/systemd-run"
+OUT="$(ACFS_SP_ROOT="$FAKE" EXTRA_ENV="" sp pane-shell -c 'echo $0' 2>&1)"
+check "pane shell: without a login shell from getent it falls back to bash" grep -qx "/bin/bash" <<<"$OUT"
+OUT="$(mv "$HOMEDIR/.acfs/scripts/lib/service_protection.sh" "$W/sp2.sh"; printf '%s\n' "$W/login-shell" > "$STATE/login-shell"; \
+    env -i HOME="$HOMEDIR" PATH="$SYSBIN:/usr/bin:/bin" STUB_STATE="$STATE" "$HOMEDIR/.acfs/agent-scope/pane-shell" x 2>&1; \
+    mv "$W/sp2.sh" "$HOMEDIR/.acfs/scripts/lib/service_protection.sh")"
+check "pane shell without the library still runs the login shell" grep -qF "args=[x]" <<<"$OUT"
+check "pane shell without the library sets the real SHELL" grep -qF "shell SHELL=$W/login-shell " <<<"$OUT"
+
 # The shim without ACFS's library still runs the agent, skipping itself.
 mv "$HOMEDIR/.acfs/scripts/lib/service_protection.sh" "$W/sp.sh"
 OUT="$(shim z)"; RC=$?
@@ -306,24 +348,27 @@ CG="/user.slice/user-$UID_NUM.slice/user@$UID_NUM.service/acfs.slice/acfs-agents
 printf '%s\n' "$CG" > "$STATE/ControlGroup-acfs-agents.slice"
 mkdir -p "$FAKE/sys/fs/cgroup$CG"
 printf 'some avg10=70.00 avg60=50.00 avg300=10.00 total=1\nfull avg10=55.12 avg60=40.00 avg300=9.00 total=1\n' > "$FAKE/sys/fs/cgroup$CG/memory.pressure"
-printf 'acfs-agent-claude-10.scope loaded active running x\nacfs-agent-codex-20.scope loaded active running x\n' > "$STATE/scopes"
-echo 100 > "$STATE/ActiveEnterTimestampMonotonic-acfs-agent-claude-10.scope"
-echo 200 > "$STATE/ActiveEnterTimestampMonotonic-acfs-agent-codex-20.scope"
+printf '%s loaded active running x\n' acfs-agent-claude-10.scope acfs-pane-30.scope acfs-agent-codex-20.scope run-r1.scope > "$STATE/scopes"
+echo 1073741824 > "$STATE/MemoryCurrent-acfs-agent-claude-10.scope"
+echo 5368709120 > "$STATE/MemoryCurrent-acfs-pane-30.scope"
+echo 2147483648 > "$STATE/MemoryCurrent-acfs-agent-codex-20.scope"
+echo 9999999999 > "$STATE/MemoryCurrent-run-r1.scope"
 guard() { EXTRA_ENV="ACFS_SP_PRESSURE_INTERVAL=0 ACFS_SP_PRESSURE_SAMPLES=3 ACFS_SP_PRESSURE_MAX_LOOPS=$1" sp pressure-guard; }
 OUT="$(guard 2)"
-check "two samples over the limit kill nothing" test ! -e "$STATE/killed-acfs-agent-codex-20.scope"
+check "two samples over the limit kill nothing" test ! -e "$STATE/killed-acfs-pane-30.scope"
 OUT="$(guard 3)"
-check "three samples over the limit kill the newest scope" test -e "$STATE/killed-acfs-agent-codex-20.scope"
-check "the older scope is kept" test ! -e "$STATE/killed-acfs-agent-claude-10.scope"
-check "the kill is logged in UTC" grep -qE '^\[service-protection\] [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z .*killing acfs-agent-codex-20.scope' <<<"$OUT"
+check "three samples over the limit kill the biggest agent or pane scope" test -e "$STATE/killed-acfs-pane-30.scope"
+check "smaller agent scopes are kept" test ! -e "$STATE/killed-acfs-agent-claude-10.scope" -a ! -e "$STATE/killed-acfs-agent-codex-20.scope"
+check "a scope outside the agents' names is never killed" test ! -e "$STATE/killed-run-r1.scope"
+check "the kill is logged in UTC" grep -qE '^\[service-protection\] [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z .*killing acfs-pane-30.scope' <<<"$OUT"
 rm -f "$STATE/killed-"*
 printf 'some avg10=70.00 avg60=0 avg300=0 total=1\nfull avg10=12.00 avg60=0 avg300=0 total=1\n' > "$FAKE/sys/fs/cgroup$CG/memory.pressure"
 OUT="$(guard 4)"
-check "pressure under the limit kills nothing" test ! -e "$STATE/killed-acfs-agent-codex-20.scope"
+check "pressure under the limit kills nothing" test ! -e "$STATE/killed-acfs-pane-30.scope"
 printf 'full avg10=90.00 avg60=0 avg300=0 total=1\n' > "$FAKE/sys/fs/cgroup$CG/memory.pressure"
 touch "$STATE/system-active-systemd-oomd.service"
 OUT="$(guard 4)"
-check "with oomd active the fallback kills nothing" test ! -e "$STATE/killed-acfs-agent-codex-20.scope"
+check "with oomd active the fallback kills nothing" test ! -e "$STATE/killed-acfs-pane-30.scope"
 
 # ------------------------------------------------------------
 # verify

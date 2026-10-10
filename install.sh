@@ -3895,6 +3895,7 @@ acfs_load_internal_checksums_data() {
         scripts/lib/swarm_simulation.sh
         scripts/lib/swarm_status.sh
         scripts/lib/temp_sweep.sh
+        scripts/lib/service_protection.sh
         scripts/services-setup.sh
         scripts/agent-readiness-audit.sh
         packages/manifest/src/agent-readiness-audit.ts
@@ -7689,6 +7690,7 @@ setup_filesystem() {
     if acfs_use_generated_category "filesystem"; then
         log_detail "Using generated installers for filesystem (phase 3)"
         acfs_run_generated_category_phase "filesystem" "3" || return 1
+        user_container_tmp_policy "$TARGET_USER" "$TARGET_HOME" || return 1
         log_success "Filesystem setup complete"
         return 0
     fi
@@ -7756,6 +7758,9 @@ setup_filesystem() {
     # This prevents herdr, UBS, CASS, Bun, etc. from creating them as root via sudo
     try_step "Creating bin directory ($ACFS_BIN_DIR)" acfs_ensure_primary_bin_dir || return 1
     try_step "Creating .bun directory" run_as_target mkdir -p "$TARGET_HOME/.bun" || return 1
+
+    # In an Incus container: /tmp on disk, the agents' TMPDIR on /data (user.sh).
+    user_container_tmp_policy "$TARGET_USER" "$TARGET_HOME" || return 1
 
     log_success "Filesystem setup complete"
 }
@@ -10846,6 +10851,7 @@ finalize() {
     try_step "Installing agent_quota.sh" install_asset "scripts/lib/agent_quota.sh" "$ACFS_HOME/scripts/lib/agent_quota.sh" || return 1
     try_step "Installing temp_sweep.sh" install_asset "scripts/lib/temp_sweep.sh" "$ACFS_HOME/scripts/lib/temp_sweep.sh" || return 1
     try_step "Installing state_layer.sh" install_asset "scripts/lib/state_layer.sh" "$ACFS_HOME/scripts/lib/state_layer.sh" || return 1
+    try_step "Installing service_protection.sh" install_asset "scripts/lib/service_protection.sh" "$ACFS_HOME/scripts/lib/service_protection.sh" || return 1
     try_step "Installing support.sh" install_asset "scripts/lib/support.sh" "$ACFS_HOME/scripts/lib/support.sh" || return 1
     try_step "Installing acfs-nightly-update.service template" install_asset "scripts/templates/acfs-nightly-update.service" "$ACFS_HOME/scripts/templates/acfs-nightly-update.service" || return 1
     try_step "Installing acfs-nightly-update.timer template" install_asset "scripts/templates/acfs-nightly-update.timer" "$ACFS_HOME/scripts/templates/acfs-nightly-update.timer" || return 1
@@ -10975,6 +10981,20 @@ finalize() {
     # This wrapper finds the target user from state and runs acfs as that user
     try_step "Installing global acfs wrapper" install_asset "scripts/acfs-global" "/usr/local/bin/acfs" || return 1
     try_step "Setting global acfs permissions" $SUDO chmod 755 "/usr/local/bin/acfs" || return 1
+
+    # Service protection (acfs-ioo3.5): MemoryLow along user.slice, the
+    # services', background and agents' slices, herdr's user unit and the
+    # agent shims, so memory pressure kills agents before Agent Mail and
+    # herdr. Optional: without systemd the install still works. Services
+    # already running take their slice at their next restart or boot; a
+    # re-run never restarts them under a running swarm.
+    local service_protection="$ACFS_HOME/scripts/lib/service_protection.sh"
+    try_step "Protecting services from agents (system drop-ins)" \
+        $SUDO bash "$service_protection" apply-system "$TARGET_USER" || \
+        log_warn "Service protection's system drop-ins failed (optional); retry: sudo bash $service_protection apply-system $TARGET_USER"
+    try_step "Protecting services from agents (user slices, herdr unit, agent shims)" \
+        run_as_target bash "$service_protection" apply-user || \
+        log_warn "Service protection's user units failed (optional); retry as $TARGET_USER: bash $service_protection apply-user"
 
     # Install DCG (Destructive Command Guard) hook automatically.
     #
