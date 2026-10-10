@@ -4,7 +4,8 @@ name: Incus provider (stub incus)
 # tests scripts/providers/incus.sh, its host setup and its Tailscale
 # sidecar against a stub incus, and machine.sh, the entry command in
 # front of the launcher, against a stub launcher, and its verify checks
-# against stub agents, services and transports. Upstream's
+# against stub agents, services and transports, and the preflight of the
+# real-Incus harness (tests/vm) against a stub incus. Upstream's
 # installer.yml runs each tests/unit script by name, so a new one needs
 # its own job.
 
@@ -16,6 +17,7 @@ on:
       - 'scripts/providers/machine*.sh'
       - 'scripts/lib/logging.sh'
       - 'tests/unit/test_incus_*.sh'
+      - 'tests/vm/test_incus_provider.sh'
       - 'tests/unit/fixtures/incus/**'
       - '.github/workflows/incus-provider.yml'
   pull_request:
@@ -25,6 +27,7 @@ on:
       - 'scripts/providers/machine*.sh'
       - 'scripts/lib/logging.sh'
       - 'tests/unit/test_incus_*.sh'
+      - 'tests/vm/test_incus_provider.sh'
       - 'tests/unit/fixtures/incus/**'
       - '.github/workflows/incus-provider.yml'
 
@@ -51,5 +54,7 @@ jobs:
         run: HOME="$(mktemp -d)" bash tests/unit/test_incus_tailscale.sh
       - name: Entry command against a stub launcher
         run: HOME="$(mktemp -d)" bash tests/unit/test_incus_machine.sh
+      - name: Real-Incus harness's preflight against a stub incus
+        run: HOME="$(mktemp -d)" bash tests/unit/test_incus_harness_preflight.sh
       - name: Machine verify against stub agents, services, incus and ssh
         run: HOME="$(mktemp -d)" bash tests/unit/test_incus_machine_verify.sh
