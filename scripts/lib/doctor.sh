@@ -3909,6 +3909,12 @@ check_root_tool_ownership() {
     section "Root-owned tool binaries"
     for path in "${present[@]}"; do
         name="${path##*/}"
+        # A link is someone's own arrangement (a distro or brew build); its
+        # target is never judged or re-owned.
+        if [[ -L "$path" ]]; then
+            check "tools.$name.owner" "$path is root's" "skip" "a symlink, not the binary ACFS installs; left as it is" ""
+            continue
+        fi
         owner_mode="$(doctor_file_owner_mode "$path" || true)"
         if [[ ! "$owner_mode" =~ ^[0-9]+:[0-7]+$ ]]; then
             check "tools.$name.owner" "$path is root's" "warn" "stat can't read its owner and mode" ""
@@ -3918,8 +3924,8 @@ check_root_tool_ownership() {
         mode="${owner_mode##*:}"
         if [[ "$uid" != 0 ]]; then
             check "tools.$name.owner" "$path is root's" "warn" \
-                "owned by uid $uid, the release tarball's owner; an account with that uid could replace a binary on root's PATH" \
-                "sudo chown root:root $path && sudo chmod 0755 $path (acfs update does this too)"
+                "owned by uid $uid, the release tarball's owner; an account with that uid could have replaced it, so its contents can't be trusted" \
+                "reinstall it from the pinned release (re-run the installer's tools phase); until then: sudo chown root:root $path && sudo chmod 0755 $path, which acfs update does too"
         elif (( (8#$mode & 8#022) != 0 )); then
             check "tools.$name.owner" "$path is root's" "warn" \
                 "mode $mode lets group or other write it" \

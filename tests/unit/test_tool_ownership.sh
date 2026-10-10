@@ -63,31 +63,44 @@ fixture() { # fixture <name> <uid:mode> | fixture <name> absent
 }
 reset_fixture() { OWNERS=""; fixture lazygit absent; fixture lazydocker absent; }
 
+# The sudo the updater's real run_cmd_sudo runs: it logs its argv (chown
+# root:root <path>, chmod 0755 <path>) and fails the chown of CHOWN_FAILS.
+cat >"$ROOT/fakesudo" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FAKE_SUDO_LOG"
+[[ "$1" != chown || "$3" != "${CHOWN_FAILS:-}" ]] || exit 1
+exit 0
+STUB
+chmod +x "$ROOT/fakesudo"
+
 # run_update: sources update.sh (its guard keeps main from running), points
-# the binary list at the fixture, stubs the owner lookup, the sudo runner,
-# the read-only flag and log_item, and runs update_root_tool_ownership.
-# Env knobs: READ_ONLY, NO_SUDO, CHOWN_FAILS (the chown of this path fails).
+# the binary list at the fixture, stubs the owner lookup, the sudo prefix
+# (the real run_cmd_sudo and run_cmd then run the fake sudo), the read-only
+# flag and log_item, and runs update_root_tool_ownership. Env knobs:
+# READ_ONLY, NO_SUDO (no sudo prefix at all), CHOWN_FAILS.
 run_update() {
     : >"$ROOT/sudo.log"
     OUT="$(
         export HOME="$ROOT/home" TARGET_HOME="$ROOT/home" UPDATE_LOG_FILE="$ROOT/update.log"
+        export FAKE_SUDO_LOG="$ROOT/sudo.log"
         mkdir -p "$HOME"
         unset TARGET_USER ACFS_HOME XDG_CONFIG_HOME
         # shellcheck source=/dev/null
         source "$UPDATE" >/dev/null 2>&1
+        DRY_RUN=false VERBOSE=false QUIET=true FAIL_COUNT=0
         UPDATE_ROOT_TOOL_BINARIES=("$BIN/lazygit" "$BIN/lazydocker")
         update_file_owner_mode() { sed -n "s|^$1=||p" <<<"$OWNERS" | tail -n 1; }
         update_is_read_only_mode() { [[ -n "${READ_ONLY:-}" ]]; }
-        run_cmd_sudo() {
-            local desc="$1"; shift
-            printf '%s\n' "$*" >>"$ROOT/sudo.log"
+        update_sudo_prefix() {
+            local -n _prefix_ref="$1"
+            _prefix_ref=()
             [[ -z "${NO_SUDO:-}" ]] || return 1
-            [[ "$1" != chown || "$3" != "${CHOWN_FAILS:-}" ]] || return 1
-            return 0
+            _prefix_ref=("$ROOT/fakesudo")
         }
         log_item() { printf 'ITEM %s|%s|%s\n' "$1" "$2" "${3:-}"; }
         update_root_tool_ownership
         printf 'RC %s\n' "$?"
+        printf 'FAILS %s\n' "$FAIL_COUNT"
     )"
     SUDO_LOG="$(cat "$ROOT/sudo.log")"
 }
@@ -130,7 +143,8 @@ check "returns 0" has "RC 0"
 check "chowns exactly lazygit" sudo_ran "chown root:root $BIN/lazygit"
 check "chmods exactly lazygit" sudo_ran "chmod 0755 $BIN/lazygit"
 check "leaves lazydocker alone" bash -c '[[ "$1" != *lazydocker* ]]' _ "$SUDO_LOG"
-check "reports what it re-owned" has "ITEM ok|Root-owned tool binaries|re-owned root:root 0755: $BIN/lazygit"
+check "reports what it re-owned as a warning, since the contents can't be trusted" has "ITEM warn|Root-owned tool binaries|re-owned root:root 0755: $BIN/lazygit; a binary another uid owned may have been altered, so reinstall it from the pinned release"
+check "adds nothing to FAIL_COUNT" has "FAILS 0"
 
 echo "== update: a root-owned binary writable by group or other is re-owned too"
 reset_fixture
@@ -138,6 +152,13 @@ fixture lazydocker 0:775
 run_update
 check "chmods lazydocker" sudo_ran "chmod 0755 $BIN/lazydocker"
 check "reports it" has "re-owned root:root 0755: $BIN/lazydocker"
+reset_fixture
+fixture lazygit 0:755
+ln -sf /usr/bin/true "$BIN/lazydocker"
+run_update
+check "a symlink is left alone, whatever its mode" bash -c '[[ "$1" != *lazydocker* ]]' _ "$SUDO_LOG"
+check "a symlink is reported as not ACFS's binary" has "ITEM skip|Root-owned tool binaries|left as they are, not the binaries ACFS installs (symlinks): $BIN/lazydocker"
+rm -f "$BIN/lazydocker"
 reset_fixture
 fixture lazydocker 0:4755
 run_update
@@ -164,13 +185,15 @@ reset_fixture
 fixture lazygit 1001:755
 NO_SUDO=1 run_update
 check "returns 0" has "RC 0"
-check "warns with the command to run" has "ITEM warn|Root-owned tool binaries|could not re-own $BIN/lazygit; run: sudo chown root:root <path> && sudo chmod 0755 <path>"
+check "warns with the command to run" has "ITEM warn|Root-owned tool binaries|no sudo to re-own $BIN/lazygit; run: sudo chown root:root <path> && sudo chmod 0755 <path>, then reinstall it from the pinned release"
+check "runs no command and adds nothing to FAIL_COUNT" bash -c '[[ -z "$1" && "$2" == *"FAILS 0"* ]]' _ "$SUDO_LOG" "$OUT"
 reset_fixture
 fixture lazygit 1001:755
 fixture lazydocker 1001:755
 CHOWN_FAILS="$BIN/lazygit" run_update
 check "one failure: the other is still re-owned" has "re-owned root:root 0755: $BIN/lazydocker"
 check "one failure: the failed one is named" has "could not re-own $BIN/lazygit;"
+check "one failure: counted as one failed command, like any other" has "FAILS 1"
 
 echo "== update: nothing installed, nothing to do"
 reset_fixture
@@ -197,8 +220,15 @@ echo "== doctor: the tarball's uid warns, with the fix and the update's role"
 reset_fixture
 fixture lazygit 1001:755
 run_doctor
-check "warns" has "tools.lazygit.owner|warn|owned by uid 1001, the release tarball's owner; an account with that uid could replace a binary on root's PATH|sudo chown root:root $BIN/lazygit && sudo chmod 0755 $BIN/lazygit (acfs update does this too)"
+check "warns that the contents can't be trusted, with the reinstall first" has "tools.lazygit.owner|warn|owned by uid 1001, the release tarball's owner; an account with that uid could have replaced it, so its contents can't be trusted|reinstall it from the pinned release (re-run the installer's tools phase); until then: sudo chown root:root $BIN/lazygit && sudo chmod 0755 $BIN/lazygit, which acfs update does too"
 check "says nothing about the absent lazydocker" lacks "lazydocker"
+
+echo "== doctor: a symlink is reported, never judged by its target"
+reset_fixture
+ln -sf /usr/bin/true "$BIN/lazygit"
+run_doctor
+check "skips the link" has "tools.lazygit.owner|skip|a symlink, not the binary ACFS installs; left as it is|"
+rm -f "$BIN/lazygit"
 
 echo "== doctor: group or other write warns"
 reset_fixture

@@ -7519,13 +7519,21 @@ update_file_owner_mode() {
 
 # Re-owns exactly those binaries to root:root 0755 when they aren't root's
 # or are writable by group or other (acfs-u0wy). Idempotent: a binary that
-# is already right is left alone.
+# is already right is left alone. A symlink is someone's own arrangement
+# and is never followed. Re-owning stops further writes, but a binary
+# another uid owned may already have been altered, so the result is a
+# warning that names the reinstall (acfs-ea2d does it from the pinned
+# release). This step never fails the update: without sudo it only warns.
 update_root_tool_ownership() {
     local desc="Root-owned tool binaries" path owner_mode uid mode
-    local -a wrong=() fixed=() left=()
+    local -a wrong=() fixed=() left=() links=() sudo_cmd=()
 
     for path in "${UPDATE_ROOT_TOOL_BINARIES[@]}"; do
-        [[ -e "$path" ]] || continue
+        [[ -e "$path" || -L "$path" ]] || continue
+        if [[ -L "$path" || ! -f "$path" ]]; then
+            links+=("$path")
+            continue
+        fi
         owner_mode="$(update_file_owner_mode "$path" || true)"
         [[ "$owner_mode" =~ ^[0-9]+:[0-7]+$ ]] || continue
         uid="${owner_mode%%:*}"
@@ -7534,6 +7542,7 @@ update_root_tool_ownership() {
             wrong+=("$path")
         fi
     done
+    ((${#links[@]} == 0)) || log_item "skip" "$desc" "left as they are, not the binaries ACFS installs (symlinks): ${links[*]}"
     if ((${#wrong[@]} == 0)); then
         log_item "ok" "$desc" "lazygit and lazydocker, where installed, are root's"
         return 0
@@ -7542,15 +7551,24 @@ update_root_tool_ownership() {
         log_item "skip" "$desc" "dry-run: would chown root:root and chmod 0755: ${wrong[*]}"
         return 0
     fi
+    if ! update_sudo_prefix sudo_cmd; then
+        log_item "warn" "$desc" "no sudo to re-own ${wrong[*]}; run: sudo chown root:root <path> && sudo chmod 0755 <path>, then reinstall it from the pinned release (a binary another uid owned may have been altered)"
+        return 0
+    fi
+    # run_cmd reports a failed command through FAIL_COUNT and returns 0, so
+    # the count, not the return value, says whether a re-own went through.
+    local before=0
     for path in "${wrong[@]}"; do
-        if run_cmd_sudo "Re-own $path" chown root:root "$path" \
-            && run_cmd_sudo "Set the mode of $path" chmod 0755 "$path"; then
+        before=$FAIL_COUNT
+        run_cmd_sudo "Re-own $path" chown root:root "$path"
+        run_cmd_sudo "Set the mode of $path" chmod 0755 "$path"
+        if ((FAIL_COUNT == before)); then
             fixed+=("$path")
         else
             left+=("$path")
         fi
     done
-    ((${#fixed[@]} == 0)) || log_item "ok" "$desc" "re-owned root:root 0755: ${fixed[*]}"
+    ((${#fixed[@]} == 0)) || log_item "warn" "$desc" "re-owned root:root 0755: ${fixed[*]}; a binary another uid owned may have been altered, so reinstall it from the pinned release (re-run the installer's tools phase)"
     ((${#left[@]} == 0)) || log_item "warn" "$desc" "could not re-own ${left[*]}; run: sudo chown root:root <path> && sudo chmod 0755 <path>"
     return 0
 }
