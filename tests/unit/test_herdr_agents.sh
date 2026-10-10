@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# scripts/lib/herdr_agents.sh (acfs agents spawn/send/list) against a STUB
+# scripts/lib/herdr_agents.sh (acfs agents spawn/send/list/inbox) against a STUB
 # herdr and a STUB am
 #
 # Proves which herdr and Agent Mail calls the helper makes, in which order
@@ -114,6 +114,34 @@ cat >"$WORK/bin/am" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'am %s\n' "$*" >>"$STUB_DIR/calls"
+# The mailbox (inbox tests) is $STUB_DIR/mailbox.json, with the ids marked
+# read in $STUB_DIR/read_ids; `late` rows are not yet in `am mail inbox`.
+# Both listings honour --limit (default 20), as am does.
+limit=20
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+    [[ "${args[i]}" != --limit ]] || limit="${args[i + 1]}"
+done
+case "$1 ${2:-}" in
+    "mail inbox")
+        jq --argjson limit "$limit" '[.[] | select(.late | not)] | sort_by(-.id) | .[:$limit]
+            | map({id, subject, from, importance, kind, created_ts, thread_id: .thread})' "$STUB_DIR/mailbox.json"
+        exit 0 ;;
+    "inbox "*)
+        jq --argjson limit "$limit" --slurpfile read <(cat "$STUB_DIR/read_ids") '
+            [.[] | select(.id as $i | $read | index($i) | not)]
+            | sort_by([(if .importance == "high" then 0 else 1 end), -.id]) | .[:$limit]
+            | {count: length, inbox: map({id, priority: "unread", from, subject, thread, age: "1m ago", ack_status, importance, body_md})}' \
+            "$STUB_DIR/mailbox.json"
+        exit 0 ;;
+    "mail read")
+        # Drain stdin, as a CLI may: a caller looping over ids must not feed it.
+        cat >/dev/null
+        id="${args[-1]}"
+        [[ ! -e "$STUB_DIR/read_fail_$id" ]] || { echo "stub: cannot mark $id" >&2; exit 1; }
+        echo "$id" >>"$STUB_DIR/read_ids"
+        exit 0 ;;
+esac
 n=$(( $(cat "$STUB_DIR/am_count" 2>/dev/null || echo 0) + 1 ))
 echo "$n" >"$STUB_DIR/am_count"
 name="$(sed -n "${n}p" "$STUB_DIR/am_names")"
@@ -683,6 +711,77 @@ check "list filters by workspace and kind" test "$(jq -r '[.[].name] | join(",")
 run_helper list
 check "list prints a table with every agent" \
     bash -c 'head -1 <<<"$1" | grep -q "^NAME *KIND *STATUS *PANE *TAB$" && [[ $(wc -l <<<"$1") -eq 5 ]]' _ "$OUT"
+
+# acfs-gen.5: inbox lists every unread message to the agent, oldest first,
+# then marks each read.
+echo "inbox"
+
+# 45 unread messages to the agent (#1-#45, #44 a bcc) in two threads, #2
+# needing an ack, #46 an unread cc, #47 already read, and #48 arriving
+# between the helper's two am calls (unread, but not yet in `am mail inbox`).
+write_mailbox() {
+    jq -n '[range(1; 49) | {
+        id: .,
+        kind: (if . == 46 then "cc" elif . == 44 then "bcc" else "to" end),
+        thread: (if . % 2 == 1 then "odd" else "even" end),
+        created_ts: "2026-10-10T07:\(. | tostring | if length == 1 then "0" + . else . end):00Z",
+        importance: (if . == 45 then "high" else "normal" end),
+        ack_status: (if . == 2 then "required" else "none" end),
+        from: "BlueLake", subject: "message \(.)", body_md: "body of \(.)",
+        late: (. == 48)}]' >"$STUB_DIR/mailbox.json"
+    echo 47 >"$STUB_DIR/read_ids"
+}
+unread_ids() {
+    jq -c --slurpfile read <(cat "$STUB_DIR/read_ids") \
+        '[.[] | select(.id as $i | $read | index($i) | not) | .id]' "$STUB_DIR/mailbox.json"
+}
+
+reset_stub inbox
+write_mailbox
+run_helper inbox --agent BetaOwl --project /stub/project
+check "inbox lists every unread message to the agent, past am's 20-row default" \
+    test "$(grep -c '^--- #' <<<"$OUT")" -eq 45
+check "a message older than 40 newer ones is listed" grep -q '^--- #1 2026-10-10T07:01:00Z from BlueLake \[normal\]$' <<<"$OUT"
+check "messages are grouped by thread, the thread of the oldest first, oldest first within it" \
+    test "$(grep -o '^--- #[0-9]*' <<<"$OUT" | head -3 | tr '\n' ' ')" = "--- #1 --- #3 --- #5 "
+check "the even thread follows the odd one" \
+    bash -c 'grep "^== thread" <<<"$1" | tr "\n" "|" | grep -qx "== thread odd (23 unread)|== thread even (22 unread)|"' _ "$OUT"
+check "bodies are printed, a bcc's too" grep -qx 'body of 44' <<<"$OUT"
+check "the cc and the message that arrived late are not listed" \
+    bash -c '! grep -q "^--- #4[678] " <<<"$1"' _ "$OUT"
+check "each listed message is marked read with am mail read, and nothing else" \
+    test "$(grep -c '^am mail read --project /stub/project --agent BetaOwl [0-9]*$' "$STUB_DIR/calls")/$(count_calls '^am mail read')" = "45/45"
+check "afterwards only the cc and the late message are unread" test "$(unread_ids)" = "[46,48]"
+check "inbox counts what it listed and what stays unread, and names the ack pending" \
+    grep -qx 'listed 45 unread, marked 45 read; 1 cc still unread; ack pending: #2' <<<"$OUT"
+check "inbox exits 0" test "$RC" -eq 0
+
+reset_stub inboxkeep
+write_mailbox
+run_helper inbox --agent BetaOwl --project /stub/project --keep-unread
+check "--keep-unread lists the same messages and marks none read" \
+    test "$(grep -c '^--- #' <<<"$OUT")/$(count_calls '^am mail read')/$(unread_ids | jq length)" = "45/0/47"
+
+reset_stub inboxfail
+write_mailbox
+touch "$STUB_DIR/read_fail_7"
+run_helper inbox --agent BetaOwl --project /stub/project
+check "a message am cannot mark read is named, counted and fails the call" \
+    bash -c '[[ "$1" -eq 1 ]] && grep -q "could not mark #7 read" <<<"$2" && grep -q "marked 44 read" <<<"$3"' _ "$RC" "$ERR" "$OUT"
+
+reset_stub inboxenv
+write_mailbox
+RC=0
+(cd "$WORK/repo" && PATH="$WORK/bin:$PATH" AGENT_NAME=BetaOwl AGENT_MAIL_PROJECT='' AGENT_MAIL_AGENT='' \
+    bash "$HELPER" inbox >/dev/null 2>&1) || RC=$?
+check "inbox takes the agent from AGENT_NAME, and the project from the directory outside git" \
+    grep -qx "am mail inbox --project $WORK/repo --agent BetaOwl --limit 1000000 --json" "$STUB_DIR/calls"
+
+reset_stub inboxnoagent
+write_mailbox
+RC=0
+PATH="$WORK/bin:$PATH" AGENT_NAME='' AGENT_MAIL_AGENT='' bash "$HELPER" inbox >/dev/null 2>&1 || RC=$?
+check "inbox without an agent refuses and calls no am" test "$RC/$(count_calls '^am ')" = "1/0"
 
 echo
 echo "passed: $PASS, failed: $FAIL"

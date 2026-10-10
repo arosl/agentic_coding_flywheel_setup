@@ -14,6 +14,7 @@
 #   acfs agents spawn [--claude N] [--codex N] [--agy N] [--kind K [--count N]]...
 #   acfs agents send (--all | --kind K | --name N)... <prompt>
 #   acfs agents list [--workspace ID] [--kind K] [--json]
+#   acfs agents inbox [--agent NAME] [--project KEY] [--keep-unread]
 #   acfs agents codex-daemon (status [--json] | start | restart)
 # ============================================================
 
@@ -25,6 +26,9 @@ HERDR_AGENTS_NAME_ERROR=""
 # How long a prompt may take to show that it was submitted (or, with send
 # --wait, to finish), unless --timeout says otherwise.
 HERDR_AGENTS_PROMPT_TIMEOUT_MS=15000
+# The --limit inbox passes to am: far above any real mailbox. An answer this
+# long could be a truncated one, so inbox refuses it.
+HERDR_AGENTS_INBOX_LIMIT=1000000
 
 herdr_agents_usage() {
     cat <<'EOF'
@@ -35,6 +39,7 @@ Usage:
   acfs agents send  (--all | --kind KIND | --name NAME)... [--workspace ID]
                     [--wait] [--timeout MS] <prompt>
   acfs agents list  [--workspace ID] [--kind KIND] [--json]
+  acfs agents inbox [--agent NAME] [--project KEY] [--keep-unread]
   acfs agents codex-daemon (status [--json] | start | restart)
 
 spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
@@ -64,6 +69,15 @@ send   Prompt every matching agent, and wait until each is seen working, which
        agent's screen and says whether a dialog or undimmed typed text is on
        it; it never presses a key there.
 list   Show the agents herdr knows about.
+inbox  Print every unread Agent Mail message sent to the agent (To or bcc,
+       not cc), oldest first and grouped by thread, with bodies, then mark
+       each one read, so that unread means not yet seen. am's own inbox shows
+       only 20 rows, high importance first, and never marks anything read.
+       inbox ends with a count of what it listed, the cc messages still
+       unread and the messages whose ack is pending (acknowledge those
+       yourself). --keep-unread lists without marking. The agent is --agent,
+       else $AGENT_MAIL_AGENT, else $AGENT_NAME; the project key is
+       --project, else $AGENT_MAIL_PROJECT, else the git top level.
 codex-daemon
        Codex runs its hooks through one shared app-server daemon. Started from
        inside a herdr pane, the daemon keeps that pane's HERDR_* variables, and
@@ -871,6 +885,85 @@ herdr_agents_send() {
     (( skipped == 0 ))
 }
 
+# List every unread message sent To (or bcc) the agent, oldest first and
+# grouped by thread, with bodies; then mark each listed one read. `am inbox`
+# alone shows 20 rows by importance and never marks anything read, so older
+# normal mail sinks out of sight. The unread set (with bodies) comes from
+# `am inbox --unread`, the to/cc kind and the send time from `am mail inbox`;
+# only a message in both is listed, so one that arrives in between stays
+# unread.
+herdr_agents_inbox() {
+    local agent="${AGENT_MAIL_AGENT:-${AGENT_NAME:-}}" project="${AGENT_MAIL_PROJECT:-}" keep_unread=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --agent) [[ $# -ge 2 ]] || herdr_agents_die "--agent needs a value"; agent="$2"; shift 2 ;;
+            --project) [[ $# -ge 2 ]] || herdr_agents_die "--project needs a value"; project="$2"; shift 2 ;;
+            --keep-unread) keep_unread=true; shift ;;
+            -h|--help) herdr_agents_usage; return 0 ;;
+            *) herdr_agents_die "unknown inbox option: $1" ;;
+        esac
+    done
+    herdr_agents_require am jq
+    [[ -n "$agent" ]] || herdr_agents_die "inbox needs --agent (or AGENT_MAIL_AGENT / AGENT_NAME)"
+    if [[ -z "$project" ]]; then
+        project="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    fi
+
+    local all unread
+    all="$(am mail inbox --project "$project" --agent "$agent" --limit "$HERDR_AGENTS_INBOX_LIMIT" --json)" \
+        || herdr_agents_die "am mail inbox failed for $agent"
+    unread="$(am inbox --project "$project" --agent "$agent" --unread --include-bodies --limit "$HERDR_AGENTS_INBOX_LIMIT" --json)" \
+        || herdr_agents_die "am inbox --unread failed for $agent"
+    if (( $(jq 'length' <<<"$all") >= HERDR_AGENTS_INBOX_LIMIT || $(jq '.inbox | length' <<<"$unread") >= HERDR_AGENTS_INBOX_LIMIT )); then
+        herdr_agents_die "am returned $HERDR_AGENTS_INBOX_LIMIT rows, so the listing may be cut short"
+    fi
+
+    # The unread rows To (or bcc) this agent, oldest first, each with its
+    # kind and send time; and how many unread cc rows stay unread. Both
+    # answers go in on stdin: a whole mailbox is too long for one argument.
+    local joined listed cc_unread
+    joined="$(printf '%s\n%s\n' "$all" "$unread" | jq -cs '
+        (.[0] | map({key: (.id | tostring), value: .}) | from_entries) as $meta
+        | [.[1].inbox[] | . + {kind: $meta[(.id | tostring)].kind, created_ts: $meta[(.id | tostring)].created_ts}]
+        | {listed: (map(select(.kind == "to" or .kind == "bcc")) | sort_by(.id)),
+           cc: (map(select(.kind == "cc")) | length)}')" || herdr_agents_die "could not read am's inbox JSON"
+    listed="$(jq -c '.listed' <<<"$joined")"
+    cc_unread="$(jq '.cc' <<<"$joined")"
+
+    # Threads in the order of their oldest unread message.
+    jq -r '
+        group_by(.thread // "")
+        | sort_by(.[0].id)[]
+        | "== thread \(.[0].thread // "(none)") (\(length) unread)",
+          (.[] | "--- #\(.id) \(.created_ts) from \(.from) [\(.importance)]"
+                 + (if .ack_status == "required" or .ack_status == "overdue" then " [ack \(.ack_status)]" else "" end),
+                 "Subject: \(.subject)", "", (.body_md // ""), ""),
+          ""' <<<"$listed"
+
+    local count=0 failed=0 id
+    count="$(jq 'length' <<<"$listed")"
+    if [[ "$keep_unread" == false ]]; then
+        # am gets no stdin, which holds the ids still to mark.
+        while IFS= read -r id; do
+            [[ -n "$id" ]] || continue
+            am mail read --project "$project" --agent "$agent" "$id" </dev/null >/dev/null \
+                || { herdr_agents_note "could not mark #$id read"; failed=$((failed + 1)); }
+        done < <(jq -r '.[].id' <<<"$listed")
+    fi
+
+    local ack_pending
+    ack_pending="$(jq -r '[.[] | select(.ack_status == "required" or .ack_status == "overdue") | .id] | map("#\(.)") | join(" ")' <<<"$listed")"
+    if [[ "$keep_unread" == true ]]; then
+        printf 'listed %s unread (left unread)' "$count"
+    else
+        printf 'listed %s unread, marked %s read' "$count" "$((count - failed))"
+    fi
+    printf '; %s cc still unread' "$cc_unread"
+    [[ -z "$ack_pending" ]] || printf '; ack pending: %s' "$ack_pending"
+    printf '\n'
+    (( failed == 0 )) || return 1
+}
+
 herdr_agents_main() {
     local subcommand="${1:-help}"
     [[ $# -gt 0 ]] && shift
@@ -878,6 +971,7 @@ herdr_agents_main() {
         spawn) herdr_agents_spawn "$@" ;;
         send) herdr_agents_send "$@" ;;
         list|ls) herdr_agents_list "$@" ;;
+        inbox) herdr_agents_inbox "$@" ;;
         codex-daemon) herdr_agents_codex_daemon "$@" ;;
         help|-h|--help) herdr_agents_usage ;;
         *) herdr_agents_usage >&2; return 1 ;;

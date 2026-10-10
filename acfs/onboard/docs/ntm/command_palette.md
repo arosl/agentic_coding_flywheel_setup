@@ -134,6 +134,7 @@ First read ALL of the AGENTS.md file and README.md file super carefully and unde
 
 ### check_and_respond_to_mail | Check and Respond to Mail
 Be sure to check your agent mail and to promptly respond if needed to any messages, and also acknowledge any contact requests; make sure you know the names of all active agents using the MCP Agent Mail system. 
+Run `acfs agents inbox --agent <your Agent Mail name>` to read every unread message sent to you, oldest first, which also marks each one read; then acknowledge each message it lists as ack pending.
 
 ### introduce_to_fellow_agents | Introduce to Fellow Agents
 Before doing anything else, read ALL of AGENTS.md, then register with MCP Agent Mail and introduce yourself to the other agents.

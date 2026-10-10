@@ -17,7 +17,7 @@ DEST_FILE="$PROJECT_ROOT/acfs/onboard/docs/ntm/command_palette.md"
 
 # The palette's header (everything before the first "## " category) and
 # these command_keys are the fork's herdr ports; a sync keeps them.
-PALETTE_FORK_KEYS="ensemble_list ensemble_run ensemble_status ensemble_synthesize ensemble_modes_core ensemble_modes_advanced check_project_inbox"
+PALETTE_FORK_KEYS="ensemble_list ensemble_run ensemble_status ensemble_synthesize ensemble_modes_core ensemble_modes_advanced check_project_inbox check_and_respond_to_mail"
 
 # Colors
 GREEN='\033[0;32m'
