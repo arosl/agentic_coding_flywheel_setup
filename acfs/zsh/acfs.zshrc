@@ -53,6 +53,23 @@ if command -v zsh &>/dev/null; then
   export SHELL="$(command -v zsh)"
 fi
 
+# --- TMPDIR in a container ---
+# In an Incus container the installer points the agents' TMPDIR at the data
+# volume, in the file systemd user units read (user.sh,
+# user_container_tmp_policy). herdr's shells take it from here.
+if [[ -r "$HOME/.config/environment.d/60-acfs-tmpdir.conf" ]]; then
+  while IFS= read -r _acfs_env_line; do
+    [[ "$_acfs_env_line" == TMPDIR=* ]] || continue
+    _acfs_env_line="${_acfs_env_line#TMPDIR=}"
+    _acfs_env_line="${_acfs_env_line%\"}"
+    _acfs_env_line="${_acfs_env_line#\"}"
+    if [[ "$_acfs_env_line" == /* && -d "$_acfs_env_line" ]]; then
+      export TMPDIR="$_acfs_env_line"
+    fi
+  done < "$HOME/.config/environment.d/60-acfs-tmpdir.conf"
+  unset _acfs_env_line
+fi
+
 # Atuin remains available through the guarded shim in ~/.local/bin. Do not
 # source Atuin's env file here; it can put the real binary ahead of the shim.
 

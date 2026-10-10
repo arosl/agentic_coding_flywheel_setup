@@ -677,6 +677,102 @@ set_default_shell() {
     $SUDO chsh -s "$shell" "$target"
 }
 
+# ------------------------------------------------------------
+# /tmp and TMPDIR in a container (acfs-ioo3.7)
+#
+# In an Incus (LXC) system container, /tmp stays on the root disk:
+# tmp.mount is masked, because a RAM-backed /tmp is charged to the
+# container's memory limit and keeps every agent's leftovers in RAM.
+# The agents' TMPDIR is /data/tmp, on the data volume, through
+# ~/.config/environment.d (systemd user units) and acfs.zshrc (herdr's
+# shells). `acfs agents sweep` stays the cleaner of both. On a VPS or
+# VM nothing changes.
+# ------------------------------------------------------------
+USER_TMPDIR_ENV_FILE=".config/environment.d/60-acfs-tmpdir.conf"
+
+# Run a command as the target user: directly when we are that user,
+# through runuser as root, through sudo otherwise.
+user_run_as_target() {
+    local target_user="$1"
+    shift
+    if [[ "$(id -un 2>/dev/null)" == "$target_user" ]]; then
+        "$@"
+    elif [[ $EUID -eq 0 ]]; then
+        runuser -u "$target_user" -- "$@"
+    else
+        sudo -n -u "$target_user" -- "$@"
+    fi
+}
+
+# user_container_tmp_policy <target_user> <target_home> [tmpdir]
+# A no-op outside an LXC container. Returns 1 only without its
+# arguments; anything else that stops it only warns.
+user_container_tmp_policy() {
+    local target_user="${1:-}" target_home="${2:-}" tmpdir="${3:-/data/tmp}"
+    local virt="" unit_state="" owner_mode="" env_file="" env_line=""
+
+    [[ -n "$target_user" && -n "$target_home" ]] || return 1
+    virt="$(systemd-detect-virt --container 2>/dev/null)" || virt=""
+    [[ "$virt" == "lxc" ]] || return 0
+
+    unit_state="$(systemctl is-enabled tmp.mount 2>/dev/null)" || true
+    if [[ "$unit_state" == masked ]]; then
+        log_detail "tmp.mount is already masked: /tmp stays on disk"
+    elif $SUDO systemctl mask tmp.mount >/dev/null 2>&1; then
+        log_detail "Masked tmp.mount: /tmp stays on disk in this container"
+    else
+        log_warn "Could not mask tmp.mount; /tmp may be a RAM-backed tmpfs after the next restart"
+    fi
+    if [[ "$(findmnt -n -o FSTYPE --target /tmp 2>/dev/null)" == tmpfs ]]; then
+        log_warn "/tmp is a tmpfs right now; it moves to disk at the next container restart, unless the instance itself mounts a tmpfs there"
+    fi
+
+    if [[ -L "$tmpdir" ]]; then
+        log_warn "$tmpdir is a symlink; TMPDIR stays unchanged"
+        return 0
+    fi
+    # Made by the target user, who owns /data, so root never acts on a
+    # path that user could swap for a symlink.
+    if [[ ! -e "$tmpdir" ]] && ! user_run_as_target "$target_user" mkdir -m 755 -- "$tmpdir"; then
+        log_warn "Could not create $tmpdir as $target_user; TMPDIR stays unchanged"
+        return 0
+    fi
+    # TMPDIR must be a directory the target user owns, or a sticky
+    # world-writable one like /tmp; otherwise every mktemp would fail.
+    owner_mode="$(stat -c '%U %a' -- "$tmpdir" 2>/dev/null)" || owner_mode=""
+    if [[ ! -d "$tmpdir" ]] || { [[ "$owner_mode" != "$target_user "* ]] && [[ "$owner_mode" != *" 1777" ]]; }; then
+        log_warn "$tmpdir is not a directory $target_user owns ($owner_mode); TMPDIR stays unchanged"
+        return 0
+    fi
+
+    env_file="$target_home/$USER_TMPDIR_ENV_FILE"
+    env_line="TMPDIR=$tmpdir"
+    if [[ -f "$env_file" && ! -L "$env_file" ]] && grep -qxF -- "$env_line" "$env_file" 2>/dev/null; then
+        log_detail "TMPDIR is already $tmpdir for $target_user"
+        return 0
+    fi
+    # Written as the target user, so a symlink in their home can't
+    # redirect a root-owned write.
+    if user_run_as_target "$target_user" bash -c '
+        set -e
+        dir="${1%/*}"
+        mkdir -p -- "$dir"
+        tmp="$(mktemp "$dir/.acfs-tmpdir.XXXXXX")"
+        printf "%s\n%s\n" "# Managed by the ACFS installer, which overwrites edits: in a container, temp files go to the data volume." "$2" > "$tmp"
+        mv -f -- "$tmp" "$1"
+    ' _ "$env_file" "$env_line"; then
+        log_detail "TMPDIR is $tmpdir for $target_user (in $env_file)"
+        # The user manager (running since linger) reads environment.d on a
+        # reload; units started later in the install then get TMPDIR.
+        user_run_as_target "$target_user" env XDG_RUNTIME_DIR="/run/user/$(id -u "$target_user")" \
+            systemctl --user daemon-reload >/dev/null 2>&1 \
+            || log_detail "The user manager gets TMPDIR at its next start"
+    else
+        log_warn "Could not write $env_file; TMPDIR stays unchanged"
+    fi
+    return 0
+}
+
 # Get current user info
 get_current_user_info() {
     echo "Current user: $(user_resolve_current_user 2>/dev/null || true)"

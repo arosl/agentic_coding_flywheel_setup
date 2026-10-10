@@ -9,7 +9,12 @@ setup() {
     
     # Overwrite SUDO to avoid actual sudo calls
     SUDO=""
-    
+    # Tripwire: should a change set SUDO before user.sh is sourced (an
+    # empty one becomes "sudo"), or call user_run_as_target for another
+    # user, the call fails here and never reaches the real sudo
+    # (acfs-ioo3.7).
+    stub_command "sudo" "test tripwire: sudo must not run in unit tests" 97
+
     # Mock system commands
     stub_command "useradd" ""
     stub_command "usermod" ""

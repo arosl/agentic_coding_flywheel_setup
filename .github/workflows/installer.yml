@@ -126,6 +126,9 @@ jobs:
       - name: Run doctor ast-grep launcher check tests
         run: bash tests/unit/test_doctor_ast_grep_launcher.sh
 
+      - name: Run container /tmp and TMPDIR policy tests
+        run: bash tests/unit/test_container_tmp_policy.sh
+
       - name: Run state layer tests (acfs state, against stubs)
         run: bash tests/unit/test_state_layer.sh
 
