@@ -61,10 +61,12 @@ export function NtmPaletteLesson() {
         </Paragraph>
 
         <div className="mt-6">
-          <CodeBlock code={`less ${PALETTE_PATH}`} />
+          <CodeBlock code="acfs palette" />
         </div>
         <Paragraph>
-          This opens the file with all available prompts. Browse the same prompts here:
+          In herdr, press <InlineCode>F6</InlineCode>; anywhere else, run{" "}
+          <InlineCode>acfs palette</InlineCode>. This opens an interactive browser of all available
+          prompts, with pinned and recent ones first. Browse the same prompts here:
         </Paragraph>
         <div className="mt-8">
           <InteractivePaletteBrowser />
@@ -123,36 +125,41 @@ export function NtmPaletteLesson() {
         <div className="space-y-8">
           <UsageOption
             number={1}
-            title="Copy and Send"
+            title="Pick and Send"
             steps={[
               <>
-                Open the palette: <InlineCode>less {PALETTE_PATH}</InlineCode>
+                Open the palette: <InlineCode>F6</InlineCode> in herdr, or{" "}
+                <InlineCode>acfs palette</InlineCode>
               </>,
-              "Select a prompt",
-              "Copy it",
               <>
-                Use <InlineCode>herdr agent prompt</InlineCode> or paste directly
+                Select a prompt and press Enter (<InlineCode>ctrl-e</InlineCode> edits it first,{" "}
+                <InlineCode>ctrl-n</InlineCode> writes a new message)
               </>,
+              <>
+                Pick who gets it: <InlineCode>1</InlineCode> every agent in the workspace,{" "}
+                <InlineCode>2</InlineCode> and up one kind, or <InlineCode>tab</InlineCode> to mark
+                single agents, each shown with its herdr status and screen
+              </>,
+              "Press Enter to send",
             ]}
           />
 
-          <UsageOption number={2} title="Send From The Shell (Power Move)" steps={[]}>
+          <UsageOption number={2} title="Send Without The Menu (Power Move)" steps={[]}>
             <div className="mt-4">
               <CodeBlock
-                code={`# One-off prompt to one agent
-herdr agent prompt myproject-cc1 "Review the changes in src/ for edge cases"
-
-# The same prompt to every agent in the workspace, or to one kind
+                code={`# A one-off prompt to every agent in the workspace
 acfs agents send --all "Review the changes in src/ for edge cases"
-acfs agents send --kind claude "Review the changes in src/ for edge cases"`}
+
+# A palette prompt by its key (keys: acfs palette --list)
+acfs agents send --kind claude --template fresh_review`}
               />
             </div>
             <p className="mt-3 text-white/60">
-              herdr has no palette menu. <InlineCode>herdr agent prompt</InlineCode> sends to one
-              agent by name or pane ID; <InlineCode>acfs agents send</InlineCode> picks recipients
-              with <InlineCode>--all</InlineCode>, <InlineCode>--kind claude</InlineCode>,{" "}
+              Same battle-tested prompts, no menu: <InlineCode>acfs agents send</InlineCode> picks
+              recipients with <InlineCode>--all</InlineCode>, <InlineCode>--kind claude</InlineCode>,{" "}
               <InlineCode>--kind codex</InlineCode>, <InlineCode>--kind agy</InlineCode> or{" "}
-              <InlineCode>--name N</InlineCode>, and checks that each agent took the prompt.
+              <InlineCode>--name N</InlineCode>, skips agents blocked at a question, and checks that
+              each agent took the prompt.
             </p>
           </UsageOption>
         </div>
@@ -202,19 +209,27 @@ Create a simple diagram if helpful.`}
         icon={<FolderOpen className="h-5 w-5" />}
         delay={0.3}
       >
-        <Paragraph>You can add your own prompts. Keep them in your own copy of the palette:</Paragraph>
+        <Paragraph>You can add your own prompts. The palette reads, first key wins:</Paragraph>
 
         <div className="mt-6">
           <CodeBlock
-            code={`# Primary location
-cp ${PALETTE_PATH} ~/command_palette.md
+            code={`# In your project directory (or at its git root)
+./command_palette.md
 
-# Or in your project directory
-./command_palette.md`}
+# Your own, for every project
+~/.config/acfs/command_palette.md
+
+# The one ACFS installs
+${PALETTE_PATH}`}
           />
         </div>
 
-        <Paragraph>Add your prompts to that markdown file, and send them the same way.</Paragraph>
+        <Paragraph>
+          Use the installed file&apos;s format (<InlineCode>## Category</InlineCode>, then{" "}
+          <InlineCode>### key | Label</InlineCode> and the prompt text), and your prompts show up in
+          the menu. F6 is the default key: <InlineCode>acfs palette bind --key prefix+space</InlineCode>{" "}
+          picks another, and <InlineCode>acfs palette unbind</InlineCode> removes it.
+        </Paragraph>
       </Section>
 
       <Divider />
@@ -246,13 +261,12 @@ cp ${PALETTE_PATH} ~/command_palette.md
       {/* Try It Now */}
       <Section title="Try It Now" icon={<Play className="h-5 w-5" />} delay={0.4}>
         <CodeBlock
-          code={`# Open the palette
-$ less ${PALETTE_PATH}
+          code={`# Open the palette (or press F6 in herdr)
+$ acfs palette
 
 # Browse the categories
 # Select something interesting
-# Try sending it to your test agent
-$ herdr agent prompt test-cc "<the prompt>"`}
+# Send it to your test agent`}
           showLineNumbers
         />
       </Section>

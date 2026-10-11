@@ -1132,6 +1132,22 @@ acfs agents list [--workspace w1] [--kind claude] [--json]
 
 Tool detection always runs in the target user's context (including under `sudo`, resolved via `SUDO_USER` with `~/.local/bin`, `~/go/bin`, etc. on PATH), so user-local tools are reported accurately.
 
+### `acfs palette` — The Command Palette
+
+What `ntm palette` was in tmux: an interactive menu of the command palette's prompts, and the agents in herdr to send one to. In herdr, **F6** opens it in a popup over the current tab; anywhere else, run `acfs palette`.
+
+```bash
+acfs palette                          # pick a prompt, then the agents that get it
+acfs palette --list                   # every prompt: key, label, category, file (--json too)
+acfs palette --show fresh_review      # one prompt's text
+acfs palette bind --key prefix+space  # open it on another herdr key (default F6)
+acfs palette unbind                   # remove the key; acfs update leaves it removed
+```
+
+The first step lists the prompts by category, pinned (`ctrl-p`) and recent ones first, with a preview; type to filter, `ctrl-e` edits a prompt before it goes and `ctrl-n` writes a new one. The second step offers every agent in the workspace (`1`), each kind (`2` and up), or single agents marked with `tab`, each with its herdr status and a preview of its screen. The send is `acfs agents send --template`, so the placeholders, the skipping of blocked agents and the submit check are the ones described above; the palette asks for `{{thread}}` when a prompt uses it.
+
+Prompts come from `./command_palette.md` (in the current directory and at its git root), `~/.config/acfs/command_palette.md`, and the installed `~/.acfs/onboard/docs/ntm/command_palette.md`, first key wins. Pins, favorites and recents live under `~/.local/state/acfs/palette/`. The key is a `[[keys.command]]` popup in herdr's `config.toml`, between `# >>> acfs palette >>>` markers. The installer and `acfs update` add it only when the file has no such block, doesn't open the palette some other way, and doesn't use F6 already.
+
 ### `acfs info` — System Overview
 
 Displays installation status in under 1 second by reading cached state (no verification).

@@ -16,11 +16,15 @@ the best results from coding agents.
 
 ## View The Palette
 
+In herdr, press **F6**. Anywhere else:
+
 ```bash
-less ~/.acfs/onboard/docs/ntm/command_palette.md
+acfs palette
 ```
 
-This opens the file with all available prompts.
+This opens an interactive browser of all available prompts: type to filter,
+and the preview shows the whole prompt. Pinned and recent prompts come
+first.
 
 ---
 
@@ -57,30 +61,36 @@ The prompts are organized into categories:
 
 ## Using Palette Prompts
 
-### Option 1: Copy and Send
+### Option 1: Pick and Send
 
-1. Open the palette: `less ~/.acfs/onboard/docs/ntm/command_palette.md`
-2. Select a prompt
-3. Copy it
-4. Use `herdr agent prompt` or paste directly
+1. Open the palette: **F6** in herdr, or `acfs palette`
+2. Select a prompt and press Enter (`ctrl-e` edits it first, `ctrl-n`
+   writes a new message)
+3. Pick who gets it: `1` every agent in this workspace, `2` and up one
+   kind (claude, codex, ...), or `tab` to mark single agents. Each agent
+   shows its herdr status (working, blocked, done) and a preview of its
+   screen
+4. Press Enter to send
 
-### Option 2: Send From The Shell (Power Move)
+`ctrl-p` pins a prompt to the top, `ctrl-f` marks it a favorite, and Esc
+goes back a step.
 
-herdr has no palette menu. The non-interactive sender is `herdr agent prompt`:
+### Option 2: Send Without The Menu (Power Move)
+
+The non-interactive sender is `acfs agents send`, and `--template` takes a
+palette prompt by its key:
 
 ```bash
-# Send a one-off prompt to one agent
-herdr agent prompt myproject-cc1 "Review the changes in src/ for edge cases"
+# Send a one-off prompt to every agent in the workspace
+acfs agents send --all "Review the changes in src/ for edge cases"
 
-# Send it to every agent in the workspace (the `agents` helper from lesson 5)
-for a in $(agents); do
-  herdr agent prompt "$a" "Review the changes in src/ for edge cases"
-done
+# Send a palette prompt (keys: acfs palette --list)
+acfs agents send --kind claude --template fresh_review
 ```
 
-Same battle-tested prompts, no menu: `herdr agent prompt` targets one agent by
-name or pane ID, and `agents claude`, `agents codex` or `agents agy` picks
-recipients by kind.
+Same battle-tested prompts, no menu: `--all` targets every agent, or use
+`--kind claude`, `--kind codex`, `--kind agy` or `--name <agent>` to pick
+recipients. Agents blocked at a question are skipped, never answered.
 
 ---
 
@@ -117,17 +127,24 @@ Create a simple diagram if helpful.
 
 ## Customizing The Palette
 
-You can add your own prompts. Keep them in your own copy of the palette:
+You can add your own prompts. The palette reads, first key wins:
 
 ```bash
-# Primary location
-cp ~/.acfs/onboard/docs/ntm/command_palette.md ~/command_palette.md
-
-# Or in your project directory
+# In your project directory (or at its git root)
 ./command_palette.md
+
+# Your own, for every project
+~/.config/acfs/command_palette.md
+
+# The one ACFS installs
+~/.acfs/onboard/docs/ntm/command_palette.md
 ```
 
-Add your prompts to that markdown file, and send them the same way.
+Use the installed file's format (`## Category`, then `### key | Label` and
+the prompt text), and your prompts show up in the menu.
+
+F6 is the default key. `acfs palette bind --key prefix+space` picks
+another, and `acfs palette unbind` removes it.
 
 ---
 
@@ -143,13 +160,12 @@ Add your prompts to that markdown file, and send them the same way.
 ## Try It Now
 
 ```bash
-# Open the palette
-less ~/.acfs/onboard/docs/ntm/command_palette.md
+# Open the palette (or press F6 in herdr)
+acfs palette
 
 # Browse the categories
 # Select something interesting
-# Try sending it to your test agent
-herdr agent prompt test-cc "<the prompt>"
+# Send it to your test agent
 ```
 
 ---
