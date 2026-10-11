@@ -199,6 +199,16 @@ case "$1 $2" in
 JSON
         ;;
     "agent read") printf 'screen of %s\n' "$3" ;;
+    # herdr calls a key it can't parse invalid, as 0.9.3 does.
+    "config check")
+        if grep -q '"bogus' "$HERDR_CONFIG_PATH"; then
+            echo 'config: issues found'
+            echo 'invalid keybinding: keys.command[0].key = "bogus+zz"; disabling binding'
+        else
+            echo 'config: ok'
+        fi
+        ;;
+    "server reload-config") [[ ! -e "$STUB_DIR/no_server" ]] ;;
     *) exit 1 ;;
 esac
 STUB
@@ -249,6 +259,91 @@ check "an unnamed agent is skipped and said so, never sent its row's text as a n
     bash -c '[[ -z "$1" ]] && grep -qF "skipped pane w1:p3" "$2"' _ "$(flags w1 "$(rows w1:p3)")" "$WORK/flags_err"
 check "with an unnamed agent marked too, only the named ones get it" \
     bash -c '[[ "$1" == "--workspace w1 --name oddone" ]]' _ "$(flags w1 "$(rows w1:p3 w1:p4)")"
+
+# ------------------------------------------------------------
+# herdr key, in a scratch config.toml
+# ------------------------------------------------------------
+echo "herdr key:"
+export HERDR_CONFIG_PATH="$WORK/herdr/config.toml"
+mkdir -p "$WORK/herdr"
+printf 'onboarding = false\n\n[keys]\nzoom = "prefix+z"\n\n[theme]\nname = "catppuccin"\n\n\n' >"$HERDR_CONFIG_PATH"
+ORIGINAL_CONFIG="$(cat "$HERDR_CONFIG_PATH")"
+block_lines() { awk '/^# >>> acfs palette >>>/,/^# <<< acfs palette <<</' "$HERDR_CONFIG_PATH"; }
+
+: >"$STUB_DIR/calls"
+run_palette bind --auto
+check "bind --auto appends a popup on F6 that runs this script, after one blank line" \
+    bash -c '[[ "$1" -eq 0 && "$(cat "$2")" == "$3"$'"'"'\n\n'"'"'"$4" ]] && grep -qxF "key = \"f6\"" "$2" && grep -qxF "type = \"popup\"" "$2" \
+        && grep -qxF "command = \"bash '"'"'$5'"'"'\"" "$2"' \
+    _ "$RC" "$HERDR_CONFIG_PATH" "$ORIGINAL_CONFIG" "$(block_lines)" "$PALETTE"
+check "bind asks herdr to check the result, then reloads the running server" \
+    bash -c 'grep -qx "herdr config check" "$1" && grep -qx "herdr server reload-config" "$1" && grep -qF "reloaded the running herdr server" <<<"$2"' \
+    _ "$STUB_DIR/calls" "$ERR"
+
+BOUND_CONFIG="$(cat "$HERDR_CONFIG_PATH")"
+run_palette bind --auto --key prefix+space
+check "bind --auto leaves a config that has the block alone" \
+    bash -c '[[ "$1" -eq 0 && "$(cat "$2")" == "$3" ]]' _ "$RC" "$HERDR_CONFIG_PATH" "$BOUND_CONFIG"
+
+touch "$STUB_DIR/no_server"
+run_palette bind --key prefix+space
+check "bind --key rebinds in place, the rest of the file unchanged" \
+    bash -c '[[ "$1" -eq 0 && "$(grep -c "acfs palette >>>" "$2")" == 1 ]] && grep -qxF "key = \"prefix+space\"" "$2" \
+        && ! grep -qxF "key = \"f6\"" "$2" && [[ "$(head -7 "$2")" == "$3" ]]' _ "$RC" "$HERDR_CONFIG_PATH" "$ORIGINAL_CONFIG"
+check "with no herdr server running, bind says how to reload" \
+    bash -c 'grep -qF "herdr server reload-config" <<<"$1"' _ "$ERR"
+rm -f "$STUB_DIR/no_server"
+
+run_palette bind --key prefix+Z --no-reload
+check "bind refuses a key the config already uses, ignoring case" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "already uses prefix+z" <<<"$2" && grep -qxF "key = \"prefix+space\"" "$3"' _ "$RC" "$ERR" "$HERDR_CONFIG_PATH"
+
+run_palette bind --key bogus+zz --no-reload
+check "bind leaves the file as it was when herdr calls the key invalid" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "herdr refuses the key bogus+zz" <<<"$2" && grep -qxF "key = \"prefix+space\"" "$3" \
+        && [[ -z "$(find "$(dirname "$3")" -name ".config.toml.acfs-palette.*")" ]]' _ "$RC" "$ERR" "$HERDR_CONFIG_PATH"
+
+run_palette bind --key 'f6"; rm' --no-reload
+check "bind refuses a key that is not herdr key syntax" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "not a herdr key" <<<"$2"' _ "$RC" "$ERR"
+
+run_palette unbind --no-reload
+check "unbind leaves an empty block, the rest of the file unchanged" \
+    bash -c '[[ "$1" -eq 0 && "$(block_count=$(grep -c "^\[\[keys.command\]\]" "$2"); echo "$block_count")" == 0 ]] \
+        && grep -qF "unbound by" "$2" && [[ "$(head -7 "$2")" == "$3" ]]' _ "$RC" "$HERDR_CONFIG_PATH" "$ORIGINAL_CONFIG"
+run_palette bind --auto --no-reload
+check "after unbind, bind --auto (acfs update) leaves it unbound" \
+    bash -c '! grep -q "^\[\[keys.command\]\]" "$1"' _ "$HERDR_CONFIG_PATH"
+run_palette bind --no-reload
+check "an explicit bind after unbind binds F6 again" grep -qxF 'key = "f6"' "$HERDR_CONFIG_PATH"
+
+printf '[[keys.command]]\nkey = "f6"\ntype = "popup"\ncommand = "lazygit"\n' >"$HERDR_CONFIG_PATH"
+run_palette bind --auto --no-reload
+check "bind --auto binds nothing over a key the user has, and says so" \
+    bash -c '[[ "$1" -eq 0 && "$(grep -c "^\[\[keys.command\]\]" "$2")" == 1 ]] && grep -qF "already uses f6" <<<"$3"' _ "$RC" "$HERDR_CONFIG_PATH" "$ERR"
+
+printf '[[keys.command]]\nkey = "f7"\ntype = "popup"\ncommand = "acfs palette"\n' >"$HERDR_CONFIG_PATH"
+run_palette bind --auto --no-reload
+check "bind --auto leaves a user's own palette binding alone" \
+    bash -c '[[ "$1" -eq 0 ]] && ! grep -qF "acfs palette >>>" "$2"' _ "$RC" "$HERDR_CONFIG_PATH"
+
+rm -f "$HERDR_CONFIG_PATH"
+rmdir "$WORK/herdr"
+run_palette bind --auto --no-reload
+check "with no config yet, bind --auto writes one holding only the block" \
+    bash -c '[[ "$1" -eq 0 && "$(head -1 "$2")" == "# >>> acfs palette >>>"* ]]' _ "$RC" "$HERDR_CONFIG_PATH"
+
+run_palette bind --dry-run --key prefix+space
+check "--dry-run prints the block and writes nothing" \
+    bash -c 'grep -qF "Would write to" <<<"$1" && ! grep -qF "prefix+space" "$2"' _ "$OUT" "$HERDR_CONFIG_PATH"
+
+mv "$WORK/bin/herdr" "$WORK/bin/herdr.off"
+rm -f "$HERDR_CONFIG_PATH"
+PATH="$WORK/bin:/usr/bin:/bin" run_palette bind --auto
+check "without herdr, bind --auto writes nothing" \
+    bash -c '[[ "$1" -eq 0 && ! -e "$2" ]] && grep -qF "herdr is not installed" <<<"$3"' _ "$RC" "$HERDR_CONFIG_PATH" "$ERR"
+mv "$WORK/bin/herdr.off" "$WORK/bin/herdr"
+unset HERDR_CONFIG_PATH
 
 # ------------------------------------------------------------
 # the whole menu, over a stub fzf and a stub send

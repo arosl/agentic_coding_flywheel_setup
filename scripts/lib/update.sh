@@ -7457,6 +7457,39 @@ update_herdr_integrations() {
     return 0
 }
 
+# herdr opens the command palette in a popup on F6, as ntm's did in tmux
+# (palette.sh bind --auto): unless the target user's herdr config already
+# has the palette's block (bound, or unbound by `acfs palette unbind`),
+# opens the palette some other way, or uses F6. A running herdr server
+# reloads its config. Never fails the update.
+update_herdr_palette_key() {
+    local herdr_bin=""
+    local target_home=""
+    local palette_script=""
+    local bash_bin=""
+    local out=""
+
+    herdr_bin="$(update_binary_path herdr 2>/dev/null || true)"
+    [[ -n "$herdr_bin" ]] || return 0
+    target_home="$(update_target_home "$(update_target_user 2>/dev/null || true)" 2>/dev/null || true)"
+    [[ -n "$target_home" && "$target_home" == /* ]] || return 0
+    palette_script="$target_home/.acfs/scripts/lib/palette.sh"
+    [[ -f "$palette_script" ]] || return 0
+    bash_bin="$(update_system_binary_path bash 2>/dev/null || true)"
+    [[ -n "$bash_bin" ]] || return 0
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_item "skip" "herdr palette key" "dry-run: would run palette.sh bind --auto"
+        return 0
+    fi
+    if out="$(update_run_in_target_context "" "$bash_bin" "$palette_script" bind --auto 2>&1)"; then
+        log_item "ok" "herdr palette key" "${out%%$'\n'*}"
+    else
+        log_item "skip" "herdr palette key" "${out%%$'\n'*}"
+    fi
+    return 0
+}
+
 # herdr's server holds every agent pane, so its keystroke path has to win the
 # CPU race against the swarm, the way SRPS gives the wezterm and frankenterm
 # mux servers nice -10. SRPS has no herdr rule, and a 10-local rule outranks
@@ -7655,6 +7688,7 @@ update_stack() {
         update_say "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[herdr]}" "${VERSION_AFTER[herdr]}"
     fi
     update_herdr_integrations
+    update_herdr_palette_key
 
     # minisign (issue #375): the MCP Agent Mail and CAAM installers fail
     # closed without it, so provision it once here, before either runs.

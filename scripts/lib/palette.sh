@@ -11,9 +11,11 @@
 # skipping agents blocked at a dialog and the check that each prompt was
 # submitted stay in one place.
 #
-# Run `acfs palette` in any terminal; inside herdr it fits a popup
-# ([[keys.command]] type = "popup"), whose HERDR_ACTIVE_* variables say
-# which workspace and directory it was opened over.
+# Inside herdr, F6 opens it in a popup over the current tab, as ntm bound
+# F6 in tmux: `acfs palette bind` writes that [[keys.command]] into herdr's
+# config.toml (the installer and acfs update run `bind --auto`), and the
+# popup's HERDR_ACTIVE_* variables say which workspace and directory it was
+# opened over. Anywhere else, run `acfs palette`.
 #
 # Palette files, first key wins: --file (or ACFS_PALETTE_FILE) alone when
 # given; otherwise ./command_palette.md in the current directory and at its
@@ -29,6 +31,8 @@
 #   acfs palette [--workspace ID] [--file PATH]
 #   acfs palette --list [--json] [--file PATH]
 #   acfs palette --show KEY [--file PATH]
+#   acfs palette bind [--key KEY] [--auto] [--no-reload] [--dry-run]
+#   acfs palette unbind [--no-reload] [--dry-run]
 #
 # Needs fzf 0.44 or later (Ubuntu 24.04's), jq, and herdr for the targets.
 # ============================================================
@@ -43,6 +47,11 @@ PALETTE_FZF="${ACFS_PALETTE_FZF:-fzf}"
 PALETTE_RECENTS_MAX=8
 # The order kinds are offered in on the target step; others follow, sorted.
 PALETTE_KIND_ORDER=(claude codex gemini agy pi)
+# herdr's config file and the block `bind` manages in it.
+PALETTE_HERDR_CONFIG="${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}"
+PALETTE_DEFAULT_KEY="f6"
+PALETTE_BLOCK_BEGIN="# >>> acfs palette >>>"
+PALETTE_BLOCK_END="# <<< acfs palette <<<"
 
 palette_usage() {
     cat <<'EOF'
@@ -50,8 +59,11 @@ Usage:
   acfs palette [--workspace ID] [--file PATH]
   acfs palette --list [--json] [--file PATH]
   acfs palette --show KEY [--file PATH]
+  acfs palette bind [--key KEY] [--auto] [--no-reload] [--dry-run]
+  acfs palette unbind [--no-reload] [--dry-run]
 
 Open the command palette: pick a prompt, then the agents in herdr that get it.
+In herdr, F6 opens it in a popup (see bind).
 
 Prompt step:
   type          fuzzy-filter prompts by label, key or category
@@ -85,6 +97,15 @@ Options:
 
 Palette files, first key wins: ./command_palette.md (here and at the git
 root), ~/.config/acfs/command_palette.md, ~/.acfs/onboard/docs/ntm/command_palette.md.
+
+bind writes a herdr key that opens the palette in a popup (F6, as ntm's
+palette had in tmux; --key takes herdr's key syntax, such as prefix+space)
+into herdr's config.toml ($HERDR_CONFIG_PATH, else ~/.config/herdr/config.toml),
+between "# >>> acfs palette >>>" and "# <<< acfs palette <<<", then reloads
+a running herdr server. It refuses a key the file already uses. --auto,
+which the installer and acfs update run, changes nothing when the file has
+that block (bound or unbound), binds the palette itself, or uses the key.
+unbind leaves the block empty, so --auto never binds it again.
 EOF
 }
 
@@ -493,6 +514,177 @@ palette_send_flags() {
 }
 
 # ------------------------------------------------------------
+# herdr key: bind and unbind
+# ------------------------------------------------------------
+
+# Config file $1 without the block `bind` manages.
+palette_config_outside_block() {
+    [[ -f "$1" ]] || return 0
+    awk -v begin="$PALETTE_BLOCK_BEGIN" -v end="$PALETTE_BLOCK_END" '
+        index($0, begin) == 1 { inside = 1; next }
+        inside && index($0, end) == 1 { inside = 0; next }
+        !inside { print }
+    ' "$1"
+}
+
+palette_config_has_block() {
+    [[ -f "$1" ]] && grep -qF -- "$PALETTE_BLOCK_BEGIN" "$1"
+}
+
+# Whether config file $1, outside the block, assigns key $2 to anything
+# (`key = "f6"` in a [[keys.command]], `zoom = "f6"` in [keys]), ignoring case.
+palette_config_uses_key() {
+    palette_config_outside_block "$1" | awk -v want="$2" '
+        /^[[:space:]]*#/ { next }
+        {
+            line = tolower($0)
+            if (match(line, /^[[:space:]]*[a-z0-9_.]+[[:space:]]*=[[:space:]]*"[^"]*"/)) {
+                value = substr(line, RSTART, RLENGTH)
+                sub(/^[^"]*"/, "", value); sub(/"$/, "", value)
+                if (value == want) found = 1
+            }
+        }
+        END { exit !found }'
+}
+
+# Whether config file $1, outside the block, already runs the palette.
+palette_config_binds_palette() {
+    palette_config_outside_block "$1" \
+        | grep -qE '^[[:space:]]*command[[:space:]]*=.*(acfs palette|palette\.sh)'
+}
+
+# The command the popup runs: this script, by its absolute path, so the
+# popup needs nothing on the herdr server's PATH. A path TOML would need
+# escaping for falls back to `acfs palette`.
+palette_popup_command() {
+    if [[ "$PALETTE_SELF" =~ ^/[A-Za-z0-9_./+-]+$ ]]; then
+        printf "bash '%s'\n" "$PALETTE_SELF"
+    else
+        printf 'acfs palette\n'
+    fi
+}
+
+# The managed block binding key $1, or the unbound block for an empty $1.
+palette_block() {
+    if [[ -z "$1" ]]; then
+        printf '%s unbound by `acfs palette unbind`; `acfs palette bind` binds it again\n' "$PALETTE_BLOCK_BEGIN"
+    else
+        printf '%s managed by `acfs palette bind`; `acfs palette unbind` removes it\n' "$PALETTE_BLOCK_BEGIN"
+        printf '[[keys.command]]\n'
+        printf 'key = "%s"\n' "$1"
+        printf 'type = "popup"\n'
+        printf 'command = "%s"\n' "$(palette_popup_command)"
+        printf 'description = "command palette (acfs palette)"\n'
+        printf 'width = "90%%"\n'
+        printf 'height = "80%%"\n'
+    fi
+    printf '%s\n' "$PALETTE_BLOCK_END"
+}
+
+# Replace config file $1 with the file outside the block plus block $2.
+# herdr checks the result first, when it is installed; a key it calls
+# invalid leaves the file as it was.
+palette_config_write() {
+    local file="$1" block="$2" key="$3" dir tmp outside report
+    dir="$(dirname "$file")"
+    mkdir -p "$dir"
+    tmp="$(mktemp "$dir/.config.toml.acfs-palette.XXXXXX")"
+    outside="$(palette_config_outside_block "$file")"
+    # Drop the trailing blank lines, then one blank line before the block.
+    outside="$(printf '%s\n' "$outside" | awk 'NF { for (; blank > 0; blank--) print ""; print; next } { blank++ }')"
+    { [[ -z "$outside" ]] || printf '%s\n\n' "$outside"; printf '%s\n' "$block"; } >"$tmp"
+    if [[ -f "$file" ]]; then
+        chmod "$(stat -c '%a' "$file" 2>/dev/null || stat -f '%Lp' "$file" 2>/dev/null || echo 600)" "$tmp" 2>/dev/null || true
+    fi
+    if [[ -n "$key" ]] && command -v herdr >/dev/null 2>&1; then
+        report="$(HERDR_CONFIG_PATH="$tmp" herdr config check 2>&1 || true)"
+        if grep -qF -- "\"$key\"" <<<"$report"; then
+            rm -f "$tmp"
+            palette_die "herdr refuses the key $key: $(grep -F -- "\"$key\"" <<<"$report" | head -n 1)"
+        fi
+    fi
+    mv -f "$tmp" "$file"
+}
+
+# Ask a running herdr server to read its config again.
+palette_reload() {
+    if command -v herdr >/dev/null 2>&1 && herdr server reload-config >/dev/null 2>&1; then
+        palette_note "reloaded the running herdr server's config"
+    else
+        palette_note "herdr reads it when its server next starts (or run: herdr server reload-config)"
+    fi
+}
+
+palette_bind() {
+    local key="$PALETTE_DEFAULT_KEY" auto=false reload=true dry_run=false file="$PALETTE_HERDR_CONFIG" block
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --key) [[ $# -ge 2 && -n "$2" ]] || palette_die "--key needs a key, such as f6 or prefix+space"; key="${2,,}"; shift 2 ;;
+            --auto) auto=true; shift ;;
+            --no-reload) reload=false; shift ;;
+            --dry-run) dry_run=true; shift ;;
+            -h|--help) palette_usage; return 0 ;;
+            *) palette_die "unknown bind option: $1" ;;
+        esac
+    done
+    [[ "$key" =~ ^[a-z0-9+.-]+$ ]] || palette_die "--key $key: not a herdr key (such as f6, ctrl+space or prefix+space)"
+
+    if [[ "$auto" == true ]]; then
+        if ! command -v herdr >/dev/null 2>&1; then
+            palette_note "herdr is not installed; no palette key bound"
+            return 0
+        fi
+        if palette_config_has_block "$file"; then
+            palette_note "herdr's config already has the palette's block; left as it is"
+            return 0
+        fi
+        if palette_config_binds_palette "$file"; then
+            palette_note "herdr's config already opens the palette; left as it is"
+            return 0
+        fi
+        if palette_config_uses_key "$file" "$key"; then
+            palette_note "herdr's config already uses $key; no palette key bound (pick one: acfs palette bind --key KEY)"
+            return 0
+        fi
+    else
+        if palette_config_binds_palette "$file"; then
+            palette_die "$file already opens the palette outside the acfs palette block; remove that binding first"
+        fi
+        if palette_config_uses_key "$file" "$key"; then
+            palette_die "$file already uses $key; pick another with --key"
+        fi
+    fi
+
+    block="$(palette_block "$key")"
+    if [[ "$dry_run" == true ]]; then
+        printf 'Would write to %s:\n%s\n' "$file" "$block"
+        return 0
+    fi
+    palette_config_write "$file" "$block" "$key"
+    palette_note "bound $key to the command palette in $file"
+    [[ "$reload" == false ]] || palette_reload
+}
+
+palette_unbind() {
+    local reload=true dry_run=false file="$PALETTE_HERDR_CONFIG"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-reload) reload=false; shift ;;
+            --dry-run) dry_run=true; shift ;;
+            -h|--help) palette_usage; return 0 ;;
+            *) palette_die "unknown unbind option: $1" ;;
+        esac
+    done
+    if [[ "$dry_run" == true ]]; then
+        printf 'Would write to %s:\n%s\n' "$file" "$(palette_block "")"
+        return 0
+    fi
+    palette_config_write "$file" "$(palette_block "")" ""
+    palette_note "unbound the command palette's key in $file; acfs update leaves it unbound"
+    [[ "$reload" == false ]] || palette_reload
+}
+
+# ------------------------------------------------------------
 # main
 # ------------------------------------------------------------
 
@@ -569,6 +761,10 @@ palette_interactive() {
 
 palette_main() {
     local mode="interactive" json=false key="" workspace="" workspace_set=false
+    case "${1:-}" in
+        bind) shift; palette_bind "$@"; return 0 ;;
+        unbind) shift; palette_unbind "$@"; return 0 ;;
+    esac
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --workspace) [[ $# -ge 2 ]] || palette_die "--workspace needs a value"; workspace="$2"; workspace_set=true; shift 2 ;;

@@ -10931,6 +10931,10 @@ finalize() {
     try_step "Setting lib scripts permissions" $SUDO chmod 755 "$ACFS_HOME/scripts/lib/"*.sh "$ACFS_HOME/scripts/nightly-update.sh" || return 1
     try_step "Setting generated scripts permissions" $SUDO find "$ACFS_HOME/scripts/generated" -maxdepth 1 -type f -name '*.sh' -exec chmod 755 {} + || return 1
     try_step "Setting scripts ownership" acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/scripts" || return 1
+    # herdr opens the command palette in a popup on F6, as ntm's did in tmux.
+    # bind --auto never takes a key or binding the user's herdr config has;
+    # install starts no herdr server, so there is none to reload.
+    try_step "Binding the command palette to F6 in herdr" run_as_target bash "$ACFS_HOME/scripts/lib/palette.sh" bind --auto --no-reload || true
     try_step "Configuring ACFS nightly update timer" configure_acfs_nightly_timer || return 1
 
     # Install newproj command scripts (used by acfs newproj CLI and TUI wizard)

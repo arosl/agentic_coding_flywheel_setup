@@ -16446,4 +16446,69 @@ write_fake_agent_clis() {
     stack="$(sed -n '/^update_stack() {$/,/^}$/p' "$PROJECT_ROOT/scripts/lib/update.sh")"
     run grep -A4 'update_run_verified_installer_or_existing_on_transient "herdr"' <<< "$stack"
     assert_output --partial "update_herdr_integrations"
+    run grep -A5 'update_run_verified_installer_or_existing_on_transient "herdr"' <<< "$stack"
+    assert_output --partial "update_herdr_palette_key"
+}
+
+# A fake herdr for update_herdr_palette_key: `config check` passes, and
+# `server reload-config` is recorded in ~/herdr-reloads. palette.sh is the
+# deployed copy under ~/.acfs.
+write_fake_herdr_for_palette_key() {
+    mkdir -p "$HOME/.local/bin" "$HOME/.acfs/scripts/lib"
+    cp "$PROJECT_ROOT/scripts/lib/palette.sh" "$HOME/.acfs/scripts/lib/palette.sh"
+    cat > "$HOME/.local/bin/herdr" <<FAKE
+#!/bin/bash
+case "\$1 \$2" in
+  "config check") echo "config: ok" ;;
+  "server reload-config") echo reload >> "$HOME/herdr-reloads" ;;
+  *) exit 2 ;;
+esac
+FAKE
+    chmod +x "$HOME/.local/bin/herdr"
+    unset HERDR_CONFIG_PATH
+}
+
+@test "update_herdr_palette_key binds F6 to the palette popup and reloads herdr" {
+    write_fake_herdr_for_palette_key
+    DRY_RUN=false
+
+    run update_herdr_palette_key
+    assert_success
+    assert_output --partial "herdr palette key"
+    run grep -xF 'key = "f6"' "$HOME/.config/herdr/config.toml"
+    assert_success
+    run grep -xF "command = \"bash '$HOME/.acfs/scripts/lib/palette.sh'\"" "$HOME/.config/herdr/config.toml"
+    assert_success
+    run cat "$HOME/herdr-reloads"
+    assert_output "reload"
+}
+
+@test "update_herdr_palette_key leaves a palette key the user unbound unbound" {
+    write_fake_herdr_for_palette_key
+    mkdir -p "$HOME/.config/herdr"
+    printf '%s\n' 'onboarding = false' '' \
+        '# >>> acfs palette >>> unbound by `acfs palette unbind`; `acfs palette bind` binds it again' \
+        '# <<< acfs palette <<<' > "$HOME/.config/herdr/config.toml"
+    local before
+    before="$(cat "$HOME/.config/herdr/config.toml")"
+    DRY_RUN=false
+
+    run update_herdr_palette_key
+    assert_success
+    assert_equal "$(cat "$HOME/.config/herdr/config.toml")" "$before"
+}
+
+@test "update_herdr_palette_key writes nothing in dry-run, or without herdr" {
+    write_fake_herdr_for_palette_key
+    DRY_RUN=true
+    run update_herdr_palette_key
+    assert_success
+    assert_output --partial "dry-run: would run palette.sh bind --auto"
+    [[ ! -e "$HOME/.config/herdr/config.toml" ]]
+
+    rm -f "$HOME/.local/bin/herdr"
+    DRY_RUN=false
+    run update_herdr_palette_key
+    assert_success
+    [[ ! -e "$HOME/.config/herdr/config.toml" ]]
 }
