@@ -5,11 +5,13 @@
 #
 # Installs made before acfs-x2c9 left /usr/local/bin/lazygit and
 # /usr/local/bin/lazydocker owned by the release tarball's uid. acfs update
-# re-owns exactly those two to root:root 0755 when they aren't right; the
-# doctor warns. Both read the owner and mode through one function, which
+# and the doctor warn about exactly those two when they aren't right, and
+# name the reinstall from the pinned release; neither changes them
+# (acfs-ea2d). Both read the owner and mode through one function, which
 # this test answers for fixture files (no test user can own a file as
-# another uid), and the updater's sudo runner is a stub that logs. Nothing
-# under /usr/local/bin is read or touched.
+# another uid), and the updater's sudo is a stub that logs, so the test
+# proves nothing runs as root. Nothing under /usr/local/bin is read or
+# touched.
 #
 # Run with: bash scripts/tests/run_gate.sh -- bash tests/unit/test_tool_ownership.sh
 # ============================================================
@@ -134,24 +136,26 @@ check "returns 0" has "RC 0"
 check "reports them as root's" has "ITEM ok|Root-owned tool binaries|lazygit and lazydocker, where installed, are root's"
 check "runs no sudo command" sudo_ran_nothing
 
-echo "== update: a binary owned by the tarball's uid is re-owned, the other left alone"
+FIX_LAZYGIT="curl -fsSL https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --force-reinstall --only tools.lazygit"
+FIX_LAZYDOCKER="curl -fsSL https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --force-reinstall --only tools.lazydocker"
+
+echo "== update: a binary owned by the tarball's uid is reported, never re-owned (acfs-ea2d)"
 reset_fixture
 fixture lazygit 1001:755
 fixture lazydocker 0:755
 run_update
 check "returns 0" has "RC 0"
-check "chowns exactly lazygit" sudo_ran "chown root:root $BIN/lazygit"
-check "chmods exactly lazygit" sudo_ran "chmod 0755 $BIN/lazygit"
-check "leaves lazydocker alone" bash -c '[[ "$1" != *lazydocker* ]]' _ "$SUDO_LOG"
-check "reports what it re-owned as a warning, since the contents can't be trusted" has "ITEM warn|Root-owned tool binaries|re-owned root:root 0755: $BIN/lazygit; a binary another uid owned may have been altered, so reinstall it from the pinned release"
+check "runs no sudo command: re-owning would make it look trusted" sudo_ran_nothing
+check "warns about exactly lazygit, naming the reinstall from the pinned release" has "ITEM warn|Root-owned tool binaries|$BIN/lazygit is owned by uid 1001, so another account could have replaced it; reinstall it from the pinned release: $FIX_LAZYGIT"
+check "says nothing of the root-owned lazydocker" lacks "$BIN/lazydocker is"
 check "adds nothing to FAIL_COUNT" has "FAILS 0"
 
-echo "== update: a root-owned binary writable by group or other is re-owned too"
+echo "== update: a root-owned binary writable by group or other is reported too"
 reset_fixture
 fixture lazydocker 0:775
 run_update
-check "chmods lazydocker" sudo_ran "chmod 0755 $BIN/lazydocker"
-check "reports it" has "re-owned root:root 0755: $BIN/lazydocker"
+check "runs no sudo command" sudo_ran_nothing
+check "warns, naming the mode and the lazydocker reinstall" has "ITEM warn|Root-owned tool binaries|$BIN/lazydocker is writable by group or other (mode 775), so another account could have replaced it; reinstall it from the pinned release: $FIX_LAZYDOCKER"
 reset_fixture
 fixture lazygit 0:755
 ln -sf /usr/bin/true "$BIN/lazydocker"
@@ -162,38 +166,31 @@ rm -f "$BIN/lazydocker"
 reset_fixture
 fixture lazydocker 0:4755
 run_update
-check "a setuid root binary with no group or other write bits is left alone" sudo_ran_nothing
+check "a setuid root binary with no group or other write bits passes" has "ITEM ok|Root-owned tool binaries|"
 
-echo "== update: both wrong, both fixed"
+echo "== update: both wrong, both reported"
 reset_fixture
 fixture lazygit 1001:755
 fixture lazydocker 1001:755
 run_update
-check "chowns both" bash -c '[[ "$1" == *"chown root:root $2/lazygit"* && "$1" == *"chown root:root $2/lazydocker"* ]]' _ "$SUDO_LOG" "$BIN"
-check "reports both" has "re-owned root:root 0755: $BIN/lazygit $BIN/lazydocker"
+check "warns about lazygit" has "$BIN/lazygit is owned by uid 1001"
+check "warns about lazydocker" has "$BIN/lazydocker is owned by uid 1001"
+check "runs no sudo command" sudo_ran_nothing
 
-echo "== update: dry-run changes nothing and says what it would do"
+echo "== update: dry-run and no sudo say the same, and run nothing"
 reset_fixture
 fixture lazygit 1001:755
 READ_ONLY=1 run_update
-check "returns 0" has "RC 0"
-check "runs no sudo command" sudo_ran_nothing
-check "names the path it would re-own" has "ITEM skip|Root-owned tool binaries|dry-run: would chown root:root and chmod 0755: $BIN/lazygit"
-
-echo "== update: without sudo it warns with the command, and never fails the update"
-reset_fixture
-fixture lazygit 1001:755
+check "dry-run: returns 0 and runs nothing" bash -c '[[ "$1" == *"RC 0"* && -z "$2" ]]' _ "$OUT" "$SUDO_LOG"
+check "dry-run: the same warning" has "$BIN/lazygit is owned by uid 1001, so another account could have replaced it"
 NO_SUDO=1 run_update
-check "returns 0" has "RC 0"
-check "warns with the command to run" has "ITEM warn|Root-owned tool binaries|no sudo to re-own $BIN/lazygit; run: sudo chown root:root <path> && sudo chmod 0755 <path>, then reinstall it from the pinned release"
-check "runs no command and adds nothing to FAIL_COUNT" bash -c '[[ -z "$1" && "$2" == *"FAILS 0"* ]]' _ "$SUDO_LOG" "$OUT"
+check "no sudo: the same warning, nothing failed" bash -c '[[ "$1" == *"is owned by uid 1001"* && "$1" == *"FAILS 0"* && -z "$2" ]]' _ "$OUT" "$SUDO_LOG"
+
+echo "== update: the fix command follows the repository owner"
 reset_fixture
 fixture lazygit 1001:755
-fixture lazydocker 1001:755
-CHOWN_FAILS="$BIN/lazygit" run_update
-check "one failure: the other is still re-owned" has "re-owned root:root 0755: $BIN/lazydocker"
-check "one failure: the failed one is named" has "could not re-own $BIN/lazygit;"
-check "one failure: counted as one failed command, like any other" has "FAILS 1"
+ACFS_REPO_OWNER=someone run_update
+check "names that owner's install.sh" has "raw.githubusercontent.com/someone/agentic_coding_flywheel_setup/main/install.sh | bash -s -- --yes --force-reinstall --only tools.lazygit"
 
 echo "== update: nothing installed, nothing to do"
 reset_fixture
@@ -216,11 +213,11 @@ check "opens its section" has "SECTION Root-owned tool binaries"
 check "lazygit passes" has "tools.lazygit.owner|pass|root:root, mode 755|"
 check "lazydocker passes" has "tools.lazydocker.owner|pass|root:root, mode 755|"
 
-echo "== doctor: the tarball's uid warns, with the fix and the update's role"
+echo "== doctor: the tarball's uid warns, and the fix is the reinstall"
 reset_fixture
 fixture lazygit 1001:755
 run_doctor
-check "warns that the contents can't be trusted, with the reinstall first" has "tools.lazygit.owner|warn|owned by uid 1001, the release tarball's owner; an account with that uid could have replaced it, so its contents can't be trusted|reinstall it from the pinned release (re-run the installer's tools phase); until then: sudo chown root:root $BIN/lazygit && sudo chmod 0755 $BIN/lazygit, which acfs update does too"
+check "warns that the contents can't be trusted; the fix reinstalls from the pinned release" has "tools.lazygit.owner|warn|owned by uid 1001, the release tarball's owner; an account with that uid could have replaced it, so its contents can't be trusted|$FIX_LAZYGIT"
 check "says nothing about the absent lazydocker" lacks "lazydocker"
 
 echo "== doctor: a symlink is reported, never judged by its target"
@@ -234,7 +231,7 @@ echo "== doctor: group or other write warns"
 reset_fixture
 fixture lazydocker 0:775
 run_doctor
-check "warns on the mode" has "tools.lazydocker.owner|warn|mode 775 lets group or other write it|sudo chmod 0755 $BIN/lazydocker (acfs update does this too)"
+check "warns on the mode; the fix is the reinstall" has "tools.lazydocker.owner|warn|mode 775 lets group or other write it, so its contents can't be trusted|$FIX_LAZYDOCKER"
 
 echo "== doctor: an unreadable owner warns rather than passes"
 reset_fixture

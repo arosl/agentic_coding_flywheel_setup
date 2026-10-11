@@ -7517,16 +7517,23 @@ update_file_owner_mode() {
     stat -c '%u:%a' "$1" 2>/dev/null
 }
 
-# Re-owns exactly those binaries to root:root 0755 when they aren't root's
-# or are writable by group or other (acfs-u0wy). Idempotent: a binary that
-# is already right is left alone. A symlink is someone's own arrangement
-# and is never followed. Re-owning stops further writes, but a binary
-# another uid owned may already have been altered, so the result is a
-# warning that names the reinstall (acfs-ea2d does it from the pinned
-# release). This step never fails the update: without sudo it only warns.
+# The command that reinstalls tool $1 (lazygit, lazydocker) from its pinned
+# release through install.sh's own module path, run by the user.
+update_root_tool_fix_command() {
+    printf 'curl -fsSL https://raw.githubusercontent.com/%s/%s/main/install.sh | bash -s -- --yes --force-reinstall --only tools.%s\n' \
+        "${ACFS_REPO_OWNER:-arosl}" "${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}" "$1"
+}
+
+# Warns about exactly those binaries when they aren't root's or are
+# writable by group or other (acfs-u0wy). It changes nothing (acfs-ea2d):
+# a binary another uid could write may already have been altered, and
+# re-owning it would only make it look trusted to the doctor. So each
+# warning names the reinstall from the pinned release. A symlink is
+# someone's own arrangement and is never followed. This step never fails
+# the update and runs nothing as root.
 update_root_tool_ownership() {
-    local desc="Root-owned tool binaries" path owner_mode uid mode
-    local -a wrong=() fixed=() left=() links=() sudo_cmd=()
+    local desc="Root-owned tool binaries" path owner_mode uid mode reason
+    local -a wrong=() links=()
 
     for path in "${UPDATE_ROOT_TOOL_BINARIES[@]}"; do
         [[ -e "$path" || -L "$path" ]] || continue
@@ -7538,8 +7545,10 @@ update_root_tool_ownership() {
         [[ "$owner_mode" =~ ^[0-9]+:[0-7]+$ ]] || continue
         uid="${owner_mode%%:*}"
         mode="${owner_mode##*:}"
-        if [[ "$uid" != 0 ]] || (( (8#$mode & 8#022) != 0 )); then
-            wrong+=("$path")
+        if [[ "$uid" != 0 ]]; then
+            wrong+=("$path|owned by uid $uid")
+        elif (( (8#$mode & 8#022) != 0 )); then
+            wrong+=("$path|writable by group or other (mode $mode)")
         fi
     done
     ((${#links[@]} == 0)) || log_item "skip" "$desc" "left as they are, not the binaries ACFS installs (symlinks): ${links[*]}"
@@ -7547,29 +7556,12 @@ update_root_tool_ownership() {
         log_item "ok" "$desc" "lazygit and lazydocker, where installed, are root's"
         return 0
     fi
-    if update_is_read_only_mode; then
-        log_item "skip" "$desc" "dry-run: would chown root:root and chmod 0755: ${wrong[*]}"
-        return 0
-    fi
-    if ! update_sudo_prefix sudo_cmd; then
-        log_item "warn" "$desc" "no sudo to re-own ${wrong[*]}; run: sudo chown root:root <path> && sudo chmod 0755 <path>, then reinstall it from the pinned release (a binary another uid owned may have been altered)"
-        return 0
-    fi
-    # run_cmd reports a failed command through FAIL_COUNT and returns 0, so
-    # the count, not the return value, says whether a re-own went through.
-    local before=0
-    for path in "${wrong[@]}"; do
-        before=$FAIL_COUNT
-        run_cmd_sudo "Re-own $path" chown root:root "$path"
-        run_cmd_sudo "Set the mode of $path" chmod 0755 "$path"
-        if ((FAIL_COUNT == before)); then
-            fixed+=("$path")
-        else
-            left+=("$path")
-        fi
+    local entry
+    for entry in "${wrong[@]}"; do
+        path="${entry%%|*}"
+        reason="${entry#*|}"
+        log_item "warn" "$desc" "$path is $reason, so another account could have replaced it; reinstall it from the pinned release: $(update_root_tool_fix_command "${path##*/}")"
     done
-    ((${#fixed[@]} == 0)) || log_item "warn" "$desc" "re-owned root:root 0755: ${fixed[*]}; a binary another uid owned may have been altered, so reinstall it from the pinned release (re-run the installer's tools phase)"
-    ((${#left[@]} == 0)) || log_item "warn" "$desc" "could not re-own ${left[*]}; run: sudo chown root:root <path> && sudo chmod 0755 <path>"
     return 0
 }
 

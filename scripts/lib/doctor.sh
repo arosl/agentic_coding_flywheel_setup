@@ -3899,7 +3899,7 @@ doctor_file_owner_mode() {
 }
 
 check_root_tool_ownership() {
-    local path owner_mode uid mode name
+    local path owner_mode uid mode name fix
     local -a present=()
     for path in "${DOCTOR_ROOT_TOOL_BINARIES[@]}"; do
         [[ -e "$path" ]] && present+=("$path")
@@ -3922,14 +3922,18 @@ check_root_tool_ownership() {
         fi
         uid="${owner_mode%%:*}"
         mode="${owner_mode##*:}"
+        # Re-owning a binary another account could write would only hide
+        # that it may have been altered, so the fix is a reinstall from the
+        # pinned release (acfs-ea2d); acfs update warns the same way.
+        fix="curl -fsSL https://raw.githubusercontent.com/${ACFS_REPO_OWNER:-arosl}/${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}/main/install.sh | bash -s -- --yes --force-reinstall --only tools.$name"
         if [[ "$uid" != 0 ]]; then
             check "tools.$name.owner" "$path is root's" "warn" \
                 "owned by uid $uid, the release tarball's owner; an account with that uid could have replaced it, so its contents can't be trusted" \
-                "reinstall it from the pinned release (re-run the installer's tools phase); until then: sudo chown root:root $path && sudo chmod 0755 $path, which acfs update does too"
+                "$fix"
         elif (( (8#$mode & 8#022) != 0 )); then
             check "tools.$name.owner" "$path is root's" "warn" \
-                "mode $mode lets group or other write it" \
-                "sudo chmod 0755 $path (acfs update does this too)"
+                "mode $mode lets group or other write it, so its contents can't be trusted" \
+                "$fix"
         else
             check "tools.$name.owner" "$path is root's" "pass" "root:root, mode $mode" ""
         fi
