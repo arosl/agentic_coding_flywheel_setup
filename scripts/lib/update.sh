@@ -3530,6 +3530,7 @@ sync_acfs_deployed() {
         "scripts/lib/cheatsheet.sh:scripts/lib/cheatsheet.sh"
         "scripts/lib/dashboard.sh:scripts/lib/dashboard.sh"
         "scripts/lib/herdr_agents.sh:scripts/lib/herdr_agents.sh"
+        "scripts/lib/palette.sh:scripts/lib/palette.sh"
         "scripts/lib/agent_mail_hook.sh:scripts/lib/agent_mail_hook.sh"
         "scripts/lib/agent_quota.sh:scripts/lib/agent_quota.sh"
         "scripts/lib/temp_sweep.sh:scripts/lib/temp_sweep.sh"

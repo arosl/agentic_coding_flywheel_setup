@@ -1319,7 +1319,7 @@ describe("Generated script headers", () => {
     expect(countMatch).not.toBeNull();
     expect(rawEntries.length).toBe(checksums.size);
     expect(Number(countMatch?.[1])).toBe(checksums.size);
-    expect(checksums.size).toBe(127);
+    expect(checksums.size).toBe(128);
 
     const mandatoryPaths = [
       "install.sh",
@@ -1407,6 +1407,7 @@ describe("Generated script headers", () => {
       "scripts/lib/newproj_screens/screen_welcome.sh",
       "scripts/lib/newproj_tui.sh",
       "scripts/lib/notifications.sh",
+      "scripts/lib/palette.sh",
       "scripts/lib/policy_lint.sh",
       "scripts/lib/provenance.sh",
       "scripts/lib/rescue.sh",

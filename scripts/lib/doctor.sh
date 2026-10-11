@@ -1092,6 +1092,8 @@ print_acfs_help() {
     echo "                      --codex-global | --workspace | --root |"
     echo "                      --project DIR | --to PATH"
     echo "    path              Print the canonical guide path"
+    echo "  palette             Pick a command palette prompt, then the agents in herdr"
+    echo "                      to send it to (--list, --show KEY; see --help)"
     echo "  undo [--list|ID]    Revert a change recorded by doctor --fix"
     echo "  update [options]    Update ACFS tools to latest versions"
     echo "  hold <tool> --reason \"why\" [--version X] [--expiry DATE]"
@@ -6276,6 +6278,17 @@ main() {
             fi
 
             echo "Error: newproj.sh not found" >&2
+            return 1
+            ;;
+        palette)
+            shift
+            # The command palette as a menu over herdr (palette.sh).
+            local palette_script=""
+            palette_script="$(_acfs_doctor_find_lib_script "palette.sh" 2>/dev/null || true)"
+            if [[ -n "$palette_script" ]]; then
+                _acfs_doctor_exec_bash_script "$palette_script" "$@"
+            fi
+            echo "Error: palette.sh not found (run acfs-update to sync the runtime)" >&2
             return 1
             ;;
         agents|agent-guide)

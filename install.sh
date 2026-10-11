@@ -3877,6 +3877,7 @@ acfs_load_internal_checksums_data() {
         scripts/lib/newproj_screens/screen_welcome.sh
         scripts/lib/newproj_tui.sh
         scripts/lib/notifications.sh
+        scripts/lib/palette.sh
         scripts/lib/policy_lint.sh
         scripts/lib/provenance.sh
         scripts/lib/rescue.sh
@@ -10859,6 +10860,7 @@ finalize() {
     try_step "Installing notifications.sh" install_asset "scripts/lib/notifications.sh" "$ACFS_HOME/scripts/lib/notifications.sh" || return 1
     try_step "Installing dashboard.sh" install_asset "scripts/lib/dashboard.sh" "$ACFS_HOME/scripts/lib/dashboard.sh" || return 1
     try_step "Installing herdr_agents.sh" install_asset "scripts/lib/herdr_agents.sh" "$ACFS_HOME/scripts/lib/herdr_agents.sh" || return 1
+    try_step "Installing palette.sh" install_asset "scripts/lib/palette.sh" "$ACFS_HOME/scripts/lib/palette.sh" || return 1
     try_step "Installing agent_mail_hook.sh" install_asset "scripts/lib/agent_mail_hook.sh" "$ACFS_HOME/scripts/lib/agent_mail_hook.sh" || return 1
     try_step "Installing agent_quota.sh" install_asset "scripts/lib/agent_quota.sh" "$ACFS_HOME/scripts/lib/agent_quota.sh" || return 1
     try_step "Installing temp_sweep.sh" install_asset "scripts/lib/temp_sweep.sh" "$ACFS_HOME/scripts/lib/temp_sweep.sh" || return 1

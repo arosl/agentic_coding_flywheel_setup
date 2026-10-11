@@ -8,7 +8,7 @@ _acfs_completions() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="newproj new services svc services-setup setup doctor check session sessions update status continue progress info i capacity cap policy-lint policy_lint credential-preflight credential_preflight secrets-preflight secrets_preflight agent-readiness readiness swarm swarm-plan swarm_plan swarm-status swarm_status swarm-simulate swarm_simulate swarm-packet swarm_packet swarm-assign swarm_assign swarm-convergence swarm_convergence swarm-calibration swarm_calibration swarm-inventory swarm_inventory provisioning-packet provider-packet installer-cache coordinate coord cheatsheet cs changelog changes log export-config export dashboard dash support-bundle bundle rescue rescue-advisor undo hold unhold holds agents agent-guide landing-plane land closeout provenance prov notifications notify version help"
+    local commands="newproj new services svc services-setup setup doctor check session sessions update status continue progress info i capacity cap policy-lint policy_lint credential-preflight credential_preflight secrets-preflight secrets_preflight agent-readiness readiness swarm swarm-plan swarm_plan swarm-status swarm_status swarm-simulate swarm_simulate swarm-packet swarm_packet swarm-assign swarm_assign swarm-convergence swarm_convergence swarm-calibration swarm_calibration swarm-inventory swarm_inventory provisioning-packet provider-packet installer-cache coordinate coord cheatsheet cs changelog changes log export-config export dashboard dash support-bundle bundle rescue rescue-advisor undo hold unhold holds agents agent-guide palette landing-plane land closeout provenance prov notifications notify version help"
 
     # Subcommand-specific flags
     local newproj_flags="-i --interactive --no-br --no-claude --no-agents -h --help"
@@ -22,6 +22,7 @@ _acfs_completions() {
     local swarm_subcommands="plan advisor launch status snapshot doctor preflight simulate packet assign convergence calibration inventory hosts host-inventory help"
     local notifications_subcommands="enable disable test status topic set-server -h --help"
     local agents_subcommands="update generate refresh install deploy path spawn send list ls help"
+    local palette_flags="--workspace --file --list --json --show -h --help"
     local swarm_plan_flags="--json --agents --profile --workload --status-file -h --help"
     local swarm_status_flags="--json -h --help"
     local swarm_doctor_flags="--json --status-file -h --help"
@@ -53,7 +54,7 @@ _acfs_completions() {
     local cmd=""
     for ((i=1; i < cword; i++)); do
         case "${words[i]}" in
-            newproj|new|services|svc|services-setup|setup|doctor|check|session|sessions|update|status|continue|progress|info|i|capacity|cap|policy-lint|policy_lint|credential-preflight|credential_preflight|secrets-preflight|secrets_preflight|agent-readiness|agent_readiness|readiness|swarm|swarm-plan|swarm_plan|swarm-status|swarm_status|swarm-simulate|swarm_simulate|swarm-packet|swarm_packet|swarm-assign|swarm_assign|swarm-convergence|swarm_convergence|swarm-calibration|swarm_calibration|swarm-inventory|swarm_inventory|provisioning-packet|provider-packet|installer-cache|coordinate|coord|cheatsheet|cs|changelog|changes|log|export-config|export|dashboard|dash|support-bundle|bundle|rescue|rescue-advisor|undo|hold|unhold|holds|agents|agent-guide|landing-plane|land|closeout|provenance|prov|notifications|notify|version|help)
+            newproj|new|services|svc|services-setup|setup|doctor|check|session|sessions|update|status|continue|progress|info|i|capacity|cap|policy-lint|policy_lint|credential-preflight|credential_preflight|secrets-preflight|secrets_preflight|agent-readiness|agent_readiness|readiness|swarm|swarm-plan|swarm_plan|swarm-status|swarm_status|swarm-simulate|swarm_simulate|swarm-packet|swarm_packet|swarm-assign|swarm_assign|swarm-convergence|swarm_convergence|swarm-calibration|swarm_calibration|swarm-inventory|swarm_inventory|provisioning-packet|provider-packet|installer-cache|coordinate|coord|cheatsheet|cs|changelog|changes|log|export-config|export|dashboard|dash|support-bundle|bundle|rescue|rescue-advisor|undo|hold|unhold|holds|agents|agent-guide|palette|landing-plane|land|closeout|provenance|prov|notifications|notify|version|help)
                 cmd="${words[i]}"
                 break
                 ;;
@@ -215,6 +216,14 @@ _acfs_completions() {
             ;;
         agents|agent-guide)
             mapfile -t COMPREPLY < <(compgen -W "$agents_subcommands" -- "$cur")
+            return
+            ;;
+        palette)
+            if [[ "$prev" == "--file" ]]; then
+                mapfile -t COMPREPLY < <(compgen -f -- "$cur")
+            else
+                mapfile -t COMPREPLY < <(compgen -W "$palette_flags" -- "$cur")
+            fi
             return
             ;;
         changelog|changes|log)

@@ -425,6 +425,16 @@ _acfs() {
                         '-h[Show help message]' \
                         '--help[Show help message]'
                     ;;
+                palette)
+                    _arguments \
+                        '--workspace[herdr workspace whose agents are offered]:workspace id:' \
+                        '--file[Read prompts from this file only]:file:_files' \
+                        '--list[Print the prompts and exit]' \
+                        '--json[With --list, as JSON]' \
+                        '--show[Print one prompt and exit]:key:' \
+                        '-h[Show help message]' \
+                        '--help[Show help message]'
+                    ;;
                 update|continue|progress|services-setup|setup|support-bundle|bundle)
                     _arguments \
                         '-h[Show help message]' \
@@ -503,6 +513,7 @@ _acfs_commands() {
         'unhold:Release a version hold'
         'holds:List version holds'
         'agents:Manage the flywheel agent guide; spawn, send to and list agents in herdr'
+        'palette:Pick a command palette prompt and the agents in herdr to send it to'
         'landing-plane:Read-only end-of-session closeout checklist'
         'land:Closeout checklist (alias for landing-plane)'
         'provenance:Read-only installed-tool provenance ledger'

@@ -195,6 +195,7 @@ INTERNAL_CHECKSUM_REQUIRED_PATHS=(
     scripts/lib/newproj_screens/screen_welcome.sh
     scripts/lib/newproj_tui.sh
     scripts/lib/notifications.sh
+    scripts/lib/palette.sh
     scripts/lib/policy_lint.sh
     scripts/lib/provenance.sh
     scripts/lib/rescue.sh
