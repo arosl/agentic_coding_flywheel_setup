@@ -1,6 +1,6 @@
 """Execute the real launch CLI against native-process contract fixtures.
 
-herdr, am and the planner are fixtures; the launcher and the real
+herdr, Agent Mail's HTTP endpoint (curl) and the planner are fixtures; the launcher and the real
 herdr_agents.sh (acfs agents spawn) run unchanged between them.
 """
 import hashlib
@@ -57,11 +57,23 @@ if name == "swarm_plan.sh":
     if mode == "bad-plan":
         print('sensitive-probe-output'); sys.exit(0)
     print(json.dumps(response)); sys.exit(code)
-if name == "am":
-    assert args[:2] == ["agents", "create"] and opt("--project") == str(root / "repo")
-    names = ["GreenCastle", "AmberFox", "CopperHill"]
-    if mode == "am-fail" and state["next"] > 2: sys.exit(1)
-    print(json.dumps({"name": names[state["next"] - 2]})); sys.exit(0)
+if name == "curl":
+    # Agent Mail's HTTP MCP endpoint, as spawn calls it: ensure_project, then
+    # create_agent_identity for the next name.
+    assert args[-2:] == ["--data-binary", "@-"]
+    call = json.load(sys.stdin)["params"]
+    project = call["arguments"].get("project_key", call["arguments"].get("human_key"))
+    assert project == str(root / "repo")
+    if call["name"] == "ensure_project":
+        text = {"id": 1}
+    else:
+        assert call["name"] == "create_agent_identity"
+        names = ["GreenCastle", "AmberFox", "CopperHill"]
+        if mode == "am-fail" and state["next"] > 2:
+            print(json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "stub: down"}})); sys.exit(0)
+        text = {"name": names[state["next"] - 2], "registration_token": "tok-" + names[state["next"] - 2]}
+    print(json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": json.dumps(text)}], "isError": False}}))
+    sys.exit(0)
 assert name == "herdr"
 if args[:2] == ["status", "server"]:
     print("server:\n  status: " + ("stopped" if mode == "server-down" else "running")); sys.exit(0)
@@ -137,7 +149,7 @@ class LaunchTests(unittest.TestCase):
         shutil.copyfile(HELPER, self.lib / "herdr_agents.sh")
         # The planner is a Bash entrypoint like production; a native fixture
         # implements its contract while all launcher code is copied unchanged.
-        for path in (self.bin / "herdr", self.bin / "am", self.bin / "swarm_plan.sh"):
+        for path in (self.bin / "herdr", self.bin / "curl", self.bin / "swarm_plan.sh"):
             path.write_text(FIXTURE)
             path.chmod(0o755)
         (self.lib / "swarm_plan.sh").write_text('#!/usr/bin/env bash\nexec "' + str(self.bin / "swarm_plan.sh") + '" "$@"\n')
@@ -154,7 +166,9 @@ class LaunchTests(unittest.TestCase):
         (self.bin / "codex").chmod(0o755)
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"], LAUNCH_TEST_ROOT=str(self.root),
                         ACFS_HOME=str(self.root / "no-acfs-home"), CODEX_HOME=str(codex_home),
-                        HERDR_AGENTS_PROC_ROOT=str(proc))
+                        HERDR_AGENTS_PROC_ROOT=str(proc),
+                        # Only the curl fixture answers; a live Agent Mail is never reached.
+                        AGENT_MAIL_URL="http://127.0.0.1:9/acfs-test-stub/mcp/")
         self.env.pop("HERDR_WORKSPACE_ID", None)
         self.receipt = self.root / "intent.json"
         self.agents = [("BlueLake", "codex"), ("RedFox", "claude")]

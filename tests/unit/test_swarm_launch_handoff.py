@@ -46,6 +46,22 @@ elif name == "am":
         print(json.dumps([{"name":x} for x in ["GreenCastle","AmberFox","CopperHill"][:n]])); sys.exit(0)
     count.write_text(str(n + 1))
     print(json.dumps({"name":["GreenCastle","AmberFox","CopperHill"][n]}))
+elif name == "curl":
+    # Agent Mail's HTTP MCP endpoint, as spawn calls it: ensure_project, then
+    # create_agent_identity for the next name, which `am agents list` then lists.
+    assert args[-2:] == ["--data-binary","@-"]
+    call = json.load(sys.stdin)["params"]
+    assert call["arguments"].get("project_key", call["arguments"].get("human_key")) == str(root / "repo")
+    text = {"id":1}
+    if call["name"] == "create_agent_identity":
+        count = root / "am-count"
+        n = int(count.read_text()) if count.exists() else 0
+        count.write_text(str(n + 1))
+        agent = ["GreenCastle","AmberFox","CopperHill"][n]
+        text = {"name":agent,"registration_token":"tok-" + agent}
+    else:
+        assert call["name"] == "ensure_project"
+    print(json.dumps({"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":json.dumps(text)}],"isError":False}}))
 elif name == "herdr":
     sp = root / "herdr-state.json"
     st = json.loads(sp.read_text()) if sp.exists() else {"workspaces":[],"agents":[],"labels":{},"next":2}
@@ -222,7 +238,7 @@ class HandoffTests(unittest.TestCase):
         self.script = self.lib / "swarm_launch.sh"
         shutil.copyfile(LAUNCH, self.script)
         shutil.copyfile(HELPER, self.lib / "herdr_agents.sh")
-        for name in ("ntm","herdr","am","plan","packet"):
+        for name in ("ntm","herdr","am","curl","plan","packet"):
             path = self.bin / name
             path.write_text(PROBE)
             path.chmod(0o755)
@@ -241,7 +257,9 @@ class HandoffTests(unittest.TestCase):
         (self.bin / "codex").chmod(0o755)
         self.env = dict(os.environ, PATH=str(self.bin)+os.pathsep+os.environ["PATH"], HANDOFF_ROOT=str(self.root),
                         ACFS_HOME=str(self.root / "no-acfs-home"), CODEX_HOME=str(codex_home),
-                        HERDR_AGENTS_PROC_ROOT=str(proc))
+                        HERDR_AGENTS_PROC_ROOT=str(proc),
+                        # Only the curl fixture answers; a live Agent Mail is never reached.
+                        AGENT_MAIL_URL="http://127.0.0.1:9/acfs-test-stub/mcp/")
         self.env.pop("HERDR_WORKSPACE_ID", None)
         self.receipt = self.root / "launch.json"
         self.output = self.root / "work bundle"
