@@ -141,7 +141,7 @@ test.describe
           // The count is derived from the manifest at build time (28 today); assert that a number renders.
           await expect(page.getByText(/\d+ default-enabled stack modules/).first()).toBeVisible();
           await expect(
-            page.getByText(/raw\.githubusercontent\.com\/Dicklesworthstone/).first(),
+            page.getByText(/raw\.githubusercontent\.com\/arosl\/agentic_coding_flywheel_setup/).first(),
           ).toBeVisible();
           await expect(page.getByText("Foundation").first()).toBeVisible();
         });
