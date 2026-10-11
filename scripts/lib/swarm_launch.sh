@@ -215,7 +215,8 @@ def preflight(request):
     """Create-only, as ntm's --spawn-safety was: a new workspace for every launch,
     and none may already carry this launch's label."""
     herdr = binary("herdr")
-    binary("am")
+    # spawn names each agent through Agent Mail's HTTP endpoint, over curl.
+    binary("curl")
     binary("jq")
     helper_script()
     code, data = run([herdr, "status", "server"], request["repo"])
