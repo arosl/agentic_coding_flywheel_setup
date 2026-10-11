@@ -669,9 +669,10 @@ modules:
         printf 'Enabled: yes\nTypes: deb\nURIs: https://pkgs.zabbly.com/incus/lts-6.0\nSuites: %s\nComponents: main\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/zabbly.asc\n' \
           "$codename" "$(dpkg --print-architecture)" > "$etc/apt/sources.list.d/zabbly-incus-lts-6.0.sources"
         # The step itself is the shell's stdin, so apt reads /dev/null.
-        apt_opts=(-o DPkg::Lock::Timeout=120 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
-        DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" update </dev/null
-        DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" install -y incus </dev/null
+        # Each apt-get names the lock wait itself, which the apt-lock test checks.
+        apt_opts=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+        DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 "${apt_opts[@]}" update </dev/null
+        DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 "${apt_opts[@]}" install -y incus </dev/null
         if ! missing="$(missing_extensions)"; then
           echo "tools.incus: Zabbly's Incus is installed, but its daemon didn't answer; acfs doctor checks its API extensions" >&2
         elif [[ -n "$missing" ]]; then
