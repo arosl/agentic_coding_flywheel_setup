@@ -291,6 +291,9 @@ unset ACFS_BOOTSTRAP_DIR ACFS_LIB_DIR ACFS_GENERATED_DIR ACFS_ASSETS_DIR
 unset ACFS_CHECKSUMS_YAML ACFS_MANIFEST_YAML CHECKSUMS_FILE
 CHECKSUMS_FILE=""
 export CHECKSUMS_FILE
+# nhm's verified installer runs in a clean environment and installs to
+# ~/.local/bin, so every stack.nhm step must read that default too.
+unset NHM_BIN_DIR
 
 # SCRIPT_DIR is empty when running via curl|bash (stdin; no file on disk).
 # Canonicalize the containing directory without GNU-only `readlink -f`, and

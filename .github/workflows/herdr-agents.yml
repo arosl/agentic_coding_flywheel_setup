@@ -31,6 +31,8 @@ on:
       - 'tests/unit/test_nhm_hooks.sh'
       - 'tests/unit/test_doctor_nhm.sh'
       - 'tests/unit/test_update_nhm.sh'
+      - 'install.sh'
+      - 'tests/unit/test_nhm_bin_dir_unset.sh'
       - 'scripts/lib/agent_quota.sh'
       - 'tests/unit/test_agent_quota.sh'
       - 'tests/unit/test_doctor_agents_route.sh'
@@ -59,6 +61,8 @@ on:
       - 'tests/unit/test_nhm_hooks.sh'
       - 'tests/unit/test_doctor_nhm.sh'
       - 'tests/unit/test_update_nhm.sh'
+      - 'install.sh'
+      - 'tests/unit/test_nhm_bin_dir_unset.sh'
       - 'scripts/lib/agent_quota.sh'
       - 'tests/unit/test_agent_quota.sh'
       - 'tests/unit/test_doctor_agents_route.sh'
@@ -103,6 +107,8 @@ jobs:
         run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_nhm.sh
       - name: acfs update's nhm install and hook lines against stubs
         run: HOME="$(mktemp -d)" bash tests/unit/test_update_nhm.sh
+      - name: install.sh and acfs update ignore a caller's NHM_BIN_DIR
+        run: bash tests/unit/test_nhm_bin_dir_unset.sh
       - name: Quota reader against fixture session logs
         run: HOME="$(mktemp -d)" bash tests/unit/test_agent_quota.sh
       - name: acfs agents routing in doctor.sh against a stub helper

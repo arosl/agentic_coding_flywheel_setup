@@ -9247,6 +9247,10 @@ update_procwatch_stop() {
 
 
 main() {
+    # nhm's verified installer runs in a clean environment and installs to
+    # ~/.local/bin, so every stack.nhm step must read that default too.
+    unset NHM_BIN_DIR
+
     # Ensure PATH includes user tool directories
     ensure_path
 
