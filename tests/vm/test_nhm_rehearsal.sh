@@ -211,10 +211,11 @@ step_E01() {
     echo "$spawn"
     check "E01: --robot-spawn --dry-run returns admission.decision" \
         jq -e '.. | objects | select(has("admission")) | .admission.decision' <<<"$spawn"
-    # The guards as ACFS's install sets them: `dcg install` writes Claude's
-    # PreToolUse hook (here into the sandbox HOME). ACFS installs no dcg
-    # hook for Codex, so the matrix's "dcg active for codex" shows that
-    # gap rather than passing on a hook the harness wrote itself.
+    # The guards as ACFS's install sets them, here in the sandbox HOME:
+    # Claude's through claude_guards; Codex's dcg line and its trust through
+    # nhm_hooks.sh's codex-dcg register and trust codex (acfs-9hkh.81),
+    # which the step file's e01_codex_dcg runs. Without that file, Codex's
+    # check fails: the harness writes no hook of its own.
     claude_guards
     # Codex's dcg line and its trust, as ACFS's install records them
     # (tests/vm/rehearsal/E01_codex.sh, TealHorizon).
