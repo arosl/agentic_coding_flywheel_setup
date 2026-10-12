@@ -3533,6 +3533,7 @@ sync_acfs_deployed() {
         "scripts/lib/palette.sh:scripts/lib/palette.sh"
         "scripts/lib/agent_mail_hook.sh:scripts/lib/agent_mail_hook.sh"
         "scripts/lib/nhm_hooks.sh:scripts/lib/nhm_hooks.sh"
+        "scripts/lib/nhm_maintain_timer.sh:scripts/lib/nhm_maintain_timer.sh"
         "scripts/lib/agent_quota.sh:scripts/lib/agent_quota.sh"
         "scripts/lib/temp_sweep.sh:scripts/lib/temp_sweep.sh"
         "scripts/lib/coexistence.sh:scripts/lib/coexistence.sh"
@@ -7804,6 +7805,44 @@ update_nhm_hooks() {
     return 0
 }
 
+# nhm's maintenance pass (scripts/lib/nhm_maintain_timer.sh, F.29):
+# nhm-maintain.timer runs `nhm maintain --once` every 15 s. It runs after
+# update_nhm, so the nhm that update just installed decides: an nhm
+# without `maintain`, no user manager or a masked timer leaves it as is.
+update_nhm_maintain_timer() {
+    local desc="nhm maintain timer" helper="" target_user="" current_user="" rc=0
+
+    [[ "${UPDATE_STACK:-true}" == "true" ]] || return 0
+    if ! update_binary_exists nhm; then
+        log_item "skip" "$desc" "nhm is not installed"
+        return 0
+    fi
+    helper="$(update_runtime_acfs_home 2>/dev/null || true)/scripts/lib/nhm_maintain_timer.sh"
+    if [[ ! -r "$helper" ]]; then
+        log_item "skip" "$desc" "nhm_maintain_timer.sh is not installed"
+        return 0
+    fi
+    if update_is_read_only_mode; then
+        log_item "skip" "$desc" "dry-run: would install and enable nhm-maintain.timer"
+        return 0
+    fi
+    target_user="$(update_target_user 2>/dev/null || true)"
+    current_user="$(update_current_user 2>/dev/null || true)"
+    if [[ -z "$target_user" || "$current_user" != "$target_user" ]]; then
+        log_item "warn" "$desc" "run as ${target_user:-the target user}: bash $helper install"
+        return 0
+    fi
+    timeout 120 bash "$helper" install </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1 || rc=$?
+    case "$rc" in
+        0) log_item "ok" "$desc" "runs nhm maintain --once every 15 s" ;;
+        3) log_item "skip" "$desc" "this nhm has no 'maintain'; a later nhm update adds the timer" ;;
+        4) log_item "skip" "$desc" "no systemd user manager; nhm's board or 'nhm maintain --loop' runs the pass" ;;
+        5) log_item "skip" "$desc" "nhm-maintain.timer is masked; left as it is" ;;
+        *) log_item "warn" "$desc" "could not enable nhm-maintain.timer; see the update log" ;;
+    esac
+    return 0
+}
+
 update_stack() {
     if [[ "$UPDATE_STACK" != "true" ]]; then
         return 0
@@ -9413,6 +9452,7 @@ main() {
     update_stack
     update_agent_mail_stop_hook
     update_nhm_hooks
+    update_nhm_maintain_timer
     update_root_tool_ownership
     update_root_agents_md
 

@@ -3846,6 +3846,7 @@ acfs_load_internal_checksums_data() {
         scripts/generate-root-agents-md.sh
         scripts/lib/agent_mail_hook.sh
         scripts/lib/nhm_hooks.sh
+        scripts/lib/nhm_maintain_timer.sh
         scripts/lib/agent_quota.sh
         scripts/lib/agy_e2e_harness.sh
         scripts/lib/agy_locked.py
@@ -10922,6 +10923,7 @@ finalize() {
     try_step "Installing palette.sh" install_asset "scripts/lib/palette.sh" "$ACFS_HOME/scripts/lib/palette.sh" || return 1
     try_step "Installing agent_mail_hook.sh" install_asset "scripts/lib/agent_mail_hook.sh" "$ACFS_HOME/scripts/lib/agent_mail_hook.sh" || return 1
     try_step "Installing nhm_hooks.sh" install_asset "scripts/lib/nhm_hooks.sh" "$ACFS_HOME/scripts/lib/nhm_hooks.sh" || return 1
+    try_step "Installing nhm_maintain_timer.sh" install_asset "scripts/lib/nhm_maintain_timer.sh" "$ACFS_HOME/scripts/lib/nhm_maintain_timer.sh" || return 1
     try_step "Installing agent_quota.sh" install_asset "scripts/lib/agent_quota.sh" "$ACFS_HOME/scripts/lib/agent_quota.sh" || return 1
     try_step "Installing temp_sweep.sh" install_asset "scripts/lib/temp_sweep.sh" "$ACFS_HOME/scripts/lib/temp_sweep.sh" || return 1
     try_step "Installing state_layer.sh" install_asset "scripts/lib/state_layer.sh" "$ACFS_HOME/scripts/lib/state_layer.sh" || return 1
@@ -11094,6 +11096,20 @@ finalize() {
     fi
 
     acfs_install_nhm_hook_lines
+
+    # nhm's maintenance pass (stack.nhm, F.29): nhm-maintain.timer runs
+    # `nhm maintain --once` every 15 s. The helper changes nothing for an
+    # nhm without `maintain` or a masked timer; doctor reports the state.
+    local nhm_timer="$ACFS_HOME/scripts/lib/nhm_maintain_timer.sh"
+    if acfs_legacy_module_selected "stack.nhm" && [[ -f "$nhm_timer" ]]; then
+        local nhm_timer_rc=0
+        run_as_target timeout 120 bash "$nhm_timer" install || nhm_timer_rc=$?
+        case "$nhm_timer_rc" in
+            0) log_detail "nhm-maintain.timer runs nhm maintain --once every 15 s" ;;
+            3|4|5) log_detail "nhm-maintain.timer not enabled (see above); nhm's board or 'nhm maintain --loop' runs the pass" ;;
+            *) log_warn "could not enable nhm-maintain.timer (optional); acfs doctor shows it" ;;
+        esac
+    fi
 
     # Configure workspace trust for coding agents (fixes #159)
     # In vibe/yolo mode, Claude Code requires explicit workspace trust to avoid

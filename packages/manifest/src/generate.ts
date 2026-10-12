@@ -620,6 +620,7 @@ const INTERNAL_SCRIPTS_TO_CHECKSUM = [
   "scripts/generate-root-agents-md.sh",
   "scripts/lib/agent_mail_hook.sh",
   "scripts/lib/nhm_hooks.sh",
+  "scripts/lib/nhm_maintain_timer.sh",
   "scripts/lib/agent_quota.sh",
   "scripts/lib/agy_e2e_harness.sh",
   "scripts/lib/agy_locked.py",

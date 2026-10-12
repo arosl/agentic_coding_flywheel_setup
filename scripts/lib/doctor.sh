@@ -3187,6 +3187,37 @@ _acfs_doctor_nhm_codex_trust() {
     fi
 }
 
+# nhm's maintenance pass (stack.nhm, plan-v8 F.29): ACFS runs `nhm
+# maintain --once` from nhm-maintain.timer (scripts/lib/nhm_maintain_timer.sh).
+# Without the timer only nhm's board or `nhm maintain --loop` runs it.
+# Read-only: the helper's status asks systemd and changes nothing.
+check_nhm_maintain() {
+    local label="nhm maintenance pass" home="" helper="" rc=0
+    local others="nhm's board or 'nhm maintain --loop' must run the pass"
+
+    if ! doctor_binary_exists "nhm"; then
+        check "stack.nhm.maintain" "$label" "skip" "nhm not installed"
+        return
+    fi
+    home="$(doctor_runtime_home)"
+    helper="$home/.acfs/scripts/lib/nhm_maintain_timer.sh"
+    if [[ ! -r "$helper" ]]; then
+        check "stack.nhm.maintain" "$label" "warn" "nhm_maintain_timer.sh is not installed; $others" "Run: acfs update"
+        return
+    fi
+    HOME="$home" timeout 30 bash "$helper" status </dev/null >/dev/null 2>&1 || rc=$?
+    case "$rc" in
+        0) check "stack.nhm.maintain" "$label" "pass" "nhm-maintain.timer runs nhm maintain --once every 15 s" ;;
+        3) check "stack.nhm.maintain" "$label" "skip" "this nhm has no 'maintain'; the next nhm update adds the timer" ;;
+        4) check "stack.nhm.maintain" "$label" "skip" "no systemd user manager; $others" ;;
+        5) check "stack.nhm.maintain" "$label" "skip" "nhm-maintain.timer is masked (opt-out); $others" ;;
+        2) check "stack.nhm.maintain" "$label" "warn" "the timer's unit exists, but the user manager does not answer; $others" \
+            "loginctl enable-linger \$(whoami) && systemctl --user enable --now nhm-maintain.timer" ;;
+        *) check "stack.nhm.maintain" "$label" "warn" "nhm-maintain.timer is not enabled; $others" \
+            "Run: bash $helper install (or acfs update)" ;;
+    esac
+}
+
 _acfs_doctor_join_by() {
     local separator="$1"
     local joined="${2:-}"
@@ -3726,6 +3757,7 @@ check_stack() {
     # Agent Mail Stop hook for Claude Code and Codex
     check_agent_mail_stop_hook
     check_nhm
+    check_nhm_maintain
 
     # Check acfs-nightly-update timer (systemd user unit)
     # Gracefully handle missing systemd user session (curl|bash installs as
