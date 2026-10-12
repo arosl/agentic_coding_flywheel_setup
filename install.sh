@@ -11045,12 +11045,21 @@ finalize() {
     # only. Codex runs a hook only once it is trusted: ACFS records that
     # trust for its own entries through Codex's app-server (F.25), and
     # names /hooks in Codex when it cannot.
-    # The lines run ~/.local/bin/nhm-hook: when nhm's install failed, no
-    # line is added, so no turn hits a hook that points at nothing.
+    # The lines run nhm-hook from ${NHM_BIN_DIR:-~/.local/bin}, read in the
+    # target user's context as stack.nhm's verify reads it. When nhm-hook
+    # is not there, no line is added and the lines an earlier run added are
+    # removed, so no turn hits a hook that points at nothing.
     local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh"
-    if acfs_legacy_module_selected "stack.nhm" && [[ -f "$nhm_hooks" ]] \
-            && [[ ! -x "$TARGET_HOME/.local/bin/nhm-hook" ]]; then
-        log_warn "nhm-hook is not installed; the nhm hook lines are not registered"
+    # shellcheck disable=SC2016 # expanded by the target user's bash
+    if [[ -f "$nhm_hooks" ]] \
+            && ! run_as_target bash -c 'test -x "${NHM_BIN_DIR:-$HOME/.local/bin}/nhm-hook"'; then
+        if acfs_legacy_module_selected "stack.nhm"; then
+            log_warn "nhm-hook is not installed; the nhm hook lines are not registered"
+        fi
+        run_as_target bash "$nhm_hooks" unregister claude "$TARGET_HOME/.claude/settings.json" || \
+            log_warn "could not remove the nhm hook lines from Claude Code's settings"
+        run_as_target bash "$nhm_hooks" unregister codex "$TARGET_HOME/.codex/hooks.json" || \
+            log_warn "could not remove the nhm hook lines from Codex's hooks.json"
     elif acfs_legacy_module_selected "stack.nhm" && [[ -f "$nhm_hooks" ]]; then
         if binary_installed "claude"; then
             try_step "Registering the nhm hook lines for Claude Code" \
