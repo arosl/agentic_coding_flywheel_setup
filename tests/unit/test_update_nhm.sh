@@ -273,10 +273,6 @@ check "dcg: another user only warns with the command" has "ITEM warn|dcg guard f
 DCG=1 READ_ONLY=1 run_update update_codex_dcg_hook codex
 check "dcg: read-only mode writes nothing" has "ITEM skip|dcg guard for Codex|dry-run"
 
-echo
-echo "Tests passed: $TESTS_PASSED"
-echo "Tests failed: $TESTS_FAILED"
-[[ "$TESTS_FAILED" -eq 0 ]]
 # ------------------------------------------------------------
 # update_nhm_learning_profile: nhm's [learning] implicit_outcome
 # (acfs-9hkh.88)
@@ -304,3 +300,7 @@ READ_ONLY=1 run_update update_nhm_learning_profile nhm
 check "learning: read-only mode writes nothing" has "ITEM skip|nhm learning profile|dry-run"
 check "learning: and no config appears" test ! -e "$FIX_HOME/.config/nhm/config.toml"
 
+echo
+echo "Tests passed: $TESTS_PASSED"
+echo "Tests failed: $TESTS_FAILED"
+[[ "$TESTS_FAILED" -eq 0 ]]

@@ -7816,8 +7816,6 @@ update_nhm_hooks() {
     return 0
 }
 
-# dcg's Bash guard for Codex (stack.dcg; nhm_hooks.sh codex-dcg,
-# acfs-9hkh.81): `dcg install` configures Claude Code only, and dcg's own
 # nhm's learning profile (nhm_hooks.sh learning-profile, acfs-9hkh.88):
 # [learning] implicit_outcome = "closed-assigned" in nhm's config, so
 # `nhm feedback outcomes` records cm outcomes for closed beads (plan-v8
@@ -7861,6 +7859,8 @@ update_nhm_learning_profile() {
     return 0
 }
 
+# dcg's Bash guard for Codex (stack.dcg; nhm_hooks.sh codex-dcg,
+# acfs-9hkh.81): `dcg install` configures Claude Code only, and dcg's own
 # installer writes Codex's line only when it finds codex. Register that
 # exact line when dcg and codex are both installed, and record its trust
 # (F.25); remove ACFS's line only when dcg is gone.
@@ -9585,9 +9585,9 @@ main() {
     update_stack
     update_agent_mail_stop_hook
     update_nhm_hooks
+    update_nhm_learning_profile
     update_codex_dcg_hook
     update_nhm_maintain_timer
-    update_nhm_learning_profile
     update_root_tool_ownership
     update_root_agents_md
 
