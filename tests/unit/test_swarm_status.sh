@@ -451,6 +451,59 @@ esac'
     pass "wall_clock_stepping_back_keeps_durations"
 }
 
+# acfs-9hkh.27: swarm_status.sh beside a fake herdr_agents.sh whose owner
+# probe answers $2, and a fake nhm that prints nhm's --robot-status fixture
+# (or fails with $3 = fail). Prints the JSON.
+run_with_owner() {
+    local name="$1" owner="$2" nhm_mode="${3:-ok}" stub_dir lib
+    stub_dir="$(make_stub_dir)"
+    write_herdr_stub "$stub_dir" 1 2
+    lib="$stub_dir/lib"
+    mkdir -p "$lib"
+    cp "$SWARM_STATUS_SH" "$lib/swarm_status.sh"
+    write_executable "$lib/herdr_agents.sh" "#!/usr/bin/env bash
+[[ \"\$1\" == owner ]] || exit 2
+echo \"owner: $owner (fake)\" >&2
+echo $owner"
+    if [[ "$nhm_mode" == fail ]]; then
+        write_executable "$stub_dir/nhm" '#!/usr/bin/env bash
+exit 1'
+    else
+        write_executable "$stub_dir/nhm" "#!/usr/bin/env bash
+[[ \"\$1\" == --robot-status ]] || exit 2
+cat '$REPO_ROOT/tests/fixtures/nhm/robot_status.json'"
+    fi
+    run_and_capture "$name" env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=2 bash "$lib/swarm_status.sh" --json
+}
+
+test_nhm_backend_adds_the_nhm_probe() {
+    local output
+    output="$(run_with_owner nhm_backend nhm)"
+    write_artifact "nhm_backend.json" "$output"
+    jq -e '.probes.nhm == {status: "pass", available: true, robot_status_ok: true, session_count: 1,
+             agent_count: 2, duration_ms: .probes.nhm.duration_ms, warnings: []}
+           and .probes.herdr.available == true' <<<"$output" >/dev/null \
+        || { fail "nhm_backend_adds_the_nhm_probe" "$output"; return 1; }
+    pass "nhm_backend_adds_the_nhm_probe"
+}
+
+test_bash_backend_has_no_nhm_probe() {
+    local output
+    output="$(run_with_owner bash_backend acfs-bash)"
+    jq -e '(.probes | has("nhm") | not) and .probes.herdr.available == true' <<<"$output" >/dev/null \
+        || { fail "bash_backend_has_no_nhm_probe" "$output"; return 1; }
+    pass "bash_backend_has_no_nhm_probe"
+}
+
+test_nhm_backend_failure_is_a_warning() {
+    local output
+    output="$(run_with_owner nhm_backend_fail nhm fail)"
+    jq -e '.probes.nhm.status == "warn" and .probes.nhm.robot_status_ok == false
+           and (.warnings | index("nhm --robot-status failed or timed out")) != null and .status != "pass"' \
+        <<<"$output" >/dev/null || { fail "nhm_backend_failure_is_a_warning" "$output"; return 1; }
+    pass "nhm_backend_failure_is_a_warning"
+}
+
 run_test() {
     local name="$1"
     if "$name"; then
@@ -474,6 +527,9 @@ main() {
     run_test test_rch_queue_timeout_becomes_structured_warning
     run_test test_human_output
     run_test test_wall_clock_stepping_back_keeps_durations
+    run_test test_nhm_backend_adds_the_nhm_probe
+    run_test test_bash_backend_has_no_nhm_probe
+    run_test test_nhm_backend_failure_is_a_warning
 
     echo "Results: $TESTS_PASSED passed, $TESTS_FAILED failed"
     echo "Artifacts: $ARTIFACT_DIR"

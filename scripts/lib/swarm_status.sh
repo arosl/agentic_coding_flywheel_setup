@@ -24,6 +24,18 @@ HOST_MEM_TOTAL_KB=0
 HOST_MEM_AVAILABLE_KB=0
 HOST_DISK_AVAILABLE_KB=0
 
+# Who drives agents here (acfs-9hkh.27): herdr_agents.sh owner says nhm only
+# when nhm is installed, enrolled for this herdr server and owns it. Then the
+# nhm probe (upstream's ntm probe, with nhm) runs beside the herdr one.
+SWARM_STATUS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SWARM_STATUS_BACKEND="acfs-bash"
+NHM_STATUS="warn"
+NHM_WARNINGS=()
+NHM_DURATION_MS=0
+NHM_AVAILABLE=false
+NHM_ROBOT_STATUS_OK=false
+NHM_SESSION_COUNT="null"
+NHM_AGENT_COUNT="null"
 HERDR_STATUS="warn"
 HERDR_WARNINGS=()
 HERDR_DURATION_MS=0
@@ -390,6 +402,60 @@ swarm_status_collect_herdr() {
     HERDR_DURATION_MS="$(swarm_status_duration_ms "$start_ms")"
 }
 
+# Fail-safe: anything but a clear "nhm" from the owner probe is acfs-bash.
+swarm_status_detect_backend() {
+    local helper="$SWARM_STATUS_SCRIPT_DIR/herdr_agents.sh"
+    local output=""
+    [[ -f "$helper" && ! -L "$helper" ]] || return 0
+    # The runner merges stderr (the probe's reason) into stdout; the answer
+    # is the last line.
+    output="$(swarm_status_run_with_timeout "$SWARM_STATUS_TIMEOUT" bash "$helper" owner)" || return 0
+    [[ "${output##*$'\n'}" == nhm ]] && SWARM_STATUS_BACKEND="nhm"
+    return 0
+}
+
+# Upstream's ntm probe, with nhm in ntm's place: --robot-status answers, and
+# its sessions (an array of StatusSessionHeader) give the counts that
+# upstream read from tmux.
+swarm_status_collect_nhm() {
+    local start_ms=""
+    start_ms="$(swarm_status_now_ms)"
+
+    local nhm_bin=""
+    local jq_bin=""
+    local output=""
+    local count=""
+    local exit_status=0
+
+    nhm_bin="$(swarm_status_binary_path nhm 2>/dev/null || true)"
+    if [[ -z "$nhm_bin" && -x "${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" ]]; then
+        nhm_bin="${NHM_BIN_DIR:-$HOME/.local/bin}/nhm"
+    fi
+    if [[ -n "$nhm_bin" ]]; then
+        NHM_AVAILABLE=true
+        output="$(swarm_status_run_with_timeout "$SWARM_STATUS_TIMEOUT" "$nhm_bin" --robot-status)" || exit_status=$?
+        if [[ $exit_status -eq 0 && -n "$output" ]]; then
+            NHM_ROBOT_STATUS_OK=true
+            jq_bin="$(swarm_status_binary_path jq 2>/dev/null || true)"
+            if [[ -n "$jq_bin" ]]; then
+                count="$(printf '%s' "$output" | "$jq_bin" -r 'if (.sessions | type) == "array" then .sessions | length else empty end' 2>/dev/null || true)"
+                [[ "$count" =~ ^[0-9]+$ ]] && NHM_SESSION_COUNT="$count"
+                count="$(printf '%s' "$output" | "$jq_bin" -r 'if (.sessions | type) == "array" then [.sessions[].agent_count | numbers] | add // 0 else empty end' 2>/dev/null || true)"
+                [[ "$count" =~ ^[0-9]+$ ]] && NHM_AGENT_COUNT="$count"
+            fi
+        else
+            NHM_WARNINGS+=("nhm --robot-status failed or timed out")
+        fi
+    else
+        NHM_WARNINGS+=("nhm not found in PATH")
+    fi
+
+    if [[ "$NHM_AVAILABLE" == true && "$NHM_ROBOT_STATUS_OK" == true ]]; then
+        NHM_STATUS="pass"
+    fi
+    NHM_DURATION_MS="$(swarm_status_duration_ms "$start_ms")"
+}
+
 swarm_status_collect_agent_mail() {
     local start_ms=""
     start_ms="$(swarm_status_now_ms)"
@@ -571,13 +637,15 @@ swarm_status_collect_rch() {
 
 swarm_status_collect_all() {
     swarm_status_collect_host
+    swarm_status_detect_backend
     swarm_status_collect_herdr
+    [[ "$SWARM_STATUS_BACKEND" != nhm ]] || swarm_status_collect_nhm
     swarm_status_collect_agent_mail
     swarm_status_collect_beads
     swarm_status_collect_bv
     swarm_status_collect_rch
 
-    SWARM_STATUS_WARNINGS=("${HOST_WARNINGS[@]}" "${HERDR_WARNINGS[@]}" "${AGENT_MAIL_WARNINGS[@]}" "${BEADS_WARNINGS[@]}" "${BV_WARNINGS[@]}" "${RCH_WARNINGS[@]}")
+    SWARM_STATUS_WARNINGS=("${HOST_WARNINGS[@]}" "${HERDR_WARNINGS[@]}" "${NHM_WARNINGS[@]}" "${AGENT_MAIL_WARNINGS[@]}" "${BEADS_WARNINGS[@]}" "${BV_WARNINGS[@]}" "${RCH_WARNINGS[@]}")
 
     if [[ "$HOST_STATUS" == "fail" || "$HERDR_STATUS" == "fail" || "$AGENT_MAIL_STATUS" == "fail" || "$BEADS_STATUS" == "fail" || "$BV_STATUS" == "fail" || "$RCH_STATUS" == "fail" ]]; then
         SWARM_STATUS_OVERALL="fail"
@@ -604,7 +672,21 @@ swarm_status_emit_json() {
     bv_warnings_json="$(swarm_status_json_array "$jq_bin" "${BV_WARNINGS[@]}")"
     rch_warnings_json="$(swarm_status_json_array "$jq_bin" "${RCH_WARNINGS[@]}")"
 
+    # The nhm probe appears only when nhm drives agents here (acfs-9hkh.27).
+    local nhm_json="null"
+    if [[ "$SWARM_STATUS_BACKEND" == nhm ]]; then
+        nhm_json="$("$jq_bin" -n --arg status "$NHM_STATUS" \
+            --argjson available "$NHM_AVAILABLE" --argjson robot_status_ok "$NHM_ROBOT_STATUS_OK" \
+            --argjson session_count "$NHM_SESSION_COUNT" --argjson agent_count "$NHM_AGENT_COUNT" \
+            --argjson duration_ms "$(swarm_status_json_number "$NHM_DURATION_MS")" \
+            --argjson warnings "$(swarm_status_json_array "$jq_bin" "${NHM_WARNINGS[@]}")" \
+            '{status: $status, available: $available, robot_status_ok: $robot_status_ok,
+              session_count: $session_count, agent_count: $agent_count,
+              duration_ms: $duration_ms, warnings: $warnings}')"
+    fi
+
     "$jq_bin" -n \
+        --argjson nhm "$nhm_json" \
         --arg generated_at "$SWARM_STATUS_GENERATED_AT" \
         --arg status "$SWARM_STATUS_OVERALL" \
         --argjson warnings "$warnings_json" \
@@ -725,7 +807,7 @@ swarm_status_emit_json() {
                     warnings: $rch_warnings
                 }
             }
-        }'
+        } | if $nhm == null then . else .probes.nhm = $nhm end'
 }
 
 swarm_status_emit_human() {
@@ -733,6 +815,9 @@ swarm_status_emit_human() {
     echo "Status: $SWARM_STATUS_OVERALL"
     echo "Host: ${HOST_CPU_COUNT} CPU, ${HOST_MEM_AVAILABLE_KB}/${HOST_MEM_TOTAL_KB} KiB memory available"
     echo "herdr: $HERDR_STATUS (${HERDR_WORKSPACE_COUNT} workspaces, ${HERDR_AGENT_COUNT} agents)"
+    if [[ "$SWARM_STATUS_BACKEND" == nhm ]]; then
+        echo "nhm: $NHM_STATUS (${NHM_SESSION_COUNT} sessions, ${NHM_AGENT_COUNT} agents)"
+    fi
     echo "Agent Mail: $AGENT_MAIL_STATUS"
     echo "Beads: $BEADS_STATUS (ready=${BEADS_READY_COUNT}, in_progress=${BEADS_IN_PROGRESS_COUNT}, open=${BEADS_OPEN_COUNT})"
     echo "bv: $BV_STATUS"
