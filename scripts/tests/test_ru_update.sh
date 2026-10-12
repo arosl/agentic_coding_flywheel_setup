@@ -91,7 +91,8 @@ test_update_helper_has_env_support() {
 # Test 5: RU update preserves non-interactive env
 test_ru_update_uses_non_interactive_env() {
     local update_sh="$REPO_ROOT/scripts/lib/update.sh"
-    command grep -q 'update_run_verified_installer_with_env ru "RU_NON_INTERACTIVE=1"' "$update_sh" 2>/dev/null
+    command grep -A1 'update_run_verified_installer_with_env ru' "$update_sh" 2>/dev/null \
+        | command grep -q "'RU_NON_INTERACTIVE=1"
 }
 
 # Test 6: ru self-update mechanism (if ru is installed)

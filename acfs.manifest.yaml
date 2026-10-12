@@ -3010,8 +3010,12 @@ modules:
     verified_installer:
       tool: ru
       runner: bash
-      url: "https://raw.githubusercontent.com/Dicklesworthstone/repo_updater/main/install.sh"
-      env: ["RU_NON_INTERACTIVE=1"]
+      url: "https://raw.githubusercontent.com/arosl/repo_updater/v1.5.0-nhm.1/install.sh"
+      # The fork's tagged installer (acfs-9hkh.64) installs the fork's ru,
+      # whose ntm driver runs nhm. RU_VERSION names the tag's release, so
+      # "latest" never picks the binary; a self-refresh would fetch main's
+      # installer in place of the pinned one.
+      env: ["RU_NON_INTERACTIVE=1", "RU_VERSION=1.5.0-nhm.1", "RU_INSTALLER_NO_SELF_REFRESH=1"]
     install: []
     verify:
       - ru --version

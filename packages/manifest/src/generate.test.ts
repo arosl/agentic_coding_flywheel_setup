@@ -592,13 +592,13 @@ describe("Generated verified installer args", () => {
     expect(stackContent).not.toContain('tmux new-session -d -s "$tmux_session"');
   });
 
-  test("stack.ru passes RU_NON_INTERACTIVE via env in generated installer", () => {
+  test("stack.ru passes RU_NON_INTERACTIVE, the pinned RU_VERSION and no self-refresh via env in generated installer", () => {
     const stackPath = resolve(GENERATED_DIR, "install_stack.sh");
     expect(existsSync(stackPath)).toBe(true);
     const stackContent = readFileSync(stackPath, "utf-8");
 
     expect(stackContent).toContain(
-      `run_as_target_runner 'env' 'RU_NON_INTERACTIVE=1' 'bash' "$verified_installer_file"`,
+      `run_as_target_runner 'env' 'RU_NON_INTERACTIVE=1' 'RU_VERSION=1.5.0-nhm.1' 'RU_INSTALLER_NO_SELF_REFRESH=1' 'bash' "$verified_installer_file"`,
     );
     expect(stackContent).not.toContain(
       'verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner \'env\' \'RU_NON_INTERACTIVE=1\'',

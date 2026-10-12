@@ -8045,8 +8045,11 @@ update_stack() {
     # An operator-audited/pinned binary is preserved unless ACFS_FORCE_SLB_UPDATE=1.
     run_cmd "SLB" update_run_slb_verified_install
 
-    # RU (Repo Updater) - always install/update
-    run_cmd "RU" update_run_verified_installer_with_env ru "RU_NON_INTERACTIVE=1"
+    # RU (Repo Updater) - always install/update. The fork's tag that
+    # KNOWN_INSTALLERS[ru] pins (acfs-9hkh.64): RU_VERSION names its release,
+    # and no self-refresh replaces the pinned installer with main's.
+    run_cmd "RU" update_run_verified_installer_with_env ru \
+        $'RU_NON_INTERACTIVE=1\nRU_VERSION=1.5.0-nhm.1\nRU_INSTALLER_NO_SELF_REFRESH=1'
 
     # DCG (Destructive Command Guard) - always install/update, but do not
     # report a transient installer/network failure when an existing dcg remains

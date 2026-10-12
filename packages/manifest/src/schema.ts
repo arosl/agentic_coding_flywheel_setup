@@ -52,7 +52,16 @@ function isAllowedVerifiedInstallerEnv(tool: string, entry: string): boolean {
     );
   }
   if (tool === "grok") return entry === "GROK_BIN_DIR=$TARGET_HOME/.local/bin";
-  if (tool === "ru" || tool === "s2p") return entry === "RU_NON_INTERACTIVE=1";
+  if (tool === "ru") {
+    // The fork's tagged installer (acfs-9hkh.64): RU_VERSION pins the
+    // release, and no self-refresh fetches main's installer instead.
+    return (
+      entry === "RU_NON_INTERACTIVE=1" ||
+      entry === "RU_INSTALLER_NO_SELF_REFRESH=1" ||
+      /^RU_VERSION=[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$/.test(entry)
+    );
+  }
+  if (tool === "s2p") return entry === "RU_NON_INTERACTIVE=1";
   if (tool === "cass") {
     return entry === "TMPDIR=$TARGET_HOME/.cache/acfs/installer-tmp/cass.XXXXXX";
   }
