@@ -10746,17 +10746,6 @@ acfs_merge_existing_json_config_as_target() {
     return 0
 }
 
-# nhm's hook lines (stack.nhm): PostToolUse on Agent Mail's registration
-# tools and SessionStart (Codex: also PostCompact) run nhm-hook, which names
-# panes and keeps names through compaction. Idempotent; appends only. Codex
-# runs a hook only once it is trusted: ACFS records that trust for its own
-# entries through Codex's app-server (F.25), and names /hooks in Codex when
-# it cannot.
-# The lines run nhm-hook from ${NHM_BIN_DIR:-~/.local/bin}, read in the
-# target user's context as stack.nhm's verify reads it. When nhm-hook is not
-# there, no line is added and the lines an earlier run added are removed,
-# so no turn hits a hook that points at nothing. When the check itself
-# cannot run as the target user, nothing changes.
 # nhm's learning profile (stack.nhm; nhm_hooks.sh learning-profile,
 # acfs-9hkh.88): [learning] implicit_outcome = "closed-assigned" in nhm's
 # config, so `nhm feedback outcomes` records cm outcomes for closed beads
@@ -10803,6 +10792,17 @@ acfs_install_codex_dcg_hook() {
     fi
 }
 
+# nhm's hook lines (stack.nhm): PostToolUse on Agent Mail's registration
+# tools and SessionStart (Codex: also PostCompact) run nhm-hook, which names
+# panes and keeps names through compaction. Idempotent; appends only. Codex
+# runs a hook only once it is trusted: ACFS records that trust for its own
+# entries through Codex's app-server (F.25), and names /hooks in Codex when
+# it cannot.
+# The lines run nhm-hook from ${NHM_BIN_DIR:-~/.local/bin}, read in the
+# target user's context as stack.nhm's verify reads it. When nhm-hook is not
+# there, no line is added and the lines an earlier run added are removed,
+# so no turn hits a hook that points at nothing. When the check itself
+# cannot run as the target user, nothing changes.
 acfs_install_nhm_hook_lines() {
     local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh" hook_rc=0
     [[ -f "$nhm_hooks" ]] || return 0

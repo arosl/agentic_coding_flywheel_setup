@@ -540,9 +540,31 @@ cp "$LP/bad.toml" "$LP/bad.before"
 check "learning-profile set: a file that is not TOML fails and stays as it is" \
     bash -c '! bash "$1" learning-profile set "$2" 2>/dev/null && cmp -s "$2" "$3"' _ "$HOOKS" "$LP/bad.toml" "$LP/bad.before"
 check "learning-profile check: and is not set (1)" bash -c 'bash "$1" learning-profile check "$2" 2>/dev/null; [[ $? -eq 1 ]]' _ "$HOOKS" "$LP/bad.toml"
+# The review of a21aaef2 (acfs-9hkh.90): line ends, trailing blank lines,
+# a header-like line inside a string, and the file's mode stay right.
+printf '[reap]\r\nkeep = []\r\n' >"$LP/crlf.toml"
+lp set "$LP/crlf.toml" 2>/dev/null
+# every line of FILE ends in CR LF
+all_crlf() { python3 -I -c 'import sys; b = open(sys.argv[1], "rb").read(); sys.exit(0 if b.count(b"\n") > 2 and b.count(b"\n") == b.count(b"\r\n") else 1)' "$1"; }
+check "learning-profile set: a CRLF file stays CRLF throughout" all_crlf "$LP/crlf.toml"
+check "learning-profile set: and holds the value" test "$(toml_value "$LP/crlf.toml")" = closed-assigned
+printf '[learning]\nmax_items = 3\n\n\n' >"$LP/blank.toml"
+lp set "$LP/blank.toml" 2>/dev/null
+check "learning-profile set: trailing blank lines stay" \
+    python3 -I -c 'import sys; sys.exit(0 if open(sys.argv[1], "rb").read().endswith(b"max_items = 3\n\n\n") else 1)' "$LP/blank.toml"
+printf 'motd = """\n[learning]\nnot a table\n"""\n\n[learning]\nmax_items = 3\n' >"$LP/string.toml"
+lp set "$LP/string.toml" 2>/dev/null
+check "learning-profile set: a [learning] line inside a string is skipped for the real table" \
+    bash -c '[[ "$(python3 -I -c "import sys, tomllib; d = tomllib.load(open(sys.argv[1], \"rb\")); print(d[\"learning\"][\"implicit_outcome\"], \"implicit\" in d[\"motd\"])" "$1")" == "closed-assigned False" ]]' _ "$LP/string.toml"
+printf '[reap]\nkeep = []\n' >"$LP/mode.toml"
+chmod 640 "$LP/mode.toml"
+lp set "$LP/mode.toml" 2>/dev/null
+check "learning-profile set: the file keeps its mode" test "$(stat -c %a "$LP/mode.toml")" = 640
+check "learning-profile set: a new file is 0600" test "$(stat -c %a "$LP/new/config.toml")" = 600
+
 check "learning-profile: the default file is XDG_CONFIG_HOME's" \
     bash -c 'XDG_CONFIG_HOME="$2/xdg" bash "$1" learning-profile set 2>/dev/null && [[ -f "$2/xdg/nhm/config.toml" ]]' _ "$HOOKS" "$LP"
-unset -f lp toml_value
+unset -f lp toml_value all_crlf
 
 echo
 echo "nhm_hooks: $PASS passed, $FAIL failed"

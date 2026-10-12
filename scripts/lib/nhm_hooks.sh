@@ -770,11 +770,11 @@ nhm_hooks_learning_file() {
 }
 
 # The checker and editor, in Python for its TOML parser (tomllib). argv:
-# check|set FILE. set prints the new content on stdout, or nothing when
-# nothing must change; check exits 0, 3 or 1 as above.
+# check|set FILE. set writes FILE itself and prints "changed" or
+# "unchanged"; check exits 0, 3 or 1 as above.
 nhm_hooks_learning_driver() {
     cat <<'PY'
-import os, re, sys
+import os, re, sys, tempfile
 try:
     import tomllib
 except ImportError:
@@ -786,7 +786,8 @@ mode, path = sys.argv[1], sys.argv[2]
 text = ""
 if os.path.exists(path):
     try:
-        with open(path, encoding="utf-8") as f:
+        # newline="": read and write the file's own line ends (CRLF stays).
+        with open(path, encoding="utf-8", newline="") as f:
             text = f.read()
         data = tomllib.loads(text)
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
@@ -802,33 +803,64 @@ value = (learning or {}).get("implicit_outcome")
 if mode == "check":
     sys.exit(0 if value == WANT else (3 if value is not None else 1))
 if value is not None:
+    print("unchanged")
     sys.exit(0)
-line = f'implicit_outcome = "{WANT}"   # ACFS: record cm outcomes for closed beads (plan-v8 2.13)\n'
-header = re.compile(r'^[ \t]*\[[ \t]*learning[ \t]*\][ \t]*(#.*)?$', re.M)
-m = header.search(text)
-if m:
-    end = text.find("\n", m.end())
-    new = text + "\n" + line if end < 0 else text[:end + 1] + line + text[end + 1:]
-elif learning is not None:
-    # learning.* as dotted keys of the root table: a second [learning]
-    # table would redefine it, so add a dotted key at the top, where the
-    # root table's keys are.
-    new = "learning." + line + text
-else:
-    sep = "" if text == "" or text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
-    new = text + sep + "[learning]\n" + line
-try:
-    if tomllib.loads(new).get("learning", {}).get("implicit_outcome") != WANT:
-        raise ValueError("the edit did not set it")
-except (tomllib.TOMLDecodeError, ValueError, AttributeError) as e:
-    print(f"nhm_hooks: could not add the learning profile to {path} ({e}); left as it is", file=sys.stderr)
+nl = "\r\n" if "\r\n" in text else "\n"
+line = f'implicit_outcome = "{WANT}"   # ACFS: record cm outcomes for closed beads (plan-v8 2.13){nl}'
+
+
+def candidates():
+    # Under each [learning] header line in turn: a header-like line inside
+    # a multi-line string fails the check below, and the next one is tried.
+    for m in re.finditer(r'^[ \t]*\[[ \t]*learning[ \t]*\][ \t]*(#[^\r\n]*)?\r?$', text, re.M):
+        end = text.find("\n", m.end())
+        yield text + nl + line if end < 0 else text[:end + 1] + line + text[end + 1:]
+    if learning is not None:
+        # learning.* as dotted keys of the root table: a second [learning]
+        # table would redefine it, so a dotted key at the top, where the
+        # root table's keys are.
+        yield "learning." + line + text
+    else:
+        sep = "" if text == "" or text.endswith(nl * 2) else (nl if text.endswith(nl) else nl * 2)
+        yield text + sep + "[learning]" + nl + line
+
+
+new = None
+for c in candidates():
+    try:
+        if tomllib.loads(c).get("learning", {}).get("implicit_outcome") == WANT:
+            new = c
+            break
+    except (tomllib.TOMLDecodeError, AttributeError):
+        pass
+if new is None:
+    print(f"nhm_hooks: could not add the learning profile to {path}; left as it is", file=sys.stderr)
     sys.exit(1)
-sys.stdout.write(new)
+# Write it here, through a temp file beside it, keeping its mode (0600 for
+# a new file): the text, trailing blank lines included, goes through no
+# shell substitution.
+d = os.path.dirname(path) or "."
+os.makedirs(d, exist_ok=True)
+mode_bits = os.stat(path).st_mode & 0o7777 if os.path.exists(path) else 0o600
+fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".tmp.", dir=d)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+        f.write(new)
+    os.chmod(tmp, mode_bits)
+    os.replace(tmp, path)
+except OSError as e:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    print(f"nhm_hooks: could not write {path} ({e}); left as it is", file=sys.stderr)
+    sys.exit(1)
+print("changed")
 PY
 }
 
 nhm_hooks_learning_profile() {
-    local verb="${1:-}" file="${2:-}" target="" new="" rc=0
+    local verb="${1:-}" file="${2:-}" target="" result="" rc=0
     [[ -n "$file" ]] || file="$(nhm_hooks_learning_file)"
     command -v python3 >/dev/null 2>&1 || { nhm_hooks_note "python3 not found"; return 1; }
     target="$file"
@@ -845,15 +877,14 @@ nhm_hooks_learning_profile() {
             return "$rc"
             ;;
         set)
-            new="$(python3 -I -c "$(nhm_hooks_learning_driver)" set "$target" </dev/null)" || return 1
-            if [[ -z "$new" ]]; then
+            # The driver writes the file itself (atomically, keeping its
+            # mode and line ends) and says whether it changed it.
+            result="$(python3 -I -c "$(nhm_hooks_learning_driver)" set "$target" </dev/null)" || return 1
+            if [[ "$result" == changed ]]; then
+                nhm_hooks_note "set [learning] implicit_outcome = \"closed-assigned\" in $file"
+            else
                 nhm_hooks_note "$file already sets [learning] implicit_outcome"
-                return 0
             fi
-            mkdir -p -- "$(dirname -- "$target")" || return 1
-            # $(...) drops the final newline; nhm_hooks_write adds one back.
-            nhm_hooks_write "$target" "$new" || return 1
-            nhm_hooks_note "set [learning] implicit_outcome = \"closed-assigned\" in $file"
             ;;
         *) nhm_hooks_usage >&2; return 2 ;;
     esac
