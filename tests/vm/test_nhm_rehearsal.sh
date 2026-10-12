@@ -193,8 +193,22 @@ step_E01() {
     echo "$spawn"
     check "E01: --robot-spawn --dry-run returns admission.decision" \
         jq -e '.. | objects | select(has("admission")) | .admission.decision' <<<"$spawn"
+    # The guards as ACFS's install sets them: `dcg install` writes Claude's
+    # PreToolUse hook (here into the sandbox HOME). ACFS installs no dcg
+    # hook for Codex, so the matrix's "dcg active for codex" shows that
+    # gap rather than passing on a hook the harness wrote itself.
+    if command -v dcg >/dev/null 2>&1; then
+        show "dcg install" dcg install --quiet || true
+    fi
     doc="$(nhm doctor --json --no-mail 2>/dev/null || true)"
-    for kind in claude codex agy pi; do
+    echo "### the guard checks of nhm doctor --json"
+    jq -c '.result.checks[]? | select(.name | startswith("guard "))' <<<"$doc"
+    for kind in claude codex; do
+        check "E01: dcg is active for $kind" \
+            jq -e --arg k "$kind" '.result.checks[]? | select(.name == ("guard " + $k + " dcg"))
+                | select(.detail | startswith("configured") or startswith("verified_for_launch"))' <<<"$doc"
+    done
+    for kind in agy pi; do
         check "E01: the doctor reports $kind's guard state" \
             jq -e --arg k "$kind" '.result.checks[]? | select(.name | startswith("guard " + $k + " "))' <<<"$doc"
     done
