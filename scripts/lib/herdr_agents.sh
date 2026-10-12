@@ -1140,7 +1140,14 @@ herdr_agents_spawn() {
             failed=true
             break
         fi
-        HERDR_AGENTS_OWNER_CLEANUP="the Agent Mail identity $mail_name is registered but has no agent; retire it with its token, kept under ${ACFS_HOME:-$HOME/.acfs}/state/tokens (nhm imports it at takeover)"
+        # What a takeover from here on leaves behind (herdr_agents_owner_refused).
+        local identity_cleanup
+        if [[ -n "$(herdr_agents_token_load "$cwd" "$mail_name")" ]]; then
+            identity_cleanup="retire the Agent Mail identity $mail_name with its token, kept under ${ACFS_HOME:-$HOME/.acfs}/state/tokens (nhm imports it at takeover)"
+        else
+            identity_cleanup="no token was kept for the Agent Mail identity $mail_name: retire it with its token from create_agent_identity's answer, or leave it to 'am agents reap'"
+        fi
+        HERDR_AGENTS_OWNER_CLEANUP="the Agent Mail identity $mail_name is registered but has no agent; $identity_cleanup"
         if ! herdr_name="$(herdr_agents_herdr_name "$mail_name")"; then
             herdr_agents_note "spawn stopped: $HERDR_AGENTS_NAME_ERROR"
             failed=true
@@ -1178,6 +1185,9 @@ herdr_agents_spawn() {
                     start_error="$HERDR_AGENTS_ERR_MESSAGE"
                 fi
             fi
+            # agent_not_ready: the agent runs, stopped at a first-run dialog.
+            [[ "$started" == true || "$status" != agent_not_ready ]] \
+                || HERDR_AGENTS_OWNER_CLEANUP="$herdr_name ($mail_name) runs in tab $tab_id, stopped at a first-run dialog such as 'Trust this folder?'; answer it in the tab and send it its kickoff with nhm, or close the tab with 'herdr tab close $tab_id' and $identity_cleanup"
             if [[ "$started" == false && "$status" == agent_not_ready && "$trust_folder" == true ]] \
                 && herdr_agents_trust_folder "$herdr_name" "$kind"; then
                 started=true

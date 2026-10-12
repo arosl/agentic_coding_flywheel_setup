@@ -91,6 +91,10 @@ case "$1 $2" in
             echo $(( $(cat "$busy") - 1 )) >"$busy"
             fail_with agent_pane_busy "agent target pane $5 is not an available shell"
         fi
+        # takeover_after_agent_start: as takeover_after_tab_create, after this start.
+        if [[ -s "$STUB_DIR/takeover_after_agent_start" ]]; then
+            printf 'owner = "nhm"\ngeneration = 1\n' >"$(cat "$STUB_DIR/takeover_after_agent_start")"
+        fi
         [[ ! -e "$STUB_DIR/not_ready_$3" ]] || fail_with agent_not_ready "agent $3 is not ready"
         printf '{"id":"cli:agent:start","result":{"agent":{"name":"%s"}}}\n' "$3"
         ;;
@@ -2281,14 +2285,40 @@ run_helper spawn --claude 1 --cwd "$WORK/repo"
 check "a takeover between tab create and agent start stops spawn and says how to clean up" \
     bash -c '[[ "$1" -ne 0 ]] && grep -qF "stopped part way: the Agent Mail identity AlphaFox is registered but has no agent" <<<"$2" \
         && grep -qF "herdr tab close w9:t1" <<<"$2" && ! grep -q "^herdr agent start" "$3"' _ "$RC" "$ERR" "$STUB_DIR/calls"
+
+# acfs-9hkh.36: with no token kept, the note does not point at a token
+# directory.
+owner_case ownermidnotoken none
+touch "$STUB_DIR/curl_no_token"
+printf '%s\n' "$NHM_INST/owner.toml" >"$STUB_DIR/takeover_after_tab_create"
+mkdir -p "$WORK/repo-notoken"
+run_helper spawn --claude 1 --cwd "$WORK/repo-notoken"
+check "with no token kept, the cut-short note says so and names no token directory" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "no token was kept for the Agent Mail identity AlphaFox" <<<"$2" \
+        && ! grep -qF "state/tokens" <<<"$(grep "stopped part way" <<<"$2")"' _ "$RC" "$ERR"
+
+# acfs-9hkh.36: an agent stopped at a first-run dialog runs; a takeover
+# before spawn answers it leaves a running agent, not an empty tab.
+owner_case ownermidtrust none
+touch "$STUB_DIR/not_ready_alphafox"
+claude_trust_screen >"$STUB_DIR/screen_alphafox"
+printf '%s\n' "$NHM_INST/owner.toml" >"$STUB_DIR/takeover_after_agent_start"
+mkdir -p "$WORK/repo-trust"
+run_helper spawn --claude 1 --cwd "$WORK/repo-trust" --trust-folder
+check "a takeover before the trust-folder answer says the agent runs at a dialog, not that the tab is empty" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "stopped part way: alphafox (AlphaFox) runs in tab w9:t1, stopped at a first-run dialog" <<<"$2" \
+        && ! grep -qF "empty tab" <<<"$2" && ! grep -q "^herdr agent send-keys" "$3"' \
+    _ "$RC" "$ERR" "$STUB_DIR/calls"
+
 RC="$spawn_rc"
 STUB_DIR="$WORK/stub.ownerspawn"
+# (A later sha256sum, token_load reading the name back, needs no lock.)
 check "spawn keeps the new identity's token under the same owner lock as its creation" \
-    bash -c '[[ -s "$1/state/tokens/$2/AlphaFox" ]] && grep -qx "sha256sum held" "$3" && ! grep -qx "sha256sum free" "$3"' \
+    bash -c '[[ -s "$1/state/tokens/$2/AlphaFox" ]] && [[ "$(grep -m1 "^sha256sum" "$3")" == "sha256sum held" ]]' \
     _ "$WORK/acfs-home" "$(printf '%s' "$(cd "$WORK/repo" && pwd -P)" | sha256sum | cut -c1-16)" "$STUB_DIR/owner_lock_calls"
 check "spawn holds the lock for each change: tab create, agent start, the kickoff" \
     bash -c '[[ "$1" -eq 0 ]] && grep -qx "tab create held" "$2" && grep -qx "agent start held" "$2" \
-        && grep -qx "agent prompt held" "$2" && ! grep -q " free$" "$2"' \
+        && grep -qx "agent prompt held" "$2" && ! grep -v "^sha256sum " "$2" | grep -q " free$"' \
     _ "$RC" "$STUB_DIR/owner_lock_calls"
 
 owner_case ownerbash acfs-bash
