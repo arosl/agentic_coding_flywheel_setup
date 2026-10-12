@@ -2454,6 +2454,19 @@ ACFS_AGENTS_OWNER_WAIT=1 run_helper send --name alphafox "Check your Agent Mail 
 rm -f "$NHM_INST/owner.lock.intent"
 check "an intent marker from the future (a clock step) holds nobody either" \
     bash -c '[[ "$1" -eq 0 ]] && grep -q "^herdr agent prompt alphafox" "$2"' _ "$RC" "$STUB_DIR/calls"
+# acfs-9hkh.83: ACFS_AGENTS_OWNER_WAIT goes into shell arithmetic; a value
+# that hides a command runs nothing, and the default is used.
+rm -f "$WORK/owner-wait-ran"
+: >"$STUB_DIR/calls"
+ACFS_AGENTS_OWNER_WAIT="a[\$(touch $WORK/owner-wait-ran)]" run_helper send --name alphafox "Check your Agent Mail inbox."
+check "a non-numeric ACFS_AGENTS_OWNER_WAIT runs nothing, warns, and the default wait is used" \
+    bash -c '[[ ! -e "$1" && "$2" -eq 0 ]] && grep -qF "ACFS_AGENTS_OWNER_WAIT is not whole seconds; using 10" <<<"$3" && grep -q "^herdr agent prompt alphafox" "$4"' \
+    _ "$WORK/owner-wait-ran" "$RC" "$ERR" "$STUB_DIR/calls"
+: >"$STUB_DIR/calls"
+ACFS_AGENTS_OWNER_WAIT=08 run_helper send --name alphafox "Check your Agent Mail inbox."
+check "ACFS_AGENTS_OWNER_WAIT=08 is 8 seconds, not an octal error" \
+    bash -c '[[ "$1" -eq 0 ]] && ! grep -q "ACFS_AGENTS_OWNER_WAIT\|value too great" <<<"$2" && grep -q "^herdr agent prompt alphafox" "$3"' \
+    _ "$RC" "$ERR" "$STUB_DIR/calls"
 
 # A stale copy of an instance directory never counts, as in nhm.
 owner_case ownerbak none

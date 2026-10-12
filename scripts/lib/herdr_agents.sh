@@ -387,6 +387,14 @@ herdr_agents_resolve_workspace() {
 # skips that cycle and tries again at the next.
 # ------------------------------------------------------------
 HERDR_AGENTS_OWNER_WAIT="${ACFS_AGENTS_OWNER_WAIT:-10}"
+# The wait goes into shell arithmetic, which would run a command hidden in
+# it (a[$(cmd)]): whole seconds only, in decimal (no octal 08).
+if [[ "$HERDR_AGENTS_OWNER_WAIT" =~ ^[0-9]{1,6}$ ]]; then
+    HERDR_AGENTS_OWNER_WAIT=$((10#$HERDR_AGENTS_OWNER_WAIT))
+else
+    herdr_agents_note "ACFS_AGENTS_OWNER_WAIT is not whole seconds; using 10"
+    HERDR_AGENTS_OWNER_WAIT=10
+fi
 HERDR_AGENTS_OWNER_MODE=refuse
 HERDR_AGENTS_OWNER_FD=""
 HERDR_AGENTS_OWNER_DEPTH=0
