@@ -29,11 +29,18 @@ check_case() {
 
 [[ "$(tail -n 1 "$DOCTOR")" == 'main "$@"' ]] || { echo "doctor.sh no longer ends in 'main \"\$@\"'" >&2; exit 1; }
 
+# A `codex` whose app-server is the fake (tests/unit/fake_codex_app_server.py),
+# for the check's Codex trust question.
+FAKEBIN="$WORK/fakebin"
+mkdir -p "$FAKEBIN"
+printf '#!/bin/sh\nexec python3 "%s" "$@"\n' "$ROOT/tests/unit/fake_codex_app_server.py" >"$FAKEBIN/codex"
+chmod +x "$FAKEBIN/codex"
+
 # run_check <agents: claude|codex|both|none> [nhm present: true|false]
 # prints "id|status|details|fix".
 run_check() {
     local agents="$1" nhm_present="${2:-true}"
-    STUB_HOME="$WORK/home" STUB_AGENTS="$agents" STUB_NHM="$nhm_present" XDG_STATE_HOME="" \
+    PATH="$FAKEBIN:$PATH" STUB_HOME="$WORK/home" STUB_AGENTS="$agents" STUB_NHM="$nhm_present" XDG_STATE_HOME="" \
     bash -c '
         set +e
         # shellcheck disable=SC1090
@@ -73,9 +80,27 @@ echo "stack.nhm.setup"
 
 fixture yes both
 out="$(run_check both)"
-check_case "enrolled and registered for both passes" \
-    bash -c '[[ "$1" == stack.nhm.setup\|pass\|enrolled*"Claude Code"*Codex*\| ]]' _ "$out"
-check_case "the Codex pass reminds that /hooks must trust them" bash -c '[[ "$1" == *"/hooks"* ]]' _ "$out"
+check_case "lines Codex does not trust yet warn with the trust command" \
+    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"Codex does not trust 3 nhm hook line(s) yet"*\|*"nhm_hooks.sh trust codex" ]]' _ "$out"
+check_case "the check asked Codex without recording trust" test ! -e "$WORK/home/.codex/fake-trust.json"
+
+PATH="$FAKEBIN:$PATH" HOME="$WORK/home" CODEX_HOME="$WORK/home/.codex" \
+    bash "$ROOT/scripts/lib/nhm_hooks.sh" trust codex "$WORK/home/.codex/hooks.json" 2>/dev/null
+out="$(run_check both)"
+check_case "enrolled, registered for both and trusted by Codex passes" \
+    bash -c '[[ "$1" == stack.nhm.setup\|pass\|enrolled*"Claude Code"*"Codex (trusted)"\| ]]' _ "$out"
+
+fixture yes claude
+printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/elsewhere/nhm-hook sessionstart"}]}],"PostToolUse":[{"hooks":[{"type":"command","command":"/elsewhere/nhm-hook posttooluse"}]}],"PostCompact":[{"hooks":[{"type":"command","command":"/elsewhere/nhm-hook sessionstart"}]}]}}' \
+    >"$WORK/home/.codex/hooks.json"
+out="$(run_check codex)"
+check_case "nhm lines ACFS did not write are not reported as trusted" \
+    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"is unknown"* || "$1" == stack.nhm.setup\|warn\|*"does not trust"* ]]' _ "$out"
+
+fixture yes both
+out="$(FAKE_CODEX_FAIL=1 run_check codex)"
+check_case "an app-server that fails warns that trust is unknown" \
+    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"trust of the nhm hook lines is unknown"*\|*"trust codex" ]]' _ "$out"
 
 fixture no both
 out="$(run_check both)"

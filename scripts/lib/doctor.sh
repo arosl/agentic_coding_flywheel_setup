@@ -3073,8 +3073,8 @@ check_agent_mail_stop_hook() {
 }
 
 # nhm (stack.nhm): a herdr server is enrolled, and nhm's hook lines
-# (scripts/lib/nhm_hooks.sh) are registered for the installed agent CLIs.
-# Read-only; `nhm doctor` checks nhm itself.
+# (scripts/lib/nhm_hooks.sh) are registered for the installed agent CLIs,
+# and Codex trusts its lines. Read-only; `nhm doctor` checks nhm itself.
 check_nhm() {
     local label="nhm"
     local home="" helper="" state_root="" enrolled=""
@@ -3106,7 +3106,7 @@ check_nhm() {
         fi
         if doctor_binary_exists "codex"; then
             if bash "$helper" registered codex "$home/.codex/hooks.json" </dev/null >/dev/null 2>&1; then
-                notes+=("hooks: Codex (trust them once in Codex's /hooks)")
+                _acfs_doctor_nhm_codex_trust "$helper" "$home"
             else
                 missing+=("hook lines missing for Codex")
                 fixes+=("bash $helper register codex")
@@ -3121,6 +3121,34 @@ check_nhm() {
     else
         check "stack.nhm.setup" "$label" "warn" "$(_acfs_doctor_join_by "; " "${missing[@]}")" \
             "Run: $(_acfs_doctor_join_by " && " "${fixes[@]}")"
+    fi
+}
+
+# Whether Codex trusts the nhm hook lines: Codex runs an untrusted hook
+# never. `nhm_hooks.sh trust codex --dry-run` asks Codex's app-server
+# (bounded at 60 s) and writes nothing; it lists each untrusted entry as
+# "would trust <key>". It runs with HOME at the runtime home, since ACFS's
+# lines name that home's ~/.local/bin/nhm-hook. Adds to check_nhm's
+# notes, missing and fixes.
+_acfs_doctor_nhm_codex_trust() {
+    local helper="$1" home="$2" out="" rc=0 untrusted=0
+    local -a bound=()
+    # A shell bound as well: the doctor never waits on a hung app-server.
+    command -v timeout >/dev/null 2>&1 && bound=(timeout 75)
+    out="$(HOME="$home" CODEX_HOME="$home/.codex" "${bound[@]}" bash "$helper" trust codex "$home/.codex/hooks.json" --dry-run 2>&1 </dev/null)" || rc=$?
+    untrusted="$(grep -c 'would trust ' <<<"$out" || true)"
+    # No entry ACFS wrote means nothing was checked, not that all is trusted.
+    if (( rc == 0 )) && grep -q 'no nhm-hook entries' <<<"$out"; then
+        rc=1
+    fi
+    if (( rc == 0 && untrusted == 0 )); then
+        notes+=("hooks: Codex (trusted)")
+    elif (( rc == 0 )); then
+        missing+=("Codex does not trust $untrusted nhm hook line(s) yet, so it skips them")
+        fixes+=("bash $helper trust codex")
+    else
+        missing+=("Codex's trust of the nhm hook lines is unknown: $(tail -n 1 <<<"$out" | sed 's/^nhm_hooks: //')")
+        fixes+=("bash $helper trust codex")
     fi
 }
 

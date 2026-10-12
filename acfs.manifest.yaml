@@ -2400,7 +2400,7 @@ modules:
     notes:
       - "checksums.yaml pins nhm's install.sh at the release tag; the installer checks the archive against SHA256SUMS of the same tagged release"
       - "nhm 0.1 observes: ACFS's Bash (acfs agents) keeps owning the herdr instance until the takeover, so nhm's hooks only record evidence"
-      - "install.sh and acfs update register the nhm-hook lines for Claude Code and Codex (scripts/lib/nhm_hooks.sh); Codex runs them after the user trusts them once in /hooks"
+      - "install.sh and acfs update register the nhm-hook lines for Claude Code and Codex (scripts/lib/nhm_hooks.sh) and record Codex's trust for them through Codex's app-server; doctor reports a line Codex does not trust, and Codex's /hooks also trusts it"
 
   - id: stack.meta_skill
     description: Local-first knowledge management with hybrid semantic search (ms)
