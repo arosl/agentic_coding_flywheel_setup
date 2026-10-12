@@ -10759,6 +10759,29 @@ acfs_install_nhm_learning_profile() {
         log_warn "nhm's learning profile was not set (optional): see nhm_hooks.sh learning-profile check"
 }
 
+# herdr opens the command palette in a popup on prefix+a, as ntm's F6 did
+# in tmux. With nhm (stack.nhm), its herdr plugin is linked and `nhm bind`
+# gives prefix+a its palette, prefix+d its agent board and prefix+m its
+# menu (nhm_hooks.sh plugin bind, acfs-9hkh.50). nhm bind refuses while
+# ACFS's Bash owns the herdr server, as on a fresh install before the
+# takeover, or when the user's config uses one of the keys; ACFS's palette
+# then keeps prefix+a. bind --auto never takes a key or binding the user's
+# herdr config has. Install starts no herdr server, so there is none to
+# reload. Never fails the install.
+acfs_install_herdr_keys() {
+    local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh" rc=0
+    if [[ -f "$nhm_hooks" ]] && acfs_legacy_module_selected "stack.nhm"; then
+        run_as_target bash "$nhm_hooks" plugin bind --no-reload || rc=$?
+        case "$rc" in
+            0) log_detail "nhm's keys in herdr: prefix+a palette, prefix+d agent board, prefix+m menu"; return 0 ;;
+            3|5) ;;
+            *) log_warn "nhm's herdr plugin or keys were not set up (optional); ACFS's palette keeps prefix+a" ;;
+        esac
+    fi
+    try_step "Binding the command palette to prefix+a in herdr" \
+        run_as_target bash "$ACFS_HOME/scripts/lib/palette.sh" bind --auto --no-reload || true
+}
+
 # dcg's Bash guard for Codex (stack.dcg; nhm_hooks.sh codex-dcg,
 # acfs-9hkh.81). `dcg install` configures Claude Code only; dcg's own
 # installer adds Codex's line only when it found codex. Register that
@@ -11072,11 +11095,7 @@ finalize() {
     try_step "Setting lib scripts permissions" $SUDO chmod 755 "$ACFS_HOME/scripts/lib/"*.sh "$ACFS_HOME/scripts/nightly-update.sh" || return 1
     try_step "Setting generated scripts permissions" $SUDO find "$ACFS_HOME/scripts/generated" -maxdepth 1 -type f -name '*.sh' -exec chmod 755 {} + || return 1
     try_step "Setting scripts ownership" acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/scripts" || return 1
-    # herdr opens the command palette in a popup on prefix+a, as ntm's F6
-    # did in tmux.
-    # bind --auto never takes a key or binding the user's herdr config has;
-    # install starts no herdr server, so there is none to reload.
-    try_step "Binding the command palette to prefix+a in herdr" run_as_target bash "$ACFS_HOME/scripts/lib/palette.sh" bind --auto --no-reload || true
+    acfs_install_herdr_keys
     try_step "Configuring ACFS nightly update timer" configure_acfs_nightly_timer || return 1
 
     # Install newproj command scripts (used by acfs newproj CLI and TUI wizard)

@@ -3242,6 +3242,40 @@ check_nhm_maintain() {
     esac
 }
 
+# nhm's herdr plugin and keys (stack.nhm, acfs-9hkh.50): herdr has nhm's
+# plugin linked, and after the takeover `nhm bind` gives prefix+a nhm's
+# palette, prefix+d its agent board and prefix+m its menu. Before it,
+# ACFS's palette keeps prefix+a. Read-only (nhm_hooks.sh plugin status).
+check_nhm_plugin() {
+    local label="nhm herdr plugin" home="" helper="" state=""
+
+    if ! doctor_binary_exists "nhm"; then
+        check "stack.nhm.plugin" "$label" "skip" "nhm not installed"
+        return
+    fi
+    home="$(doctor_runtime_home)"
+    helper="$home/.acfs/scripts/lib/nhm_hooks.sh"
+    if [[ ! -r "$helper" ]]; then
+        check "stack.nhm.plugin" "$label" "warn" "nhm_hooks.sh is not installed" "Run: acfs update"
+        return
+    fi
+    # Run as another user (root), the doctor reads the target's default paths.
+    local -a env_args=(HOME="$home")
+    if [[ -n "${TARGET_USER:-}" && "$TARGET_USER" != "$(id -un 2>/dev/null || true)" ]]; then
+        env_args=(-u XDG_CONFIG_HOME -u XDG_DATA_HOME HOME="$home")
+    fi
+    state="$(env "${env_args[@]}" timeout 30 bash "$helper" plugin status </dev/null 2>/dev/null || true)"
+    case "$state" in
+        bound) check "stack.nhm.plugin" "$label" "pass" "linked; nhm's keys: prefix+a palette, prefix+d agent board, prefix+m menu" ;;
+        linked) check "stack.nhm.plugin" "$label" "pass" \
+            "linked; prefix+a is ACFS's palette until nhm owns the herdr server (after the takeover: nhm bind)" ;;
+        no-plugin) check "stack.nhm.plugin" "$label" "skip" "this nhm has no herdr plugin" ;;
+        unlinked) check "stack.nhm.plugin" "$label" "warn" "nhm's herdr plugin is not linked, so its board and menu are missing" \
+            "Run: bash $helper plugin link (or acfs update)" ;;
+        *) check "stack.nhm.plugin" "$label" "warn" "could not read the plugin's state" "Run: bash $helper plugin status" ;;
+    esac
+}
+
 _acfs_doctor_join_by() {
     local separator="$1"
     local joined="${2:-}"
@@ -3782,6 +3816,7 @@ check_stack() {
     check_agent_mail_stop_hook
     check_nhm
     check_nhm_maintain
+    check_nhm_plugin
 
     # Check acfs-nightly-update timer (systemd user unit)
     # Gracefully handle missing systemd user session (curl|bash installs as

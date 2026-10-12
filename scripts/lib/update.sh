@@ -7461,26 +7461,54 @@ update_herdr_integrations() {
 }
 
 # herdr opens the command palette in a popup on prefix+a, as ntm's F6 did
-# in tmux (palette.sh bind --auto): unless the target user's herdr config
-# already has the palette's block (bound, or unbound by `acfs palette
-# unbind`), opens the palette some other way, or uses prefix+a. A running
-# herdr server reloads its config. Never fails the update.
+# in tmux. With nhm (stack.nhm), its herdr plugin is linked and `nhm bind`
+# gives prefix+a its palette, prefix+d its agent board and prefix+m its
+# menu, in place of ACFS's palette block (nhm_hooks.sh plugin bind,
+# acfs-9hkh.50). nhm bind refuses while ACFS's Bash owns the herdr server
+# (nhm's palette cannot send before the takeover) or when the user's
+# config uses one of the keys; ACFS's palette then keeps prefix+a
+# (palette.sh bind --auto): unless the target user's herdr config already
+# has the palette's block (bound, or unbound by `acfs palette unbind`),
+# opens the palette some other way, or uses prefix+a. A running herdr
+# server reloads its config. Never fails the update.
 update_herdr_palette_key() {
     local herdr_bin=""
     local target_home=""
     local palette_script=""
+    local nhm_hooks=""
     local bash_bin=""
     local out=""
+    local rc=0
 
     herdr_bin="$(update_binary_path herdr 2>/dev/null || true)"
     [[ -n "$herdr_bin" ]] || return 0
     target_home="$(update_target_home "$(update_target_user 2>/dev/null || true)" 2>/dev/null || true)"
     [[ -n "$target_home" && "$target_home" == /* ]] || return 0
-    palette_script="$target_home/.acfs/scripts/lib/palette.sh"
-    [[ -f "$palette_script" ]] || return 0
     bash_bin="$(update_system_binary_path bash 2>/dev/null || true)"
     [[ -n "$bash_bin" ]] || return 0
 
+    nhm_hooks="$target_home/.acfs/scripts/lib/nhm_hooks.sh"
+    if [[ -f "$nhm_hooks" ]] && update_binary_exists nhm; then
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log_item "skip" "herdr keys" "dry-run: would link nhm's herdr plugin and run nhm bind"
+            return 0
+        fi
+        out="$(update_run_in_target_context "" "$bash_bin" "$nhm_hooks" plugin bind 2>&1)" || rc=$?
+        out="${out##*$'\n'}"
+        out="${out#nhm_hooks: }"
+        case "$rc" in
+            0)
+                log_item "ok" "herdr keys" "nhm: prefix+a palette, prefix+d agent board, prefix+m menu"
+                return 0
+                ;;
+            3) ;;
+            5) log_item "skip" "herdr keys" "$out; ACFS's palette keeps prefix+a" ;;
+            *) log_item "warn" "herdr keys" "${out:-the plugin or nhm bind failed}; ACFS's palette keeps prefix+a" ;;
+        esac
+    fi
+
+    palette_script="$target_home/.acfs/scripts/lib/palette.sh"
+    [[ -f "$palette_script" ]] || return 0
     if [[ "$DRY_RUN" == "true" ]]; then
         log_item "skip" "herdr palette key" "dry-run: would run palette.sh bind --auto"
         return 0

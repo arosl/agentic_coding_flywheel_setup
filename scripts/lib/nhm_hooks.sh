@@ -59,6 +59,13 @@ Usage:
                                              (default $XDG_CONFIG_HOME/nhm/
                                              config.toml); check: 0 on, 3 the
                                              user's other value, 1 not set
+  nhm_hooks.sh plugin link|bind [--no-reload]|status
+                                             nhm's herdr plugin (link) and its
+                                             keys (bind: nhm bind for the
+                                             default server); 0 done, 3 no
+                                             plugin, 4 no herdr, 5 nhm bind
+                                             refused; status prints no-plugin,
+                                             unlinked, linked or bound
   nhm_hooks.sh register claude|codex [FILE]  Add the nhm-hook lines to FILE
                                              (default ~/.claude/settings.json
                                              or ~/.codex/hooks.json)
@@ -890,6 +897,108 @@ nhm_hooks_learning_profile() {
     esac
 }
 
+# --- nhm's herdr plugin and keys (stack.nhm, acfs-9hkh.50) -------------------
+#
+# nhm's installer keeps its herdr plugin in a real directory,
+# $XDG_DATA_HOME/nhm/plugin, whose ../nhm and ../nhm-hook follow each
+# release. herdr stores a linked plugin's resolved path, so that directory
+# is the one to link, never current/plugin. `link` links it (idempotent;
+# it needs no herdr server). `bind` links it, then runs `nhm bind` for the
+# default herdr server: prefix+a the palette, prefix+d the agent board,
+# prefix+m the menu, in place of ACFS's palette block. nhm bind refuses
+# while ACFS's Bash owns the server (nhm's palette cannot send before the
+# takeover) or when the user's config uses one of the keys; the caller
+# then keeps ACFS's palette. `status` changes nothing.
+
+nhm_hooks_plugin_dir() { printf '%s/nhm/plugin\n' "${XDG_DATA_HOME:-$HOME/.local/share}"; }
+nhm_hooks_plugin_herdr_dir() { printf '%s/herdr\n' "${XDG_CONFIG_HOME:-$HOME/.config}"; }
+
+# The nhm or herdr binary: ~/.local/bin first, then PATH (the acfs CLI's
+# lookup). Prints nothing when there is none.
+nhm_hooks_plugin_bin() {
+    local found=""
+    if [[ -x "$HOME/.local/bin/$1" ]]; then
+        printf '%s\n' "$HOME/.local/bin/$1"
+        return 0
+    fi
+    found="$(command -v "$1" 2>/dev/null || true)"
+    [[ "$found" != /* ]] || printf '%s\n' "$found"
+    return 0
+}
+
+# Whether herdr has nhm's plugin linked from DIR.
+nhm_hooks_plugin_linked() {
+    local herdr="$1" dir="$2" root=""
+    root="$("$herdr" plugin list --json --plugin nhm </dev/null 2>/dev/null |
+        jq -r 'first(.result.plugins[]? | select(.plugin_id == "nhm") | .plugin_root) // empty' 2>/dev/null)"
+    [[ -n "$root" && "$(realpath -m -- "$root")" == "$(realpath -m -- "$dir")" ]]
+}
+
+# Whether the default herdr server's config holds nhm's keys.
+nhm_hooks_plugin_bound() {
+    grep -q '^# >>> nhm >>>' "$(nhm_hooks_plugin_herdr_dir)/config.toml" 2>/dev/null
+}
+
+nhm_hooks_plugin() {
+    local verb="${1:-}" dir="" herdr="" nhm="" out="" rc=0
+    local -a reload=()
+    [[ $# -eq 0 ]] || shift
+    case "$verb" in
+        link|bind|status) ;;
+        *) nhm_hooks_usage >&2; return 2 ;;
+    esac
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-reload) [[ "$verb" == bind ]] || { nhm_hooks_usage >&2; return 2; }; reload=(--no-reload) ;;
+            *) nhm_hooks_usage >&2; return 2 ;;
+        esac
+        shift
+    done
+    dir="$(nhm_hooks_plugin_dir)"
+    herdr="$(nhm_hooks_plugin_bin herdr)"
+    nhm="$(nhm_hooks_plugin_bin nhm)"
+    if [[ "$verb" == status ]]; then
+        if [[ -z "$nhm" || ! -f "$dir/herdr-plugin.toml" ]]; then
+            echo no-plugin
+        elif [[ -z "$herdr" ]] || ! nhm_hooks_plugin_linked "$herdr" "$dir"; then
+            echo unlinked
+        elif nhm_hooks_plugin_bound; then
+            echo bound
+        else
+            echo linked
+        fi
+        return 0
+    fi
+    if [[ -z "$nhm" || ! -f "$dir/herdr-plugin.toml" ]]; then
+        nhm_hooks_note "this nhm has no herdr plugin ($dir)"
+        return 3
+    fi
+    if [[ -z "$herdr" ]]; then
+        nhm_hooks_note "herdr is not installed"
+        return 4
+    fi
+    if [[ -L "$dir" ]]; then
+        # herdr would store where the link points: one release's directory.
+        nhm_hooks_note "$dir is a symlink; nhm's installer makes it a directory"
+        return 1
+    fi
+    if ! nhm_hooks_plugin_linked "$herdr" "$dir"; then
+        if ! out="$("$herdr" plugin link "$dir" </dev/null 2>&1)"; then
+            nhm_hooks_note "herdr plugin link $dir failed: ${out##*$'\n'}"
+            return 1
+        fi
+        nhm_hooks_note "linked nhm's herdr plugin ($dir)"
+    fi
+    [[ "$verb" == bind ]] || return 0
+    out="$("$nhm" bind --socket "$(nhm_hooks_plugin_herdr_dir)/herdr.sock" "${reload[@]}" </dev/null 2>&1)" || rc=$?
+    case "$rc" in
+        0) nhm_hooks_note "nhm's keys are bound: prefix+a palette, prefix+d agent board, prefix+m menu" ;;
+        2) nhm_hooks_note "${out%%$'\n'*}"; return 5 ;;
+        *) nhm_hooks_note "nhm bind failed: ${out%%$'\n'*}"; return 1 ;;
+    esac
+    return 0
+}
+
 nhm_hooks_main() {
     local subcommand="${1:-}"
     [[ $# -eq 0 ]] || shift
@@ -901,6 +1010,7 @@ nhm_hooks_main() {
         trust) nhm_hooks_trust "$@" ;;
         codex-dcg) nhm_hooks_codex_dcg "$@" ;;
         learning-profile) nhm_hooks_learning_profile "$@" ;;
+        plugin) nhm_hooks_plugin "$@" ;;
         -h|--help|help) nhm_hooks_usage ;;
         *) nhm_hooks_usage >&2; return 2 ;;
     esac
