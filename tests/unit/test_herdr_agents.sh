@@ -943,11 +943,25 @@ ACFS_AGENTS_CAPACITY_SCRIPT="$WORK/missing.sh" run_helper spawn --claude 1 --cwd
 check "without capacity.sh, spawn goes ahead and says so" \
     bash -c '[[ "$1" -eq 0 ]] && grep -q "missing.sh not found" <<<"$2"' _ "$RC" "$ERR"
 
+# acfs-9hkh.49: quota and quota check moved to nhm (nhm's TestQuotaVerb,
+# TestQuotaCheck and TestQuotaAndLimitsDispatch carry their vectors;
+# test_agent_quota.sh keeps testing agent_quota.sh, which spawn's check
+# and record-claude still use).
 reset_stub quotashow
 codex_usage 40.0
-run_helper quota --json
-check "acfs agents quota runs agent_quota.sh" \
-    bash -c 'jq -e ".plans[] | select(.kind == \"codex\") | .windows.five_hour.used_percent == 40" "$1" >/dev/null' _ "$STUB_DIR/out"
+for args in "" "--json" "check codex"; do
+    # shellcheck disable=SC2086 # the words are the subcommand and its flags
+    run_helper quota $args
+    check "acfs agents quota${args:+ $args} is gone: it names nhm quota and nhm quota check" \
+        bash -c '[[ "$1" -ne 0 && -z "$2" ]] && grep -qF "run '"'"'nhm quota'"'"'" <<<"$3" && grep -qF "nhm quota check KIND" <<<"$3"' \
+        _ "$RC" "$OUT" "$ERR"
+done
+printf '{"model":{"display_name":"Opus"}}' >"$STUB_DIR/status.json"
+RC=0
+OUT="$(PATH="$WORK/bin:$PATH" HOME="$WORK/home" ACFS_HOME="$WORK/acfs-home" XDG_STATE_HOME="$WORK/home/.local/state" \
+    bash "$HELPER" quota record-claude <"$STUB_DIR/status.json" 2>"$STUB_DIR/err")" || RC=$?
+check "acfs agents quota record-claude still runs agent_quota.sh, for Claude Code's statusLine" \
+    bash -c '[[ "$1" -eq 0 && -n "$2" ]] && ! grep -qF "moved to nhm" "$3"' _ "$RC" "$OUT" "$STUB_DIR/err"
 
 echo "send and list"
 
@@ -2434,6 +2448,30 @@ rm -rf "$NHM_INST"
 run_helper send --name alphafox "Check your Agent Mail inbox."
 check "nhm owning another herdr server leaves this one to the Bash" \
     bash -c '[[ "$1" -eq 0 ]] && grep -q "^herdr agent prompt alphafox" "$2"' _ "$RC" "$STUB_DIR/calls"
+
+echo "owner (acfs-9hkh.27)"
+# A fake nhm in NHM_BIN_DIR stands for an installed nhm.
+mkdir -p "$WORK/nhmbin"
+printf '#!/bin/sh\nexit 0\n' >"$WORK/nhmbin/nhm"
+chmod +x "$WORK/nhmbin/nhm"
+owner_says() { # owner_says <expected> <stderr part> <description>
+    check "$3" bash -c '[[ "$1" -eq 0 && "$2" == "$4" ]] && grep -qF "$5" <<<"$3"' _ "$RC" "$OUT" "$ERR" "$1" "$2"
+}
+owner_case ownerprobe nhm
+run_helper owner
+owner_says acfs-bash "nhm is not installed" "owner: without nhm installed, acfs-bash"
+NHM_BIN_DIR="$WORK/nhmbin" run_helper owner
+owner_says nhm "owner: nhm ($NHM_INST)" "owner: nhm installed, enrolled and named in owner.toml: nhm"
+owner_case ownerprobebash acfs-bash
+NHM_BIN_DIR="$WORK/nhmbin" run_helper owner
+owner_says acfs-bash "owner: acfs-bash" "owner: owner.toml names acfs-bash: acfs-bash"
+owner_case ownerprobecorrupt corrupt
+NHM_BIN_DIR="$WORK/nhmbin" run_helper owner
+owner_says acfs-bash "owner.toml is corrupt" "owner: a corrupt owner.toml is acfs-bash, never nhm"
+owner_case ownerprobeother none
+rm -rf "$NHM_INST"
+NHM_BIN_DIR="$WORK/nhmbin" run_helper owner
+owner_says acfs-bash "not enrolled for this herdr server" "owner: nhm enrolled for another herdr server only: acfs-bash"
 
 echo "export and import (acfs-9hkh.26)"
 reset_stub export

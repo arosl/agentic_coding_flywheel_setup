@@ -23,7 +23,7 @@
 #   acfs agents retire <MailName> [--workspace ID] [--cwd DIR] [--token T] [--keep-identity] [--dry-run]
 #   acfs agents recycle <MailName> [--prompt TEXT] [--dry-run]
 #   acfs agents reap [--idle MIN] [--workspace ID] [--project KEY | --all-workspaces] [--loop [--interval SEC]] [--dry-run]
-#   acfs agents quota [--json] | quota check <kind> | quota record-claude   (agent_quota.sh)
+#   acfs agents quota record-claude   (agent_quota.sh; quota and quota check moved to nhm)
 #   acfs agents sweep [--hours N] [--dir DIR] [--name-regex ERE] [--dry-run]   (temp_sweep.sh)
 #   acfs agents export | import FILE   (the state nhm takes over and hands back)
 # ============================================================
@@ -72,10 +72,11 @@ Usage:
                     [--timeout MS] [--dry-run]
   acfs agents reap  [--idle MIN] [--workspace ID] [--project KEY | --all-workspaces]
                     [--loop [--interval SEC]] [--dry-run]
-  acfs agents quota [--json] | quota check KIND [--limit PERCENT] | quota record-claude
+  acfs agents quota record-claude
   acfs agents sweep [--hours N] [--dir DIR] [--name-regex ERE] [--dry-run]
   acfs agents export
   acfs agents import FILE
+  acfs agents owner
 
 spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        an Agent Mail identity first; its herdr name is that name lowercased and
@@ -99,7 +100,7 @@ spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        Each kickoff prompt must be seen submitted, as for send.
        Spawn refuses a kind whose plan has used $ACFS_AGENTS_QUOTA_LIMIT
        percent (default 90) of its 5-hour window, or reports a limit
-       reached ('acfs agents quota check', before anything is created),
+       reached (agent_quota.sh check, before anything is created),
        and refuses when the host's capacity guard is red ('acfs capacity
        --guard --check': MemAvailable under 4 GiB, the --cwd or temp
        filesystem under 10% free, or PSI memory full avg60 over 10; its
@@ -264,13 +265,20 @@ reap   Retire, through retire and all its refusals, each agent of this
            [Install]
            WantedBy=timers.target
          systemctl --user enable --now acfs-agents-reap.timer
-quota  Show how full each plan's 5-hour and weekly usage windows are, and how
-       many live agents of each kind there are (agent_quota.sh; see
-       'acfs agents quota --help'). Read-only.
+quota  Moved to nhm (acfs-9hkh.49): 'nhm quota' shows how full each plan's
+       5-hour and weekly windows are and the live agents per kind; 'nhm
+       quota check KIND' exits 1 near a limit. 'acfs agents quota
+       record-claude' stays: Claude Code's statusLine runs agent_quota.sh
+       record-claude until nhm takes the server over.
 sweep  Remove the temp dirs tests and browsers left in /tmp and $TMPDIR:
        only test-made names, owned by you, unchanged for --hours (6), holding
        no git worktree and used by no process (temp_sweep.sh; see
        'acfs agents sweep --help'). --dry-run lists them.
+owner  Print who drives agents on this herdr server: nhm when nhm is
+       installed, enrolled for the server and named in its owner.toml;
+       acfs-bash otherwise, also when that cannot be read (the reason goes
+       to stderr). Read-only. The swarm scripts use it to pick nhm or
+       these commands.
 export Print the state these commands keep, as JSON (format
        acfs-agents-state, version 1), for nhm admin takeover to import:
        where each kept registration token is (its file, never its value),
@@ -445,6 +453,36 @@ herdr_agents_owner_read() {
             if (bad || owners != 1 || generations != 1 || updated > 1) exit 1
             print owner
         }' "$file"
+}
+
+# acfs agents owner (acfs-9hkh.27): nhm only when nhm is installed, enrolled
+# for this herdr server and named in its owner.toml; acfs-bash otherwise, so
+# a caller never picks nhm by mistake. The reason goes to stderr.
+herdr_agents_owner() {
+    case "${1:-}" in
+        "") ;;
+        -h|--help) herdr_agents_usage; return 0 ;;
+        *) herdr_agents_die "owner takes no arguments" ;;
+    esac
+    local dir owner
+    if [[ ! -x "${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" ]] && ! command -v nhm >/dev/null 2>&1; then
+        herdr_agents_note "owner: nhm is not installed"
+        printf 'acfs-bash\n'
+        return 0
+    fi
+    dir="$(herdr_agents_owner_dir)"
+    if [[ -z "$dir" ]]; then
+        herdr_agents_note "owner: nhm is not enrolled for this herdr server"
+        printf 'acfs-bash\n'
+        return 0
+    fi
+    if ! owner="$(herdr_agents_owner_read "$dir")"; then
+        herdr_agents_note "owner: $dir/owner.toml is corrupt; nothing may change agents until it is repaired"
+        printf 'acfs-bash\n'
+        return 0
+    fi
+    herdr_agents_note "owner: $owner ($dir)"
+    printf '%s\n' "$owner"
 }
 
 # Take the owner lock shared for one change, nested calls counting once.
@@ -1058,7 +1096,7 @@ herdr_agents_spawn() {
             bash "$HERDR_AGENTS_SCRIPT_DIR/agent_quota.sh" check "$quota_kind" || quota_status=$?
             case "$quota_status" in
                 0) ;;
-                1) herdr_agents_spawn_refuse "$dry_run" "$quota_kind is near its usage limit (see 'acfs agents quota'); --force spawns anyway" ;;
+                1) herdr_agents_spawn_refuse "$dry_run" "$quota_kind is near its usage limit (see 'nhm quota'); --force spawns anyway" ;;
                 *) herdr_agents_note "could not check $quota_kind's usage (agent_quota.sh exited $quota_status); spawning anyway" ;;
             esac
         done
@@ -3120,9 +3158,17 @@ herdr_agents_main() {
         retire) herdr_agents_retire "$@" ;;
         recycle) herdr_agents_recycle "$@" ;;
         reap) herdr_agents_reap "$@" ;;
-        quota) exec bash "$HERDR_AGENTS_SCRIPT_DIR/agent_quota.sh" "$@" ;;
+        quota)
+            # Moved to nhm (acfs-9hkh.49), but for record-claude: Claude
+            # Code's statusLine runs it until the takeover (acfs-9hkh.32).
+            case "${1:-}" in
+                record-claude) exec bash "$HERDR_AGENTS_SCRIPT_DIR/agent_quota.sh" "$@" ;;
+                *) herdr_agents_die "quota moved to nhm: run 'nhm quota' (each plan's windows and the live agents per kind) or 'nhm quota check KIND [--limit PERCENT]'" ;;
+            esac
+            ;;
         sweep) exec bash "$HERDR_AGENTS_SCRIPT_DIR/temp_sweep.sh" "$@" ;;
         export) herdr_agents_export "$@" ;;
+        owner) herdr_agents_owner "$@" ;;
         import) herdr_agents_import "$@" ;;
         help|-h|--help) herdr_agents_usage ;;
         *) herdr_agents_usage >&2; return 1 ;;
