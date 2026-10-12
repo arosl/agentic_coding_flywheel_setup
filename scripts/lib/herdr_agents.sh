@@ -495,7 +495,10 @@ herdr_agents_owner_release() {
 # dies (exit 1); skip notes it and exits 0 (inside a --loop cycle's
 # subshell, that ends only the cycle); retry notes it and exits 2, retire's
 # code for a refusal that reap tries again later.
+HERDR_AGENTS_OWNER_CLEANUP=""
 herdr_agents_owner_refused() {
+    # What a command cut short by a takeover leaves behind, and how to clean it up.
+    [[ -z "$HERDR_AGENTS_OWNER_CLEANUP" ]] || herdr_agents_note "stopped part way: $HERDR_AGENTS_OWNER_CLEANUP"
     case "$HERDR_AGENTS_OWNER_MODE" in
         skip)
             herdr_agents_note "$HERDR_AGENTS_OWNER_REASON; acfs agents changes nothing"
@@ -1137,6 +1140,7 @@ herdr_agents_spawn() {
             failed=true
             break
         fi
+        HERDR_AGENTS_OWNER_CLEANUP="the Agent Mail identity $mail_name is registered but has no agent; retire it with its token, kept under ${ACFS_HOME:-$HOME/.acfs}/state/tokens (nhm imports it at takeover)"
         if ! herdr_name="$(herdr_agents_herdr_name "$mail_name")"; then
             herdr_agents_note "spawn stopped: $HERDR_AGENTS_NAME_ERROR"
             failed=true
@@ -1155,6 +1159,7 @@ herdr_agents_spawn() {
         tab_id="$(jq -r '.result.tab.tab_id // empty' <<<"$HERDR_AGENTS_OUT")"
         pane_id="$(jq -r '.result.root_pane.pane_id // empty' <<<"$HERDR_AGENTS_OUT")"
         [[ -n "$pane_id" ]] || herdr_agents_die "herdr tab create returned no root pane for $mail_name"
+        HERDR_AGENTS_OWNER_CLEANUP+="; close its empty tab with 'herdr tab close $tab_id'"
 
         local started=true start_error="" unused_identity=false tab_closed=false
         if ! herdr_agents_herdr agent start "$herdr_name" --kind "$kind" --pane "$pane_id" "${agent_args[@]}"; then
@@ -1215,6 +1220,7 @@ herdr_agents_spawn() {
         fi
 
         status="started"
+        HERDR_AGENTS_OWNER_CLEANUP="$mail_name ($herdr_name) started in tab $tab_id without its kickoff prompt; send it one with nhm"
         if [[ "$prompt_mode" != none ]]; then
             kickoff="Your Agent Mail identity is already registered: name $mail_name, project key $cwd (use it; don't register a new one). Your herdr name is $herdr_name, in herdr workspace $workspace."
             kickoff+=$'\n\n'"$base_prompt"
@@ -1232,6 +1238,7 @@ herdr_agents_spawn() {
                 [[ "$HERDR_AGENTS_ERR_CODE" != agent_prompt_stalled ]] || herdr_agents_explain_stall "$herdr_name"
             fi
         fi
+        HERDR_AGENTS_OWNER_CLEANUP=""
         herdr_agents_note "$status: $mail_name ($herdr_name, $kind) in tab $tab_id, pane $pane_id"
         results="$(jq -c --arg kind "$kind" --arg name "$mail_name" --arg herdr "$herdr_name" \
             --arg tab "$tab_id" --arg pane "$pane_id" --arg status "$status" \
@@ -1707,7 +1714,8 @@ herdr_agents_prompt_one() {
         if [[ "$wait" == true && "$(jq -r '.result.agent.agent_status // empty' <<<"$HERDR_AGENTS_OUT")" != blocked ]]; then
             local left=$(( timeout - ($(date +%s%3N) - start) ))
             (( left > 0 )) || left=1
-            herdr_agents_herdr agent wait "$target" --until idle --until "done" --timeout "$left" || ok=false
+            # blocked too: an agent can stop at an approval mid-turn.
+            herdr_agents_herdr agent wait "$target" --until idle --until "done" --until blocked --timeout "$left" || ok=false
         fi
     fi
     if [[ "$ok" == true ]]; then
@@ -2205,9 +2213,19 @@ herdr_agents_token_forget() {
 # ensure_project first, since create_agent_identity answers nothing for a
 # project the server doesn't have yet.
 herdr_agents_create_identity() {
-    local project="$1" text name token
+    local project="$1" name
     herdr_agents_mail_call ensure_project "$(jq -nc --arg p "$project" '{human_key: $p}')" >/dev/null || return 1
-    text="$(herdr_agents_owned herdr_agents_mail_call create_agent_identity \
+    # One owner step: an nhm takeover never lands between the identity and
+    # its kept token, so its export always has the token.
+    name="$(herdr_agents_owned herdr_agents_create_identity_step "$project" "$2" "$3")" || return 1
+    printf '%s\n' "$name"
+}
+
+# The owned part of create_identity: create the identity, keep its token,
+# print its name.
+herdr_agents_create_identity_step() {
+    local project="$1" text name token
+    text="$(herdr_agents_mail_call create_agent_identity \
         "$(jq -nc --arg p "$project" --arg g "$2" --arg m "$3" '{project_key: $p, program: $g, model: $m}')")" || return 1
     name="$(jq -r '.name // empty' <<<"$text" 2>/dev/null || true)"
     token="$(jq -r '.registration_token // empty' <<<"$text" 2>/dev/null || true)"
@@ -2231,8 +2249,14 @@ herdr_agents_retire_identity() {
     local arguments
     arguments="$(HERDR_AGENTS_TOKEN="$3" jq -nc --arg p "$1" --arg a "$2" \
         '{project_key: $p, agent_name: $a, registration_token: env.HERDR_AGENTS_TOKEN}')"
-    herdr_agents_owned herdr_agents_mail_call retire_agent "$arguments" >/dev/null || return 1
-    herdr_agents_token_forget "$1" "$2"
+    # One owner step, as in create_identity: the retirement and the
+    # dropped token are never split by a takeover.
+    herdr_agents_owned herdr_agents_retire_identity_step "$arguments" "$1" "$2"
+}
+
+herdr_agents_retire_identity_step() {
+    herdr_agents_mail_call retire_agent "$1" >/dev/null || return 1
+    herdr_agents_token_forget "$2" "$3"
 }
 
 herdr_agents_retire() {

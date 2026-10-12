@@ -50,6 +50,11 @@ if [[ -s "$STUB_DIR/owner_lock_probe" ]]; then
 fi
 case "$1 $2" in
     "tab create")
+        # takeover_after_tab_create names an owner.toml: nhm takes the
+        # server over right after this tab is made.
+        if [[ -s "$STUB_DIR/takeover_after_tab_create" ]]; then
+            printf 'owner = "nhm"\ngeneration = 1\n' >"$(cat "$STUB_DIR/takeover_after_tab_create")"
+        fi
         n=$(( $(cat "$STUB_DIR/tabs" 2>/dev/null || echo 0) + 1 ))
         echo "$n" >"$STUB_DIR/tabs"
         printf '{"id":"cli:tab:create","result":{"tab":{"tab_id":"w9:t%s"},"root_pane":{"pane_id":"w9:p%s"}}}\n' "$n" "$n"
@@ -120,7 +125,11 @@ case "$1 $2" in
     "agent send-keys") ;;
     "agent wait")
         [[ ! -e "$STUB_DIR/wait_fail_$3" ]] || fail_with timeout "agent $3 did not reach the requested state"
-        printf '{"id":"cli:agent:wait","result":{"agent":{"name":"%s","agent_status":"idle"}}}\n' "$3"
+        # wait_status_<name> holds the state the agent stops in (default
+        # idle); a state the call does not --until is a timeout.
+        state="$(cat "$STUB_DIR/wait_status_$3" 2>/dev/null || echo idle)"
+        [[ " $* " == *" --until $state "* ]] || fail_with timeout "agent $3 did not reach the requested state"
+        printf '{"id":"cli:agent:wait","result":{"agent":{"name":"%s","agent_status":"%s"}}}\n' "$3" "$state"
         ;;
     "agent list") cat "$STUB_DIR/list.json" ;;
     "agent rename")
@@ -1098,9 +1107,17 @@ check "send --all --workspace skips this pane and other workspaces" \
     test "$(grep -o '^herdr agent prompt [a-z]*' "$STUB_DIR/calls" | tr '\n' '|')" = "herdr agent prompt betaowl|herdr agent prompt gammayak|"
 check "--wait prompts until the agent works, then waits for its turn to end, within --timeout; the prompt words are joined" \
     bash -c 'grep -qx -- "herdr agent prompt betaowl hello there --wait --until working --until blocked --timeout 5000" "$1" \
-        && grep -qE -- "^herdr agent wait betaowl --until idle --until done --timeout [1-9][0-9]*$" "$1" \
+        && grep -qE -- "^herdr agent wait betaowl --until idle --until done --until blocked --timeout [1-9][0-9]*$" "$1" \
         && [[ "$(grep -oE "^herdr agent wait betaowl .* --timeout [0-9]+$" "$1" | grep -oE "[0-9]+$")" -le 5000 ]]' _ "$STUB_DIR/calls"
 check "send exits 0 when nothing was skipped" test "$RC" -eq 0
+
+# An agent that starts working, then stops at an approval mid-turn.
+reset_stub sendwaitblocked
+write_list
+echo blocked >"$STUB_DIR/wait_status_alphafox"
+run_helper send --name alphafox --wait --timeout 5000 "Review the open beads"
+check "send --wait stops when the agent is blocked mid-turn and says so, not after the whole --timeout" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qF "sent: alphafox, which is now blocked at an approval or question" <<<"$2"' _ "$RC" "$ERR"
 
 # acfs-gen.7: --all reports each target, and one agent gone since the list fails send.
 reset_stub sendallmissing
@@ -2245,7 +2262,30 @@ check "send --wait holds the lock for the prompt, not while the turn runs (agent
 
 owner_case ownerspawn none
 printf '%s\n' "$NHM_INST/owner.lock" >"$STUB_DIR/owner_lock_probe"
+# token_save names the token's file with sha256sum: a sha256sum first on
+# PATH records whether the owner lock is held while the token is kept.
+mkdir -p "$WORK/probebin"
+cat >"$WORK/probebin/sha256sum" <<STUB
+#!/usr/bin/env bash
+if flock -n -x "\$(cat "\$STUB_DIR/owner_lock_probe")" true; then seen=free; else seen=held; fi
+printf 'sha256sum %s\n' "\$seen" >>"\$STUB_DIR/owner_lock_calls"
+exec $(command -v sha256sum) "\$@"
+STUB
+chmod +x "$WORK/probebin/sha256sum"
+PATH="$WORK/probebin:$PATH" run_helper spawn --claude 1 --cwd "$WORK/repo"
+spawn_rc="$RC"
+
+owner_case ownermidspawn none
+printf '%s\n' "$NHM_INST/owner.toml" >"$STUB_DIR/takeover_after_tab_create"
 run_helper spawn --claude 1 --cwd "$WORK/repo"
+check "a takeover between tab create and agent start stops spawn and says how to clean up" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "stopped part way: the Agent Mail identity AlphaFox is registered but has no agent" <<<"$2" \
+        && grep -qF "herdr tab close w9:t1" <<<"$2" && ! grep -q "^herdr agent start" "$3"' _ "$RC" "$ERR" "$STUB_DIR/calls"
+RC="$spawn_rc"
+STUB_DIR="$WORK/stub.ownerspawn"
+check "spawn keeps the new identity's token under the same owner lock as its creation" \
+    bash -c '[[ -s "$1/state/tokens/$2/AlphaFox" ]] && grep -qx "sha256sum held" "$3" && ! grep -qx "sha256sum free" "$3"' \
+    _ "$WORK/acfs-home" "$(printf '%s' "$(cd "$WORK/repo" && pwd -P)" | sha256sum | cut -c1-16)" "$STUB_DIR/owner_lock_calls"
 check "spawn holds the lock for each change: tab create, agent start, the kickoff" \
     bash -c '[[ "$1" -eq 0 ]] && grep -qx "tab create held" "$2" && grep -qx "agent start held" "$2" \
         && grep -qx "agent prompt held" "$2" && ! grep -q " free$" "$2"' \
