@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-10-11T07:10:07+00:00
+# checksums.yaml - Auto-generated 2026-10-12T05:02:49+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -132,7 +132,7 @@ installers:
 
   pfr:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/power_failure_resumer/main/install.sh"
-    sha256: "980b56861828b01a1fc8db2ec2e9b7068b8efa0184ceef6433b84dec8ff6a8c9"
+    sha256: "b1e22d637bc464332b236627ff1dcae12f343ce04248fe0b8d9548d89f9169f3"
 
   pi:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/pi_agent_rust/main/install.sh"
