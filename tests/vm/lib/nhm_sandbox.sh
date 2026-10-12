@@ -22,7 +22,9 @@
 #   sandbox_exec CMD...        run CMD in the sandbox (below)
 #
 # sandbox_exec runs CMD in one bwrap: / read-only; ROOT writable; the
-# real HOME, /tmp and /run/user hidden under empty tmpfs mounts; its own
+# real HOME, /tmp, /run and the daemons' socket dirs (/var/lib/incus and
+# the like: a socket file is reachable from any net namespace) hidden
+# under empty tmpfs mounts; its own
 # network namespace (only lo, so the live Agent Mail and every other
 # host service are out of reach) and its own pid namespace (every
 # process CMD starts ends with CMD). The environment is cleared, then
@@ -175,8 +177,14 @@ sandbox_exec() {
     real_home="$(realpath -m "$HOME")"
     live="$(sandbox_live_socket)"
     args=(--ro-bind / / --dev /dev --proc /proc
-        --tmpfs "$real_home" --tmpfs /tmp --tmpfs /run/user
-        --bind "$SANDBOX_ROOT" "$SANDBOX_ROOT")
+        --tmpfs "$real_home" --tmpfs /tmp --tmpfs /run)
+    # The net namespace hides abstract sockets, not socket files: hide the
+    # daemons' socket dirs that / would show (dbus and the rest are under
+    # /run; acfs-9hkh.84).
+    for i in /var/lib/incus /var/lib/lxd /var/snap/lxd /var/lib/docker; do
+        [[ ! -d "$i" ]] || args+=(--tmpfs "$i")
+    done
+    args+=(--bind "$SANDBOX_ROOT" "$SANDBOX_ROOT")
     for ((i = 0; i < ${#SANDBOX_BINDS[@]}; i += 2)); do
         args+=(--ro-bind "${SANDBOX_BINDS[i]}" "${SANDBOX_BINDS[i + 1]}")
     done

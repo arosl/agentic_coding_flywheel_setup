@@ -73,6 +73,9 @@ touch "$SANDBOX_ROOT/written" && echo "sandbox-writable" >>"$out"
 [[ "$HOME" == "$SANDBOX_HOME" ]] && echo "home-sandbox" >>"$out"
 ifaces="$(awk -F: 'NR > 2 { gsub(/ /, "", $1); print $1 }' /proc/net/dev | sort | tr '\n' ' ')"
 [[ "$ifaces" == "lo " ]] && echo "net-lo-only" >>"$out" || echo "net: $ifaces" >>"$out"
+# Host daemons' socket files: a net namespace does not hide them.
+socks="$(find /run /var/lib/incus /var/lib/lxd /var/snap/lxd /var/lib/docker -type s 2>/dev/null | head -3)"
+[[ -z "$socks" ]] && echo "no-host-sockets" >>"$out" || echo "host sockets: $socks" >>"$out"
 STEP
 sandbox_exec bash "$WORK/sb/isolation.sh"
 iso="$(cat "$SANDBOX_EVIDENCE/isolation.txt")"
@@ -81,6 +84,7 @@ check "/ is read-only" grep -qx root-readonly <<<"$iso"
 check "the sandbox root is writable" grep -qx sandbox-writable <<<"$iso"
 check "HOME is the sandbox's" grep -qx home-sandbox <<<"$iso"
 check "the only network is lo" grep -qx net-lo-only <<<"$iso"
+check "no host daemon's socket file (dbus, incus) is reachable" grep -qx no-host-sockets <<<"$iso"
 check "nothing was written outside the root" test ! -e /usr/acfs-sandbox-probe
 
 echo "the sandbox herdr server and the mock API"
