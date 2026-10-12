@@ -470,7 +470,7 @@ declare -gA KNOWN_INSTALLERS=(
     [atuin]="https://github.com/atuinsh/atuin/releases/latest/download/atuin-installer.sh"
     [herdr]="https://herdr.dev/install.sh"
     # nhm: the release tag pins the installer; acfs.manifest.yaml names the same version.
-    [nhm]="https://raw.githubusercontent.com/arosl/nhm/v0.1.0/install.sh"
+    [nhm]="https://raw.githubusercontent.com/arosl/nhm/v0.1.1/install.sh"
     [mcp_agent_mail]="https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/refs/heads/main/install.sh"
     [ubs]="https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/main/install.sh"
     [bv]="https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh"
@@ -508,6 +508,15 @@ declare -gA KNOWN_INSTALLERS=(
     [pfr]="https://raw.githubusercontent.com/Dicklesworthstone/power_failure_resumer/main/install.sh"
 )
 declare -ga ACFS_SECURITY_REQUIRED_INSTALLERS=("${!KNOWN_INSTALLERS[@]}")
+
+# nhm's release archives, pinned by SHA-256 per platform (acfs-9hkh.42).
+# nhm's install.sh checks the archive against this pin before it reads the
+# release's own SHA256SUMS, so a re-uploaded release asset is refused. The
+# archives (8-9 MB) are too large for the checksum refresh, so this pin is
+# set by hand from the downloaded archives, together with the tag in
+# KNOWN_INSTALLERS[nhm]. stack.nhm's args in acfs.manifest.yaml carry the
+# same pins; tests/unit/test_update_nhm.sh fails when the two differ.
+declare -g ACFS_NHM_ARCHIVE_SHA256="linux-amd64=c50636964a0103a2227d8c07953bf67db343cac61524f93b40bfcda90e6aaa23 linux-arm64=02a987a7af59200d513b963deaa5e30495d9cc3d4941a1d95bbe7add577aa6bc"
 
 # ============================================================
 # Checksum Verification Policy

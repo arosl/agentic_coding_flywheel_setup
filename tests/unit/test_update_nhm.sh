@@ -52,7 +52,7 @@ chmod +x "$FAKEBIN/codex"
 # ACFS's copy of nhm_hooks.sh, then the function with the given binaries
 # "installed". Env knobs: SAME_USER (default 1), READ_ONLY, NO_HELPER,
 # NO_HOOK_BIN (no ~/.local/bin/nhm-hook), PIN_URL (replaces
-# KNOWN_INSTALLERS[nhm]).
+# KNOWN_INSTALLERS[nhm]), PINS (replaces ACFS_NHM_ARCHIVE_SHA256).
 run_update() {
     local fn="$1"; shift
     FIX_HOME="$(mktemp -d -p "$ROOT")"
@@ -71,6 +71,7 @@ run_update() {
         # shellcheck source=/dev/null
         source "$REPO_ROOT/scripts/lib/security.sh" >/dev/null 2>&1
         [[ -z "${PIN_URL:-}" ]] || KNOWN_INSTALLERS["nhm"]="$PIN_URL"
+        [[ -z "${PINS+set}" ]] || ACFS_NHM_ARCHIVE_SHA256="$PINS"
         INSTALLED=" $* "
         update_binary_exists() { [[ "$INSTALLED" == *" $1 "* ]]; }
         update_binary_path() { [[ "$INSTALLED" == *" $1 "* ]] && printf '%s\n' "$FIX_HOME/.local/bin/$1"; }
@@ -95,7 +96,32 @@ registered_in() { bash "$REPO_ROOT/scripts/lib/nhm_hooks.sh" registered "$1" "$2
 # update_nhm: the pinned release, then enroll
 # ------------------------------------------------------------
 run_update update_nhm nhm
-check "update_nhm: installs the release the pinned URL names" has "RUN nhm 0.1.0: update_run_verified_installer nhm --version 0.1.0"
+# shellcheck source=/dev/null
+NHM_PINS="$(source "$REPO_ROOT/scripts/lib/security.sh" >/dev/null 2>&1; printf '%s' "$ACFS_NHM_ARCHIVE_SHA256")"
+NHM_AMD64="$(tr ' ' '\n' <<<"$NHM_PINS" | grep '^linux-amd64=')"
+NHM_ARM64="$(tr ' ' '\n' <<<"$NHM_PINS" | grep '^linux-arm64=')"
+check "update_nhm: installs the release the pinned URL names, with its archive pins" \
+    has "RUN nhm 0.1.1: update_run_verified_installer nhm --version 0.1.1 --archive-sha256 $NHM_AMD64 --archive-sha256 $NHM_ARM64"
+
+PINS="" run_update update_nhm nhm
+check "update_nhm: no archive pins installs nothing" lacks "RUN nhm 0"
+check "update_nhm: and says so" has "ITEM warn|nhm|no pinned nhm archives"
+
+# acfs-9hkh.42: the install (stack.nhm's args) and acfs update (security.sh)
+# pin the same archives, one per platform, and the same version.
+manifest_args="$(awk '/^  - id: stack.nhm$/ { m = 1 } m && /^  - id: / && !/stack.nhm/ { m = 0 }
+    m && /args:/ { a = 1 } a { print } a && /\]/ { exit }' "$REPO_ROOT/acfs.manifest.yaml" | tr -d '\n ')"
+check "stack.nhm's args pin the same archives as security.sh" \
+    bash -c '[[ -n "$2" && -n "$3" && "$1" == *"\"--archive-sha256\",\"$2\""* && "$1" == *"\"--archive-sha256\",\"$3\""* ]] \
+        && [[ "$(grep -o -- "--archive-sha256" <<<"$1" | wc -l)" -eq 2 ]]' _ "$manifest_args" "$NHM_AMD64" "$NHM_ARM64"
+check "each archive pin is <platform>=<64 hex>" \
+    bash -c '[[ "$1" =~ ^linux-amd64=[0-9a-f]{64}$ && "$2" =~ ^linux-arm64=[0-9a-f]{64}$ ]]' _ "$NHM_AMD64" "$NHM_ARM64"
+check "stack.nhm's args and installed_check name the version security.sh's URL pins" \
+    bash -c 'v="$(source "$4/scripts/lib/security.sh" >/dev/null 2>&1; [[ "${KNOWN_INSTALLERS[nhm]}" =~ /v([0-9.]+)/install ]] && printf %s "${BASH_REMATCH[1]}")"
+        [[ -n "$v" && "$1" == *"\"--version\",\"$v\""* ]] && grep -qF "\"version\": \"$v\"" "$4/acfs.manifest.yaml"' \
+    _ "$manifest_args" "" "" "$REPO_ROOT"
+
+run_update update_nhm nhm
 check "update_nhm: enrolls the default herdr server as the target user" \
     has "RUN nhm enroll: update_run_in_target_context  $FIX_HOME/.local/bin/nhm admin instance enroll --session default"
 check "update_nhm: returns 0" has "RC 0"

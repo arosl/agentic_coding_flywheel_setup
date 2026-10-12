@@ -909,7 +909,7 @@ acfs_generated_install_stack_nhm() {
                         elif ! "$verified_installer_chmod_bin" 0444 "$verified_installer_file"; then
                             log_error "stack.nhm: failed to make verified installer staging file read-only"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
-                        elif run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.1.0'; then
+                        elif run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.1.1' '--archive-sha256' 'linux-amd64=c50636964a0103a2227d8c07953bf67db343cac61524f93b40bfcda90e6aaa23' '--archive-sha256' 'linux-arm64=02a987a7af59200d513b963deaa5e30495d9cc3d4941a1d95bbe7add577aa6bc'; then
                             install_success=true
                         else
                             log_error "stack.nhm: verified installer execution failed"

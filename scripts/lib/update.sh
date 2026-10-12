@@ -7670,16 +7670,26 @@ update_nhm_pinned_version() {
 }
 
 update_nhm() {
-    local desc="nhm" version="" bin=""
+    local desc="nhm" version="" bin="" pin=""
+    local -a pin_args=()
 
     if ! version="$(update_nhm_pinned_version)"; then
         log_item "warn" "$desc" "no pinned nhm release in security.sh's KNOWN_INSTALLERS"
         return 0
     fi
+    # The release archives are pinned too (security.sh), so nhm's installer
+    # refuses a re-uploaded archive (acfs-9hkh.42).
+    for pin in ${ACFS_NHM_ARCHIVE_SHA256:-}; do
+        pin_args+=(--archive-sha256 "$pin")
+    done
+    if (( ${#pin_args[@]} == 0 )); then
+        log_item "warn" "$desc" "no pinned nhm archives in security.sh's ACFS_NHM_ARCHIVE_SHA256"
+        return 0
+    fi
     capture_version_before "nhm"
     # run_cmd reports a failure itself (and returns 0); the version line
     # below shows what is installed either way.
-    run_cmd "nhm $version" update_run_verified_installer nhm --version "$version"
+    run_cmd "nhm $version" update_run_verified_installer nhm --version "$version" "${pin_args[@]}"
     if capture_version_after "nhm"; then
         update_say "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[nhm]}" "${VERSION_AFTER[nhm]}"
     fi
