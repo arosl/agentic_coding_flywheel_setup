@@ -7710,30 +7710,36 @@ update_nhm() {
 
 # nhm's hook lines (scripts/lib/nhm_hooks.sh): register them for the
 # installed agent CLIs, and record Codex's trust for ACFS's own entries
-# through Codex's app-server (F.25). Idempotent; appends only.
+# through Codex's app-server (F.25). Idempotent; appends only. When
+# nhm-hook is gone, it removes the lines ACFS wrote instead.
 update_nhm_hooks() {
     local desc="nhm hook lines"
-    local helper="" target_user="" current_user="" target_home="" agent="" file=""
-    local registered="" failed="" codex_untrusted=false
+    local helper="" target_user="" current_user="" target_home="" agent="" file="" bin_dir=""
+    local registered="" failed="" codex_untrusted=false nhm_installed=true
 
     [[ "${UPDATE_STACK:-true}" == "true" ]] || return 0
-    if ! update_binary_exists nhm; then
-        log_item "skip" "$desc" "nhm is not installed"
-        return 0
-    fi
+    update_binary_exists nhm || nhm_installed=false
     helper="$(update_runtime_acfs_home 2>/dev/null || true)/scripts/lib/nhm_hooks.sh"
     if [[ ! -r "$helper" ]]; then
         log_item "skip" "$desc" "nhm_hooks.sh is not installed"
         return 0
     fi
     if update_is_read_only_mode; then
-        log_item "skip" "$desc" "dry-run: would register them for the installed agents"
+        if [[ "$nhm_installed" == true ]]; then
+            log_item "skip" "$desc" "dry-run: would register them for the installed agents"
+        else
+            log_item "skip" "$desc" "nhm is not installed"
+        fi
         return 0
     fi
     target_user="$(update_target_user 2>/dev/null || true)"
     current_user="$(update_current_user 2>/dev/null || true)"
     if [[ -z "$target_user" || "$current_user" != "$target_user" ]]; then
-        log_item "warn" "$desc" "run as ${target_user:-the target user}: bash $helper register claude (and codex)"
+        if [[ "$nhm_installed" == true ]]; then
+            log_item "warn" "$desc" "run as ${target_user:-the target user}: bash $helper register claude (and codex)"
+        else
+            log_item "skip" "$desc" "nhm is not installed"
+        fi
         return 0
     fi
     target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
@@ -7741,10 +7747,31 @@ update_nhm_hooks() {
         log_item "warn" "$desc" "no home for $target_user"
         return 0
     fi
-    # The lines run ~/.local/bin/nhm-hook; without it they would point at
-    # nothing in every turn.
-    if [[ ! -x "$target_home/.local/bin/nhm-hook" ]]; then
-        log_item "warn" "$desc" "nhm-hook is not installed in $target_home/.local/bin; the lines are not registered"
+    # The lines run nhm-hook from ${NHM_BIN_DIR:-~/.local/bin}, as
+    # stack.nhm's verify and nhm_hooks.sh read it. Without nhm-hook they
+    # would point at nothing in every turn: remove the lines ACFS wrote.
+    bin_dir="${NHM_BIN_DIR:-$target_home/.local/bin}"
+    if [[ ! -x "$bin_dir/nhm-hook" ]]; then
+        for agent in claude codex; do
+            case "$agent" in
+                claude) file="$target_home/.claude/settings.json" ;;
+                codex) file="$target_home/.codex/hooks.json" ;;
+            esac
+            bash "$helper" unregister "$agent" "$file" </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1 \
+                || failed+="${failed:+, }$agent"
+        done
+        if [[ "$nhm_installed" == true ]]; then
+            log_item "warn" "$desc" "nhm-hook is not installed in $bin_dir; the lines are not registered"
+        else
+            log_item "skip" "$desc" "nhm is not installed"
+        fi
+        if [[ -n "$failed" ]]; then
+            log_item "warn" "$desc" "could not remove the lines for $failed; see the update log"
+        fi
+        return 0
+    fi
+    if [[ "$nhm_installed" != true ]]; then
+        log_item "skip" "$desc" "nhm is not installed"
         return 0
     fi
 

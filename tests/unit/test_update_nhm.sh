@@ -51,7 +51,9 @@ chmod +x "$FAKEBIN/codex"
 # run_update <function> <installed binaries...>: a fresh fixture home with
 # ACFS's copy of nhm_hooks.sh, then the function with the given binaries
 # "installed". Env knobs: SAME_USER (default 1), READ_ONLY, NO_HELPER,
-# NO_HOOK_BIN (no ~/.local/bin/nhm-hook), PIN_URL (replaces
+# NO_HOOK_BIN (no ~/.local/bin/nhm-hook), PRESEED (ACFS's lines already in
+# both files), BIN_DIR (nhm-hook in $FIX_HOME/$BIN_DIR, which NHM_BIN_DIR
+# names), PIN_URL (replaces
 # KNOWN_INSTALLERS[nhm]), DROP_PIN (a checksums.yaml entry to drop),
 # BAD_PIN (an entry whose pin becomes malformed). The repo's checksums.yaml
 # stands in for the one update_require_security fetches.
@@ -65,9 +67,19 @@ run_update() {
         chmod 0755 "$FIX_HOME/.local/bin/nhm-hook"
     fi
     printf '{\n  "model": "opus",\n  "hooks": {}\n}\n' > "$FIX_HOME/.claude/settings.json"
+    if [[ -n "${PRESEED:-}" ]]; then
+        HOME="$FIX_HOME" env -u NHM_BIN_DIR bash "$REPO_ROOT/scripts/lib/nhm_hooks.sh" register claude "$FIX_HOME/.claude/settings.json" 2>/dev/null
+        HOME="$FIX_HOME" env -u NHM_BIN_DIR bash "$REPO_ROOT/scripts/lib/nhm_hooks.sh" register codex "$FIX_HOME/.codex/hooks.json" 2>/dev/null
+    fi
+    if [[ -n "${BIN_DIR:-}" ]]; then
+        mkdir -p "$FIX_HOME/$BIN_DIR"
+        printf '#!/bin/sh\nexit 0\n' > "$FIX_HOME/$BIN_DIR/nhm-hook"
+        chmod 0755 "$FIX_HOME/$BIN_DIR/nhm-hook"
+    fi
     OUT="$(
         export HOME="$FIX_HOME" TARGET_HOME="$FIX_HOME" UPDATE_LOG_FILE="$ROOT/update.log" PATH="$FAKEBIN:$PATH"
         unset TARGET_USER ACFS_HOME XDG_CONFIG_HOME NHM_BIN_DIR CODEX_HOME
+        [[ -z "${BIN_DIR:-}" ]] || export NHM_BIN_DIR="$FIX_HOME/$BIN_DIR"
         # shellcheck source=/dev/null
         source "$REPO_ROOT/scripts/lib/update.sh" >/dev/null 2>&1
         # shellcheck source=/dev/null
@@ -185,6 +197,23 @@ check "hooks: no ~/.local/bin/nhm-hook warns" has "ITEM warn|nhm hook lines|nhm-
 check "hooks: and adds no line that points at nothing" \
     bash -c '! bash "$1" registered claude "$2" && test ! -e "$3"' _ "$REPO_ROOT/scripts/lib/nhm_hooks.sh" \
     "$FIX_HOME/.claude/settings.json" "$FIX_HOME/.codex/hooks.json"
+
+# acfs-9hkh.46: lines an earlier run added go when nhm-hook goes, as install
+# does; and nhm-hook is looked for where NHM_BIN_DIR says.
+PRESEED=1 NO_HOOK_BIN=1 run_update update_nhm_hooks nhm claude codex
+check "hooks: nhm-hook gone warns" has "ITEM warn|nhm hook lines|nhm-hook is not installed"
+check "hooks: and removes ACFS's Claude Code lines" bash -c '! grep -q nhm-hook "$1"' _ "$FIX_HOME/.claude/settings.json"
+check "hooks: and ACFS's Codex lines" bash -c '! grep -q nhm-hook "$1"' _ "$FIX_HOME/.codex/hooks.json"
+check "hooks: and keeps the other settings" grep -q '"model": "opus"' "$FIX_HOME/.claude/settings.json"
+
+PRESEED=1 NO_HOOK_BIN=1 run_update update_nhm_hooks claude codex
+check "hooks: nhm uninstalled skips" has "ITEM skip|nhm hook lines|nhm is not installed"
+check "hooks: and still removes the lines" bash -c '! grep -q nhm-hook "$1" && ! grep -q nhm-hook "$2"' _ \
+    "$FIX_HOME/.claude/settings.json" "$FIX_HOME/.codex/hooks.json"
+
+BIN_DIR=alt NO_HOOK_BIN=1 run_update update_nhm_hooks nhm claude
+check "hooks: nhm-hook under NHM_BIN_DIR counts" has "ITEM ok|nhm hook lines|registered for claude"
+check "hooks: and the lines run that nhm-hook" grep -q "$FIX_HOME/alt/nhm-hook sessionstart" "$FIX_HOME/.claude/settings.json"
 
 SAME_USER=0 run_update update_nhm_hooks nhm claude
 check "hooks: another user only warns with the command" has "ITEM warn|nhm hook lines|run as ubuntu: bash"
