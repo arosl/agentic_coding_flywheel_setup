@@ -23,7 +23,11 @@
 # Usage:
 #   nhm_hooks.sh register claude|codex [FILE]   (default ~/.claude/settings.json
 #                                                or ~/.codex/hooks.json)
-#   nhm_hooks.sh registered claude|codex FILE   (exit 0 if FILE has every line)
+#   nhm_hooks.sh registered claude|codex FILE   (exit 0 if FILE has every line
+#                                                exact; 3 if register must
+#                                                upgrade an older nhm line)
+#   nhm_hooks.sh unregister claude|codex [FILE] (remove ACFS's exact lines;
+#                                                Codex: trailing ones only)
 #   nhm_hooks.sh trust codex [FILE] [--dry-run] (FILE is $CODEX_HOME/hooks.json;
 #                                                default ~/.codex/hooks.json)
 # ============================================================
@@ -41,7 +45,12 @@ Usage:
   nhm_hooks.sh register claude|codex [FILE]  Add the nhm-hook lines to FILE
                                              (default ~/.claude/settings.json
                                              or ~/.codex/hooks.json)
-  nhm_hooks.sh registered claude|codex FILE  Exit 0 if FILE has every line
+  nhm_hooks.sh registered claude|codex FILE  Exit 0 if FILE has every line exact,
+                                             3 if an older nhm line needs register
+  nhm_hooks.sh unregister claude|codex [FILE]
+                                             Remove the lines register wrote
+                                             (Codex: only those no other
+                                             entry follows)
   nhm_hooks.sh trust codex [FILE] [--dry-run]
                                              Record Codex's trust for the
                                              nhm-hook entries of FILE
@@ -74,22 +83,47 @@ nhm_hooks_lines() {
     esac
 }
 
-# The jq program that appends one nhm hook line to an event, unless an
-# entry under that event already is an nhm line for the same verb: its
-# whole command is nhm-hook (any path, so an older nhm entry counts) with
-# the verb as its only argument. A user's command that merely contains
-# nhm-hook (`myscript; nhm-hook sessionstart`) does not count.
-nhm_hooks_register_filter() {
+# The jq definitions that register and registered share. ACFS's line for
+# an event is exact: its handler is {type, command, timeout} as register
+# writes it, in a group with the line's matcher and no other key; that is
+# what trust (and the doctor) count. An older nhm line is one whose whole
+# command is nhm-hook (any path, an older timeout or matcher) with the verb
+# as its only argument. A user's command that merely contains nhm-hook
+# (`myscript; nhm-hook sessionstart`) is neither.
+nhm_hooks_jq_defs() {
     cat <<'JQ'
-def ours: type == "object"
+def nhmish: type == "object"
   and ((.command? // "") | type) == "string"
   and ((.command? // "") | test("^[[:space:]]*([^[:space:];&|#<>`$()]*/)?nhm-hook[[:space:]]+" + $verb + "[[:space:]]*$"));
-def entry: (if $matcher == "" then {} else {matcher: $matcher} end)
-  + {hooks: [{type: "command", command: $cmd, timeout: $timeout}]};
+def handler: {type: "command", command: $cmd, timeout: $timeout};
+def entry: (if $matcher == "" then {} else {matcher: $matcher} end) + {hooks: [handler]};
+def group_fits: type == "object" and ((.matcher // "") == $matcher) and ((keys - ["matcher", "hooks"]) | length) == 0;
+def exact_at: [(.hooks?[$event]? // []) | arrays | to_entries[] | .key as $gi | .value
+    | select(group_fits) | (.hooks // []) | arrays | to_entries[] | select(.value == handler) | [$gi, .key]];
+def nhmish_at: [(.hooks?[$event]? // []) | arrays | to_entries[] | .key as $gi | .value
+    | select(type == "object" and (.hooks | type) == "array") | .hooks | to_entries[] | select(.value | nhmish) | [$gi, .key]];
+JQ
+}
+
+# The jq program that makes ACFS's line for one event exact. It keeps an
+# exact line as it is. It upgrades an older nhm line in place, so Codex's
+# position-keyed trust then trusts the upgraded line: the handler alone
+# when its group fits, the whole group when the line is alone in it. An
+# older line that shares a group with the user's handlers under another
+# matcher stays, and the exact line is appended. Otherwise it appends.
+nhm_hooks_register_filter() {
+    nhm_hooks_jq_defs
+    cat <<'JQ'
 if type != "object" then error("the file's top level is not a JSON object")
 elif has("hooks") and (.hooks | type) != "object" then error("\"hooks\" is not a JSON object")
 elif (.hooks? // {} | has($event)) and (.hooks[$event] | type) != "array" then error("\"hooks.\($event)\" is not an array")
-elif ([(.hooks[$event] // [])[] | (.hooks? // []) | arrays | .[] | select(ours)] | length) > 0 then .
+elif (exact_at | length) > 0 then .
+elif (nhmish_at | length) > 0 then
+  nhmish_at[0] as [$gi, $hi]
+  | if (.hooks[$event][$gi] | group_fits) then .hooks[$event][$gi].hooks[$hi] = handler
+    elif (.hooks[$event][$gi].hooks | length) == 1 then .hooks[$event][$gi] = entry
+    else .hooks[$event] += [entry]
+    end
 else .hooks[$event] = ((.hooks[$event] // []) + [entry])
 end
 JQ
@@ -100,10 +134,30 @@ nhm_hooks_command() {
     printf '%s/nhm-hook %s' "$bin_dir" "$verb"
 }
 
+# Replace TARGET with CONTENT through a temp file beside it, keeping
+# TARGET's mode (settings files are often 0600); a new file is 0600.
+nhm_hooks_write() {
+    local target="$1" content="$2" tmp=""
+    tmp="$(mktemp "$target.tmp.XXXXXX")" || return 1
+    if ! printf '%s\n' "$content" >"$tmp"; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+    if [[ -e "$target" ]]; then
+        chmod --reference="$target" "$tmp" 2>/dev/null || true
+    else
+        chmod 0600 "$tmp" 2>/dev/null || true
+    fi
+    if ! mv -f -- "$tmp" "$target"; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+}
+
 nhm_hooks_register() {
     local kind="${1:-}"
     local file="${2:-}"
-    local target="" dir="" current="" updated="" tmp="" line="" event="" matcher="" verb="" cmd=""
+    local target="" dir="" current="" updated="" line="" event="" matcher="" verb="" cmd=""
 
     case "$kind" in
         claude) [[ -n "$file" ]] || file="$HOME/.claude/settings.json" ;;
@@ -150,42 +204,102 @@ nhm_hooks_register() {
     fi
 
     mkdir -p -- "$dir" || return 1
-    tmp="$(mktemp "$target.tmp.XXXXXX")" || return 1
-    if ! printf '%s\n' "$updated" >"$tmp"; then
-        rm -f -- "$tmp"
-        return 1
-    fi
-    # Keep the file's mode (settings files are often 0600).
-    if [[ -e "$target" ]]; then
-        chmod --reference="$target" "$tmp" 2>/dev/null || true
-    else
-        chmod 0600 "$tmp" 2>/dev/null || true
-    fi
-    if ! mv -f -- "$tmp" "$target"; then
-        rm -f -- "$tmp"
-        return 1
-    fi
+    nhm_hooks_write "$target" "$updated" || return 1
     line="added the nhm hook lines to $file"
     [[ "$kind" != codex ]] || line+="; Codex runs them once trusted (nhm_hooks.sh trust codex, or Codex's /hooks)"
     nhm_hooks_note "$line"
 }
 
+# registered: exit 0 when every line of the kind is exact (as trust and
+# the doctor count it); 3 when a line exists only as an older nhm line,
+# which `register` upgrades in place; 1 when a line is missing.
 nhm_hooks_registered() {
-    local kind="${1:-}" file="${2:-}" event="" matcher="" verb=""
+    local kind="${1:-}" file="${2:-}" event="" matcher="" verb="" state="" upgrade=false
 
     [[ -f "$file" ]] || return 1
     command -v jq >/dev/null 2>&1 || return 1
     nhm_hooks_lines "$kind" >/dev/null 2>&1 || return 2
-    # shellcheck disable=SC2034 # matcher: registered checks the command only.
     while IFS='|' read -r event verb matcher; do
         [[ -n "$event" ]] || continue
-        jq -e --arg event "$event" --arg verb "$verb" '
-            [(.hooks?[$event]? // []) | arrays | .[] | (.hooks? // []) | arrays | .[]
-              | select(type == "object" and ((.command? // "") | type) == "string"
-                       and ((.command? // "") | test("^[[:space:]]*([^[:space:];&|#<>`$()]*/)?nhm-hook[[:space:]]+" + $verb + "[[:space:]]*$")))]
-            | length > 0
-        ' "$file" >/dev/null 2>&1 || return 1
+        state="$(jq -r --arg event "$event" --arg matcher "$matcher" --arg verb "$verb" \
+            --arg cmd "$(nhm_hooks_command "$verb")" --argjson timeout "$NHM_HOOKS_TIMEOUT_SECONDS" \
+            "$(nhm_hooks_jq_defs)"'
+            if (exact_at | length) > 0 then "exact" elif (nhmish_at | length) > 0 then "older" else "missing" end
+        ' "$file" 2>/dev/null)" || return 1
+        case "$state" in
+            exact) ;;
+            older) upgrade=true ;;
+            *) return 1 ;;
+        esac
     done < <(nhm_hooks_lines "$kind")
+    [[ "$upgrade" == false ]] || return 3
+    return 0
+}
+
+# The jq program that removes ACFS's own entry for one event: exactly what
+# `register` writes, nothing else (an entry the user edited, an older nhm
+# command, or a user line that mentions nhm-hook stays). For Codex it
+# removes only trailing entries, since Codex keys trust by position and
+# removing one would move every entry after it. With $count it prints how
+# many of ACFS's entries the event still has instead.
+nhm_hooks_unregister_filter() {
+    cat <<'JQ'
+def entry: (if $matcher == "" then {} else {matcher: $matcher} end)
+  + {hooks: [{type: "command", command: $cmd, timeout: $timeout}]};
+def drop_trailing: if length > 0 and .[-1] == entry then .[:-1] | drop_trailing else . end;
+if type != "object" or ((.hooks? // {}) | type) != "object" or ((.hooks? // {})[$event] | type) != "array"
+then (if $count then 0 else . end)
+elif $count then [.hooks[$event][] | select(. == entry)] | length
+else .hooks[$event] |= (if $codex then drop_trailing else map(select(. != entry)) end)
+  | if (.hooks[$event] | length) == 0 then del(.hooks[$event]) else . end
+end
+JQ
+}
+
+# unregister claude|codex [FILE]: remove ACFS's nhm-hook lines, for when
+# nhm-hook is gone and the lines would point at nothing in every turn.
+nhm_hooks_unregister() {
+    local kind="${1:-}" file="${2:-}"
+    local target="" current="" updated="" event="" matcher="" verb="" cmd="" left=0 n=0 is_codex=false
+
+    case "$kind" in
+        claude) [[ -n "$file" ]] || file="$HOME/.claude/settings.json" ;;
+        codex) [[ -n "$file" ]] || file="$HOME/.codex/hooks.json"; is_codex=true ;;
+        *) nhm_hooks_usage >&2; return 2 ;;
+    esac
+    command -v jq >/dev/null 2>&1 || { nhm_hooks_note "jq not found"; return 1; }
+    target="$file"
+    if [[ -L "$file" ]]; then
+        target="$(readlink -f -- "$file")" || { nhm_hooks_note "cannot resolve $file"; return 1; }
+    fi
+    [[ -e "$target" ]] || return 0
+    [[ -f "$target" ]] || { nhm_hooks_note "$target is not a regular file"; return 1; }
+    current="$(cat -- "$target")" || return 1
+    [[ -n "${current//[[:space:]]/}" ]] || return 0
+
+    updated="$current"
+    while IFS='|' read -r event verb matcher; do
+        [[ -n "$event" ]] || continue
+        cmd="$(nhm_hooks_command "$verb")"
+        if ! updated="$(jq --arg event "$event" --arg matcher "$matcher" --arg cmd "$cmd" \
+                --argjson timeout "$NHM_HOOKS_TIMEOUT_SECONDS" --argjson codex "$is_codex" --argjson count false \
+                "$(nhm_hooks_unregister_filter)" <<<"$updated" 2>/dev/null)"; then
+            nhm_hooks_note "left $file unchanged: jq cannot read it (see: jq . $file)"
+            return 1
+        fi
+        n="$(jq --arg event "$event" --arg matcher "$matcher" --arg cmd "$cmd" \
+                --argjson timeout "$NHM_HOOKS_TIMEOUT_SECONDS" --argjson codex "$is_codex" --argjson count true \
+                "$(nhm_hooks_unregister_filter)" <<<"$updated" 2>/dev/null)" || n=0
+        left=$((left + n))
+    done < <(nhm_hooks_lines "$kind")
+
+    if [[ "$(jq -c . <<<"$current")" != "$(jq -c . <<<"$updated")" ]]; then
+        nhm_hooks_write "$target" "$updated" || return 1
+        nhm_hooks_note "removed the nhm hook lines from $file"
+    fi
+    if (( left > 0 )); then
+        nhm_hooks_note "left $left nhm hook lines in $file: other entries follow them, and Codex keys trust by position, so removing them would untrust those entries"
+    fi
     return 0
 }
 
@@ -234,24 +348,34 @@ def ours():
     return found
 
 
+def on_signal(signum, _frame):
+    # The caller's `timeout` sends SIGTERM to its own process group, which
+    # the app-server (a session of its own) is not in. Exit through the
+    # finally below, which kills the app-server's group.
+    sys.exit(128 + signum)
+
+
+for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+    signal.signal(sig, on_signal)
+
 real = os.path.realpath(hooks_file)
 mine = ours()
 if not mine:
     note(f"{hooks_file} has no nhm-hook entries that ACFS wrote")
     sys.exit(0)
-proc = subprocess.Popen([codex, "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                        stderr=subprocess.DEVNULL, text=True, cwd=os.path.dirname(real), start_new_session=True)
+proc = None
+killer = None
 
 
 def kill_group(sig):
+    if proc is None:
+        return
     try:
         os.killpg(proc.pid, sig)
     except (ProcessLookupError, PermissionError):
         pass
 
 
-killer = threading.Timer(float(os.environ.get("NHM_HOOKS_TRUST_TIMEOUT") or 60), kill_group, args=(signal.SIGKILL,))
-killer.start()
 seq = [0]
 
 
@@ -288,6 +412,10 @@ def listed():
 
 status = 1
 try:
+    proc = subprocess.Popen([codex, "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, text=True, cwd=os.path.dirname(real), start_new_session=True)
+    killer = threading.Timer(float(os.environ.get("NHM_HOOKS_TRUST_TIMEOUT") or 60), kill_group, args=(signal.SIGKILL,))
+    killer.start()
     call("initialize", {"clientInfo": {"name": "acfs-nhm-hooks", "title": None, "version": "1"}, "capabilities": None})
     proc.stdin.write(json.dumps({"method": "initialized"}) + "\n")
     proc.stdin.flush()
@@ -316,21 +444,26 @@ try:
 except (RuntimeError, OSError, ValueError, KeyError) as e:
     note(f"could not record Codex's trust: {e}")
 finally:
-    killer.cancel()
-    try:
-        proc.stdin.close()
-    except OSError:
-        pass
-    kill_group(signal.SIGTERM)
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        pass
-    kill_group(signal.SIGKILL)
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        pass
+    # A second signal must not cut the cleanup short.
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(sig, signal.SIG_IGN)
+    if killer is not None:
+        killer.cancel()
+    if proc is not None:
+        try:
+            proc.stdin.close()
+        except OSError:
+            pass
+        kill_group(signal.SIGTERM)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        kill_group(signal.SIGKILL)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
 sys.exit(status)
 PY
 }
@@ -382,6 +515,7 @@ nhm_hooks_main() {
     case "$subcommand" in
         register) nhm_hooks_register "$@" ;;
         registered) nhm_hooks_registered "$@" ;;
+        unregister) nhm_hooks_unregister "$@" ;;
         trust) nhm_hooks_trust "$@" ;;
         -h|--help|help) nhm_hooks_usage ;;
         *) nhm_hooks_usage >&2; return 2 ;;

@@ -3096,21 +3096,31 @@ check_nhm() {
         missing+=("nhm_hooks.sh is not installed")
         fixes+=("acfs update")
     else
+        # registered: 0 every line exact, 3 an older nhm line that register
+        # upgrades in place (acfs update runs register), else missing. The
+        # exact line names the runtime home's ~/.local/bin/nhm-hook.
+        local rc=0
         if doctor_binary_exists "claude"; then
-            if bash "$helper" registered claude "$home/.claude/settings.json" </dev/null >/dev/null 2>&1; then
-                notes+=("hooks: Claude Code")
-            else
-                missing+=("hook lines missing for Claude Code")
-                fixes+=("bash $helper register claude")
-            fi
+            rc=0
+            HOME="$home" bash "$helper" registered claude "$home/.claude/settings.json" </dev/null >/dev/null 2>&1 || rc=$?
+            case "$rc" in
+                0) notes+=("hooks: Claude Code") ;;
+                3) missing+=("older nhm hook lines for Claude Code need an upgrade")
+                   fixes+=("bash $helper register claude (or acfs update)") ;;
+                *) missing+=("hook lines missing for Claude Code")
+                   fixes+=("bash $helper register claude") ;;
+            esac
         fi
         if doctor_binary_exists "codex"; then
-            if bash "$helper" registered codex "$home/.codex/hooks.json" </dev/null >/dev/null 2>&1; then
-                _acfs_doctor_nhm_codex_trust "$helper" "$home"
-            else
-                missing+=("hook lines missing for Codex")
-                fixes+=("bash $helper register codex")
-            fi
+            rc=0
+            HOME="$home" bash "$helper" registered codex "$home/.codex/hooks.json" </dev/null >/dev/null 2>&1 || rc=$?
+            case "$rc" in
+                0) _acfs_doctor_nhm_codex_trust "$helper" "$home" ;;
+                3) missing+=("older nhm hook lines for Codex need an upgrade, then Codex's trust")
+                   fixes+=("bash $helper register codex (or acfs update)" "bash $helper trust codex") ;;
+                *) missing+=("hook lines missing for Codex")
+                   fixes+=("bash $helper register codex") ;;
+            esac
         fi
     fi
 

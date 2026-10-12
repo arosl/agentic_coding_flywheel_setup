@@ -94,8 +94,21 @@ fixture yes claude
 printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/elsewhere/nhm-hook sessionstart"}]}],"PostToolUse":[{"hooks":[{"type":"command","command":"/elsewhere/nhm-hook posttooluse"}]}],"PostCompact":[{"hooks":[{"type":"command","command":"/elsewhere/nhm-hook sessionstart"}]}]}}' \
     >"$WORK/home/.codex/hooks.json"
 out="$(run_check codex)"
-check_case "nhm lines ACFS did not write are not reported as trusted" \
-    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"is unknown"* || "$1" == stack.nhm.setup\|warn\|*"does not trust"* ]]' _ "$out"
+check_case "nhm lines at another path are not reported as trusted: they need register's upgrade" \
+    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"older nhm hook lines for Codex need an upgrade"* ]]' _ "$out"
+
+fixture yes claude
+printf '%s\n' '{"hooks":{"PostToolUse":[{"matcher":"x","hooks":[{"type":"command","command":"/old/nhm-hook posttooluse"}]}],"SessionStart":[{"hooks":[{"type":"command","command":"/old/nhm-hook sessionstart"}]}],"PostCompact":[{"hooks":[{"type":"command","command":"/old/nhm-hook sessionstart"}]}]}}' \
+    >"$WORK/home/.codex/hooks.json"
+out="$(run_check codex)"
+check_case "older-path lines warn: upgrade with register, then trust" \
+    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"older nhm hook lines for Codex need an upgrade"*\|*"register codex (or acfs update)"*"trust codex" ]]' _ "$out"
+HOME="$WORK/home" bash "$ROOT/scripts/lib/nhm_hooks.sh" register codex 2>/dev/null
+PATH="$FAKEBIN:$PATH" HOME="$WORK/home" CODEX_HOME="$WORK/home/.codex" \
+    bash "$ROOT/scripts/lib/nhm_hooks.sh" trust codex "$WORK/home/.codex/hooks.json" 2>/dev/null
+out="$(run_check codex)"
+check_case "after register and trust, register, trust and the doctor agree: trusted" \
+    bash -c '[[ "$1" == stack.nhm.setup\|pass\|*"Codex (trusted)"* ]]' _ "$out"
 
 fixture yes both
 out="$(FAKE_CODEX_FAIL=1 run_check codex)"
