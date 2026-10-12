@@ -292,10 +292,11 @@ test_skipping_codex_or_antigravity_keeps_the_workspace() {
 }
 
 # The `agents` alias runs herdr, so skipping herdr alone still fails selection.
+# stack.nhm depends on herdr too and is skipped here, so the error names the workspace.
 test_skipping_herdr_alone_fails_on_the_workspace() {
     source_manifest_index
     reset_selection_env
-    SKIP_MODULES=("tools.herdr")
+    SKIP_MODULES=("tools.herdr" "stack.nhm")
 
     local output status=0
     output="$(acfs_resolve_selection 2>&1)" || status=$?
