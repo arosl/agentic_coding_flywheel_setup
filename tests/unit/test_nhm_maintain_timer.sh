@@ -47,6 +47,9 @@ trap cleanup EXIT
 FAKEBIN="$ROOT/fakebin"
 SYSD="$ROOT/sysd"
 mkdir -p "$FAKEBIN" "$SYSD"
+# The helper falls back to nhm on PATH: keep the host's own nhm (in
+# ~/.local/bin or /usr/local/bin) out of every case.
+PATH="/usr/bin:/bin"
 cat >"$FAKEBIN/systemctl" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"$SYSD/calls"
@@ -162,7 +165,7 @@ fixture maintain
 mkdir -p "$ROOT/with space/bin"
 cp "$HOMEDIR/.local/bin/nhm" "$ROOT/with space/bin/nhm"
 RC=0
-OUT="$(PATH="$FAKEBIN:$PATH" HOME="$HOMEDIR" XDG_CONFIG_HOME="" XDG_STATE_HOME="" NHM_BIN_DIR="$ROOT/with space/bin" \
+OUT="$(PATH="$FAKEBIN:$PATH" HOME="$HOMEDIR" XDG_CONFIG_HOME="" XDG_STATE_HOME="" NHM_MAINTAIN_NHM="$ROOT/with space/bin/nhm" \
     bash "$HOMEDIR/.acfs/scripts/lib/nhm_maintain_timer.sh" install 2>&1)" || RC=$?
 check "an nhm path that a unit cannot hold: exit 1, nothing written" test "$RC" -eq 1 -a ! -e "$(UNITS)/nhm-maintain.service"
 
@@ -302,6 +305,19 @@ NHM_AT="$HOMEDIR/opt/bin/nhm" run_update nhm
 check "an nhm outside ~/.local/bin: installs, and the service runs that nhm" \
     bash -c '[[ "$1" == *"ITEM ok|nhm maintain timer|"*"RC 0"* ]] && grep -qF "ExecStart=$3 maintain --once" "$2"' \
     _ "$OUT" "$(UNITS)/nhm-maintain.service" "$HOMEDIR/opt/bin/nhm"
+# Without NHM_MAINTAIN_NHM (the doctor, install.sh), the helper finds an
+# nhm on PATH when ~/.local/bin has none, as the acfs CLI does.
+fixture maintain
+mkdir -p "$HOMEDIR/opt/bin"
+mv "$HOMEDIR/.local/bin/nhm" "$HOMEDIR/opt/bin/nhm"
+PATH="$HOMEDIR/opt/bin:$PATH" helper install
+check "no NHM_MAINTAIN_NHM, nhm only on PATH: install runs that nhm" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qF "ExecStart=$3 maintain --once" "$2"' \
+    _ "$RC" "$(UNITS)/nhm-maintain.service" "$HOMEDIR/opt/bin/nhm"
+PATH="$HOMEDIR/opt/bin:$PATH" helper status
+check "and status finds it" test "$RC" -eq 0
+helper status
+check "with no nhm anywhere: no-maintain" test "$RC" -eq 3 -a "$OUT" = no-maintain
 fixture old
 run_update nhm
 check "an nhm without maintain: skip, never a failure" \
@@ -347,6 +363,14 @@ rm -f "$HOMEDIR/.local/bin/nhm"
 run_install yes
 check "nhm missing: the timer is removed" \
     bash -c '[[ "$1" == *"RC 0"* && ! -e "$2" ]]' _ "$OUT" "$(UNITS)/nhm-maintain.timer"
+# acfs-9hkh.84: an nhm only on PATH counts, and the units run it.
+fixture maintain
+mkdir -p "$HOMEDIR/opt/bin"
+mv "$HOMEDIR/.local/bin/nhm" "$HOMEDIR/opt/bin/nhm"
+PATH="$HOMEDIR/opt/bin:$PATH" run_install yes
+check "nhm only on PATH: enabled with that nhm" \
+    bash -c '[[ "$1" == *"DETAIL nhm-maintain.timer runs"* ]] && grep -qF "ExecStart=$3 maintain --once" "$2"' \
+    _ "$OUT" "$(UNITS)/nhm-maintain.service" "$HOMEDIR/opt/bin/nhm"
 fixture maintain "" no
 run_install yes
 check "not enrolled: a note, no timer, never a failure" \

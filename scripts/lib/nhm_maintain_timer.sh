@@ -58,14 +58,24 @@ nhm_maintain_timer_note() { printf 'nhm_maintain_timer: %s\n' "$*" >&2; }
 
 # The nhm binary: NHM_MAINTAIN_NHM when the caller resolved it (acfs
 # update passes the nhm its own lookup found, so an nhm outside
-# ~/.local/bin is the same one for both, acfs-9hkh.84), else where ACFS
-# installs it.
+# ~/.local/bin is the same one for both, acfs-9hkh.84). Else the acfs
+# CLI's lookup (ca3a5bce): ~/.local/bin/nhm, then nhm on PATH, so the
+# doctor and install find the nhm that update finds. Without either it
+# names ~/.local/bin/nhm, where ACFS installs it.
 nhm_maintain_timer_nhm() {
+    local found=""
     if [[ "${NHM_MAINTAIN_NHM:-}" == /* ]]; then
         printf '%s\n' "$NHM_MAINTAIN_NHM"
         return 0
     fi
-    printf '%s/nhm\n' "${NHM_BIN_DIR:-$HOME/.local/bin}"
+    if [[ ! -x "$HOME/.local/bin/nhm" ]]; then
+        found="$(command -v nhm 2>/dev/null || true)"
+        if [[ "$found" == /* ]]; then
+            printf '%s\n' "$found"
+            return 0
+        fi
+    fi
+    printf '%s/.local/bin/nhm\n' "$HOME"
 }
 
 nhm_maintain_timer_unit_dir() { printf '%s/systemd/user\n' "${XDG_CONFIG_HOME:-$HOME/.config}"; }

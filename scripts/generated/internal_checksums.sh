@@ -10,7 +10,7 @@
 ACFS_INTERNAL_CHECKSUMS_SCHEMA=1
 
 declare -gA ACFS_INTERNAL_CHECKSUMS=(
-  [install.sh]="745a8e97d0f91bf3bc42b8768af0915fcdccd224592716c26bef08192ec93e30"
+  [install.sh]="f8b301250dd833a3f6cc542d27946e99eadb0dd7a25784484d620fec4b40598f"
   [checksums.yaml]="51cdaac26a8226622d0cba67b39fd00ff1af8e2459ecaf465a56469824b40240"
   [scripts/preflight.sh]="f8b5829f2be4cbe08b6d33316fa07fe1b5a951b570819e38a1cb6ffe283d5902"
   [scripts/lib/security.sh]="9be2be3625c233571893965e69a789caf17dbefbcbe60fdfc9032a050b7a4a93"
@@ -65,7 +65,7 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/generate-root-agents-md.sh]="725a036f9a0695bb3423c1f54030f626f7c6b43c0f73233ff87ca604960de356"
   [scripts/lib/agent_mail_hook.sh]="bf45ae55002af558862d56b95061b52ceb88b15a7f3783ce4bfcca8463461c13"
   [scripts/lib/nhm_hooks.sh]="16e8ac62f37e0d9fbca0cb6b6fc26c96b2d08f870eb75767f3386edca1e70f78"
-  [scripts/lib/nhm_maintain_timer.sh]="8994d6b0b119932a20a50515ec8e832651fb8efaf6ead86f2c08d78d5dc3d44a"
+  [scripts/lib/nhm_maintain_timer.sh]="e2cf3c244ab2fa4d38c4cd5de532a4605aa4db83d8040c13c42d0864de3bde21"
   [scripts/lib/agent_quota.sh]="0fabea807e89bc5e5f74de125202b7a046b6f6018cd16e2f3494d389ad97fd00"
   [scripts/lib/agy_e2e_harness.sh]="99c2cd036ba51f2c109327438afc25fd47b29f0f49ec3b1e3ae7d1ab88990222"
   [scripts/lib/agy_locked.py]="e92e30cf33f925bb666512b81f7c96134442914b6d4b846e4212be0e1e4db245"

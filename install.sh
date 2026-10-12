@@ -10841,8 +10841,9 @@ acfs_install_nhm_maintain_timer() {
     local nhm_timer="$ACFS_HOME/scripts/lib/nhm_maintain_timer.sh" nhm_rc=0 timer_rc=0
     [[ -f "$nhm_timer" ]] || return 0
     # 0: nhm is there; 3: it is not; anything else: the check did not run.
+    # The acfs CLI's lookup, as the helper's: ~/.local/bin/nhm, then PATH.
     # shellcheck disable=SC2016 # expanded by the target user's bash
-    run_as_target bash -c 'test -x "${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" || exit 3' || nhm_rc=$?
+    run_as_target bash -c 'test -x "$HOME/.local/bin/nhm" || command -v nhm >/dev/null || exit 3' || nhm_rc=$?
     if [[ "$nhm_rc" -ne 0 && "$nhm_rc" -ne 3 ]]; then
         log_warn "could not check for nhm as $TARGET_USER; nhm-maintain.timer is unchanged"
         return 0
