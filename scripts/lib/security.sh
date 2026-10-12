@@ -470,7 +470,7 @@ declare -gA KNOWN_INSTALLERS=(
     [atuin]="https://github.com/atuinsh/atuin/releases/latest/download/atuin-installer.sh"
     [herdr]="https://herdr.dev/install.sh"
     # nhm: the release tag pins the installer; acfs.manifest.yaml names the same version.
-    [nhm]="https://raw.githubusercontent.com/arosl/nhm/v0.1.1/install.sh"
+    [nhm]="https://raw.githubusercontent.com/arosl/nhm/v0.1.2/install.sh"
     [mcp_agent_mail]="https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/refs/heads/main/install.sh"
     [ubs]="https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/main/install.sh"
     [bv]="https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh"
@@ -507,16 +507,55 @@ declare -gA KNOWN_INSTALLERS=(
     [pi]="https://raw.githubusercontent.com/Dicklesworthstone/pi_agent_rust/main/install.sh"
     [pfr]="https://raw.githubusercontent.com/Dicklesworthstone/power_failure_resumer/main/install.sh"
 )
-declare -ga ACFS_SECURITY_REQUIRED_INSTALLERS=("${!KNOWN_INSTALLERS[@]}")
+# Release archives that an installer above downloads, pinned by SHA-256 in
+# checksums.yaml beside it (acfs-9hkh.42, acfs-9hkh.47). The installer
+# checks its archive against the pin before it reads the release's own
+# SHA256SUMS, so a re-uploaded release asset is refused. The checksum
+# refresh and --verify fetch each archive under ACFS_RELEASE_ARCHIVE_MAX_BYTES
+# and check it against the SHA256SUMS beside it in the release. A key is
+# <tool>_archive_<os>_<arch>; acfs_release_archive_pins turns a tool's keys
+# into <os>-<arch>=<sha256> pins. nhm: the tag is the one in
+# KNOWN_INSTALLERS[nhm].
+declare -gA KNOWN_RELEASE_ARCHIVES=(
+    [nhm_archive_linux_amd64]="https://github.com/arosl/nhm/releases/download/v0.1.2/nhm-0.1.2-linux-amd64.tar.zst"
+    [nhm_archive_linux_arm64]="https://github.com/arosl/nhm/releases/download/v0.1.2/nhm-0.1.2-linux-arm64.tar.zst"
+)
+declare -g ACFS_RELEASE_ARCHIVE_MAX_BYTES=67108864
+declare -g ACFS_RELEASE_ARCHIVE_SUMS_MAX_BYTES=1048576
+declare -ga ACFS_SECURITY_REQUIRED_INSTALLERS=("${!KNOWN_INSTALLERS[@]}" "${!KNOWN_RELEASE_ARCHIVES[@]}")
 
-# nhm's release archives, pinned by SHA-256 per platform (acfs-9hkh.42).
-# nhm's install.sh checks the archive against this pin before it reads the
-# release's own SHA256SUMS, so a re-uploaded release asset is refused. The
-# archives (8-9 MB) are too large for the checksum refresh, so this pin is
-# set by hand from the downloaded archives, together with the tag in
-# KNOWN_INSTALLERS[nhm]. stack.nhm's args in acfs.manifest.yaml carry the
-# same pins; tests/unit/test_update_nhm.sh fails when the two differ.
-declare -g ACFS_NHM_ARCHIVE_SHA256="linux-amd64=c50636964a0103a2227d8c07953bf67db343cac61524f93b40bfcda90e6aaa23 linux-arm64=02a987a7af59200d513b963deaa5e30495d9cc3d4941a1d95bbe7add577aa6bc"
+# The URL of a checksums.yaml entry: an installer's or a release archive's.
+acfs_checksum_entry_url() {
+    local name="$1"
+    printf '%s' "${KNOWN_INSTALLERS[$name]:-${KNOWN_RELEASE_ARCHIVES[$name]:-}}"
+}
+
+# Every checksums.yaml entry name, byte-sorted.
+acfs_checksum_entry_names() {
+    local name=""
+    for name in "${!KNOWN_INSTALLERS[@]}" "${!KNOWN_RELEASE_ARCHIVES[@]}"; do
+        printf '%s\n' "$name"
+    done | acfs_security_sort_lines
+}
+
+# A tool's archive pins from the loaded checksums, as <os>-<arch>=<sha256>
+# separated by spaces (what nhm's install.sh takes as --archive-sha256).
+# Fails, printing nothing, when the tool has no archive or a pin is missing
+# or malformed: a caller never installs unpinned.
+acfs_release_archive_pins() {
+    local tool="$1"
+    local name="" sha="" platform=""
+    local -a pins=()
+    while IFS= read -r name; do
+        [[ "$name" == "${tool}_archive_"* ]] || continue
+        sha="$(get_checksum "$name")"
+        [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+        platform="${name#"${tool}_archive_"}"
+        pins+=("${platform//_/-}=$sha")
+    done < <(printf '%s\n' "${!KNOWN_RELEASE_ARCHIVES[@]}" | acfs_security_sort_lines)
+    (( ${#pins[@]} > 0 )) || return 1
+    printf '%s\n' "${pins[*]}"
+}
 
 # ============================================================
 # Checksum Verification Policy
@@ -1577,6 +1616,14 @@ fetch_checksum() {
         return 1
     fi
 
+    local archive_name=""
+    for archive_name in "${!KNOWN_RELEASE_ARCHIVES[@]}"; do
+        if [[ "${KNOWN_RELEASE_ARCHIVES[$archive_name]}" == "$url" ]]; then
+            acfs_release_archive_checksum "$url"
+            return $?
+        fi
+    done
+
     # Create safe temp file
     local tmp_file
     tmp_file="$(acfs_security_mktemp "${TMPDIR:-/tmp}/acfs-fetch.XXXXXX")" || {
@@ -1598,6 +1645,48 @@ fetch_checksum() {
     fi
 
     _acfs_remove_temp_files "$tmp_file"
+    return "$status"
+}
+
+# Print the SHA-256 of a release archive in KNOWN_RELEASE_ARCHIVES. The
+# archive is fetched under ACFS_RELEASE_ARCHIVE_MAX_BYTES, and its hash must
+# match the line for its file name in the SHA256SUMS beside it in the
+# release; otherwise nothing is printed and it fails.
+acfs_release_archive_checksum() {
+    local url="$1"
+    local file="${url##*/}"
+    local sums_url="${url%/*}/SHA256SUMS"
+    local archive_tmp="" sums_tmp="" sha="" listed="" line="" status=1
+
+    archive_tmp="$(acfs_security_mktemp "${TMPDIR:-/tmp}/acfs-archive.XXXXXX")" || return 1
+    sums_tmp="$(acfs_security_mktemp "${TMPDIR:-/tmp}/acfs-archive-sums.XXXXXX")" || {
+        _acfs_remove_temp_files "$archive_tmp"
+        return 1
+    }
+    if ! acfs_curl --retry 3 --max-filesize "$ACFS_RELEASE_ARCHIVE_MAX_BYTES" "$url" -o "$archive_tmp"; then
+        log_error "Failed to fetch $url (limit $ACFS_RELEASE_ARCHIVE_MAX_BYTES bytes)"
+    elif ! acfs_curl --retry 3 --max-filesize "$ACFS_RELEASE_ARCHIVE_SUMS_MAX_BYTES" "$sums_url" -o "$sums_tmp"; then
+        log_error "Failed to fetch $sums_url"
+    elif ! sha="$(calculate_file_sha256 "$archive_tmp")" || [[ ! "$sha" =~ ^[0-9a-f]{64}$ ]]; then
+        log_error "Failed to checksum $url"
+    else
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            line="${line%$'\r'}"
+            if [[ "$line" =~ ^([0-9a-fA-F]{64})[[:space:]]+\*?(.+)$ && "${BASH_REMATCH[2]}" == "$file" ]]; then
+                listed="${BASH_REMATCH[1],,}"
+                break
+            fi
+        done < "$sums_tmp"
+        if [[ -z "$listed" ]]; then
+            log_error "$sums_url has no line for $file"
+        elif [[ "$listed" != "$sha" ]]; then
+            log_error "$file has SHA-256 $sha, but $sums_url lists $listed"
+        else
+            printf '%s\n' "$sha"
+            status=0
+        fi
+    fi
+    _acfs_remove_temp_files "$archive_tmp" "$sums_tmp"
     return "$status"
 }
 
@@ -2057,18 +2146,15 @@ print_current_checksums() {
         echo "installers:"
     } >"$tmp_output"
 
+    # Installers and release archives share the one installers mapping.
     local -a installer_names=()
     local name=""
-    for name in "${!KNOWN_INSTALLERS[@]}"; do
-        installer_names+=("$name")
-    done
-    if [[ ${#installer_names[@]} -gt 0 ]]; then
-        mapfile -t installer_names < <(printf '%s\n' "${installer_names[@]}" | acfs_security_sort_lines)
-    fi
+    mapfile -t installer_names < <(acfs_checksum_entry_names)
 
     local wrote_entry=false
     for name in "${installer_names[@]}"; do
-        local url="${KNOWN_INSTALLERS[$name]}"
+        local url
+        url="$(acfs_checksum_entry_url "$name")"
         local sha256
 
         printf "  Fetching %s... " "$name" >&2
@@ -2432,7 +2518,12 @@ load_checksums() {
     for tool in "${!parsed_checksums[@]}"; do
         LOADED_CHECKSUMS["$tool"]="${parsed_checksums[$tool]}"
         if [[ -n "${parsed_installers[$tool]:-}" ]]; then
-            KNOWN_INSTALLERS["$tool"]="${parsed_installers[$tool]}"
+            # A release archive is downloaded by its installer, never run.
+            if [[ -n "${KNOWN_RELEASE_ARCHIVES[$tool]:-}" ]]; then
+                KNOWN_RELEASE_ARCHIVES["$tool"]="${parsed_installers[$tool]}"
+            else
+                KNOWN_INSTALLERS["$tool"]="${parsed_installers[$tool]}"
+            fi
         fi
     done
 
@@ -3026,11 +3117,13 @@ verify_all_installers() {
     echo "============================================================"
     echo ""
 
-    for name in "${!KNOWN_INSTALLERS[@]}"; do
-        local url="${KNOWN_INSTALLERS[$name]}"
+    local name=""
+    while IFS= read -r name; do
+        local url
+        url="$(acfs_checksum_entry_url "$name")"
         local expected="${LOADED_CHECKSUMS[$name]:-}"
 
-        printf "  %-20s " "$name"
+        printf "  %-24s " "$name"
 
         if [[ -z "$expected" ]]; then
             echo -e "${RED}[fail]${NC} no checksum recorded"
@@ -3055,7 +3148,7 @@ verify_all_installers() {
             ((failed += 1))
             all_pass=false
         fi
-    done
+    done < <(acfs_checksum_entry_names)
 
     echo ""
     echo "------------------------------------------------------------"

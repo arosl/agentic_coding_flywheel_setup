@@ -324,6 +324,26 @@ export function validateVerifiedInstallerChecksums(
     const verifiedInstaller = module.verified_installer;
     if (!verifiedInstaller) continue;
 
+    // Pins passed as installer args come from checksums.yaml too (acfs-9hkh.47).
+    for (const arg of verifiedInstaller.checksum_args ?? []) {
+      const pin = installers[arg.checksum];
+      if (!pin?.url || !pin?.sha256) {
+        errors.push({
+          code: "MISSING_VERIFIED_INSTALLER_CHECKSUM",
+          message: `checksums.yaml is missing a complete entry for "${arg.checksum}" (checksum_args of "${module.id}")`,
+          moduleId: module.id,
+          context: { tool: arg.checksum, hasUrl: Boolean(pin?.url), hasSha256: Boolean(pin?.sha256) },
+        });
+      } else if (!SHA256_HEX_PATTERN.test(pin.sha256)) {
+        errors.push({
+          code: "INVALID_VERIFIED_INSTALLER_CHECKSUM",
+          message: `checksums.yaml has invalid sha256 "${pin.sha256}" for "${arg.checksum}" (checksum_args of "${module.id}")`,
+          moduleId: module.id,
+          context: { tool: arg.checksum, sha256: pin.sha256 },
+        });
+      }
+    }
+
     const tool = verifiedInstaller.tool;
     const entry = installers[tool];
 

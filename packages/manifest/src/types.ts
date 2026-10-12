@@ -77,6 +77,21 @@ export interface VerifiedInstaller {
   env?: string[];
   /** Optional additional args for runner */
   args?: string[];
+  /** Pins from checksums.yaml passed after args as `<flag> <prefix><sha256>` */
+  checksum_args?: VerifiedInstallerChecksumArg[];
+}
+
+/**
+ * One installer argument whose value is a checksums.yaml pin, read at
+ * install time (acfs-9hkh.47)
+ */
+export interface VerifiedInstallerChecksumArg {
+  /** Long option, e.g. "--archive-sha256" */
+  flag: string;
+  /** Text before the hash in the value, e.g. "linux-amd64=" */
+  prefix?: string;
+  /** checksums.yaml entry name */
+  checksum: string;
 }
 
 /**

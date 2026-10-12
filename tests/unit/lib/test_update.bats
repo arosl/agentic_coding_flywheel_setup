@@ -62,10 +62,10 @@ write_update_refresh_checksums_fixture() {
     local expected=""
 
     actual="$(update_required_checksum_tools | sort)"
-    expected="$(bash -c 'source "$1"; printf "%s\n" "${!KNOWN_INSTALLERS[@]}" | sort' _ "$PROJECT_ROOT/scripts/lib/security.sh")"
+    expected="$(bash -c 'source "$1"; printf "%s\n" "${!KNOWN_INSTALLERS[@]}" "${!KNOWN_RELEASE_ARCHIVES[@]}" | sort' _ "$PROJECT_ROOT/scripts/lib/security.sh")"
 
     if [[ "$actual" != "$expected" ]]; then
-        printf 'update_required_checksum_tools is out of sync with KNOWN_INSTALLERS\n' >&2
+        printf 'update_required_checksum_tools is out of sync with KNOWN_INSTALLERS and KNOWN_RELEASE_ARCHIVES\n' >&2
         printf 'Actual:\n%s\n' "$actual" >&2
         printf 'Expected:\n%s\n' "$expected" >&2
         return 1

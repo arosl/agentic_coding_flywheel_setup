@@ -4051,7 +4051,8 @@ update_sync_known_installer_urls_from_checksums() {
 update_required_checksum_tools() {
     printf '%s\n' \
         antigravity apr asb atuin br brenner_bot bun bv caam casr cass claude cm csctf dcg dsr \
-        ee fmd fsfs gemini_patch giil grok herdr jfp mcp_agent_mail mdwb ms nvm ohmyzsh omp opencode \
+        ee fmd fsfs gemini_patch giil grok herdr jfp mcp_agent_mail mdwb ms nhm \
+        nhm_archive_linux_amd64 nhm_archive_linux_arm64 nvm ohmyzsh omp opencode \
         pcr pfr pi pt rano rch ru rust s2p sbh slb srps tru ubs uv xf zoxide
 }
 
@@ -7677,15 +7678,17 @@ update_nhm() {
         log_item "warn" "$desc" "no pinned nhm release in security.sh's KNOWN_INSTALLERS"
         return 0
     fi
-    # The release archives are pinned too (security.sh), so nhm's installer
-    # refuses a re-uploaded archive (acfs-9hkh.42).
-    for pin in ${ACFS_NHM_ARCHIVE_SHA256:-}; do
-        pin_args+=(--archive-sha256 "$pin")
-    done
-    if (( ${#pin_args[@]} == 0 )); then
-        log_item "warn" "$desc" "no pinned nhm archives in security.sh's ACFS_NHM_ARCHIVE_SHA256"
+    # The release archives are pinned in checksums.yaml too, so nhm's
+    # installer refuses a re-uploaded archive (acfs-9hkh.42, acfs-9hkh.47).
+    # A missing or malformed pin skips the update: never install unpinned.
+    local pins=""
+    if ! update_require_security || ! pins="$(acfs_release_archive_pins nhm)"; then
+        log_item "warn" "$desc" "no pinned nhm archives in checksums.yaml"
         return 0
     fi
+    for pin in $pins; do
+        pin_args+=(--archive-sha256 "$pin")
+    done
     capture_version_before "nhm"
     # run_cmd reports a failure itself (and returns 0); the version line
     # below shows what is installed either way.

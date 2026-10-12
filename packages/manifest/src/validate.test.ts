@@ -13,6 +13,7 @@ import {
   validateManifest,
   validateOrchestrationOwnership,
   validatePhaseOrdering,
+  validateVerifiedInstallerChecksums,
 } from "./validate.js";
 
 // Helper to create a minimal valid manifest
@@ -733,5 +734,54 @@ describe("validateManifest with function name checks", () => {
     const result = validateManifest(manifest);
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.code === "FUNCTION_NAME_COLLISION")).toBe(true);
+  });
+});
+
+describe("validateVerifiedInstallerChecksums checksum_args (acfs-9hkh.47)", () => {
+  const sha = "a".repeat(64);
+  const manifest = createManifest([
+    {
+      id: "stack.nhm",
+      description: "nhm",
+      install: [],
+      verify: ["nhm version"],
+      run_as: "target_user",
+      optional: false,
+      enabled_by_default: true,
+      generated: true,
+      verified_installer: {
+        tool: "nhm",
+        runner: "bash",
+        args: ["--", "--version", "0.1.1"],
+        checksum_args: [
+          { flag: "--archive-sha256", prefix: "linux-amd64=", checksum: "nhm_archive_linux_amd64" },
+          { flag: "--archive-sha256", prefix: "linux-arm64=", checksum: "nhm_archive_linux_arm64" },
+        ],
+      },
+    },
+  ]);
+  const installer = { url: "https://example.com/install.sh", sha256: sha };
+  const archive = { url: "https://example.com/nhm.tar.zst", sha256: sha };
+
+  test("passes when every checksum_args entry is in checksums.yaml", () => {
+    expect(
+      validateVerifiedInstallerChecksums(manifest, {
+        nhm: installer,
+        nhm_archive_linux_amd64: archive,
+        nhm_archive_linux_arm64: archive,
+      }),
+    ).toEqual([]);
+  });
+
+  test("reports a missing and a malformed checksum_args entry", () => {
+    const errors = validateVerifiedInstallerChecksums(manifest, {
+      nhm: installer,
+      nhm_archive_linux_amd64: { ...archive, sha256: "short" },
+    });
+    expect(errors.map((e) => e.code).sort()).toEqual([
+      "INVALID_VERIFIED_INSTALLER_CHECKSUM",
+      "MISSING_VERIFIED_INSTALLER_CHECKSUM",
+    ]);
+    expect(errors.some((e) => e.message.includes("nhm_archive_linux_arm64"))).toBe(true);
   });
 });

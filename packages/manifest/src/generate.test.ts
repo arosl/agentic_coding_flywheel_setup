@@ -606,6 +606,28 @@ describe("Generated verified installer args", () => {
     expect(stackContent).toContain('_acfs_remove_temp_files "$verified_installer_file"');
   });
 
+  test("stack.nhm reads its archive pins from checksums.yaml and fails closed without them (acfs-9hkh.47)", () => {
+    const stackContent = readFileSync(resolve(GENERATED_DIR, "install_stack.sh"), "utf-8");
+    const start = stackContent.indexOf("acfs_generated_install_stack_nhm() {");
+    expect(start).toBeGreaterThan(-1);
+    const end = stackContent.indexOf("\n}\n", start);
+    const nhm = stackContent.slice(start, end);
+
+    for (const platform of ["amd64", "arm64"]) {
+      expect(nhm).toContain(`verified_installer_pin="$(get_checksum 'nhm_archive_linux_${platform}')"`);
+      expect(nhm).toContain(
+        `verified_installer_checksum_args+=('--archive-sha256' 'linux-${platform}='"$verified_installer_pin")`,
+      );
+    }
+    expect(nhm).toContain(
+      `run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.1.2' "\${verified_installer_checksum_args[@]}"`,
+    );
+    // A bad pin clears expected_sha256, which keeps the installer from running.
+    expect(nhm).toMatch(/has no valid pin 'nhm_archive_linux_amd64'"\n\s+ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"\n\s+expected_sha256=""/);
+    // No pin is kept in the generated installer itself.
+    expect(nhm).not.toMatch(/[0-9a-f]{64}/);
+  });
+
   test("stack.cass prepares and uses a target-owned installer TMPDIR", () => {
     const stackPath = resolve(GENERATED_DIR, "install_stack.sh");
     expect(existsSync(stackPath)).toBe(true);

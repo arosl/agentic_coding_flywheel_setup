@@ -2378,22 +2378,23 @@ modules:
     dependencies:
       - tools.herdr
       - stack.mcp_agent_mail
-    # The version is pinned in three places that change together: the args
-    # and installed_check below, and the tag in the installer URL
-    # (scripts/lib/security.sh and checksums.yaml). acfs update installs it.
-    # The release archives are pinned per platform in the args below and in
-    # security.sh's ACFS_NHM_ARCHIVE_SHA256, which must agree
-    # (tests/unit/test_update_nhm.sh): nhm's installer refuses an archive
-    # that does not match, even with a matching SHA256SUMS (acfs-9hkh.42).
+    # The version is pinned in places that change together: the args and
+    # installed_check below, and the tag in the installer URL and the
+    # release archive URLs (scripts/lib/security.sh, then checksums.yaml by
+    # the canonical refresh). acfs update installs it. The archives' pins
+    # live only in checksums.yaml; checksum_args below passes them, and
+    # nhm's installer refuses an archive that does not match, even with a
+    # matching SHA256SUMS (acfs-9hkh.42, acfs-9hkh.47).
     installed_check:
       run_as: target_user
-      command: '"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" version --json 2>/dev/null | grep -q ''"version": "0.1.1"'''
+      command: '"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" version --json 2>/dev/null | grep -q ''"version": "0.1.2"'''
     verified_installer:
       tool: nhm
       runner: bash
-      args: ["--", "--version", "0.1.1",
-             "--archive-sha256", "linux-amd64=c50636964a0103a2227d8c07953bf67db343cac61524f93b40bfcda90e6aaa23",
-             "--archive-sha256", "linux-arm64=02a987a7af59200d513b963deaa5e30495d9cc3d4941a1d95bbe7add577aa6bc"]
+      args: ["--", "--version", "0.1.2"]
+      checksum_args:
+        - { flag: "--archive-sha256", prefix: "linux-amd64=", checksum: nhm_archive_linux_amd64 }
+        - { flag: "--archive-sha256", prefix: "linux-arm64=", checksum: nhm_archive_linux_arm64 }
     install:
       - |
         # acfs-summary: enroll the default herdr server with nhm

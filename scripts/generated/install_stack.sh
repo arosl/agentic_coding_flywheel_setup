@@ -894,6 +894,24 @@ acfs_generated_install_stack_nhm() {
                         ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"
                         expected_sha256=""
                     fi
+                    local -a verified_installer_checksum_args=()
+                    local verified_installer_pin=""
+                    verified_installer_pin="$(get_checksum 'nhm_archive_linux_amd64')"
+                    if [[ "$verified_installer_pin" =~ ^[0-9a-f]{64}$ ]]; then
+                        verified_installer_checksum_args+=('--archive-sha256' 'linux-amd64='"$verified_installer_pin")
+                    else
+                        log_error "stack.nhm: checksums.yaml has no valid pin 'nhm_archive_linux_amd64'"
+                        ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"
+                        expected_sha256=""
+                    fi
+                    verified_installer_pin="$(get_checksum 'nhm_archive_linux_arm64')"
+                    if [[ "$verified_installer_pin" =~ ^[0-9a-f]{64}$ ]]; then
+                        verified_installer_checksum_args+=('--archive-sha256' 'linux-arm64='"$verified_installer_pin")
+                    else
+                        log_error "stack.nhm: checksums.yaml has no valid pin 'nhm_archive_linux_arm64'"
+                        ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"
+                        expected_sha256=""
+                    fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
                         if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
@@ -909,7 +927,7 @@ acfs_generated_install_stack_nhm() {
                         elif ! "$verified_installer_chmod_bin" 0444 "$verified_installer_file"; then
                             log_error "stack.nhm: failed to make verified installer staging file read-only"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
-                        elif run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.1.1' '--archive-sha256' 'linux-amd64=c50636964a0103a2227d8c07953bf67db343cac61524f93b40bfcda90e6aaa23' '--archive-sha256' 'linux-arm64=02a987a7af59200d513b963deaa5e30495d9cc3d4941a1d95bbe7add577aa6bc'; then
+                        elif run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.1.2' "${verified_installer_checksum_args[@]}"; then
                             install_success=true
                         else
                             log_error "stack.nhm: verified installer execution failed"

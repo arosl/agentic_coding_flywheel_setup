@@ -25,7 +25,7 @@ write_security_checksums_fixture() {
     for tool in "${ACFS_SECURITY_REQUIRED_INSTALLERS[@]}"; do
         printf -v checksum '%064d' "$index"
         printf '  %s:\n' "$tool" >> "$output_file"
-        printf '    url: "%s"\n' "${KNOWN_INSTALLERS[$tool]}" >> "$output_file"
+        printf '    url: "%s"\n' "$(acfs_checksum_entry_url "$tool")" >> "$output_file"
         printf '    sha256: "%s"\n' "$checksum" >> "$output_file"
         index=$((index + 1))
     done
@@ -791,4 +791,90 @@ EOF
     INSTALLER_EXIT=3 run fetch_and_run_with_runner bash "https://example.com/i.sh" "$(printf '%064d' 1)" tool
     assert_failure 3
     assert_equal "$(wc -l < "$calls")" "1"
+}
+
+# ------------------------------------------------------------
+# Release archives in checksums.yaml (acfs-9hkh.47)
+# ------------------------------------------------------------
+
+# A release on disk: rel/v1/tool-1-linux-amd64.tar.zst and rel/v1/SHA256SUMS.
+# acfs_curl serves https://example.com/<path> from it, and records each
+# call's --max-filesize in $BATS_TEST_TMPDIR/caps.
+stub_release() {
+    RELEASE_DIR="$BATS_TEST_TMPDIR/rel"
+    mkdir -p "$RELEASE_DIR/v1"
+    printf 'archive bytes' > "$RELEASE_DIR/v1/tool-1-linux-amd64.tar.zst"
+    ARCHIVE_SHA="$(calculate_file_sha256 "$RELEASE_DIR/v1/tool-1-linux-amd64.tar.zst")"
+    printf '%s  tool-1-linux-amd64.tar.zst\n' "$ARCHIVE_SHA" > "$RELEASE_DIR/v1/SHA256SUMS"
+    ARCHIVE_URL="https://example.com/v1/tool-1-linux-amd64.tar.zst"
+    KNOWN_RELEASE_ARCHIVES=([tool_archive_linux_amd64]="$ARCHIVE_URL")
+    acfs_curl() {
+        local url="" out="" cap="none" i
+        local args=("$@")
+        for ((i=0; i<${#args[@]}; i++)); do
+            case "${args[$i]}" in
+                -o) out="${args[$((i+1))]}" ;;
+                --max-filesize) cap="${args[$((i+1))]}" ;;
+                https://*) url="${args[$i]}" ;;
+            esac
+        done
+        printf '%s %s\n' "${url##*/}" "$cap" >> "$BATS_TEST_TMPDIR/caps"
+        [[ -f "$RELEASE_DIR/${url#https://example.com/}" ]] || return 22
+        cp "$RELEASE_DIR/${url#https://example.com/}" "$out"
+    }
+}
+
+@test "release archive: fetch_checksum prints the hash SHA256SUMS confirms, under the archive cap" {
+    stub_release
+    run fetch_checksum "$ARCHIVE_URL"
+    assert_success
+    assert_output "$ARCHIVE_SHA"
+    grep -qx "tool-1-linux-amd64.tar.zst $ACFS_RELEASE_ARCHIVE_MAX_BYTES" "$BATS_TEST_TMPDIR/caps"
+    grep -qx "SHA256SUMS $ACFS_RELEASE_ARCHIVE_SUMS_MAX_BYTES" "$BATS_TEST_TMPDIR/caps"
+}
+
+@test "release archive: an archive that SHA256SUMS does not list, or lists with another hash, gets no hash" {
+    stub_release
+    printf '%064d  tool-1-linux-amd64.tar.zst\n' 7 > "$RELEASE_DIR/v1/SHA256SUMS"
+    run fetch_checksum "$ARCHIVE_URL"
+    assert_failure
+    refute_output --regexp '^[0-9a-f]{64}$'
+
+    printf '%s  other.tar.zst\n' "$ARCHIVE_SHA" > "$RELEASE_DIR/v1/SHA256SUMS"
+    run fetch_checksum "$ARCHIVE_URL"
+    assert_failure
+    refute_output --regexp '^[0-9a-f]{64}$'
+
+    rm "$RELEASE_DIR/v1/SHA256SUMS"
+    run fetch_checksum "$ARCHIVE_URL"
+    assert_failure
+}
+
+@test "release archive: acfs_release_archive_pins needs every pin, well formed" {
+    KNOWN_RELEASE_ARCHIVES=([tool_archive_linux_amd64]="https://example.com/a" [tool_archive_linux_arm64]="https://example.com/b")
+    LOADED_CHECKSUMS=([tool_archive_linux_amd64]="$(printf '%064d' 1)" [tool_archive_linux_arm64]="$(printf '%064d' 2)")
+    run acfs_release_archive_pins tool
+    assert_success
+    assert_output "linux-amd64=$(printf '%064d' 1) linux-arm64=$(printf '%064d' 2)"
+
+    LOADED_CHECKSUMS[tool_archive_linux_arm64]="not-a-sha"
+    run acfs_release_archive_pins tool
+    assert_failure
+    assert_output ""
+
+    unset 'LOADED_CHECKSUMS[tool_archive_linux_arm64]'
+    run acfs_release_archive_pins tool
+    assert_failure
+
+    run acfs_release_archive_pins other_tool
+    assert_failure
+}
+
+@test "release archive: load_checksums keeps an archive entry out of KNOWN_INSTALLERS" {
+    KNOWN_RELEASE_ARCHIVES=([tool_archive_linux_amd64]="https://example.com/old.tar.zst")
+    printf 'installers:\n  tool_archive_linux_amd64:\n    url: "https://example.com/new.tar.zst"\n    sha256: "%064d"\n' 3 > "$CHECKSUMS_FILE"
+    load_checksums "$CHECKSUMS_FILE"
+    assert_equal "${KNOWN_INSTALLERS[tool_archive_linux_amd64]:-}" ""
+    assert_equal "${KNOWN_RELEASE_ARCHIVES[tool_archive_linux_amd64]}" "https://example.com/new.tar.zst"
+    assert_equal "$(get_checksum tool_archive_linux_amd64)" "$(printf '%064d' 3)"
 }

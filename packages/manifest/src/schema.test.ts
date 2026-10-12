@@ -386,6 +386,31 @@ describe("ModuleSchema", () => {
     }
   });
 
+  test("accepts checksum_args and refuses unsafe ones (acfs-9hkh.47)", () => {
+    const withArgs = (checksum_args: unknown) =>
+      ModuleSchema.safeParse({
+        ...validMinimalModule,
+        verified_installer: { tool: "nhm", runner: "bash", checksum_args },
+      });
+    const ok = withArgs([{ flag: "--archive-sha256", prefix: "linux-amd64=", checksum: "nhm_archive_linux_amd64" }]);
+    expect(ok.success).toBe(true);
+    if (ok.success) {
+      expect(ok.data.verified_installer?.checksum_args).toEqual([
+        { flag: "--archive-sha256", prefix: "linux-amd64=", checksum: "nhm_archive_linux_amd64" },
+      ]);
+    }
+    expect(withArgs([{ flag: "--x", checksum: "nhm_archive" }]).success).toBe(true);
+    for (const bad of [
+      { flag: "-x", checksum: "nhm_archive" },
+      { flag: "--x;rm", checksum: "nhm_archive" },
+      { flag: "--x", prefix: "$(id)=", checksum: "nhm_archive" },
+      { flag: "--x", checksum: "Nhm-Archive" },
+      { flag: "--x", checksum: "nhm_archive", extra: true },
+    ]) {
+      expect(withArgs([bad]).success).toBe(false);
+    }
+  });
+
   test("rejects unknown verified-installer fields", () => {
     const result = ModuleSchema.safeParse({
       ...validMinimalModule,

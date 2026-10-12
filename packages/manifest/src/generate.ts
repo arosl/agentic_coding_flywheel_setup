@@ -823,7 +823,49 @@ function buildVerifiedInstallerFileCommand(module: Module): string {
     }
   }
 
+  // Pins read from checksums.yaml by verifiedInstallerChecksumArgLines.
+  if ((vi.checksum_args ?? []).length > 0) {
+    parts.push('"${verified_installer_checksum_args[@]}"');
+  }
+
   return parts.join(" ");
+}
+
+/**
+ * Lines that read a verified installer's checksum_args from checksums.yaml
+ * into the array verified_installer_checksum_args (acfs-9hkh.47). A missing
+ * or malformed pin clears expected_sha256, so the installer never runs:
+ * an install without its pins fails closed.
+ */
+function verifiedInstallerChecksumArgLines(module: Module, indent: string): string[] {
+  const checksumArgs = module.verified_installer?.checksum_args ?? [];
+  if (checksumArgs.length === 0) return [];
+  const lines = [
+    "local -a verified_installer_checksum_args=()",
+    'local verified_installer_pin=""',
+  ];
+  for (const arg of checksumArgs) {
+    for (const [field, value, pattern] of [
+      ["flag", arg.flag, /^--[a-z0-9][a-z0-9-]*$/],
+      ["prefix", arg.prefix ?? "", /^[a-z0-9_-]*=?$/],
+      ["checksum", arg.checksum, /^[a-z][a-z0-9_]*$/],
+    ] as const) {
+      if (!pattern.test(value)) {
+        throw new Error(`SECURITY: checksum_args ${field} "${value}" of module "${module.id}" is not allowed.`);
+      }
+    }
+    lines.push(
+      `verified_installer_pin="$(get_checksum ${shellQuote(arg.checksum)})"`,
+      'if [[ "$verified_installer_pin" =~ ^[0-9a-f]{64}$ ]]; then',
+      `    verified_installer_checksum_args+=(${shellQuote(arg.flag)} ${shellQuote(arg.prefix ?? "")}"$verified_installer_pin")`,
+      "else",
+      `    log_error "${escapeBash(module.id)}: checksums.yaml has no valid pin '${arg.checksum}'"`,
+      '    ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"',
+      '    expected_sha256=""',
+      "fi",
+    );
+  }
+  return lines.map((line) => indent + line);
 }
 
 export function normalizeVerifiedInstallerScriptArgs(
@@ -1489,6 +1531,7 @@ function generateVerifiedInstallerSnippet(module: Module): string[] {
     '            ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"',
     '            expected_sha256=""',
     "        fi",
+    ...verifiedInstallerChecksumArgLines(module, "        "),
     "",
     '        if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then',
     '            if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then',
@@ -1685,6 +1728,9 @@ function generateVerifiedInstallerSnippet(module: Module): string[] {
   // downloads a release archive and verifies it against SHA256SUMS.txt, so a
   // release without an aarch64 Linux artifact fails closed (no source build).
   if (tool === "fsfs") {
+    if ((vi.checksum_args ?? []).length > 0) {
+      throw new Error(`SECURITY: checksum_args are not supported for "${module.id}" (fsfs installer path).`);
+    }
     lines.push(...fsfsVerifiedInstallAttemptLines);
   } else {
     lines.push(...verifiedInstallAttemptLines);

@@ -123,6 +123,28 @@ const VerifiedInstallerSchema = z
         }
       })
       .default([]),
+    // Pins kept in checksums.yaml and passed to the installer after args
+    // (acfs-9hkh.47): each entry adds `<flag> <prefix><sha256>`, read at
+    // install time from checksums.yaml's entry `checksum`. A missing or
+    // malformed entry fails the install closed.
+    checksum_args: z
+      .array(
+        z.strictObject({
+          flag: z
+            .string()
+            .regex(/^--[a-z0-9][a-z0-9-]*$/, "checksum_args flag must be a long option like --archive-sha256"),
+          prefix: z
+            .string()
+            .max(64, "checksum_args prefix must be at most 64 characters")
+            .regex(/^[a-z0-9_-]*=?$/, "checksum_args prefix must be lowercase letters, digits, - or _, ending in = or nothing")
+            .default(""),
+          checksum: z
+            .string()
+            .regex(/^[a-z][a-z0-9_]*$/, "checksum_args checksum must name a checksums.yaml entry"),
+        }),
+      )
+      .max(16, "Verified installer checksum_args must contain at most 16 entries")
+      .default([]),
   })
   .superRefine((installer, context) => {
     installer.env.forEach((entry, index) => {
