@@ -13,7 +13,7 @@
 #
 # Usage: tests/vm/test_nhm_rehearsal.sh --authorised RUN-ID
 #            (--nhm-version X.Y.Z | --nhm-build DIR)
-#            [--release 0.1|0.2|0.3|0.4] [--steps E00,E01,...] [--root DIR]
+#            [--release 0.1|0.2|0.3|0.4] [--steps E00,E01,...] [--root DIR] [--takeover]
 #
 # --authorised is required, and names the run: sandbox runs are
 # authorised under F.12 (SageOak, 2026-10-12), and each run's id goes into
@@ -32,6 +32,10 @@
 # verify) are out of the sandbox's scope (accepted by the operator). Some
 # pass conditions name forms nhm does not have (`nhm doctor --mode
 # active`): the harness checks nhm's nearest form and names it.
+#
+# --takeover adds the takeover scenario (plan-v8 section 5 step 6) after
+# the steps: an agent outside git imported, an unbound Bash token refusing
+# both modes, and --exclude letting the takeover pass.
 #
 # --root is the sandbox root (default $NHM_SANDBOX_PARENT/$USER/
 # nhm-rehearsal/RUN-ID, NHM_SANDBOX_PARENT defaulting to /data/tmp). It
@@ -58,6 +62,7 @@ STEPS=""
 ROOT=""
 NHM_VERSION=""
 NHM_BUILD=""
+TAKEOVER=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --authorised) [[ $# -ge 2 ]] || usage; AUTHORISED="$2"; shift 2 ;;
@@ -66,6 +71,7 @@ while [[ $# -gt 0 ]]; do
         --root) [[ $# -ge 2 ]] || usage; ROOT="$2"; shift 2 ;;
         --nhm-version) [[ $# -ge 2 ]] || usage; NHM_VERSION="$2"; shift 2 ;;
         --nhm-build) [[ $# -ge 2 ]] || usage; NHM_BUILD="$2"; shift 2 ;;
+        --takeover) TAKEOVER=1; shift ;;
         -h|--help) usage ;;
         *) echo "unknown argument: $1" >&2; usage ;;
     esac
@@ -102,6 +108,10 @@ if [[ -n "$STEPS" ]]; then
     done
 else
     RUN_STEPS="$ALL_STEPS"
+fi
+# The takeover changes the owner, so it runs after every step.
+if [[ "$TAKEOVER" == 1 ]]; then
+    RUN_STEPS="$RUN_STEPS TAKEOVER"
 fi
 ROOT="${ROOT:-${NHM_SANDBOX_PARENT:-/data/tmp}/${USER:-rehearsal}/nhm-rehearsal/$AUTHORISED}"
 if [[ -e "$ROOT" ]]; then
@@ -293,6 +303,56 @@ step_E16() {
     echo "$preview"
     check "E16: resume --dry-run previews the session's argv" jq -e '.result.argv | index("--resume") != null' <<<"$preview"
     manual "E16: one send pending through the restart stays unconfirmed (needs a send the Bash leaves pending)"
+}
+
+# TAKEOVER (--takeover; plan-v8 section 5 step 6, run last): the Bash
+# spawns a Claude in a folder outside git; then
+#   1. the dry run passes, imports the agent and keeps its token;
+#   2. a token the Bash kept for an identity no agent holds refuses both
+#      the dry run and --yes with exit 2, and the Bash stays the owner;
+#   3. --exclude names that identity: the takeover passes, lists it as
+#      excluded, and nhm owns the server.
+step_TAKEOVER() {
+    local dir ws mail out rc ghostdir
+    sandbox_mail_start >/dev/null || { echo "FAIL the step's Agent Mail"; return; }
+    sandbox_mock_start >/dev/null || { echo "FAIL the mock API"; return; }
+    herdr integration install claude >"$SANDBOX_EVIDENCE/herdr-integration.out" 2>&1 || true
+    dir="$HOME/plainwork"
+    mkdir -p "$dir" && sandbox_claude_prepare "$dir" >/dev/null
+    ws="$(herdr workspace create --cwd "$dir" --label plainwork --no-focus 2>/dev/null | jq -r '.result.workspace.workspace_id // empty')"
+    acfs agents spawn --claude 1 --workspace "$ws" --cwd "$dir" --no-prompt --trust-folder --force \
+        >"$SANDBOX_EVIDENCE/plain-spawn.out" 2>&1 || true
+    mail="$(sed -n 's/^started: \([A-Za-z]*\) (.*/\1/p' "$SANDBOX_EVIDENCE/plain-spawn.out" | head -1)"
+    check "TAKEOVER: the Bash spawned a Claude outside git" test -n "$mail"
+    nhm admin recover reconcile --import-only --json >"$SANDBOX_EVIDENCE/takeover-import.json" 2>&1 || true
+
+    rc=0
+    out="$(nhm admin takeover --dry-run --json 2>&1)" || rc=$?
+    echo "### takeover --dry-run (exit $rc)"
+    echo "$out"
+    check "TAKEOVER 1: the dry run passes" test "$rc" -eq 0
+    check "TAKEOVER 1: it keeps the outside-git agent's token" \
+        jq -e --arg m "$mail" '.result.tokens[]? | select(.mail_name == $m) | select(.action != "acfs_only")' <<<"$out"
+
+    # A token the Bash kept for an identity no agent holds.
+    ghostdir="${ACFS_HOME:-$HOME/.acfs}/state/tokens/$(printf '%s' "$dir" | sha256sum | cut -c1-16)"
+    mkdir -p "$ghostdir" && printf '%s\n' "$dir" >"$ghostdir/.project" && printf 'tok-ghost\n' >"$ghostdir/GhostOwl"
+    for mode in --dry-run --yes; do
+        rc=0
+        out="$(nhm admin takeover "$mode" --json 2>&1)" || rc=$?
+        echo "### takeover $mode with GhostOwl's token (exit $rc)"
+        echo "$out"
+        check "TAKEOVER 2: $mode refuses (exit 2) over an unbound token" test "$rc" -eq 2
+        check "TAKEOVER 2: after $mode the Bash still owns the server" \
+            bash -c '[[ "$(acfs agents owner 2>/dev/null)" == acfs-bash* ]]'
+    done
+    rc=0
+    out="$(nhm admin takeover --yes --exclude GhostOwl --json 2>&1)" || rc=$?
+    echo "### takeover --yes --exclude GhostOwl (exit $rc)"
+    echo "$out"
+    check "TAKEOVER 3: --exclude passes" test "$rc" -eq 0
+    check "TAKEOVER 3: the report lists GhostOwl as excluded" jq -e '.result.excluded | index("GhostOwl") != null' <<<"$out"
+    check "TAKEOVER 3: nhm owns the server" jq -e '.result.owner.owner == "nhm"' <<<"$out"
 }
 
 # --- Outside: run each step as one script in the sandbox ------------------
