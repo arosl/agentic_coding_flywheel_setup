@@ -2387,20 +2387,30 @@ modules:
     # matching SHA256SUMS (acfs-9hkh.42, acfs-9hkh.47).
     installed_check:
       run_as: target_user
-      command: '"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" version --json 2>/dev/null | grep -q ''"version": "0.1.2"'''
+      command: '"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" version --json 2>/dev/null | grep -q ''"version": "0.1.3"'''
     verified_installer:
       tool: nhm
       runner: bash
-      args: ["--", "--version", "0.1.2"]
+      args: ["--", "--version", "0.1.3"]
       checksum_args:
         - { flag: "--archive-sha256", prefix: "linux-amd64=", checksum: nhm_archive_linux_amd64 }
         - { flag: "--archive-sha256", prefix: "linux-arm64=", checksum: nhm_archive_linux_arm64 }
     install:
       - |
-        # acfs-summary: enroll the default herdr server with nhm
+        # acfs-summary: enroll the default herdr server with nhm, then run nhm's restore
         # The install may run before herdr starts; enroll records the
         # socket anyway. An explicit --session ignores the pane this runs in.
-        "${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" admin instance enroll --session default
+        nhm="${NHM_BIN_DIR:-$HOME/.local/bin}/nhm"
+        enrolled="$("$nhm" admin instance enroll --session default --json)"
+        # restore is nhm's startup hook (acfs-9hkh.40): it restores nothing
+        # while ACFS's Bash owns the server, and after the takeover it
+        # applies the bindings again. It needs the socket enroll reports.
+        socket="$(jq -r '.result.socket_path // empty' <<<"$enrolled")"
+        if [[ -n "$socket" ]]; then
+          "$nhm" admin restore --socket "$socket"
+        else
+          echo "nhm reported no herdr socket; restore skipped" >&2
+        fi
     verify:
       - '"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" version'
       - 'test -x "${NHM_BIN_DIR:-$HOME/.local/bin}/nhm-hook"'

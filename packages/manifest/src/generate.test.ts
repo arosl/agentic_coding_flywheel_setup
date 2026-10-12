@@ -620,12 +620,45 @@ describe("Generated verified installer args", () => {
       );
     }
     expect(nhm).toContain(
-      `run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.1.2' "\${verified_installer_checksum_args[@]}"`,
+      `run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.1.3' "\${verified_installer_checksum_args[@]}"`,
     );
     // A bad pin clears expected_sha256, which keeps the installer from running.
     expect(nhm).toMatch(/has no valid pin 'nhm_archive_linux_amd64'"\n\s+ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"\n\s+expected_sha256=""/);
     // No pin is kept in the generated installer itself.
     expect(nhm).not.toMatch(/[0-9a-f]{64}/);
+  });
+
+  test("stack.nhm's install step enrolls, then runs nhm's restore on the socket enroll reports (acfs-9hkh.40)", () => {
+    const parsed = parseManifestFile(MANIFEST_PATH);
+    expect(parsed.success).toBe(true);
+    const step = parsed.data!.modules.find((m) => m.id === "stack.nhm")!.install[0]!;
+    const run = (socketJson: string) => {
+      const bin = temporaryHome("acfs-nhm-step-");
+      // A fake nhm: it logs each call and answers enroll --json.
+      writeFileSync(
+        resolve(bin, "nhm"),
+        `#!/bin/bash\nprintf '%s\\n' "$*" >> "${bin}/calls"\n` +
+          `if [[ "$*" == *"enroll"*"--json"* ]]; then printf '%s\\n' '${socketJson}'; fi\n`,
+      );
+      chmodSync(resolve(bin, "nhm"), 0o755);
+      const res = spawnSync("bash", ["-euo", "pipefail", "-c", step], {
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", NHM_BIN_DIR: bin },
+        encoding: "utf-8",
+      });
+      const calls = existsSync(resolve(bin, "calls")) ? readFileSync(resolve(bin, "calls"), "utf-8") : "";
+      return { status: res.status, stderr: res.stderr, calls };
+    };
+
+    const ok = run('{"result":{"socket_path":"/run/test/herdr.sock"}}');
+    expect(ok.status).toBe(0);
+    expect(ok.calls).toBe(
+      "admin instance enroll --session default --json\nadmin restore --socket /run/test/herdr.sock\n",
+    );
+    // No socket reported: enroll still ran, restore is skipped with a note.
+    const none = run('{"result":{}}');
+    expect(none.status).toBe(0);
+    expect(none.calls).toBe("admin instance enroll --session default --json\n");
+    expect(none.stderr).toContain("restore skipped");
   });
 
   test("stack.cass prepares and uses a target-owned installer TMPDIR", () => {

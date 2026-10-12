@@ -927,7 +927,7 @@ acfs_generated_install_stack_nhm() {
                         elif ! "$verified_installer_chmod_bin" 0444 "$verified_installer_file"; then
                             log_error "stack.nhm: failed to make verified installer staging file read-only"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
-                        elif run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.1.2' "${verified_installer_checksum_args[@]}"; then
+                        elif run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.1.3' "${verified_installer_checksum_args[@]}"; then
                             install_success=true
                         else
                             log_error "stack.nhm: verified installer execution failed"
@@ -971,16 +971,26 @@ acfs_generated_install_stack_nhm() {
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: enroll the default herdr server with nhm (target_user)"
+        log_info "dry-run: install: enroll the default herdr server with nhm, then run nhm's restore (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_STACK_NHM'
-# acfs-summary: enroll the default herdr server with nhm
+# acfs-summary: enroll the default herdr server with nhm, then run nhm's restore
 # The install may run before herdr starts; enroll records the
 # socket anyway. An explicit --session ignores the pane this runs in.
-"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" admin instance enroll --session default
+nhm="${NHM_BIN_DIR:-$HOME/.local/bin}/nhm"
+enrolled="$("$nhm" admin instance enroll --session default --json)"
+# restore is nhm's startup hook (acfs-9hkh.40): it restores nothing
+# while ACFS's Bash owns the server, and after the takeover it
+# applies the bindings again. It needs the socket enroll reports.
+socket="$(jq -r '.result.socket_path // empty' <<<"$enrolled")"
+if [[ -n "$socket" ]]; then
+  "$nhm" admin restore --socket "$socket"
+else
+  echo "nhm reported no herdr socket; restore skipped" >&2
+fi
 INSTALL_STACK_NHM
         then
-            log_error "stack.nhm: install command failed: enroll the default herdr server with nhm"
+            log_error "stack.nhm: install command failed: enroll the default herdr server with nhm, then run nhm's restore"
             return 1
         fi
     fi

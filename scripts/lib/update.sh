@@ -7707,6 +7707,17 @@ update_nhm() {
     fi
     # Idempotent: an enrolled server keeps its instance.
     run_cmd "nhm enroll" update_run_in_target_context "" "$bin" admin instance enroll --session default </dev/null || true
+    # restore is nhm's startup hook (acfs-9hkh.40): it restores nothing
+    # while ACFS's Bash owns the server, and after the takeover it applies
+    # the bindings again. It needs the socket, which enroll reports.
+    local socket=""
+    socket="$(update_run_in_target_context "" "$bin" admin instance enroll --session default --json </dev/null 2>/dev/null |
+        jq -r '.result.socket_path // empty' 2>/dev/null || true)"
+    if [[ -z "$socket" ]]; then
+        log_item "warn" "$desc" "nhm reported no herdr socket; run: nhm admin restore --socket <herdr.sock>"
+        return 0
+    fi
+    run_cmd "nhm restore" update_run_in_target_context "" "$bin" admin restore --socket "$socket" </dev/null || true
 }
 
 # nhm's hook lines (scripts/lib/nhm_hooks.sh): register them for the
