@@ -177,13 +177,17 @@ OUT="$(PATH="$FAKEBIN:$PATH" bash "$HOOKS" trust codex "$OLDC/hooks.json" --dry-
 check "older-path lines: trust finds no line ACFS wrote" bash -c '[[ "$1" == *"has no nhm-hook entries"* ]]' _ "$OUT"
 check "older-path lines: registered says upgrade needed" bash -c 'bash "$1" registered codex "$2"; test $? -eq 3' _ "$HOOKS" "$OLDC/hooks.json"
 bash "$HOOKS" register codex "$OLDC/hooks.json" 2>/dev/null
+# PostToolUse's older line is in a group with the user's matcher "x": only
+# its handler is upgraded, the matcher stays (acfs-9hkh.53), and ACFS's
+# exact line is appended after it.
 check "older-path lines: register upgrades each in place, the user's Stop line untouched" \
-    jq_true '(.hooks.PostToolUse | length) == 1 and (.hooks.SessionStart | length) == 1 and (.hooks.PostCompact | length) == 1
+    jq_true '(.hooks.PostToolUse | length) == 2 and (.hooks.SessionStart | length) == 1 and (.hooks.PostCompact | length) == 1
         and .hooks.Stop == [{hooks: [{type: "command", command: "echo user"}]}]
+        and .hooks.PostToolUse[0] == {matcher: "x", hooks: [{type: "command", command: (env.HOME + "/.local/bin/nhm-hook posttooluse"), timeout: 5}]}
         and .hooks.SessionStart[0].hooks[0].command == (env.HOME + "/.local/bin/nhm-hook sessionstart")' "$OLDC/hooks.json"
 OUT="$(PATH="$FAKEBIN:$PATH" bash "$HOOKS" trust codex "$OLDC/hooks.json" 2>&1)"
-check "older-path lines: after register, trust trusts the 3 upgraded positions" \
-    bash -c '[[ "$1" == *"trusts the 3 nhm-hook entries"* ]] && jq -e "(keys | length) == 3 and all(keys[]; test(\":(post_tool_use|session_start|post_compact):0:0$\"))" "$2/fake-trust.json" >/dev/null' \
+check "older-path lines: after register, trust trusts the 2 upgraded positions and the appended PostToolUse line" \
+    bash -c '[[ "$1" == *"trusts the 3 nhm-hook entries"* ]] && jq -e "(keys | length) == 3 and all(keys[]; test(\":(post_tool_use:1|session_start:0|post_compact:0):0$\"))" "$2/fake-trust.json" >/dev/null' \
     _ "$OUT" "$OLDC"
 # Review of b89811bd: ACFS trusts only what it wrote, the verify step needs
 # every entry, and a stuck app-server behind a wrapper cannot hang it.
@@ -275,6 +279,41 @@ printf '{not json\n' >"$UNREG/broken.json"
 check "unregister: malformed JSON fails and stays unchanged" \
     bash -c '! bash "$1" unregister claude "$2" 2>/dev/null && [[ "$(cat "$2")" == "{not json" ]]' _ "$HOOKS" "$UNREG/broken.json"
 check "unregister: unknown kind is a usage error" bash -c 'bash "$1" unregister gemini 2>/dev/null; test $? -eq 2' _ "$HOOKS"
+
+# acfs-9hkh.53: an older nhm line alone in a group of the user's (another
+# matcher, a key of the user's own). register upgrades only the handler
+# and keeps the group; ACFS's exact line is appended. unregister then
+# removes ACFS's handler from both groups and says so.
+SESSION_CMD="$HOME/.local/bin/nhm-hook sessionstart"
+printf '%s\n' '{"hooks":{"SessionStart":[{"matcher":"startup","note":"mine","hooks":[{"type":"command","command":"/old/nhm-hook sessionstart"}]}]}}' >"$UNREG/lone.json"
+bash "$HOOKS" register claude "$UNREG/lone.json" 2>/dev/null
+check "register: a lone older line in the user's group keeps its matcher and keys; only the handler is upgraded" \
+    jq_true '.hooks.SessionStart[0] == {matcher: "startup", note: "mine", hooks: [{type: "command", command: (env.HOME + "/.local/bin/nhm-hook sessionstart"), timeout: 5}]}' "$UNREG/lone.json"
+check "register: ACFS's exact line is appended after the user's group" \
+    jq_true '(.hooks.SessionStart | length) == 2 and .hooks.SessionStart[1] == {hooks: [{type: "command", command: (env.HOME + "/.local/bin/nhm-hook sessionstart"), timeout: 5}]}' "$UNREG/lone.json"
+check "registered: every line exact" bash "$HOOKS" registered claude "$UNREG/lone.json"
+cp "$UNREG/lone.json" "$UNREG/lone.once"
+bash "$HOOKS" register claude "$UNREG/lone.json" 2>/dev/null
+check "register: a second run changes nothing" cmp -s "$UNREG/lone.json" "$UNREG/lone.once"
+OUT="$(bash "$HOOKS" unregister claude "$UNREG/lone.json" 2>&1)"
+check "unregister claude: ACFS's handler goes from the user's group too" \
+    jq_true '[.. | objects | .command? // empty | select(test("nhm-hook"))] | length == 0' "$UNREG/lone.json"
+check "unregister claude: it says it removed the lines and leaves none" \
+    bash -c '[[ "$1" == *"removed the nhm hook lines"* && "$1" != *"left "* ]]' _ "$OUT"
+# The user's other handler and keys stay when ACFS's handler leaves their group.
+jq --arg c "$SESSION_CMD" '{hooks: {SessionStart: [{matcher: "startup", note: "mine", hooks: [{type: "command", command: "user-a"}, {type: "command", command: $c, timeout: 5}]}]}}' \
+    -n >"$UNREG/shared.json"
+bash "$HOOKS" unregister claude "$UNREG/shared.json" 2>/dev/null
+check "unregister claude: the user's handler, matcher and keys stay" \
+    jq_true '.hooks.SessionStart == [{matcher: "startup", note: "mine", hooks: [{type: "command", command: "user-a"}]}]' "$UNREG/shared.json"
+# Codex: ACFS's handler in a group another entry follows stays, and is reported.
+jq --arg c "$SESSION_CMD" '{hooks: {SessionStart: [{matcher: "startup", hooks: [{type: "command", command: $c, timeout: 5}]}, {hooks: [{type: "command", command: "user-after"}]}]}}' \
+    -n >"$UNREG/codex-user.json"
+cp "$UNREG/codex-user.json" "$UNREG/codex-user.orig"
+OUT="$(bash "$HOOKS" unregister codex "$UNREG/codex-user.json" 2>&1)"
+check "unregister codex: a handler another entry follows stays, the file unchanged" cmp -s "$UNREG/codex-user.json" "$UNREG/codex-user.orig"
+check "unregister codex: it reports the line it left, not a removal" \
+    bash -c '[[ "$1" == *"left 1 nhm hook lines"* && "$1" != *"removed"* ]]' _ "$OUT"
 
 echo
 echo "nhm_hooks: $PASS passed, $FAIL failed"

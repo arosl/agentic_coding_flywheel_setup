@@ -107,10 +107,14 @@ JQ
 
 # The jq program that makes ACFS's line for one event exact. It keeps an
 # exact line as it is. It upgrades an older nhm line in place, so Codex's
-# position-keyed trust then trusts the upgraded line: the handler alone
-# when its group fits, the whole group when the line is alone in it. An
-# older line that shares a group with the user's handlers under another
-# matcher stays, and the exact line is appended. Otherwise it appends.
+# position-keyed trust then trusts the upgraded line, when its group fits.
+# When the older line is alone in a group of the user's (another matcher,
+# or keys of the user's own), only its handler is upgraded: the group
+# keeps its matcher and keys, so it does not count as ACFS's line, and the
+# exact line is appended too. nhm-hook drops a repeated event, so a
+# second run is harmless. An older line that shares a group with the
+# user's handlers under another matcher stays, and the exact line is
+# appended. Otherwise it appends.
 nhm_hooks_register_filter() {
     nhm_hooks_jq_defs
     cat <<'JQ'
@@ -121,7 +125,7 @@ elif (exact_at | length) > 0 then .
 elif (nhmish_at | length) > 0 then
   nhmish_at[0] as [$gi, $hi]
   | if (.hooks[$event][$gi] | group_fits) then .hooks[$event][$gi].hooks[$hi] = handler
-    elif (.hooks[$event][$gi].hooks | length) == 1 then .hooks[$event][$gi] = entry
+    elif (.hooks[$event][$gi].hooks | length) == 1 then .hooks[$event][$gi].hooks[$hi] = handler | .hooks[$event] += [entry]
     else .hooks[$event] += [entry]
     end
 else .hooks[$event] = ((.hooks[$event] // []) + [entry])
@@ -236,21 +240,27 @@ nhm_hooks_registered() {
     return 0
 }
 
-# The jq program that removes ACFS's own entry for one event: exactly what
-# `register` writes, nothing else (an entry the user edited, an older nhm
-# command, or a user line that mentions nhm-hook stays). For Codex it
-# removes only trailing entries, since Codex keys trust by position and
-# removing one would move every entry after it. With $count it prints how
-# many of ACFS's entries the event still has instead.
+# The jq program that removes ACFS's own handler for one event: exactly
+# the handler `register` writes, in whatever group it is (register may
+# have upgraded it inside a group of the user's), and nothing else (a
+# handler the user edited, an older nhm command, or a user line that
+# mentions nhm-hook stays). A group the removal leaves empty goes; the
+# group's other handlers and keys stay. For Codex it removes only
+# trailing groups that hold nothing but ACFS's handler, since Codex keys
+# trust by position and a change before another entry would move or
+# untrust it. With $count it prints how many of ACFS's handlers the
+# event still has instead.
 nhm_hooks_unregister_filter() {
     cat <<'JQ'
-def entry: (if $matcher == "" then {} else {matcher: $matcher} end)
-  + {hooks: [{type: "command", command: $cmd, timeout: $timeout}]};
-def drop_trailing: if length > 0 and .[-1] == entry then .[:-1] | drop_trailing else . end;
+def handler: {type: "command", command: $cmd, timeout: $timeout};
+def has_ours: type == "object" and (.hooks | type) == "array" and any(.hooks[]; . == handler);
+def only_ours: has_ours and all(.hooks[]; . == handler);
+def strip: if has_ours then (.hooks |= map(select(. != handler))) | select((.hooks | length) > 0) else . end;
+def drop_trailing: if length > 0 and (.[-1] | only_ours) then .[:-1] | drop_trailing else . end;
 if type != "object" or ((.hooks? // {}) | type) != "object" or ((.hooks? // {})[$event] | type) != "array"
 then (if $count then 0 else . end)
-elif $count then [.hooks[$event][] | select(. == entry)] | length
-else .hooks[$event] |= (if $codex then drop_trailing else map(select(. != entry)) end)
+elif $count then [.hooks[$event][] | select(has_ours) | .hooks[] | select(. == handler)] | length
+else .hooks[$event] |= (if $codex then drop_trailing else map(strip) end)
   | if (.hooks[$event] | length) == 0 then del(.hooks[$event]) else . end
 end
 JQ
