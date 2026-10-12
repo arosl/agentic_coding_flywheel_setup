@@ -85,16 +85,18 @@ if name == "nhm":
     kinds = []
     for flag, kind in (("--spawn-cc=", "claude"), ("--spawn-cod=", "codex"), ("--spawn-agy=", "agy")):
         kinds += [kind] * sum(int(a[len(flag):]) for a in args if a.startswith(flag))
+    # nhm names kinds by ntm's type (kinds.go NTMType): agy is "antigravity".
+    ntm_type = {"claude": "claude", "codex": "codex", "agy": "antigravity"}
     head = {"success": True, "session": session, "working_dir": str(root / "repo"),
             "effective_project_key": str(root / "repo"), "assignments": [],
             "admission": {"decision": "refuse" if mode == "nhm-refuse" else "admit"}}
     if "--dry-run" in args:
         print(json.dumps({**head, "dry_run": True, "agents": [], "would_create": [
-            {"pane": "1.%d" % i, "type": k, "ready": False} for i, k in enumerate(kinds, 1)]}))
+            {"pane": "1.%d" % i, "type": ntm_type[k], "ready": False} for i, k in enumerate(kinds, 1)]}))
         sys.exit(0)
     assert (root / "intent.json").exists()
     names = ["GreenCastle", "AmberFox", "CopperHill"]
-    state["workspaces"].append({"workspace_id": "w9", "label": session})
+    state["workspaces"].append({"workspace_id": "w9", "label": "other" if mode == "nhm-wrong-label" else session})
     agents = []
     for i, kind in enumerate(kinds):
         n = state["next"]
@@ -103,7 +105,7 @@ if name == "nhm":
             "name": names[i].lower(), "agent": kind, "agent_status": "idle", "cwd": str(root / "repo"),
             "terminal_id": "term_%d" % n})
         agents.append({"pane": "1.%d" % (i + 1), "pane_id": "w9:p%d" % n, "agent_mail_name": names[i],
-            "name": names[i].lower(), "type": kind, "ready": not (mode == "nhm-not-ready" and kind == "codex")})
+            "name": names[i].lower(), "type": ntm_type[kind], "ready": not (mode == "nhm-not-ready" and kind == "codex")})
     save()
     print(json.dumps({**head, "agents": agents}))
     sys.exit(0)
@@ -522,6 +524,22 @@ class NhmLaunchTests(LaunchTests.__base__):
         self.assertEqual((code, report["status"]), (2, "error"), report)
         self.assertIn("admission", report["error"])
         self.assertFalse(self.receipt.exists())
+
+    def test_agy_is_nhms_antigravity_type(self):
+        # Real nhm reports agy as ntm's type "antigravity" (review of cd622731).
+        self.own()
+        self.agents = [("BlueLake", "codex"), ("RedFox", "claude"), ("GreyOwl", "agy")]
+        code, report = self.invoke(launch=True)
+        self.assertEqual((code, report["status"]), (0, "ready"), report)
+        self.assertIn("--spawn-agy=1", report.get("nhm_argv", []) or self.calls()[-1][1])
+        self.assertEqual(report["preparation_targets"][2].split(":")[2], "agy")
+
+    def test_a_workspace_without_the_launch_label_is_not_recorded(self):
+        self.own()
+        code, report = self.invoke(mode="nhm-wrong-label", launch=True)
+        self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
+        self.assertIn("labelled for this launch", report["error"])
+        self.assertFalse((self.root / "intent.json.result.json").exists())
 
     def test_acfs_bash_owner_keeps_the_acfs_agents_path(self):
         self.own("acfs-bash")

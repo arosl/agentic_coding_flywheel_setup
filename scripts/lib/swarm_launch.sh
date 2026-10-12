@@ -38,6 +38,9 @@ HERDR_NAME = r"[a-z][a-z0-9_-]{0,31}"
 MAIL_NAME = r"[A-Za-z][A-Za-z0-9_-]{0,63}"
 # The agent kinds launch starts, as herdr and acfs agents spawn name them.
 AGENT_TYPES = ("claude", "codex", "agy")
+# nhm's robot output names each kind by ntm's type (nhm's kinds.go NTMType):
+# agy is "antigravity" there.
+NHM_TYPES = {"claude": "claude", "codex": "codex", "antigravity": "agy"}
 # Every field of a saved target. The identity fields are what reconcile
 # compares against live herdr state; names and launch state are reported.
 TARGET_KEYS = {"slot", "agent_name", "agent_type", "agent_mail_name", "herdr_name", "workspace_id",
@@ -288,9 +291,10 @@ def spawn_response(data, request, dry_run):
             "nhm resource admission is unavailable or does not admit this launch.")
     agents = result.get("would_create" if dry_run else "agents")
     require(isinstance(agents, list) and len(agents) == len(request["agents"])
-            and all(isinstance(a, dict) and a.get("type") in AGENT_TYPES
+            and all(isinstance(a, dict) and a.get("type") in NHM_TYPES
                     and isinstance(a.get("pane"), str) and re.fullmatch(r"[0-9]+\.[0-9]+", a["pane"])
                     and not a.get("error") for a in agents), "nhm returned unexpected agent topology.")
+    agents = [{**a, "type": NHM_TYPES[a["type"]]} for a in agents]
     require(len({a["pane"] for a in agents}) == len(agents)
             and Counter(a["type"] for a in agents) == Counter(a["agent_type"] for a in request["agents"]),
             "nhm returned duplicate panes or the wrong agent mix.")
@@ -334,6 +338,14 @@ def nhm_launch_agents(herdr, nhm, request):
                         "pane_id": live["pane_id"], "terminal_id": live["terminal_id"],
                         "shell_pid": live["shell_pid"], "launched_state": live["state"]})
     distinct_targets(targets)
+    # The receipt names the workspace by this launch's label: nhm must have
+    # started the agents in the workspace that carries it.
+    workspaces = herdr_result(herdr, ["workspace", "list"], request["repo"],
+                              "Unable to list herdr workspaces.").get("workspaces")
+    require(isinstance(workspaces, list) and any(isinstance(w, dict) and w.get("label") == label
+                                                 and w.get("workspace_id") == targets[0]["workspace_id"]
+                                                 for w in workspaces),
+            "nhm's agents are not in the workspace labelled for this launch; inspect it, do not relaunch.")
     return targets
 
 
@@ -627,9 +639,29 @@ def packet_intent(path, request=None):
     return saved
 
 
+def nhm_receipt_submitted(request, target):
+    """Upstream's receipt query, with nhm: the durable operation must match
+    this packet and name exactly this one submitted target."""
+    code, data = run([binary("nhm"), "--robot-send-receipt=" + request["operation_id"], "--robot-format=json"],
+                     request["repo"])
+    response = parse(data)
+    operation = response.get("operation") if isinstance(response, dict) else None
+    outcome = response.get("outcome") if isinstance(response, dict) else None
+    return (code == 0 and isinstance(response, dict) and response.get("success") is True
+            and response.get("session") == request["workspace"]
+            and isinstance(operation, dict) and operation.get("operation_id") == request["operation_id"]
+            and operation.get("payload_sha256") == request["payload_sha256"]
+            and type(operation.get("payload_bytes")) is int and operation["payload_bytes"] == request["payload_bytes"]
+            and operation.get("status") == "completed" and isinstance(outcome, dict)
+            and outcome.get("success") is True and outcome.get("targets") == [target]
+            and outcome.get("successful") == [target] and outcome.get("failed") == []
+            and operation.get("admissions") == [{"target": target, "state": "submitted"}])
+
+
 def query_delivery(entry, saved):
     """A known intent NEVER goes back through a send-capable execution path:
-    only the delivery's recorded result file is read."""
+    the delivery's recorded result file is read, and an intent nhm sent
+    without a result is asked of nhm's receipt (read-only)."""
     request, target = entry["request"], saved["target"]
     report = {"schema": PACKET_SCHEMA, "request": request, "receipt": str(entry["receipt"]),
               "status": "unconfirmed", "sends_prompt": False, "reconciled_only": True,
@@ -641,6 +673,8 @@ def query_delivery(entry, saved):
                 and result.get("target") == target and result.get("status") in ("submitted", "refused")
                 and isinstance(result.get("evidence"), dict)):
             report.update(status=result["status"], evidence=result["evidence"])
+        elif result is None and saved.get("via") == "nhm" and nhm_receipt_submitted(request, target):
+            report.update(status="submitted", evidence={"operation_id": request["operation_id"], "nhm_target": target})
     except (LaunchError, OSError, UnicodeError):
         pass
     return report, 0 if report["status"] == "submitted" else 1

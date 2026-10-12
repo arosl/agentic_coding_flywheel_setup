@@ -399,6 +399,12 @@ if "--dry-run" in args:
         "successful": [], "failed": [], "would_send_to": [target, "1.2"] if mode == "two" else [target],
         "cass_injection": {"enabled": False}, "memory_injection": {"enabled": False}}))
     sys.exit(0)
+if mode in ("refused", "conflict"):
+    # nhm's robot error: refused before any operation (NOT_OWNER), or an
+    # operation id used before, which may have been sent.
+    code = "NOT_OWNER" if mode == "refused" else "IDEMPOTENCY_CONFLICT"
+    print(json.dumps({"success": False, "error_code": code, "error": code.lower()}))
+    sys.exit(2)
 operation = {"operation_id": opt("--op-id"), "status": "completed",
     "payload_sha256": hashlib.sha256(payload).hexdigest(), "payload_bytes": len(payload),
     "admissions": [{"target": target, "state": "submitted"}]}
@@ -471,6 +477,20 @@ class NhmDeliveryTests(unittest.TestCase):
         self.assertEqual(len(sends), 1)
         self.assertEqual(self.nhm_calls()[-1][0][0], "--robot-send-receipt=work-one")
         self.assertEqual(json.loads(self.case.result.read_text())["status"], "submitted")
+
+    def test_a_send_nhm_refused_records_refused_and_is_never_resent(self):
+        code, report = self.invoke(mode="refused")
+        self.assertEqual((code, report["status"], report["sends_prompt"]), (1, "refused", False), report)
+        result = json.loads(self.case.result.read_text())
+        self.assertEqual((result["status"], result["evidence"]["error_code"]), ("refused", "NOT_OWNER"))
+        code, report = self.invoke()
+        self.assertEqual((code, report["status"], report["reconciled_only"]), (1, "refused", True), report)
+        self.assertEqual(len([a for a, _ in self.nhm_calls() if any(x.startswith("--op-id=") for x in a)]), 1)
+
+    def test_an_operation_conflict_stays_unconfirmed(self):
+        code, report = self.invoke(mode="conflict")
+        self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
+        self.assertFalse(self.case.result.exists())
 
     def test_a_dry_run_naming_two_targets_sends_nothing(self):
         code, report = self.invoke(mode="two")

@@ -774,6 +774,9 @@ TERMINAL_ID = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
 # Error codes herdr returns before it types anything into the pane. Any other
 # error, and any transport trouble, leaves the delivery unconfirmed.
 REFUSED_BEFORE_TYPING = frozenset({"agent_not_found", "agent_blocked"})
+# nhm's robot error codes for a send it refused before any operation began.
+NHM_REFUSED_BEFORE_SEND = frozenset({"NOT_OWNER", "PANE_NOT_FOUND", "SESSION_NOT_FOUND", "INVALID_FLAG",
+                                     "DEPENDENCY_MISSING"})
 
 
 class DeliveryError(Exception):
@@ -1057,6 +1060,15 @@ def outcome(response, request, target, receipt_query=False):
     return "submitted" if submitted else "unconfirmed"
 
 
+def nhm_refused(code, response):
+    """nhm refused before it made a durable operation, so nothing was typed:
+    its answer carries one of these codes and no operation. Any other
+    failure (an operation id used before, an error after the operation
+    began) stays unconfirmed."""
+    return (code != 0 and isinstance(response, dict) and response.get("success") is False
+            and response.get("error_code") in NHM_REFUSED_BEFORE_SEND and "operation" not in response)
+
+
 def nhm_record(receipt, request, target):
     """A confirmed submission gets the same result file as the herdr path, so
     reconcile and acfs swarm launch read it without asking nhm again."""
@@ -1096,8 +1108,14 @@ def nhm_deliver(prepared, report):
     report.update(status="unconfirmed", sends_prompt=True, reconciled_only=False)
     try:
         code, data = run([nhm, *argv[1:]], repo, payload)
-        if code == 0 and outcome(parse(data), request, target) == "submitted":
+        response = parse(data)
+        if code == 0 and outcome(response, request, target) == "submitted":
             report.update(nhm_record(receipt, request, target))
+        elif nhm_refused(code, response):
+            evidence = {"operation_id": request["operation_id"], "error_code": response["error_code"]}
+            publish(result_path(receipt), {"schema": SCHEMA, "request": request, "target": target,
+                                           "status": "refused", "evidence": evidence})
+            report.update(status="refused", evidence=evidence, sends_prompt=False)
     except (DeliveryError, OSError, UnicodeError):
         pass
 

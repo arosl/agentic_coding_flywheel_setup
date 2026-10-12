@@ -199,8 +199,19 @@ try:
     # A recovery request must never call this send-capable path.
     assert not receipt.exists() and not pathlib.Path(str(receipt) + ".result.json").exists()
     terminal = "term_" + r["pane_id"].rsplit(":p",1)[1]
-    publish(receipt,{"schema":"acfs.packet-delivery.v2","request":r,"target":terminal,"agent_session":None})
     op = r["operation_id"]
+    if mode == "nhm-lost-first" and op == "work-1":
+        # nhm sent it (acfs-9hkh.27): the intent names nhm's target, the answer
+        # was lost, and only nhm's receipt (the fake nhm reads this) knows.
+        publish(receipt,{"schema":"acfs.packet-delivery.v2","request":r,"target":"1.1","via":"nhm"})
+        (root / "nhm-op.json").write_text(json.dumps({"session":r["workspace"],"operation":{"operation_id":op,
+            "status":"completed","payload_sha256":r["payload_sha256"],"payload_bytes":r["payload_bytes"],
+            "admissions":[{"target":"1.1","state":"submitted"}]}}))
+        with (root / "sends").open("a") as f: f.write(json.dumps([r["pane_id"],op]) + "\n")
+        print(json.dumps({"schema":"acfs.packet-delivery.v2","status":"unconfirmed","evidence":{},"request":r,
+            "receipt":str(receipt),"sends_prompt":True,"reconciled_only":False,"agent_execution_verified":False}))
+        sys.exit(1)
+    publish(receipt,{"schema":"acfs.packet-delivery.v2","request":r,"target":terminal,"agent_session":None})
     if mode == "refused-first" and op == "work-1":
         status, evidence = "refused", {"error_code":"agent_blocked"}
     else:
@@ -604,6 +615,29 @@ class DispatchTests(unittest.TestCase):
             self.assertTrue(report["deliveries"][0]["reconciled_only"])
         self.assertEqual(len(self.sends()),1)
         self.assertFalse((self.bundle/"delivery-2.json").exists())
+
+    def test_lost_nhm_answer_reconciles_from_nhms_receipt(self):
+        # acfs-9hkh.27 review: dispatch asks nhm's receipt (read-only) for an
+        # intent nhm sent, then goes on; work-1 is never sent again.
+        nhm = self.case.bin / "nhm"
+        nhm.write_text("#!/usr/bin/env python3\nimport json, os, pathlib, sys\n"
+                       "root = pathlib.Path(os.environ['HANDOFF_ROOT'])\n"
+                       "with (root / 'nhm-calls').open('a') as f: f.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                       "assert sys.argv[1:] == ['--robot-send-receipt=work-1', '--robot-format=json'], sys.argv\n"
+                       "op = json.loads((root / 'nhm-op.json').read_text())\n"
+                       "print(json.dumps({'success': True, 'session': op['session'], 'operation': op['operation'],\n"
+                       "    'outcome': {'success': True, 'targets': ['1.1'], 'successful': ['1.1'], 'failed': []}}))\n")
+        nhm.chmod(0o755)
+        review = self.preview()["review_sha256"]
+        code, report = self.invoke(mode="nhm-lost-first",review=review,send=True)
+        self.assertEqual([d["status"] for d in report["deliveries"]],["unconfirmed","not_attempted"],report)
+        code, report = self.invoke(review=review,send=True)
+        self.assertEqual((code,report["status"]),(0,"submitted"),report)
+        self.assertEqual([d["status"] for d in report["deliveries"]],["submitted","submitted"])
+        self.assertTrue(report["deliveries"][0]["reconciled_only"])
+        self.assertEqual([op for _,op in self.sends()],["work-1","work-2"])
+        calls = (self.root / "nhm-calls").read_text().splitlines()
+        self.assertTrue(calls and all(json.loads(c)[0] == "--robot-send-receipt=work-1" for c in calls))
 
     def test_refused_delivery_is_recorded_and_stops_later_work(self):
         review = self.preview()["review_sha256"]
