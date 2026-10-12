@@ -470,10 +470,12 @@ step_E11() {
         "$SANDBOX_EVIDENCE/e11-receipt-a.json"
     # The same --op-id again: the stored receipt, no second prompt.
     until_state "$pane" '^(idle|done)$' 60
-    before="$(grep -c 'hello robot slow' "$SANDBOX_EVIDENCE/mock-requests.jsonl" 2>/dev/null || echo 0)"
+    # grep -c prints 0 itself (and exits 1) when nothing matches.
+    before="$(grep -c 'hello robot slow' "$SANDBOX_EVIDENCE/mock-requests.jsonl" 2>/dev/null)"
     robot send-a-again --robot-send=e11 --all --msg="hello robot slow" --op-id=e11-a
     sleep 3
-    after="$(grep -c 'hello robot slow' "$SANDBOX_EVIDENCE/mock-requests.jsonl" 2>/dev/null || echo 0)"
+    after="$(grep -c 'hello robot slow' "$SANDBOX_EVIDENCE/mock-requests.jsonl" 2>/dev/null)"
+    before="${before:-0}" after="${after:-0}"
     echo "mock requests with the text: $before before, $after after"
     check "E11: a repeated --op-id answers with the receipt" jq -e '.success and (.successful | length == 1)' \
         "$SANDBOX_EVIDENCE/e11-send-a-again.json"
@@ -574,7 +576,7 @@ run_step() {
         printf 'sandbox_mock_start >/dev/null || echo "FAIL %s: the mock API"\n' "$step"
         printf 'sandbox_herdr_start || { echo "FAIL %s: the sandbox herdr server"; exit 1; }\n' "$step"
         printf 'show "enroll" nhm admin instance enroll --json || echo "FAIL %s: enroll"\n' "$step"
-        printf 'step_%s\nsandbox_herdr_stop\n' "$step"
+        printf 'step_%s\nsandbox_herdr_stop\necho STEP-COMPLETE\n' "$step"
     } >"$script"
     sandbox_exec bash "$script" >"$out" 2>&1 || true
     local p f m
@@ -585,6 +587,12 @@ run_step() {
     if [[ "$p$f" == "00" ]]; then
         echo "  FAIL $step: the step reported nothing (see $out)"
         f=1
+    fi
+    # A step that dies partway (a shell error ends its script) must not
+    # read as a pass on the checks it reached.
+    if ! grep -qx 'STEP-COMPLETE' "$out"; then
+        echo "  FAIL $step: the step's script did not finish (see the end of $out)"
+        f=$((f + 1))
     fi
     PASS=$((PASS + p))
     FAIL=$((FAIL + f))
