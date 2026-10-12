@@ -3171,18 +3171,21 @@ _acfs_doctor_nhm_codex_trust() {
     # A shell bound as well: the doctor never waits on a hung app-server.
     command -v timeout >/dev/null 2>&1 && bound=(timeout 75)
     out="$(HOME="$home" CODEX_HOME="$home/.codex" "${bound[@]}" bash "$helper" trust codex "$home/.codex/hooks.json" --dry-run 2>&1 </dev/null)" || rc=$?
+    # The count covers ACFS's Codex entries: the nhm-hook lines and dcg's
+    # Bash guard (acfs-9hkh.81).
     untrusted="$(grep -c 'would trust ' <<<"$out" || true)"
-    # No entry ACFS wrote means nothing was checked, not that all is trusted.
-    if (( rc == 0 )) && grep -q 'no nhm-hook entries' <<<"$out"; then
+    # No nhm-hook line checked means nothing was checked for nhm, not that
+    # all is trusted, even when dcg's guard was.
+    if (( rc == 0 )) && ! grep -Eq 'checked [1-9][0-9]* nhm-hook ' <<<"$out"; then
         rc=1
     fi
     if (( rc == 0 && untrusted == 0 )); then
         notes+=("hooks: Codex (trusted)")
     elif (( rc == 0 )); then
-        missing+=("Codex does not trust $untrusted nhm hook line(s) yet, so it skips them")
+        missing+=("Codex does not trust $untrusted ACFS hook line(s) yet, so it skips them")
         fixes+=("bash $helper trust codex")
     else
-        missing+=("Codex's trust of the nhm hook lines is unknown: $(tail -n 1 <<<"$out" | sed 's/^nhm_hooks: //')")
+        missing+=("Codex's trust of the nhm hook lines is unknown: $(grep -v '^nhm_hooks: checked ' <<<"$out" | tail -n 1 | sed 's/^nhm_hooks: //')")
         fixes+=("bash $helper trust codex")
     fi
 }

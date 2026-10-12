@@ -81,7 +81,7 @@ echo "stack.nhm.setup"
 fixture yes both
 out="$(run_check both)"
 check_case "lines Codex does not trust yet warn with the trust command" \
-    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"Codex does not trust 3 nhm hook line(s) yet"*\|*"nhm_hooks.sh trust codex" ]]' _ "$out"
+    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"Codex does not trust 3 ACFS hook line(s) yet"*\|*"nhm_hooks.sh trust codex" ]]' _ "$out"
 check_case "the check asked Codex without recording trust" test ! -e "$WORK/home/.codex/fake-trust.json"
 
 PATH="$FAKEBIN:$PATH" HOME="$WORK/home" CODEX_HOME="$WORK/home/.codex" \
@@ -89,6 +89,22 @@ PATH="$FAKEBIN:$PATH" HOME="$WORK/home" CODEX_HOME="$WORK/home/.codex" \
 out="$(run_check both)"
 check_case "enrolled, registered for both and trusted by Codex passes" \
     bash -c '[[ "$1" == stack.nhm.setup\|pass\|enrolled*"Claude Code"*"Codex (trusted)"\| ]]' _ "$out"
+
+# dcg's Bash guard (acfs-9hkh.81) counts among ACFS's lines: untrusted, it
+# warns with the same count and fix; trusted, the check passes.
+fixture yes codex
+mkdir -p "$WORK/home/.local/bin"
+printf '#!/bin/sh\nexit 0\n' >"$WORK/home/.local/bin/dcg"
+chmod +x "$WORK/home/.local/bin/dcg"
+HOME="$WORK/home" bash "$ROOT/scripts/lib/nhm_hooks.sh" codex-dcg register "$WORK/home/.codex/hooks.json" 2>/dev/null
+out="$(run_check codex)"
+check_case "an untrusted dcg guard counts as a fourth ACFS line" \
+    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"Codex does not trust 4 ACFS hook line(s) yet"* ]]' _ "$out"
+PATH="$FAKEBIN:$PATH" HOME="$WORK/home" CODEX_HOME="$WORK/home/.codex" \
+    bash "$ROOT/scripts/lib/nhm_hooks.sh" trust codex "$WORK/home/.codex/hooks.json" 2>/dev/null
+out="$(run_check codex)"
+check_case "with dcg's guard trusted too, the check passes" \
+    bash -c '[[ "$1" == stack.nhm.setup\|pass\|*"Codex (trusted)"* ]]' _ "$out"
 
 fixture yes claude
 printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/elsewhere/nhm-hook sessionstart"}]}],"PostToolUse":[{"hooks":[{"type":"command","command":"/elsewhere/nhm-hook posttooluse"}]}],"PostCompact":[{"hooks":[{"type":"command","command":"/elsewhere/nhm-hook sessionstart"}]}]}}' \

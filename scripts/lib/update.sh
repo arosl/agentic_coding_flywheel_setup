@@ -7854,8 +7854,10 @@ update_codex_dcg_hook() {
     HOME="$target_home" bash "$helper" codex-dcg registered "$file" </dev/null >/dev/null 2>&1 || rc=$?
     case "$rc" in
         0) ;;
-        3) log_item "ok" "$desc" "a dcg at another path guards Codex's Bash calls"; return 0 ;;
-        *) log_item "warn" "$desc" "dcg's line is not in $file; see the update log"; return 0 ;;
+        # A dcg guards Bash, but not where dcg's installer settles it; its
+        # next run merges it. Trust what is there now.
+        3) log_detail "dcg guards Codex's Bash calls; dcg's installer settles its place on its next run" ;;
+        *) log_item "warn" "$desc" "dcg's guard is not in $file: dcg's installer places it among existing Bash hooks; see the update log"; return 0 ;;
     esac
     # timeout bounds the helper, which bounds Codex's app-server (60 s).
     if timeout 90 env HOME="$target_home" bash "$helper" trust codex "$file" </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1; then

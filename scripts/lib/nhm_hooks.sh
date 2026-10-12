@@ -50,9 +50,9 @@ Usage:
   nhm_hooks.sh codex-dcg register|registered|unregister [FILE]
                                              dcg's Bash guard line in Codex's
                                              hooks.json (stack.dcg), as dcg's
-                                             installer writes it; registered:
-                                             0 there, 3 a dcg at another path,
-                                             1 missing
+                                             installer leaves it; registered:
+                                             0 settled, 3 a dcg in another
+                                             layout, 1 missing
   nhm_hooks.sh register claude|codex [FILE]  Add the nhm-hook lines to FILE
                                              (default ~/.claude/settings.json
                                              or ~/.codex/hooks.json)
@@ -380,12 +380,17 @@ nhm_hooks_stray() {
 # one, dcg would run twice, and every update would move entries and lose
 # Codex's position-keyed trust.
 #
-# - registered: 0 when a Bash group's first handler is exactly that line
-#   (dcg's form, which may sit in a group of the user's); 3 when only a
-#   dcg at another path guards Bash (the user's; ACFS adds no second);
-#   1 when no dcg guards Bash.
-# - register: appends a pure group only when no dcg guards Bash; it never
-#   edits a group that holds another handler.
+# - registered: 0 when the file is as dcg's installer leaves it (its own
+#   "already" test: one dcg handler, that line, first in the first Bash
+#   group, which may also hold the user's handlers); 3 when a dcg guards
+#   Bash in another layout, which dcg's installer will merge; 1 when no
+#   dcg guards Bash.
+# - register: appends a pure group only when the file has no Bash group,
+#   so dcg's installer then finds it settled and moves nothing. Next to
+#   existing Bash groups it writes nothing: only dcg's installer's merge
+#   can place the line there, and any line ACFS added would be merged
+#   away later, moving every entry and losing Codex's trust (the review
+#   of 59dee517). install and acfs update run dcg's installer first.
 # - unregister: for when dcg is gone; removes only trailing pure groups
 #   (Codex keys trust by position).
 # - trust codex records the line's trust with the nhm-hook entries'.
@@ -394,7 +399,11 @@ nhm_hooks_dcg_command() {
     printf '%s/.local/bin/dcg' "$HOME"
 }
 
-# jq definitions of the dcg line ($cmd: its command).
+# jq definitions of the dcg line ($cmd: its command). settled is dcg's
+# installer's own "already" test (configure_codex): exactly one dcg
+# handler in the Bash groups, $cmd, and it is the first handler of the
+# first Bash group. Any other layout, dcg's installer merges: it folds
+# every Bash group into one at the top, which moves every entry.
 nhm_hooks_dcg_jq_defs() {
     cat <<'JQ'
 def dcg_handler: {type: "command", command: $cmd};
@@ -403,8 +412,12 @@ def pre: (.hooks?.PreToolUse? // []) | arrays;
 def bash_group: type == "object" and .matcher == "Bash" and (.hooks | type) == "array";
 def is_dcg: type == "object" and ((.command? // null) | type) == "string"
   and ((.command | split(" ")[0] | split("/") | last) == "dcg");
+def bash_groups: [pre[] | select(bash_group)];
+def dcg_commands: [bash_groups[] | .hooks[] | select(is_dcg) | .command];
+def settled: dcg_commands == [$cmd] and (bash_groups[0].hooks[0]? | type) == "object"
+  and bash_groups[0].hooks[0].command == $cmd;
 def ours_at: [pre | to_entries[] | select((.value | bash_group) and (.value.hooks[0]? == dcg_handler)) | .key];
-def any_dcg: [pre[] | select(bash_group) | .hooks[] | select(is_dcg)] | length > 0;
+def any_dcg: (dcg_commands | length) > 0;
 JQ
 }
 
@@ -426,7 +439,7 @@ nhm_hooks_codex_dcg() {
         registered)
             [[ -e "$target" ]] || return 1
             state="$(jq -r --arg cmd "$cmd" "$(nhm_hooks_dcg_jq_defs)"'
-                if (ours_at | length) > 0 then "exact" elif any_dcg then "other" else "missing" end
+                if settled then "exact" elif any_dcg then "other" else "missing" end
             ' <<<"$current" 2>/dev/null)" || return 1
             case "$state" in
                 exact) return 0 ;;
@@ -441,7 +454,7 @@ nhm_hooks_codex_dcg() {
                 if type != "object" then error("the top level is not a JSON object")
                 elif has("hooks") and (.hooks | type) != "object" then error("\"hooks\" is not a JSON object")
                 elif (.hooks? // {} | has("PreToolUse")) and (.hooks.PreToolUse | type) != "array" then error("\"hooks.PreToolUse\" is not an array")
-                elif any_dcg then .
+                elif settled or (bash_groups | length) > 0 then .
                 else .hooks.PreToolUse = ((.hooks.PreToolUse // []) + [dcg_entry])
                 end
             ' <<<"$current" 2>/dev/null)"; then
@@ -449,7 +462,13 @@ nhm_hooks_codex_dcg() {
                 return 1
             fi
             if [[ -e "$target" ]] && [[ "$(jq -c . <<<"$current")" == "$(jq -c . <<<"$updated")" ]]; then
-                nhm_hooks_note "$file already has dcg's Bash guard"
+                if jq -e --arg cmd "$cmd" "$(nhm_hooks_dcg_jq_defs)"'settled' <<<"$current" >/dev/null 2>&1; then
+                    nhm_hooks_note "$file already has dcg's Bash guard"
+                else
+                    # Any line ACFS added beside these Bash groups, dcg's
+                    # installer would merge away, moving every entry.
+                    nhm_hooks_note "left $file to dcg's installer: it places dcg's guard among existing Bash hooks (acfs update reruns it)"
+                fi
                 return 0
             fi
             mkdir -p -- "$(dirname -- "$target")" || return 1
@@ -508,6 +527,10 @@ class HooksFileError(ValueError):
     """The hooks file cannot be read as a JSON object."""
 
 
+# The positions of dcg's Bash guard among ours(), for the dry run's count.
+DCG_KEYS = set()
+
+
 def ours():
     """The positions of the entries that are exactly what register writes."""
     try:
@@ -534,6 +557,7 @@ def ours():
                 if (isinstance(group, dict) and group.get("matcher") == want["matcher"]
                         and isinstance(group.get("hooks"), list) and group["hooks"][:1] == [handler]):
                     found.add((LABELS[want["event"]], gi, 0))
+                    DCG_KEYS.add((LABELS[want["event"]], gi, 0))
             continue
         handler = {"type": "command", "command": want["command"], "timeout": want["timeout"]}
         entry = {"hooks": [handler]}
@@ -631,6 +655,9 @@ try:
     if mode == "dry-run":
         for k in sorted(todo):
             note("would trust " + k)
+        # The doctor reads this: an nhm count of 0 means it checked no
+        # nhm-hook line, whatever dcg's guard says.
+        note(f"checked {len(mine) - len(DCG_KEYS)} nhm-hook and {len(DCG_KEYS)} dcg entries")
         status = 0 if not missing else 1
     else:
         if todo:

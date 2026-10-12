@@ -427,12 +427,53 @@ printf '{not json\n' >"$DCGD/bad.json"
 check "codex-dcg register: a file jq cannot read stays unchanged" \
     bash -c '! bash "$1" codex-dcg register "$2/bad.json" 2>/dev/null && [[ "$(cat "$2/bad.json")" == "{not json" ]]' _ "$HOOKS" "$DCGD"
 
+# The review of 59dee517: after register, dcg's installer (rerun by the
+# next acfs update) must find the file settled and move nothing. Its own
+# check and merge come from tests/unit/dcg_codex_merge.py.
+MERGE="$ROOT/tests/unit/dcg_codex_merge.py"
+dcg_check() { python3 -I "$MERGE" check "$1" "$DCG"; }
+dcg_merge() { python3 -I "$MERGE" merge "$1" "$DCG"; }
+printf '%s\n' '{"hooks":{"PreToolUse":[{"matcher":"mcp__x","hooks":[{"type":"command","command":"mcp-hook"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"/u/lint"}]}]}}' >"$DCGD/review.json"
+cp "$DCGD/review.json" "$DCGD/review.before"
+OUT="$(bash "$HOOKS" codex-dcg register "$DCGD/review.json" 2>&1)"
+check "review: next to the user's Bash group, register writes nothing" cmp -s "$DCGD/review.json" "$DCGD/review.before"
+check "review: and says dcg's installer places it" bash -c '[[ "$1" == *"left"*"to dcg'"'"'s installer"* ]]' _ "$OUT"
+check "review: registered says not settled (1: no dcg yet)" \
+    bash -c 'bash "$1" codex-dcg registered "$2"; [[ $? -eq 1 ]]' _ "$HOOKS" "$DCGD/review.json"
+dcg_merge "$DCGD/review.json"
+check "review: dcg's merge puts dcg first in one Bash group at the top" \
+    jq_ok --arg c "$DCG" '.hooks.PreToolUse[0] == {matcher: "Bash", hooks: [{type: "command", command: $c}, {type: "command", command: "/u/lint"}]}' "$DCGD/review.json"
+check "review: registered then says settled" bash "$HOOKS" codex-dcg registered "$DCGD/review.json"
+cp "$DCGD/review.json" "$DCGD/review.merged"
+bash "$HOOKS" codex-dcg register "$DCGD/review.json" 2>/dev/null
+dcg_merge "$DCGD/review.json"
+check "review: register, then dcg's installer again: nothing moves" cmp -s "$DCGD/review.json" "$DCGD/review.merged"
+for layout in plain dcgfirst; do
+    cp "$DCGD/$layout.json" "$DCGD/settle-$layout.json"
+    bash "$HOOKS" codex-dcg register "$DCGD/settle-$layout.json" 2>/dev/null
+    check "review ($layout): dcg's installer finds register's result already there" \
+        bash -c '[[ "$(python3 -I "$1" check "$2" "$3")" == already ]]' _ "$MERGE" "$DCGD/settle-$layout.json" "$DCG"
+done
+printf '{}\n' >"$DCGD/settle-empty.json"
+bash "$HOOKS" codex-dcg register "$DCGD/settle-empty.json" 2>/dev/null
+check "review (empty): register's line is what dcg's installer calls already there" \
+    bash -c '[[ "$(python3 -I "$1" check "$2" "$3")" == already ]]' _ "$MERGE" "$DCGD/settle-empty.json" "$DCG"
+# What 59dee517 wrote (dcg appended after the user's Bash group) is not
+# settled, so registered says 3 and dcg's installer will merge it.
+jq --argjson e "$DCG_ENTRY" '.hooks.PreToolUse += [$e]' "$DCGD/review.before" >"$DCGD/old81.json"
+check "review: a line appended after the user's Bash group is not settled (3)" \
+    bash -c 'bash "$1" codex-dcg registered "$2"; [[ $? -eq 3 ]] && [[ "$(python3 -I "$3" check "$2" "$4")" == merge ]]' _ "$HOOKS" "$DCGD/old81.json" "$MERGE" "$DCG"
+unset -f dcg_check dcg_merge
+
 # trust codex trusts dcg's guard where it stands, never the user's handler
 # beside it.
 TDCG="$WORK/codex-dcg-trust"
 mkdir -p "$TDCG"
 cp "$DCGD/dcgfirst.json" "$TDCG/hooks.json"
 bash "$HOOKS" register codex "$TDCG/hooks.json" 2>/dev/null
+OUT="$(PATH="$FAKEBIN:$PATH" bash "$HOOKS" trust codex "$TDCG/hooks.json" --dry-run 2>&1)"
+check "trust --dry-run counts the nhm-hook and dcg entries it checked (the doctor reads it)" \
+    bash -c '[[ "$1" == *"checked 3 nhm-hook and 1 dcg entries"* ]]' _ "$OUT"
 OUT="$(PATH="$FAKEBIN:$PATH" bash "$HOOKS" trust codex "$TDCG/hooks.json" 2>&1)"
 check "trust: dcg's guard is trusted with the nhm entries" \
     bash -c '[[ "$1" == *"trusts the 4 ACFS entries"* ]] && jq -e "keys | any(test(\":pre_tool_use:0:0$\"))" "$2/fake-trust.json" >/dev/null' _ "$OUT" "$TDCG"
