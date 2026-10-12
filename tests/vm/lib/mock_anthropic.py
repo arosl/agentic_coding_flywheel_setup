@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""Mock model APIs for the nhm rehearsal sandbox (acfs-9hkh.31.1).
+
+Claude Code and Codex in the sandbox talk to this server instead of a real
+account: the Anthropic Messages API (POST /v1/messages, streamed or not,
+and /v1/messages/count_tokens) and the OpenAI Responses API (POST
+/v1/responses, streamed or not; GET /v1/models). The wire shapes are those
+that exp.3 (Codex) and exp.4 (Claude Code) proved against the real CLIs.
+
+It listens on 127.0.0.1 only. --port 0 (the default) takes a free port;
+--ready FILE receives {"port", "pid", "url"} once it listens. Any API key
+is accepted, and none is ever logged: --log FILE gets one JSON line per
+request with the path, model, stream flag and the last user text (at most
+300 characters), never a header.
+
+Replies: --script FILE is a JSON list, one entry per turn in order, each a
+string (the reply text) or {"text": ..., "delay": seconds}; after the last
+entry the default reply repeats. Without a script: "mock reply N", a
+compaction summary when the prompt asks for one, and a reply streamed over
+about 8 seconds when the prompt says "slow" (so herdr sees a working
+turn). Requests whose text starts with the tools' title or summary
+helpers get the same treatment, so they never consume a scripted turn.
+
+Pointing the CLIs at it (as exp.3 and exp.4 did):
+- Claude Code: ANTHROPIC_BASE_URL=<url> and any ANTHROPIC_API_KEY.
+- Codex: a provider in $CODEX_HOME/config.toml (Codex 0.162 reads no base
+  URL from the environment for this):
+      model = "mock-model"
+      model_provider = "mock"
+      [model_providers.mock]
+      name = "mock"
+      base_url = "<url>/v1"
+      wire_api = "responses"
+      requires_openai_auth = false
+      supports_websockets = false
+
+Usage: mock_anthropic.py [--port N] [--ready FILE] [--log FILE] [--script FILE]
+"""
+
+import argparse
+import json
+import os
+import sys
+import threading
+import time
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+LOG_TEXT = 300
+SLOW_SECONDS = 8.0
+
+
+class State:
+    """The script and the turn counter, shared by the handler threads."""
+
+    def __init__(self, script, log):
+        self.script = script
+        self.log = log
+        self.turn = 0
+        self.lock = threading.Lock()
+
+    def record(self, rec):
+        if not self.log:
+            return
+        rec["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        line = json.dumps(rec, ensure_ascii=False) + "\n"
+        with self.lock, open(self.log, "a", encoding="utf-8") as fh:
+            fh.write(line)
+
+    def reply(self, text):
+        """The reply text and its streaming delay for a request whose last
+        user text is text."""
+        lower = text.lower()
+        if "summar" in lower:
+            return "<summary>mock compaction summary: the user asked for nothing else.</summary>", 0.0
+        if lower.startswith("generate a concise, single-line task title"):
+            return "Mock task", 0.0
+        with self.lock:
+            self.turn += 1
+            n = self.turn
+        if n <= len(self.script):
+            entry = self.script[n - 1]
+            if isinstance(entry, str):
+                return entry, 0.0
+            return str(entry.get("text", "")), float(entry.get("delay", 0))
+        return f"mock reply {n}", (SLOW_SECONDS if "slow" in lower else 0.0)
+
+
+def anthropic_user_text(body):
+    for msg in reversed(body.get("messages") or []):
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            return content
+        texts = [c.get("text", "") for c in content or [] if isinstance(c, dict) and c.get("type") == "text"]
+        if texts:
+            return texts[-1]
+    return ""
+
+
+def responses_user_text(body):
+    inp = body.get("input")
+    if isinstance(inp, str):
+        return inp
+    text = ""
+    for item in inp or []:
+        if isinstance(item, dict) and item.get("role") == "user":
+            for c in item.get("content") or []:
+                if isinstance(c, dict) and c.get("text"):
+                    text = c["text"]
+    return text
+
+
+def words(text):
+    parts = text.split(" ")
+    return [w + (" " if i < len(parts) - 1 else "") for i, w in enumerate(parts)]
+
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    state = None  # set by serve()
+
+    def log_message(self, *_):
+        pass
+
+    def _json(self, code, obj):
+        data = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _not_found(self):
+        self._json(404, {"type": "error", "error": {"type": "not_found_error", "message": "mock: no such endpoint"}})
+
+    def _stream(self):
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.send_header("cache-control", "no-cache")
+        self.send_header("connection", "close")
+        self.end_headers()
+        self.close_connection = True
+
+    def _event(self, name, data):
+        self.wfile.write(f"event: {name}\ndata: {json.dumps(data)}\n\n".encode())
+        self.wfile.flush()
+
+    def _body(self):
+        length = int(self.headers.get("content-length") or 0)
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            return {}
+        return body if isinstance(body, dict) else {}
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("content-length", "0")
+        self.end_headers()
+
+    def do_GET(self):
+        path = self.path.split("?")[0]
+        self.state.record({"method": "GET", "path": path})
+        if path.rstrip("/").endswith("/models"):
+            self._json(200, {"object": "list", "data": [{"id": "mock-model", "object": "model"}], "models": []})
+            return
+        self._not_found()
+
+    def do_POST(self):
+        path = self.path.split("?")[0].rstrip("/")
+        body = self._body()
+        if path.endswith("/v1/messages/count_tokens"):
+            self.state.record({"method": "POST", "path": path, "model": body.get("model")})
+            self._json(200, {"input_tokens": 42})
+        elif path.endswith("/v1/messages"):
+            self._messages(path, body)
+        elif path.endswith("/v1/responses"):
+            self._responses(path, body)
+        else:
+            self.state.record({"method": "POST", "path": path})
+            self._not_found()
+
+    # The Anthropic Messages API (exp.4).
+    def _messages(self, path, body):
+        text = anthropic_user_text(body)
+        self.state.record({"method": "POST", "path": path, "model": body.get("model"), "stream": body.get("stream"),
+                           "n_messages": len(body.get("messages") or []), "user_text": text[:LOG_TEXT]})
+        reply, delay = self.state.reply(text)
+        msg_id = "msg_" + uuid.uuid4().hex[:24]
+        model = body.get("model") or "claude-mock"
+        usage = {"input_tokens": 42, "output_tokens": 8, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        if not body.get("stream"):
+            time.sleep(delay)
+            self._json(200, {"id": msg_id, "type": "message", "role": "assistant", "model": model,
+                             "content": [{"type": "text", "text": reply}], "stop_reason": "end_turn",
+                             "stop_sequence": None, "usage": usage})
+            return
+        self._stream()
+        self._event("message_start", {"type": "message_start", "message": {
+            "id": msg_id, "type": "message", "role": "assistant", "model": model, "content": [],
+            "stop_reason": None, "stop_sequence": None, "usage": {**usage, "output_tokens": 1}}})
+        self._event("content_block_start", {"type": "content_block_start", "index": 0,
+                                            "content_block": {"type": "text", "text": ""}})
+        parts = words(reply)
+        for w in parts:
+            if delay:
+                time.sleep(delay / len(parts))
+                self._event("ping", {"type": "ping"})
+            self._event("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                                "delta": {"type": "text_delta", "text": w}})
+        self._event("content_block_stop", {"type": "content_block_stop", "index": 0})
+        self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                                      "usage": {"output_tokens": 8}})
+        self._event("message_stop", {"type": "message_stop"})
+
+    # The OpenAI Responses API (exp.3).
+    def _responses(self, path, body):
+        text = responses_user_text(body)
+        self.state.record({"method": "POST", "path": path, "model": body.get("model"), "stream": body.get("stream"),
+                           "user_text": text[:LOG_TEXT]})
+        reply, delay = self.state.reply(text)
+        rid = "resp_" + uuid.uuid4().hex[:24]
+        item_id = "msg_" + uuid.uuid4().hex[:24]
+        item = {"type": "message", "role": "assistant", "id": item_id, "status": "completed",
+                "content": [{"type": "output_text", "text": reply, "annotations": []}]}
+        usage = {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0},
+                 "output_tokens": 5, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 15}
+        if not body.get("stream"):
+            time.sleep(delay)
+            self._json(200, {"id": rid, "object": "response", "status": "completed", "model": body.get("model"),
+                             "output": [item], "usage": usage})
+            return
+        self._stream()
+        self._event("response.created", {"type": "response.created", "response": {"id": rid}})
+        self._event("response.output_item.added", {"type": "response.output_item.added", "output_index": 0,
+                                                   "item": {**item, "content": [], "status": "in_progress"}})
+        parts = words(reply)
+        for w in parts:
+            if delay:
+                time.sleep(delay / len(parts))
+            self._event("response.output_text.delta", {"type": "response.output_text.delta", "output_index": 0,
+                                                       "content_index": 0, "item_id": item_id, "delta": w})
+        self._event("response.output_item.done", {"type": "response.output_item.done", "output_index": 0, "item": item})
+        self._event("response.completed", {"type": "response.completed", "response": {"id": rid, "usage": usage}})
+
+
+def load_script(path):
+    if not path:
+        return []
+    with open(path, encoding="utf-8") as fh:
+        script = json.load(fh)
+    if not isinstance(script, list) or not all(isinstance(e, (str, dict)) for e in script):
+        raise ValueError(f"{path}: the script is a JSON list of strings or {{text, delay}} objects")
+    return script
+
+
+def serve(port, ready, log, script):
+    Handler.state = State(script, log)
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server.daemon_threads = True
+    if ready:
+        info = {"port": server.server_address[1], "pid": os.getpid(), "url": f"http://127.0.0.1:{server.server_address[1]}"}
+        tmp = ready + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(info, fh)
+        os.replace(tmp, ready)
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description="Mock Anthropic Messages and OpenAI Responses APIs on 127.0.0.1.")
+    p.add_argument("--port", type=int, default=0, help="the port; 0 (the default) takes a free one")
+    p.add_argument("--ready", help="write {port, pid, url} here once listening")
+    p.add_argument("--log", help="append one JSON line per request here (no headers)")
+    p.add_argument("--script", help="a JSON list of replies, one per turn")
+    args = p.parse_args(argv)
+    try:
+        script = load_script(args.script)
+    except (OSError, ValueError) as e:
+        print(f"mock_anthropic: {e}", file=sys.stderr)
+        return 2
+    serve(args.port, args.ready, args.log, script)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
