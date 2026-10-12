@@ -53,6 +53,12 @@ Usage:
                                              installer leaves it; registered:
                                              0 settled, 3 a dcg in another
                                              layout, 1 missing
+  nhm_hooks.sh learning-profile check|set [FILE]
+                                             nhm's [learning] implicit_outcome
+                                             = "closed-assigned" in its config
+                                             (default $XDG_CONFIG_HOME/nhm/
+                                             config.toml); check: 0 on, 3 the
+                                             user's other value, 1 not set
   nhm_hooks.sh register claude|codex [FILE]  Add the nhm-hook lines to FILE
                                              (default ~/.claude/settings.json
                                              or ~/.codex/hooks.json)
@@ -743,6 +749,116 @@ nhm_hooks_trust() {
         "$target" "$codex_bin" "$([[ "$dry_run" == true ]] && echo dry-run || echo write)" "$spec" </dev/null
 }
 
+# ---- nhm's learning profile (acfs-9hkh.88; plan-v8 2.13) ----
+#
+# ACFS ships learning.implicit_outcome = "closed-assigned" in nhm's
+# config ($XDG_CONFIG_HOME/nhm/config.toml): `nhm feedback outcomes` then
+# records a cm outcome for each bead that closed while assigned to an
+# agent, the flywheel's OUTCOME step. nhm's own default is off.
+#
+#   learning-profile check [FILE]  0: on; 3: the user set another value
+#                                  (theirs, left as is); 1: not set, or
+#                                  FILE cannot be read as TOML
+#   learning-profile set [FILE]    adds the setting when it is not set:
+#                                  under an existing [learning] table, or
+#                                  as a new table at the end. A file that
+#                                  is not valid TOML, and a value the
+#                                  user chose, stay as they are.
+
+nhm_hooks_learning_file() {
+    printf '%s/nhm/config.toml' "${XDG_CONFIG_HOME:-$HOME/.config}"
+}
+
+# The checker and editor, in Python for its TOML parser (tomllib). argv:
+# check|set FILE. set prints the new content on stdout, or nothing when
+# nothing must change; check exits 0, 3 or 1 as above.
+nhm_hooks_learning_driver() {
+    cat <<'PY'
+import os, re, sys
+try:
+    import tomllib
+except ImportError:
+    print("nhm_hooks: python3 has no tomllib (3.11+ needed)", file=sys.stderr)
+    sys.exit(1)
+
+WANT = "closed-assigned"
+mode, path = sys.argv[1], sys.argv[2]
+text = ""
+if os.path.exists(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        data = tomllib.loads(text)
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
+        print(f"nhm_hooks: {path} is not a TOML file nhm can read ({e}); left as it is", file=sys.stderr)
+        sys.exit(1)
+else:
+    data = {}
+learning = data.get("learning")
+if learning is not None and not isinstance(learning, dict):
+    print(f"nhm_hooks: {path}: learning is not a table; left as it is", file=sys.stderr)
+    sys.exit(1)
+value = (learning or {}).get("implicit_outcome")
+if mode == "check":
+    sys.exit(0 if value == WANT else (3 if value is not None else 1))
+if value is not None:
+    sys.exit(0)
+line = f'implicit_outcome = "{WANT}"   # ACFS: record cm outcomes for closed beads (plan-v8 2.13)\n'
+header = re.compile(r'^[ \t]*\[[ \t]*learning[ \t]*\][ \t]*(#.*)?$', re.M)
+m = header.search(text)
+if m:
+    end = text.find("\n", m.end())
+    new = text + "\n" + line if end < 0 else text[:end + 1] + line + text[end + 1:]
+elif learning is not None:
+    # learning.* as dotted keys of the root table: a second [learning]
+    # table would redefine it, so add a dotted key at the top, where the
+    # root table's keys are.
+    new = "learning." + line + text
+else:
+    sep = "" if text == "" or text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
+    new = text + sep + "[learning]\n" + line
+try:
+    if tomllib.loads(new).get("learning", {}).get("implicit_outcome") != WANT:
+        raise ValueError("the edit did not set it")
+except (tomllib.TOMLDecodeError, ValueError, AttributeError) as e:
+    print(f"nhm_hooks: could not add the learning profile to {path} ({e}); left as it is", file=sys.stderr)
+    sys.exit(1)
+sys.stdout.write(new)
+PY
+}
+
+nhm_hooks_learning_profile() {
+    local verb="${1:-}" file="${2:-}" target="" new="" rc=0
+    [[ -n "$file" ]] || file="$(nhm_hooks_learning_file)"
+    command -v python3 >/dev/null 2>&1 || { nhm_hooks_note "python3 not found"; return 1; }
+    target="$file"
+    if [[ -L "$file" ]]; then
+        target="$(readlink -f -- "$file")" || { nhm_hooks_note "cannot resolve $file"; return 1; }
+    fi
+    if [[ -e "$target" && ! -f "$target" ]]; then
+        nhm_hooks_note "$target is not a regular file"
+        return 1
+    fi
+    case "$verb" in
+        check)
+            python3 -I -c "$(nhm_hooks_learning_driver)" check "$target" </dev/null || rc=$?
+            return "$rc"
+            ;;
+        set)
+            new="$(python3 -I -c "$(nhm_hooks_learning_driver)" set "$target" </dev/null)" || return 1
+            if [[ -z "$new" ]]; then
+                nhm_hooks_note "$file already sets [learning] implicit_outcome"
+                return 0
+            fi
+            mkdir -p -- "$(dirname -- "$target")" || return 1
+            # $(...) drops the final newline; nhm_hooks_write adds one back.
+            nhm_hooks_write "$target" "$new" || return 1
+            nhm_hooks_note "set [learning] implicit_outcome = \"closed-assigned\" in $file"
+            ;;
+        *) nhm_hooks_usage >&2; return 2 ;;
+    esac
+}
+
 nhm_hooks_main() {
     local subcommand="${1:-}"
     [[ $# -eq 0 ]] || shift
@@ -753,6 +869,7 @@ nhm_hooks_main() {
         stray) nhm_hooks_stray "$@" ;;
         trust) nhm_hooks_trust "$@" ;;
         codex-dcg) nhm_hooks_codex_dcg "$@" ;;
+        learning-profile) nhm_hooks_learning_profile "$@" ;;
         -h|--help|help) nhm_hooks_usage ;;
         *) nhm_hooks_usage >&2; return 2 ;;
     esac

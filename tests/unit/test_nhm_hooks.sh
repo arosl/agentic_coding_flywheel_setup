@@ -497,6 +497,53 @@ check "codex-dcg: one dcg handler in each file, never two" \
     bash -c 'for f in "$@"; do [[ $(jq "[.hooks.PreToolUse[]? | .hooks[]? | select(.command | test(\"/dcg\$\"))] | length" "$f") -le 1 ]] || exit 1; done' _ "$DCGD"/plain.json "$DCGD"/dcgfirst.json "$TDCG/hooks.json"
 unset -f dcg_count
 
+# ------------------------------------------------------------
+# learning-profile: nhm's [learning] implicit_outcome (acfs-9hkh.88)
+# ------------------------------------------------------------
+LP="$WORK/learning"
+mkdir -p "$LP"
+lp() { bash "$HOOKS" learning-profile "$@"; }
+toml_value() { python3 -I -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb")).get("learning", {}).get("implicit_outcome", ""))' "$1"; }
+
+check "learning-profile check: no file is not set (1)" bash -c 'bash "$1" learning-profile check "$2"; [[ $? -eq 1 ]]' _ "$HOOKS" "$LP/none/config.toml"
+lp set "$LP/new/config.toml" 2>/dev/null
+check "learning-profile set: a new config holds it" test "$(toml_value "$LP/new/config.toml")" = closed-assigned
+check "learning-profile check: then 0" lp check "$LP/new/config.toml"
+
+printf '[reap]\nkeep = ["GreenCastle"]\n' >"$LP/other.toml"
+lp set "$LP/other.toml" 2>/dev/null
+check "learning-profile set: a config without [learning] gets the table, its other settings kept" \
+    bash -c '[[ "$(python3 -I -c "import sys, tomllib; d = tomllib.load(open(sys.argv[1], \"rb\")); print(d[\"reap\"][\"keep\"][0], d[\"learning\"][\"implicit_outcome\"])" "$1")" == "GreenCastle closed-assigned" ]]' _ "$LP/other.toml"
+
+printf '# mine\n[learning]  # my table\nmax_items = 3\n\n[reap]\nkeep = []\n' >"$LP/table.toml"
+lp set "$LP/table.toml" 2>/dev/null
+check "learning-profile set: an existing [learning] table gets the key, nothing else moves" \
+    bash -c '[[ "$(sed -n 2,4p "$1")" == "[learning]  # my table"$'"'"'\n'"'"'"implicit_outcome = \"closed-assigned\""*$'"'"'\n'"'"'"max_items = 3" ]] && [[ $(grep -c "^\[learning\]" "$1") -eq 1 ]]' _ "$LP/table.toml"
+check "learning-profile set: the result is valid TOML with the value" test "$(toml_value "$LP/table.toml")" = closed-assigned
+cp "$LP/table.toml" "$LP/table.before"
+lp set "$LP/table.toml" 2>/dev/null
+check "learning-profile set again: nothing changes" cmp -s "$LP/table.toml" "$LP/table.before"
+
+printf 'learning.max_items = 3\n\n[reap]\nkeep = []\n' >"$LP/dotted.toml"
+lp set "$LP/dotted.toml" 2>/dev/null
+check "learning-profile set: dotted learning.* keys get a dotted key, valid TOML" \
+    bash -c '[[ "$(python3 -I -c "import sys, tomllib; d = tomllib.load(open(sys.argv[1], \"rb\"))[\"learning\"]; print(d[\"max_items\"], d[\"implicit_outcome\"])" "$1")" == "3 closed-assigned" ]]' _ "$LP/dotted.toml"
+
+printf '[learning]\nimplicit_outcome = "off"\n' >"$LP/off.toml"
+cp "$LP/off.toml" "$LP/off.before"
+check "learning-profile check: the user's own value is 3" bash -c 'bash "$1" learning-profile check "$2"; [[ $? -eq 3 ]]' _ "$HOOKS" "$LP/off.toml"
+lp set "$LP/off.toml" 2>/dev/null
+check "learning-profile set: the user's own value stays" cmp -s "$LP/off.toml" "$LP/off.before"
+
+printf '[learning\nbroken = \n' >"$LP/bad.toml"
+cp "$LP/bad.toml" "$LP/bad.before"
+check "learning-profile set: a file that is not TOML fails and stays as it is" \
+    bash -c '! bash "$1" learning-profile set "$2" 2>/dev/null && cmp -s "$2" "$3"' _ "$HOOKS" "$LP/bad.toml" "$LP/bad.before"
+check "learning-profile check: and is not set (1)" bash -c 'bash "$1" learning-profile check "$2" 2>/dev/null; [[ $? -eq 1 ]]' _ "$HOOKS" "$LP/bad.toml"
+check "learning-profile: the default file is XDG_CONFIG_HOME's" \
+    bash -c 'XDG_CONFIG_HOME="$2/xdg" bash "$1" learning-profile set 2>/dev/null && [[ -f "$2/xdg/nhm/config.toml" ]]' _ "$HOOKS" "$LP"
+unset -f lp toml_value
+
 echo
 echo "nhm_hooks: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

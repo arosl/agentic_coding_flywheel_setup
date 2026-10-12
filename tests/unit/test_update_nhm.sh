@@ -277,3 +277,30 @@ echo
 echo "Tests passed: $TESTS_PASSED"
 echo "Tests failed: $TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]]
+# ------------------------------------------------------------
+# update_nhm_learning_profile: nhm's [learning] implicit_outcome
+# (acfs-9hkh.88)
+# ------------------------------------------------------------
+learning_in() { python3 -I -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb")).get("learning", {}).get("implicit_outcome", ""))' "$FIX_HOME/.config/nhm/config.toml"; }
+run_update update_nhm_learning_profile nhm
+check "learning: acfs update sets closed-assigned in nhm's config" test "$(learning_in)" = closed-assigned
+check "learning: reports it on" has "ITEM ok|nhm learning profile|on"
+
+run_update update_nhm_learning_profile nhm
+mkdir -p "$FIX_HOME/.config/nhm"
+printf '[learning]\nimplicit_outcome = "off"\n' >"$FIX_HOME/.config/nhm/config.toml"
+(
+    export HOME="$FIX_HOME" TARGET_HOME="$FIX_HOME" UPDATE_LOG_FILE="$ROOT/update.log"
+    unset XDG_CONFIG_HOME
+    bash "$REPO_ROOT/scripts/lib/nhm_hooks.sh" learning-profile set 2>/dev/null
+)
+check "learning: the user's own value stays" test "$(learning_in)" = off
+
+run_update update_nhm_learning_profile
+check "learning: no nhm does nothing" lacks "nhm learning profile"
+SAME_USER=0 run_update update_nhm_learning_profile nhm
+check "learning: another user only warns with the command" has "ITEM warn|nhm learning profile|run as ubuntu: bash"
+READ_ONLY=1 run_update update_nhm_learning_profile nhm
+check "learning: read-only mode writes nothing" has "ITEM skip|nhm learning profile|dry-run"
+check "learning: and no config appears" test ! -e "$FIX_HOME/.config/nhm/config.toml"
+

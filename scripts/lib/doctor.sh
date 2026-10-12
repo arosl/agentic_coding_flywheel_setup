@@ -3074,7 +3074,8 @@ check_agent_mail_stop_hook() {
 
 # nhm (stack.nhm): a herdr server is enrolled, and nhm's hook lines
 # (scripts/lib/nhm_hooks.sh) are registered for the installed agent CLIs,
-# and Codex trusts its lines. Read-only; `nhm doctor` checks nhm itself.
+# Codex trusts its lines, and nhm's learning profile is on. Read-only;
+# `nhm doctor` checks nhm itself.
 check_nhm() {
     local label="nhm"
     local home="" helper="" state_root="" enrolled=""
@@ -3124,6 +3125,17 @@ check_nhm() {
         fi
         doctor_binary_exists "claude" && _acfs_doctor_nhm_strays "$helper" "$home" claude "$home/.claude/settings.json"
         doctor_binary_exists "codex" && _acfs_doctor_nhm_strays "$helper" "$home" codex "$home/.codex/hooks.json"
+        # nhm's learning profile (acfs-9hkh.88): without it, nhm feedback
+        # outcomes records no cm outcome for a closed bead.
+        rc=0
+        HOME="$home" bash "$helper" learning-profile check "${XDG_CONFIG_HOME:-$home/.config}/nhm/config.toml" \
+            </dev/null >/dev/null 2>&1 || rc=$?
+        case "$rc" in
+            0) notes+=("learning profile on") ;;
+            3) notes+=("learning profile set by your nhm config") ;;
+            *) missing+=("nhm's learning profile is not set, so closed beads record no cm outcome")
+               fixes+=("bash $helper learning-profile set (or acfs update)") ;;
+        esac
     fi
 
     if (( ${#missing[@]} == 0 )); then

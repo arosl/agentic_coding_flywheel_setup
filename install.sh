@@ -10757,6 +10757,19 @@ acfs_merge_existing_json_config_as_target() {
 # there, no line is added and the lines an earlier run added are removed,
 # so no turn hits a hook that points at nothing. When the check itself
 # cannot run as the target user, nothing changes.
+# nhm's learning profile (stack.nhm; nhm_hooks.sh learning-profile,
+# acfs-9hkh.88): [learning] implicit_outcome = "closed-assigned" in nhm's
+# config, so `nhm feedback outcomes` records cm outcomes for closed beads
+# (plan-v8 2.13). A value the user set stays.
+acfs_install_nhm_learning_profile() {
+    local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh"
+    [[ -f "$nhm_hooks" ]] || return 0
+    acfs_legacy_module_selected "stack.nhm" || return 0
+    try_step "Setting nhm's learning profile" \
+        run_as_target bash "$nhm_hooks" learning-profile set || \
+        log_warn "nhm's learning profile was not set (optional): see nhm_hooks.sh learning-profile check"
+}
+
 # dcg's Bash guard for Codex (stack.dcg; nhm_hooks.sh codex-dcg,
 # acfs-9hkh.81). `dcg install` configures Claude Code only; dcg's own
 # installer adds Codex's line only when it found codex. Register that
@@ -11162,6 +11175,7 @@ finalize() {
     fi
 
     acfs_install_nhm_hook_lines
+    acfs_install_nhm_learning_profile
     acfs_install_codex_dcg_hook
     acfs_install_nhm_maintain_timer
 

@@ -7818,6 +7818,49 @@ update_nhm_hooks() {
 
 # dcg's Bash guard for Codex (stack.dcg; nhm_hooks.sh codex-dcg,
 # acfs-9hkh.81): `dcg install` configures Claude Code only, and dcg's own
+# nhm's learning profile (nhm_hooks.sh learning-profile, acfs-9hkh.88):
+# [learning] implicit_outcome = "closed-assigned" in nhm's config, so
+# `nhm feedback outcomes` records cm outcomes for closed beads (plan-v8
+# 2.13). Idempotent; a value the user set stays.
+update_nhm_learning_profile() {
+    local desc="nhm learning profile" helper="" target_user="" current_user="" target_home="" rc=0
+
+    [[ "${UPDATE_STACK:-true}" == "true" ]] || return 0
+    update_binary_exists nhm || return 0
+    helper="$(update_runtime_acfs_home 2>/dev/null || true)/scripts/lib/nhm_hooks.sh"
+    if [[ ! -r "$helper" ]]; then
+        log_item "skip" "$desc" "nhm_hooks.sh is not installed"
+        return 0
+    fi
+    if update_is_read_only_mode; then
+        log_item "skip" "$desc" "dry-run: would set [learning] implicit_outcome in nhm's config"
+        return 0
+    fi
+    target_user="$(update_target_user 2>/dev/null || true)"
+    current_user="$(update_current_user 2>/dev/null || true)"
+    if [[ -z "$target_user" || "$current_user" != "$target_user" ]]; then
+        log_item "warn" "$desc" "run as ${target_user:-the target user}: bash $helper learning-profile set"
+        return 0
+    fi
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    if [[ -z "$target_home" ]]; then
+        log_item "warn" "$desc" "no home for $target_user"
+        return 0
+    fi
+    # The target's own config dir: XDG_CONFIG_HOME when it is theirs.
+    if ! HOME="$target_home" bash "$helper" learning-profile set </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1; then
+        log_item "warn" "$desc" "could not set it; see the update log"
+        return 0
+    fi
+    HOME="$target_home" bash "$helper" learning-profile check </dev/null >/dev/null 2>&1 || rc=$?
+    case "$rc" in
+        0) log_item "ok" "$desc" "on ([learning] implicit_outcome = \"closed-assigned\")" ;;
+        3) log_item "ok" "$desc" "left as your config sets it" ;;
+        *) log_item "warn" "$desc" "not set; see the update log" ;;
+    esac
+    return 0
+}
+
 # installer writes Codex's line only when it finds codex. Register that
 # exact line when dcg and codex are both installed, and record its trust
 # (F.25); remove ACFS's line only when dcg is gone.
@@ -9544,6 +9587,7 @@ main() {
     update_nhm_hooks
     update_codex_dcg_hook
     update_nhm_maintain_timer
+    update_nhm_learning_profile
     update_root_tool_ownership
     update_root_agents_md
 
