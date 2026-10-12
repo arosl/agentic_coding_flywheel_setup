@@ -2528,10 +2528,16 @@ chmod +x "$WORK/nhmbin/nhm"
 owner_says() { # owner_says <expected> <stderr part> <description>
     check "$3" bash -c '[[ "$1" -eq 0 && "$2" == "$4" ]] && grep -qF "$5" <<<"$3"' _ "$RC" "$OUT" "$ERR" "$1" "$2"
 }
+# The "not installed" cases need a PATH without the host's own nhm.
+no_nhm_path="" dir=""
+IFS=: read -r -a path_dirs <<<"$PATH"
+for dir in "${path_dirs[@]}"; do
+    [[ -n "$dir" && ! -x "$dir/nhm" ]] && no_nhm_path+="${no_nhm_path:+:}$dir"
+done
 owner_case ownerprobe nhm
-run_helper owner
+PATH="$no_nhm_path" run_helper owner
 owner_says acfs-bash "nhm is not installed" "owner: without nhm installed, acfs-bash"
-NHM_BIN_DIR="$WORK/nhmbin" run_helper owner
+PATH="$no_nhm_path" NHM_BIN_DIR="$WORK/nhmbin" run_helper owner
 owner_says acfs-bash "nhm is not installed" "owner: an nhm only in a caller's NHM_BIN_DIR does not count"
 mkdir -p "$WORK/home/.local/bin"
 cp "$WORK/nhmbin/nhm" "$WORK/home/.local/bin/nhm"
