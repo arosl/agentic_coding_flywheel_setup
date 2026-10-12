@@ -708,8 +708,12 @@ command -v ee &>/dev/null && alias eectx='ee pack'
 command -v fmd &>/dev/null && alias fmdpdf='fmd --to pdf'
 # Pi Agent Rust (resume last session)
 command -v pi &>/dev/null && alias pir='pi --continue'
-# Power Failure Resumer (preview recovery plan)
-command -v pfr &>/dev/null && alias pfrd='pfr --dry-run'
+# Power Failure Resumer (preview recovery plan). pfr reads nhm's send history
+# (ntm's format) and leaves out the sessions that herdr and nhm restore.
+if command -v pfr &>/dev/null; then
+  alias pfrd='pfr --dry-run'
+  export PFR_NTM_HISTORY="${PFR_NTM_HISTORY:-${XDG_DATA_HOME:-$HOME/.local/share}/nhm/history.jsonl}"
+fi
 # Repo Updater
 command -v ru &>/dev/null && alias rusync='ru sync'
 
