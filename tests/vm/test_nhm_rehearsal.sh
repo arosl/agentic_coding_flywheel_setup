@@ -119,7 +119,7 @@ source "$LIB"
 sandbox_init "$ROOT" || exit 2
 EVIDENCE="$SANDBOX_EVIDENCE"
 sandbox_bin herdr
-for tool in dcg jq git; do
+for tool in dcg am claude; do
     if command -v "$tool" >/dev/null 2>&1; then
         sandbox_bin "$tool"
     fi
@@ -214,6 +214,87 @@ step_E01() {
     done
 }
 
+# bash_agent: Agent Mail and the mock API in the step, one Claude that the
+# Bash spawns in a git project (nhm_takeover_steps.sh), read into nhm's
+# bindings. Prints the agent's herdr name.
+bash_agent() {
+    sandbox_mail_start >/dev/null || { echo "FAIL the step's Agent Mail"; return 1; }
+    sandbox_mock_start >/dev/null || { echo "FAIL the mock API"; return 1; }
+    # As ACFS's install does: herdr's Claude integration, the hook that
+    # reports the agent's state and session to herdr.
+    herdr integration install claude >"$SANDBOX_EVIDENCE/herdr-integration.out" 2>&1 ||
+        { echo "FAIL herdr integration install claude"; return 1; }
+    # shellcheck source=tests/vm/lib/nhm_takeover_steps.sh
+    source "$(dirname "$SANDBOX_LIB")/nhm_takeover_steps.sh"
+    local name
+    name="$(takeover_bash_agent "$HOME/project")" || { echo "FAIL the Bash spawn (bash-spawn.out)"; return 1; }
+    nhm admin recover reconcile --import-only --json >"$SANDBOX_EVIDENCE/import.json" 2>&1 || true
+    printf '%s\n' "$name"
+}
+
+# E14 The sweep, release 0.1's part (status): one view and one JSON with,
+# per agent, state, observed_since, bead, unread, acks, limit, guards and
+# generation; --robot-status non-empty. nhm's row says observed_at for
+# observed_since, and has a limit only when one was seen. The interrupt
+# and recycle parts come with 0.2 and 0.3.
+step_E14() {
+    local name st row
+    name="$(bash_agent)" || { echo "$name"; return; }
+    echo "agent: $name"
+    st="$(nhm status --json 2>&1 || true)"
+    echo "### nhm status --json"
+    echo "$st"
+    row="$(jq -c --arg n "$name" '[.. | objects | select(.herdr_name? == $n)][0] // empty' <<<"$st" 2>/dev/null)"
+    check "E14: status has a row for $name" test -n "$row"
+    check "E14: the row has a state" jq -e '.state | type == "string"' <<<"${row:-null}"
+    check "E14: the row has when it was observed (observed_at)" jq -e '.observed_at | type == "string"' <<<"${row:-null}"
+    check "E14: the row has the binding's generation" jq -e '.binding.generation | type == "number"' <<<"${row:-null}"
+    check "E14: the row has unread mail and acks" jq -e '.mail | has("unread") and has("pending_acks")' <<<"${row:-null}"
+    check "E14: the row has the guards" jq -e '.guards | type == "object"' <<<"${row:-null}"
+    check "E14: the row has the agent's bead" jq -e 'has("bead")' <<<"${row:-null}"
+    check "E14: nhm status (the view) answers" show "nhm status" nhm status
+    check "E14: --robot-status is not empty" bash -c 'nhm --robot-status | jq -e "(.sessions // []) | length > 0"'
+    nhm --robot-status >"$SANDBOX_EVIDENCE/robot-status.json" 2>&1 || true
+}
+
+# E16 Server restart, release 0.1's part (inspect): stop and start the
+# herdr server with the Bash's agent bound. herdr 0.9.3 restores its
+# session itself and resumes the agents (same native session), so the
+# matrix's "nothing launched" is nhm's part: inspect knows the binding,
+# every agent herdr lists after the restart is a binding inspect calls
+# live (herdr and the registry agree), no session twice, no nhm operation
+# left open, and recover resume --dry-run previews the session. The
+# matrix's "one send pending" needs a send the Bash leaves unconfirmed,
+# which the step cannot stage yet.
+step_E16() {
+    local name bid inspect agents preview
+    name="$(bash_agent)" || { echo "$name"; return; }
+    echo "agent: $name"
+    bid="$(nhm resolve "$name" --json 2>/dev/null | jq -r '[.. | objects | .binding_id? // empty][0] // empty')"
+    check "E16: the agent is bound before the restart" test -n "$bid"
+    show "herdr server stop" sandbox_herdr_stop
+    show "herdr server start" sandbox_herdr_start || { echo "FAIL E16: the server did not come back"; return; }
+    inspect="$(nhm admin recover inspect --json 2>&1 || true)"
+    echo "### nhm admin recover inspect --json"
+    echo "$inspect"
+    check "E16: inspect knows the binding (live, displaced or orphan)" \
+        jq -e --arg b "$bid" '.result | [(.live // [])[], (.displaced // [])[], (.orphans // [])[]] | map(.binding_id) | index($b) != null' <<<"$inspect"
+    check "E16: inspect lists no session twice" jq -e '(.result.duplicate_sessions // {}) | length == 0' <<<"$inspect"
+    check "E16: no nhm operation was left open" jq -e '(.result.pending_operations // []) | length == 0' <<<"$inspect"
+    agents="$(herdr agent list 2>/dev/null || true)"
+    echo "### herdr agent list"
+    echo "$agents"
+    check "E16: every agent herdr lists is a binding inspect calls live" \
+        jq -e -n --argjson a "${agents:-null}" --argjson i "$inspect" '
+            ([$i.result.live[]?.pane_id]) as $live
+            | [$a.result.agents[]?.pane_id] | all(. as $p | $live | index($p) != null)'
+    preview="$(nhm admin recover resume "$bid" --dry-run --json 2>&1 || true)"
+    echo "### nhm admin recover resume --dry-run"
+    echo "$preview"
+    check "E16: resume --dry-run previews the session's argv" jq -e '.result.argv | index("--resume") != null' <<<"$preview"
+    manual "E16: one send pending through the restart stays unconfirmed (needs a send the Bash leaves pending)"
+}
+
 # --- Outside: run each step as one script in the sandbox ------------------
 
 PASS=0
@@ -224,7 +305,7 @@ run_step() {
     mkdir -p "$ROOT/steps"
     {
         printf '#!/usr/bin/env bash\nset -uo pipefail\nsource "$SANDBOX_LIB"\n'
-        declare -f check show manual "step_$step"
+        declare -f check show manual bash_agent "step_$step"
         printf 'sandbox_herdr_start || { echo "FAIL %s: the sandbox herdr server"; exit 1; }\n' "$step"
         printf 'show "enroll" nhm admin instance enroll --json || echo "FAIL %s: enroll"\n' "$step"
         printf 'step_%s\nsandbox_herdr_stop\n' "$step"
