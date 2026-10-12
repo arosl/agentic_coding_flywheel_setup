@@ -255,8 +255,12 @@ class LaunchTests(unittest.TestCase):
         self.assertFalse(self.events.exists())
         # Each identity's registration token is kept for retire and reap,
         # readable only by the user (acfs-e2il).
-        tokens = list((self.root / "no-acfs-home" / "state" / "tokens").glob("*/*"))
+        # Beside them, spawn records each token directory's project in a
+        # `.project` file (acfs-9hkh.26), which export reads.
+        entries = list((self.root / "no-acfs-home" / "state" / "tokens").glob("*/*"))
+        tokens = [path for path in entries if not path.name.startswith(".")]
         self.assertEqual(sorted(path.name for path in tokens), ["BlueLake", "GreenCastle", "RedStone"])
+        self.assertEqual(sorted({path.name for path in entries} - {path.name for path in tokens}), [".project"])
         for path in tokens:
             self.assertEqual(path.read_text(), "tok-" + path.name + "\n")
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
