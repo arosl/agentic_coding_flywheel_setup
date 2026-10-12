@@ -137,7 +137,7 @@ source "$LIB"
 sandbox_init "$ROOT" || exit 2
 EVIDENCE="$SANDBOX_EVIDENCE"
 sandbox_bin herdr
-for tool in dcg rch am br claude codex; do
+for tool in dcg rch am br claude codex cm cass; do
     if command -v "$tool" >/dev/null 2>&1; then
         sandbox_bin "$tool"
     fi
