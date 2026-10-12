@@ -137,7 +137,7 @@ source "$LIB"
 sandbox_init "$ROOT" || exit 2
 EVIDENCE="$SANDBOX_EVIDENCE"
 sandbox_bin herdr
-for tool in dcg rch am claude codex; do
+for tool in dcg rch am br claude codex; do
     if command -v "$tool" >/dev/null 2>&1; then
         sandbox_bin "$tool"
     fi
@@ -216,6 +216,11 @@ step_E01() {
     # hook for Codex, so the matrix's "dcg active for codex" shows that
     # gap rather than passing on a hook the harness wrote itself.
     claude_guards
+    # Codex's dcg line and its trust, as ACFS's install records them
+    # (tests/vm/rehearsal/E01_codex.sh, TealHorizon).
+    if declare -F e01_codex_dcg >/dev/null; then
+        e01_codex_dcg
+    fi
     doc="$(nhm doctor --json --no-mail 2>/dev/null || true)"
     echo "### the guard checks of nhm doctor --json"
     jq -c '.result.checks[]? | select(.name | startswith("guard "))' <<<"$doc"
@@ -394,6 +399,100 @@ step_E09() {
         jq -e '[.result.decisions[]? | select(.action == "nudged")] | length == 0' <<<"$w3"
 }
 
+# settle PANE: wait until the agent has been idle or done for 3 seconds
+# (after a kickoff, Claude may start another turn on its own).
+settle() {
+    local end=$((SECONDS + 60)) since=""
+    while ((SECONDS < end)); do
+        if [[ "$(state "$1")" =~ ^(idle|done)$ ]]; then
+            since="${since:-$SECONDS}"
+            ((SECONDS - since >= 3)) && return 0
+        else
+            since=""
+        fi
+        sleep 0.5
+    done
+    return 1
+}
+
+# e11_agent: one Claude that nhm spawns in session e11; prints its pane.
+e11_agent() {
+    local dir out pane
+    herdr integration install claude >"$SANDBOX_EVIDENCE/herdr-integration.out" 2>&1 || true
+    dir="$HOME/e11"
+    mkdir -p "$dir" && git -C "$dir" init -q && sandbox_claude_prepare "$dir" >/dev/null
+    claude_guards
+    nhm_owner || return 1
+    out="$(cd "$dir" && nhm spawn e11 --cc=1 --prompt "say hi" --json 2>&1)"
+    printf '%s\n' "$out" >"$SANDBOX_EVIDENCE/e11-spawn.json"
+    pane="$(jq -r '.result.agents[0].pane_id // empty' <<<"$out")"
+    [[ -n "$pane" ]] || return 1
+    until_state "$pane" '^(idle|done)$' 60
+    printf '%s\n' "$pane"
+}
+
+# robot ARGS...: one robot call; prints its JSON and saves it, labelled.
+robot() {
+    local label="$1" out rc=0
+    shift
+    out="$(nhm "$@" 2>&1)" || rc=$?
+    echo "### $label (exit $rc): nhm $*"
+    echo "$out"
+    printf '%s' "$out" >"$SANDBOX_EVIDENCE/e11-$label.json"
+    return 0
+}
+
+# E11 The robot-driven turn: resolve, send once, read and wait, through a
+# fast finish, a busy agent and a replaced occupant; a repeated --op-id
+# returns the stored receipt and dispatches nothing again. The matrix's
+# names map to nhm's (plan-v8 section 7): submitted_observed is
+# submitted, generation_changed is replaced. A timeout that leaves the
+# submission unconfirmed and a blocked input (a dialog) cannot be staged
+# against the mock yet: MANUAL.
+step_E11() {
+    local pane before after
+    pane="$(e11_agent)" || { echo "FAIL E11: no agent"; return; }
+    robot status --robot-status
+    check "E11: --robot-status lists the session" jq -e '[.. | objects | select(has("name") or has("session"))] | length > 0' \
+        "$SANDBOX_EVIDENCE/e11-status.json"
+    # A turn, its ack and its receipt. The mock answers a plain prompt at
+    # once, before herdr can see the agent working, and nhm then rightly
+    # says possibly_submitted; "slow" makes the turn long enough to see.
+    settle "$pane"
+    robot send-a --robot-send=e11 --all --msg="hello robot slow" --op-id=e11-a
+    check "E11: a send to a ready agent is submitted" jq -e '.success and (.successful | length == 1)' "$SANDBOX_EVIDENCE/e11-send-a.json"
+    robot ack-a --robot-ack=e11 --op-id=e11-a --timeout=60s
+    check "E11: its ack confirms the turn" jq -e '.success and (.confirmations | length == 1) and (.timed_out | not)' \
+        "$SANDBOX_EVIDENCE/e11-ack-a.json"
+    robot receipt-a --robot-send-receipt=e11-a
+    check "E11: --robot-send-receipt returns the stored receipt" jq -e '.success and (.. | objects | select(has("successful")) | .successful | length == 1)' \
+        "$SANDBOX_EVIDENCE/e11-receipt-a.json"
+    # The same --op-id again: the stored receipt, no second prompt.
+    until_state "$pane" '^(idle|done)$' 60
+    before="$(grep -c 'hello robot slow' "$SANDBOX_EVIDENCE/mock-requests.jsonl" 2>/dev/null || echo 0)"
+    robot send-a-again --robot-send=e11 --all --msg="hello robot slow" --op-id=e11-a
+    sleep 3
+    after="$(grep -c 'hello robot slow' "$SANDBOX_EVIDENCE/mock-requests.jsonl" 2>/dev/null || echo 0)"
+    echo "mock requests with the text: $before before, $after after"
+    check "E11: a repeated --op-id answers with the receipt" jq -e '.success and (.successful | length == 1)' \
+        "$SANDBOX_EVIDENCE/e11-send-a-again.json"
+    check "E11: a repeated --op-id dispatches nothing again" test "$before" -eq "$after"
+    # A busy agent: refused at the gate.
+    herdr agent prompt "$pane" "work slow" >/dev/null 2>&1 || true
+    until_state "$pane" '^working$' 10
+    robot send-busy --robot-send=e11 --all --msg="while busy" --op-id=e11-b
+    check "E11: a send to a working agent is refused (busy)" \
+        jq -e '(._nhm // .nhm) as $n | (.success | not) and ($n.targets[0].submission == "refused") and ($n.targets[0].gate == "busy")' \
+        "$SANDBOX_EVIDENCE/e11-send-busy.json"
+    until_state "$pane" '^(idle|done)$' 60
+    # A replaced occupant: recycle, then the earlier operation's ack.
+    robot recycle recycle "$(jq -r '.result.agents[0].mail_name' "$SANDBOX_EVIDENCE/e11-spawn.json")" --prompt "go on" --json
+    robot ack-after-recycle --robot-ack=e11 --op-id=e11-a --timeout=5s
+    check "E11: after a recycle the earlier send reads replaced" \
+        jq -e '(.success | not) and (.failed[0].reason | startswith("replaced"))' "$SANDBOX_EVIDENCE/e11-ack-after-recycle.json"
+    manual "E11: a timeout that leaves a submission unconfirmed (possibly_submitted) and a blocked input (refused at a dialog)"
+}
+
 # TAKEOVER (--takeover; plan-v8 section 5 step 6, run last): the Bash
 # spawns a Claude in a folder outside git; then
 #   1. the dry run passes, imports the agent and keeps its token;
@@ -442,6 +541,16 @@ step_TAKEOVER() {
     check "TAKEOVER 3: nhm owns the server" jq -e '.result.owner.owner == "nhm"' <<<"$out"
 }
 
+# --- Steps in their own files ----------------------------------------------
+# tests/vm/rehearsal/<STEP>.sh defines step_<STEP> and helpers prefixed
+# <step>_ (lower case), and may use the helpers above. Sourced after this
+# file's own steps, so a step file wins over an inline step of that name.
+for step_file in "$ROOT_DIR/tests/vm/rehearsal/"*.sh; do
+    [[ -e "$step_file" ]] || continue
+    # shellcheck source=/dev/null
+    source "$step_file"
+done
+
 # --- Outside: run each step as one script in the sandbox ------------------
 
 PASS=0
@@ -452,7 +561,12 @@ run_step() {
     mkdir -p "$ROOT/steps"
     {
         printf '#!/usr/bin/env bash\nset -uo pipefail\nsource "$SANDBOX_LIB"\n'
-        declare -f check show manual bash_agent claude_guards nhm_owner state until_state "step_$step"
+        declare -f check show manual bash_agent claude_guards nhm_owner state until_state settle e11_agent robot "step_$step"
+        # A step file's own helpers: <step>_* (and e01_* for E01's).
+        local helper
+        for helper in $(declare -F | awk '{print $3}' | grep -i "^${step,,}_"); do
+            declare -f "$helper"
+        done
         # Agent Mail and the mock come first: the herdr server's panes take
         # their URLs from its environment.
         printf 'sandbox_mail_start >/dev/null || echo "FAIL %s: the step'"'"'s Agent Mail"\n' "$step"
