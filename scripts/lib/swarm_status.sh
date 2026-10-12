@@ -427,9 +427,13 @@ swarm_status_collect_nhm() {
     local count=""
     local exit_status=0
 
-    nhm_bin="$(swarm_status_binary_path nhm 2>/dev/null || true)"
-    if [[ -z "$nhm_bin" && -x "${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" ]]; then
-        nhm_bin="${NHM_BIN_DIR:-$HOME/.local/bin}/nhm"
+    # One lookup, as everywhere in ACFS (acfs-9hkh.84): ~/.local/bin, where
+    # ACFS installs nhm, then PATH; a caller's NHM_BIN_DIR is not where
+    # ACFS put it.
+    if [[ -x "$HOME/.local/bin/nhm" ]]; then
+        nhm_bin="$HOME/.local/bin/nhm"
+    else
+        nhm_bin="$(swarm_status_binary_path nhm 2>/dev/null || true)"
     fi
     if [[ -n "$nhm_bin" ]]; then
         NHM_AVAILABLE=true

@@ -2520,7 +2520,8 @@ check "after the wake, the state holds the new cursor" \
 rm -f "$WORK/probebin/mv"
 
 echo "owner (acfs-9hkh.27)"
-# A fake nhm in NHM_BIN_DIR stands for an installed nhm.
+# A fake nhm in ~/.local/bin, where ACFS installs it, stands for an
+# installed nhm. A caller's NHM_BIN_DIR does not count (acfs-9hkh.84).
 mkdir -p "$WORK/nhmbin"
 printf '#!/bin/sh\nexit 0\n' >"$WORK/nhmbin/nhm"
 chmod +x "$WORK/nhmbin/nhm"
@@ -2531,17 +2532,22 @@ owner_case ownerprobe nhm
 run_helper owner
 owner_says acfs-bash "nhm is not installed" "owner: without nhm installed, acfs-bash"
 NHM_BIN_DIR="$WORK/nhmbin" run_helper owner
+owner_says acfs-bash "nhm is not installed" "owner: an nhm only in a caller's NHM_BIN_DIR does not count"
+mkdir -p "$WORK/home/.local/bin"
+cp "$WORK/nhmbin/nhm" "$WORK/home/.local/bin/nhm"
+run_helper owner
 owner_says nhm "owner: nhm ($NHM_INST)" "owner: nhm installed, enrolled and named in owner.toml: nhm"
 owner_case ownerprobebash acfs-bash
-NHM_BIN_DIR="$WORK/nhmbin" run_helper owner
+run_helper owner
 owner_says acfs-bash "owner: acfs-bash" "owner: owner.toml names acfs-bash: acfs-bash"
 owner_case ownerprobecorrupt corrupt
-NHM_BIN_DIR="$WORK/nhmbin" run_helper owner
+run_helper owner
 owner_says acfs-bash "owner.toml is corrupt" "owner: a corrupt owner.toml is acfs-bash, never nhm"
 owner_case ownerprobeother none
 rm -rf "$NHM_INST"
-NHM_BIN_DIR="$WORK/nhmbin" run_helper owner
+run_helper owner
 owner_says acfs-bash "not enrolled for this herdr server" "owner: nhm enrolled for another herdr server only: acfs-bash"
+rm -f "$WORK/home/.local/bin/nhm"
 
 echo "export and import (acfs-9hkh.26)"
 reset_stub export

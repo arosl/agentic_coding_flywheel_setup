@@ -5952,6 +5952,10 @@ check_runtime_deploy_skew() {
 }
 
 main() {
+    # nhm's verified installer runs in a clean environment and installs to
+    # ~/.local/bin, so every acfs command must look for nhm there too.
+    unset NHM_BIN_DIR
+
     local invoked_as
     invoked_as="$(basename "${0:-acfs}")"
 

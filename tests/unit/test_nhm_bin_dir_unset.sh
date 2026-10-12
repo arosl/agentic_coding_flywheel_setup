@@ -39,6 +39,16 @@ update_body="$(awk '/^main\(\) \{/ { capture=1 } capture { print } capture && /^
 first_stmt="$(grep -v -E '^\s*(#|$)' <<<"$update_body" | sed -n 2p | sed -E 's/^\s+//')"
 check "acfs update's main() unsets NHM_BIN_DIR before anything else" test "$first_stmt" = "unset NHM_BIN_DIR"
 
+# acfs-9hkh.84: the acfs CLI (doctor.sh's main(), which runs doctor and
+# acfs agents) unsets it first too, and herdr_agents.sh and swarm_status.sh,
+# which can also run directly, look for nhm in ~/.local/bin only.
+doctor_body="$(awk '/^main\(\) \{/ { capture=1 } capture { print } capture && /^}$/ { exit }' "$ROOT/scripts/lib/doctor.sh")"
+doctor_first="$(grep -v -E '^\s*(#|$)' <<<"$doctor_body" | sed -n 2p | sed -E 's/^\s+//')"
+check "the acfs CLI's main() unsets NHM_BIN_DIR before anything else" test "$doctor_first" = "unset NHM_BIN_DIR"
+for f in scripts/lib/herdr_agents.sh scripts/lib/swarm_status.sh; do
+    check "$f reads no NHM_BIN_DIR" bash -c '! grep -v "^\s*#" "$1" | grep -q "NHM_BIN_DIR"' _ "$ROOT/$f"
+done
+
 echo
 echo "nhm_bin_dir_unset: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

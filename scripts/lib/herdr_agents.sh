@@ -473,7 +473,9 @@ herdr_agents_owner() {
         *) herdr_agents_die "owner takes no arguments" ;;
     esac
     local dir owner
-    if [[ ! -x "${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" ]] && ! command -v nhm >/dev/null 2>&1; then
+    # ~/.local/bin, where ACFS installs nhm; a caller's NHM_BIN_DIR is not
+    # where ACFS put it (acfs-9hkh.84).
+    if [[ ! -x "$HOME/.local/bin/nhm" ]] && ! command -v nhm >/dev/null 2>&1; then
         herdr_agents_note "owner: nhm is not installed"
         printf 'acfs-bash\n'
         return 0
