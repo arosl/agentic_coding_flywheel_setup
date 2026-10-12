@@ -78,6 +78,32 @@ class BrennerToolchainSkipTests(unittest.TestCase):
         self.assertEqual(flags(install_sh_args()), expected)
         self.assertEqual(flags(generated_args()), expected)
 
+    def test_every_path_installs_the_pinned_tag(self):
+        # acfs-9hkh.54: the fork's tagged installer is pinned, and each path
+        # names that tag's release, so "latest" never picks the binary.
+        text = (ROOT / "scripts/lib/security.sh").read_text()
+        match = re.search(
+            r'^    \[brenner_bot\]="https://raw\.githubusercontent\.com/arosl/brenner_bot/v([^/"]+)/install\.sh"$',
+            text,
+            re.M,
+        )
+        self.assertIsNotNone(match, "KNOWN_INSTALLERS[brenner_bot] is not a tagged arosl/brenner_bot install.sh")
+        tag = match.group(1)
+        manifest = (ROOT / "acfs.manifest.yaml").read_text()
+        self.assertIn(
+            f'url: "https://raw.githubusercontent.com/arosl/brenner_bot/v{tag}/install.sh"',
+            manifest.split("\n  - id: stack.brenner_bot\n", 1)[1].split("\n  - id: ", 1)[0],
+        )
+        for label, args in (
+            ("acfs.manifest.yaml", manifest_args()),
+            ("install_stack.sh", generated_args()),
+            ("install.sh", install_sh_args()),
+            ("update.sh", update_sh_args()),
+        ):
+            with self.subTest(path=label):
+                self.assertIn("--version", args, f"{label} lets brenner's installer pick latest")
+                self.assertEqual(args[args.index("--version") + 1], tag)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3053,11 +3053,13 @@ modules:
     verified_installer:
       tool: brenner_bot
       runner: bash
-      url: "https://raw.githubusercontent.com/Dicklesworthstone/brenner_bot/main/install.sh"
+      url: "https://raw.githubusercontent.com/arosl/brenner_bot/v0.4.1-nhm.1/install.sh"
       # Skip brenner's own pinned toolchain: ACFS installs and updates cass
       # and cm through their own modules, and uses herdr, not ntm (same flags
-      # as acfs update, GH #210).
-      args: ["--", "--skip-ntm", "--skip-cass", "--skip-cm"]
+      # as acfs update, GH #210). The fork's tagged installer (acfs-9hkh.54)
+      # installs the fork's binary, whose cockpit drives nhm; --version names
+      # the tag's release, so "latest" never picks the binary.
+      args: ["--", "--version", "0.4.1-nhm.1", "--skip-ntm", "--skip-cass", "--skip-cm"]
     install: []
     verify:
       - brenner --version || brenner --help

@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-10-12T06:19:05+00:00
+# checksums.yaml - Auto-generated 2026-10-12T06:37:58+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -23,8 +23,8 @@ installers:
     sha256: "b2b3ed0ae2712e53a72d48afd5a980a7c1d346bb6e6b9fb9e4f3b20566726c2f"
 
   brenner_bot:
-    url: "https://raw.githubusercontent.com/Dicklesworthstone/brenner_bot/main/install.sh"
-    sha256: "171bec954d454e1e01035560376be9ee94552dcb3d1225798b2a66aa890db7bb"
+    url: "https://raw.githubusercontent.com/arosl/brenner_bot/v0.4.1-nhm.1/install.sh"
+    sha256: "cd11899afe168ce6857762f86aa57f4b3e7ea9c8632c6ee151522de7d5d67585"
 
   bun:
     url: "https://bun.sh/install"

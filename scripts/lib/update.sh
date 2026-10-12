@@ -7820,8 +7820,9 @@ update_stack() {
     # NTM, and updates CASS and CM individually below.  Previously only
     # --skip-cass was passed, causing brenner's install_toolchain() to
     # rebuild NTM and CM from source — a 5+ hour hang on slow machines (fixes #210).
+    # --version is the tag KNOWN_INSTALLERS[brenner_bot] pins (acfs-9hkh.54).
     capture_version_before "brenner"
-    run_cmd "Brenner Bot" update_run_verified_installer brenner_bot --skip-ntm --skip-cass --skip-cm
+    run_cmd "Brenner Bot" update_run_verified_installer brenner_bot --version 0.4.1-nhm.1 --skip-ntm --skip-cass --skip-cm
     if capture_version_after "brenner"; then
         update_say "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[brenner]}" "${VERSION_AFTER[brenner]}"
     fi
