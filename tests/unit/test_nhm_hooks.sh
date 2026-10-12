@@ -238,30 +238,39 @@ check "trust: an nhm entry the user edited stays untrusted" \
 check "trust: a second list that drops entries fails" bash -c 'rm -f "$1/fake-trust.json"; ! FAKE_CODEX_HIDE_AFTER_WRITE=1 PATH="$2:$PATH" bash "$3" trust codex "$1/hooks.json" 2>/dev/null' \
     _ "$CODEX_DIR" "$FAKEBIN" "$HOOKS"
 # A wrapper whose child holds stdout open and never answers: only killing
-# the process group ends it.
+# the process group ends it. The stuck app-server runs from a copy of the
+# fake under this run's $WORK, so the checks see only this run's
+# processes, never another test run's on the same host (acfs-9hkh.60: a
+# host-wide pgrep made this check flaky).
 HANGBIN="$WORK/hangbin"
 mkdir -p "$HANGBIN"
-printf '#!/bin/sh\nFAKE_CODEX_HANG=1 python3 "%s" "$@" &\nwait\n' "$ROOT/tests/unit/fake_codex_app_server.py" >"$HANGBIN/codex"
+cp "$ROOT/tests/unit/fake_codex_app_server.py" "$HANGBIN/fake_codex_app_server.py"
+printf '#!/bin/sh\nFAKE_CODEX_HANG=1 python3 "%s" "$@" &\nwait\n' "$HANGBIN/fake_codex_app_server.py" >"$HANGBIN/codex"
 chmod +x "$HANGBIN/codex"
+# hang_gone: no process of this run's stuck app-server, waiting up to 5 s
+# for a killed one to be reaped.
+hang_gone() {
+    local _
+    for _ in $(seq 1 50); do
+        pgrep -f "$HANGBIN/fake_codex_app_server.py app-server" >/dev/null || return 0
+        sleep 0.1
+    done
+    return 1
+}
 check "trust: a stuck app-server behind a wrapper ends at the timeout" bash -c '
     start=$SECONDS
     NHM_HOOKS_TRUST_TIMEOUT=2 PATH="$2:$PATH" timeout 30 bash "$3" trust codex "$1/hooks.json" 2>/dev/null
     rc=$?
     [[ $rc -ne 0 && $rc -ne 124 && $((SECONDS - start)) -lt 20 ]]' _ "$CODEX_DIR" "$HANGBIN" "$HOOKS"
-check "trust: no process of the stuck app-server is left" \
-    bash -c '! pgrep -f "[f]ake_codex_app_server.py app-server" >/dev/null'
+check "trust: no process of the stuck app-server is left" hang_gone
 
 # acfs-9hkh.46: install's and update's `timeout 90` sends SIGTERM to its
 # process group; the app-server runs in a session of its own, so the
 # driver must kill it on the way out, not leave it behind.
-check "trust: SIGTERM from timeout leaves no app-server behind" bash -c '
-    NHM_HOOKS_TRUST_TIMEOUT=60 PATH="$2:$PATH" timeout 2 bash "$3" trust codex "$1/hooks.json" 2>/dev/null
-    rc=$?
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
-        pgrep -f "[f]ake_codex_app_server.py app-server" >/dev/null || break
-        sleep 0.5
-    done
-    [[ $rc -eq 124 ]] && ! pgrep -f "[f]ake_codex_app_server.py app-server" >/dev/null' _ "$CODEX_DIR" "$HANGBIN" "$HOOKS"
+rc=0
+NHM_HOOKS_TRUST_TIMEOUT=60 PATH="$HANGBIN:$PATH" timeout 2 bash "$HOOKS" trust codex "$CODEX_DIR/hooks.json" 2>/dev/null || rc=$?
+check "trust: SIGTERM from timeout ends the run (124)" test "$rc" -eq 124
+check "trust: SIGTERM from timeout leaves no app-server behind" hang_gone
 
 printf '%s\n' '{"hooks":{}}' >"$WORK/empty-hooks.json"
 check "trust: a file without nhm entries has nothing to do" \

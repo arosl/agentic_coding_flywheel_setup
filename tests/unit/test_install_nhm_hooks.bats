@@ -126,12 +126,14 @@ registered() {
     ! registered || fail "lines were registered for a module not selected"
 }
 
-# acfs-9hkh.60: the check reads ${NHM_BIN_DIR:-~/.local/bin} as the target
-# user, so run_as_target passes NHM_BIN_DIR through sudo (outside a clean
-# environment), in both copies. The library copy runs for real here, with a
-# spy sudo; install.sh's copy is checked by its source line.
+# acfs-9hkh.60: nhm's verified installer runs in a clean environment, so it
+# never sees the caller's NHM_BIN_DIR and installs to ~/.local/bin. Every
+# other stack.nhm step (verify, enroll, the hook check) must read the same
+# directory, so run_as_target passes NHM_BIN_DIR in neither mode, in
+# neither copy. The library copy runs for real here, with a spy sudo;
+# install.sh's copy is checked by its source.
 
-@test "run_as_target passes NHM_BIN_DIR to the target user, not into a clean environment" {
+@test "run_as_target passes no NHM_BIN_DIR to the target user, in either mode" {
     source_lib "logging"
     source_lib "install_helpers"
     export TARGET_USER="testuser" TARGET_HOME="/home/testuser" NHM_BIN_DIR="/opt/nhm/bin"
@@ -151,8 +153,8 @@ registered() {
     }
     run run_as_target bash -c true
     assert_success
-    [[ "$(cat "$STUB_DIR/sudo.log")" == *" NHM_BIN_DIR=/opt/nhm/bin "* ]] \
-        || fail "NHM_BIN_DIR not passed: $(cat "$STUB_DIR/sudo.log")"
+    [[ "$(cat "$STUB_DIR/sudo.log")" != *"NHM_BIN_DIR="* ]] \
+        || fail "NHM_BIN_DIR reached the target user's steps: $(cat "$STUB_DIR/sudo.log")"
     : > "$STUB_DIR/sudo.log"
     local script="$BATS_TEST_TMPDIR/verified-installer.sh"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$script"
@@ -162,7 +164,7 @@ registered() {
         || fail "NHM_BIN_DIR reached a clean environment: $(cat "$STUB_DIR/sudo.log")"
 }
 
-@test "install.sh's run_as_target passes NHM_BIN_DIR outside a clean environment" {
+@test "install.sh's run_as_target passes no NHM_BIN_DIR either" {
     local body
     body="$(awk '
         /^run_as_target\(\) \{/ { capture=1 }
@@ -170,6 +172,6 @@ registered() {
         capture && /^    command_argv=\("\$@"\)/ { exit }
     ' "$PROJECT_ROOT/install.sh")"
     [[ -n "$body" ]] || fail "run_as_target not found in install.sh"
-    awk '/clean_environment" != "true"/ { inside=1 } inside && /NHM_BIN_DIR=\$NHM_BIN_DIR/ { found=1 } END { exit !found }' <<< "$body" \
-        || fail "install.sh's run_as_target does not pass NHM_BIN_DIR in its non-clean branch"
+    ! grep -q 'NHM_BIN_DIR' <<< "$body" \
+        || fail "install.sh's run_as_target passes NHM_BIN_DIR; nhm's clean installer would not see it"
 }
