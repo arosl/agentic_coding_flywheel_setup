@@ -10741,6 +10741,59 @@ acfs_merge_existing_json_config_as_target() {
     return 0
 }
 
+# nhm's hook lines (stack.nhm): PostToolUse on Agent Mail's registration
+# tools and SessionStart (Codex: also PostCompact) run nhm-hook, which names
+# panes and keeps names through compaction. Idempotent; appends only. Codex
+# runs a hook only once it is trusted: ACFS records that trust for its own
+# entries through Codex's app-server (F.25), and names /hooks in Codex when
+# it cannot.
+# The lines run nhm-hook from ${NHM_BIN_DIR:-~/.local/bin}, read in the
+# target user's context as stack.nhm's verify reads it. When nhm-hook is not
+# there, no line is added and the lines an earlier run added are removed,
+# so no turn hits a hook that points at nothing. When the check itself
+# cannot run as the target user, nothing changes.
+acfs_install_nhm_hook_lines() {
+    local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh" hook_rc=0
+    [[ -f "$nhm_hooks" ]] || return 0
+    # 0: nhm-hook is there; 3: it is not; anything else: the check did not run.
+    # shellcheck disable=SC2016 # expanded by the target user's bash
+    run_as_target bash -c 'test -x "${NHM_BIN_DIR:-$HOME/.local/bin}/nhm-hook" || exit 3' || hook_rc=$?
+    if [[ "$hook_rc" -eq 3 ]]; then
+        if acfs_legacy_module_selected "stack.nhm"; then
+            log_warn "nhm-hook is not installed; the nhm hook lines are not registered"
+        fi
+        run_as_target bash "$nhm_hooks" unregister claude "$TARGET_HOME/.claude/settings.json" || \
+            log_warn "could not remove the nhm hook lines from Claude Code's settings"
+        run_as_target bash "$nhm_hooks" unregister codex "$TARGET_HOME/.codex/hooks.json" || \
+            log_warn "could not remove the nhm hook lines from Codex's hooks.json"
+        return 0
+    fi
+    if [[ "$hook_rc" -ne 0 ]]; then
+        log_warn "could not check for nhm-hook as $TARGET_USER; the nhm hook lines are unchanged"
+        return 0
+    fi
+    acfs_legacy_module_selected "stack.nhm" || return 0
+    if binary_installed "claude"; then
+        try_step "Registering the nhm hook lines for Claude Code" \
+            run_as_target bash "$nhm_hooks" register claude "$TARGET_HOME/.claude/settings.json" || \
+            log_warn "nhm hook registration for Claude Code failed (optional)"
+    fi
+    if binary_installed "codex"; then
+        if try_step "Registering the nhm hook lines for Codex" \
+                run_as_target bash "$nhm_hooks" register codex "$TARGET_HOME/.codex/hooks.json"; then
+            # timeout: the helper bounds Codex's app-server itself (60 s);
+            # this bounds the helper, so no install can hang on it.
+            if run_as_target timeout 90 bash "$nhm_hooks" trust codex "$TARGET_HOME/.codex/hooks.json"; then
+                log_detail "Codex trusts the nhm hook lines"
+            else
+                log_detail "Codex asks to trust the nhm hook lines once: open /hooks in Codex"
+            fi
+        else
+            log_warn "nhm hook registration for Codex failed (optional)"
+        fi
+    fi
+}
+
 finalize() {
     set_phase "finalize" "Final Wiring"
     log_step "9/9" "Finalizing installation..."
@@ -11039,48 +11092,7 @@ finalize() {
         fi
     fi
 
-    # nhm's hook lines (stack.nhm): PostToolUse on Agent Mail's registration
-    # tools and SessionStart (Codex: also PostCompact) run nhm-hook, which
-    # names panes and keeps names through compaction. Idempotent; appends
-    # only. Codex runs a hook only once it is trusted: ACFS records that
-    # trust for its own entries through Codex's app-server (F.25), and
-    # names /hooks in Codex when it cannot.
-    # The lines run nhm-hook from ${NHM_BIN_DIR:-~/.local/bin}, read in the
-    # target user's context as stack.nhm's verify reads it. When nhm-hook
-    # is not there, no line is added and the lines an earlier run added are
-    # removed, so no turn hits a hook that points at nothing.
-    local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh"
-    # shellcheck disable=SC2016 # expanded by the target user's bash
-    if [[ -f "$nhm_hooks" ]] \
-            && ! run_as_target bash -c 'test -x "${NHM_BIN_DIR:-$HOME/.local/bin}/nhm-hook"'; then
-        if acfs_legacy_module_selected "stack.nhm"; then
-            log_warn "nhm-hook is not installed; the nhm hook lines are not registered"
-        fi
-        run_as_target bash "$nhm_hooks" unregister claude "$TARGET_HOME/.claude/settings.json" || \
-            log_warn "could not remove the nhm hook lines from Claude Code's settings"
-        run_as_target bash "$nhm_hooks" unregister codex "$TARGET_HOME/.codex/hooks.json" || \
-            log_warn "could not remove the nhm hook lines from Codex's hooks.json"
-    elif acfs_legacy_module_selected "stack.nhm" && [[ -f "$nhm_hooks" ]]; then
-        if binary_installed "claude"; then
-            try_step "Registering the nhm hook lines for Claude Code" \
-                run_as_target bash "$nhm_hooks" register claude "$TARGET_HOME/.claude/settings.json" || \
-                log_warn "nhm hook registration for Claude Code failed (optional)"
-        fi
-        if binary_installed "codex"; then
-            if try_step "Registering the nhm hook lines for Codex" \
-                    run_as_target bash "$nhm_hooks" register codex "$TARGET_HOME/.codex/hooks.json"; then
-                # timeout: the helper bounds Codex's app-server itself (60 s);
-                # this bounds the helper, so no install can hang on it.
-                if run_as_target timeout 90 bash "$nhm_hooks" trust codex "$TARGET_HOME/.codex/hooks.json"; then
-                    log_detail "Codex trusts the nhm hook lines"
-                else
-                    log_detail "Codex asks to trust the nhm hook lines once: open /hooks in Codex"
-                fi
-            else
-                log_warn "nhm hook registration for Codex failed (optional)"
-            fi
-        fi
-    fi
+    acfs_install_nhm_hook_lines
 
     # Configure workspace trust for coding agents (fixes #159)
     # In vibe/yolo mode, Claude Code requires explicit workspace trust to avoid
