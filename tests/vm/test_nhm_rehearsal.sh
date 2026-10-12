@@ -33,9 +33,11 @@
 # pass conditions name forms nhm does not have (`nhm doctor --mode
 # active`): the harness checks nhm's nearest form and names it.
 #
-# --takeover adds the takeover scenario (plan-v8 section 5 step 6) after
-# the steps: an agent outside git imported, an unbound Bash token refusing
-# both modes, and --exclude letting the takeover pass.
+# --takeover adds the takeover scenario (plan-v8 section 5 step 6) between
+# release 0.1's steps and the later ones: an agent outside git imported,
+# an unbound Bash token refusing both modes, and --exclude letting the
+# takeover pass. Without it, a later release's first step takes the
+# server over itself, as on the plan's disposable instance.
 #
 # --root is the sandbox root (default $NHM_SANDBOX_PARENT/$USER/
 # nhm-rehearsal/RUN-ID, NHM_SANDBOX_PARENT defaulting to /data/tmp). It
@@ -109,9 +111,15 @@ if [[ -n "$STEPS" ]]; then
 else
     RUN_STEPS="$ALL_STEPS"
 fi
-# The takeover changes the owner, so it runs after every step.
+# The takeover runs where the migration has it: after release 0.1's steps
+# (the Bash owns the server) and before the later releases' (nhm owns it).
 if [[ "$TAKEOVER" == 1 ]]; then
-    RUN_STEPS="$RUN_STEPS TAKEOVER"
+    before="" after=""
+    for s in $RUN_STEPS; do
+        if [[ " $(release_steps 0.1) " == *" $s "* ]]; then before+=" $s"; else after+=" $s"; fi
+    done
+    RUN_STEPS="${before# } TAKEOVER$after"
+    RUN_STEPS="${RUN_STEPS# }"
 fi
 ROOT="${ROOT:-${NHM_SANDBOX_PARENT:-/data/tmp}/${USER:-rehearsal}/nhm-rehearsal/$AUTHORISED}"
 if [[ -e "$ROOT" ]]; then
@@ -129,7 +137,7 @@ source "$LIB"
 sandbox_init "$ROOT" || exit 2
 EVIDENCE="$SANDBOX_EVIDENCE"
 sandbox_bin herdr
-for tool in dcg am claude; do
+for tool in dcg rch am claude codex; do
     if command -v "$tool" >/dev/null 2>&1; then
         sandbox_bin "$tool"
     fi
@@ -207,9 +215,7 @@ step_E01() {
     # PreToolUse hook (here into the sandbox HOME). ACFS installs no dcg
     # hook for Codex, so the matrix's "dcg active for codex" shows that
     # gap rather than passing on a hook the harness wrote itself.
-    if command -v dcg >/dev/null 2>&1; then
-        show "dcg install" dcg install --quiet || true
-    fi
+    claude_guards
     doc="$(nhm doctor --json --no-mail 2>/dev/null || true)"
     echo "### the guard checks of nhm doctor --json"
     jq -c '.result.checks[]? | select(.name | startswith("guard "))' <<<"$doc"
@@ -228,8 +234,6 @@ step_E01() {
 # Bash spawns in a git project (nhm_takeover_steps.sh), read into nhm's
 # bindings. Prints the agent's herdr name.
 bash_agent() {
-    sandbox_mail_start >/dev/null || { echo "FAIL the step's Agent Mail"; return 1; }
-    sandbox_mock_start >/dev/null || { echo "FAIL the mock API"; return 1; }
     # As ACFS's install does: herdr's Claude integration, the hook that
     # reports the agent's state and session to herdr.
     herdr integration install claude >"$SANDBOX_EVIDENCE/herdr-integration.out" 2>&1 ||
@@ -305,6 +309,91 @@ step_E16() {
     manual "E16: one send pending through the restart stays unconfirmed (needs a send the Bash leaves pending)"
 }
 
+# claude_guards: Claude's three guards, as ACFS's install sets them (here
+# in the sandbox HOME): dcg install, rch hook install, and the Agent Mail
+# Stop hook (agent_mail_hook.sh register claude).
+claude_guards() {
+    local hook
+    hook="$(dirname "$SANDBOX_LIB")/../../../scripts/lib/agent_mail_hook.sh"
+    command -v dcg >/dev/null 2>&1 && dcg install --quiet >"$SANDBOX_EVIDENCE/guard-dcg.out" 2>&1
+    command -v rch >/dev/null 2>&1 && rch hook install >"$SANDBOX_EVIDENCE/guard-rch.out" 2>&1
+    bash "$hook" register claude >"$SANDBOX_EVIDENCE/guard-agent-mail.out" 2>&1
+    return 0
+}
+
+# nhm_owner: release 0.2's steps run with nhm as the owner, as on the
+# disposable instance the plan rehearses them on: take the server over
+# when the Bash still owns it (the earlier steps' agents are imported).
+nhm_owner() {
+    local out rc=0
+    out="$(nhm admin takeover --yes --json 2>&1)" || rc=$?
+    if ((rc != 0)) && ! grep -q 'already nhm' <<<"$out"; then
+        echo "### takeover (exit $rc)"
+        echo "$out"
+        return 1
+    fi
+}
+
+# state PANE: herdr's state of the agent in PANE.
+state() { herdr agent get "$1" 2>/dev/null | jq -r '.result.agent.agent_status // empty'; }
+
+# until_state PANE REGEX SECONDS
+until_state() {
+    local end=$((SECONDS + $3))
+    while ((SECONDS < end)); do
+        [[ "$(state "$1")" =~ $2 ]] && return 0
+        sleep 0.5
+    done
+    return 1
+}
+
+# E09 Wake: mail to an idle agent and to a working one. The idle agent is
+# nudged by the pass; the working one is left alone until its turn ends,
+# then nudged; each message nudges once (a later pass nudges nobody).
+# nhm's wake keeps pending message ids, not a cursor: "the cursor
+# survives a restart" is checked as "a new pass does not nudge again".
+step_E09() {
+    local dir out a b pa pb w1 w2 w3
+    herdr integration install claude >"$SANDBOX_EVIDENCE/herdr-integration.out" 2>&1 || true
+    dir="$HOME/e09"
+    mkdir -p "$dir" && git -C "$dir" init -q && sandbox_claude_prepare "$dir" >/dev/null
+    claude_guards
+    nhm_owner || { echo "FAIL E09: nhm could not take the server over"; return; }
+    out="$(cd "$dir" && nhm spawn e09 --cc=2 --prompt "say hi" --json 2>&1)"
+    echo "### nhm spawn e09 --cc=2"
+    echo "$out"
+    a="$(jq -r '.result.agents[0].mail_name // empty' <<<"$out")"
+    b="$(jq -r '.result.agents[1].mail_name // empty' <<<"$out")"
+    pa="$(jq -r '.result.agents[0].pane_id // empty' <<<"$out")"
+    pb="$(jq -r '.result.agents[1].pane_id // empty' <<<"$out")"
+    check "E09: nhm spawned two agents" test -n "$a" -a -n "$b"
+    until_state "$pa" '^(idle|done)$' 60 && until_state "$pb" '^(idle|done)$' 60
+    am agents register --project "$dir" --program rehearsal --model none --name GrayHeron --json \
+        >"$SANDBOX_EVIDENCE/e09-sender.json" 2>&1 || true
+    # A works (a slow reply), B is idle; the mail reaches both.
+    herdr agent prompt "$pa" "say hi slow" >/dev/null 2>&1 || true
+    until_state "$pa" '^working$' 10
+    show "mail to both" am mail send --project "$dir" --from GrayHeron --to "$a,$b" -s "e09" -b "wake test" --json >/dev/null
+    w1="$(nhm wake --once --json 2>&1 || true)"
+    echo "### wake, A working"
+    echo "$w1"
+    check "E09: the idle agent is nudged" \
+        jq -e --arg m "$b" '.result.decisions[]? | select(.mail_name == $m and .action == "nudged")' <<<"$w1"
+    check "E09: the working agent is left alone" \
+        jq -e --arg m "$a" '[.result.decisions[]? | select(.mail_name == $m and .action == "nudged")] | length == 0' <<<"$w1"
+    until_state "$pa" '^(idle|done)$' 60
+    w2="$(nhm wake --once --json 2>&1 || true)"
+    echo "### wake, A done"
+    echo "$w2"
+    check "E09: the agent is nudged once its turn is done" \
+        jq -e --arg m "$a" '.result.decisions[]? | select(.mail_name == $m and .action == "nudged")' <<<"$w2"
+    w3="$(nhm wake --once --json 2>&1 || true)"
+    echo "### a later wake"
+    echo "$w3"
+    check "E09: a later pass nudges nobody again" \
+        jq -e '[.result.decisions[]? | select(.action == "nudged")] | length == 0' <<<"$w3"
+}
+
 # TAKEOVER (--takeover; plan-v8 section 5 step 6, run last): the Bash
 # spawns a Claude in a folder outside git; then
 #   1. the dry run passes, imports the agent and keeps its token;
@@ -313,9 +402,7 @@ step_E16() {
 #   3. --exclude names that identity: the takeover passes, lists it as
 #      excluded, and nhm owns the server.
 step_TAKEOVER() {
-    local dir ws mail out rc ghostdir
-    sandbox_mail_start >/dev/null || { echo "FAIL the step's Agent Mail"; return; }
-    sandbox_mock_start >/dev/null || { echo "FAIL the mock API"; return; }
+    local dir ws mail out rc ghostdir mode
     herdr integration install claude >"$SANDBOX_EVIDENCE/herdr-integration.out" 2>&1 || true
     dir="$HOME/plainwork"
     mkdir -p "$dir" && sandbox_claude_prepare "$dir" >/dev/null
@@ -365,7 +452,11 @@ run_step() {
     mkdir -p "$ROOT/steps"
     {
         printf '#!/usr/bin/env bash\nset -uo pipefail\nsource "$SANDBOX_LIB"\n'
-        declare -f check show manual bash_agent "step_$step"
+        declare -f check show manual bash_agent claude_guards nhm_owner state until_state "step_$step"
+        # Agent Mail and the mock come first: the herdr server's panes take
+        # their URLs from its environment.
+        printf 'sandbox_mail_start >/dev/null || echo "FAIL %s: the step'"'"'s Agent Mail"\n' "$step"
+        printf 'sandbox_mock_start >/dev/null || echo "FAIL %s: the mock API"\n' "$step"
         printf 'sandbox_herdr_start || { echo "FAIL %s: the sandbox herdr server"; exit 1; }\n' "$step"
         printf 'show "enroll" nhm admin instance enroll --json || echo "FAIL %s: enroll"\n' "$step"
         printf 'step_%s\nsandbox_herdr_stop\n' "$step"
