@@ -90,7 +90,7 @@ run_update() {
         printf 'RC %s\n' "$?"
     )"
 }
-registered_in() { bash "$REPO_ROOT/scripts/lib/nhm_hooks.sh" registered "$1" "$2"; }
+registered_in() { HOME="$FIX_HOME" bash "$REPO_ROOT/scripts/lib/nhm_hooks.sh" registered "$1" "$2"; }
 
 # ------------------------------------------------------------
 # update_nhm: the pinned release, then enroll
