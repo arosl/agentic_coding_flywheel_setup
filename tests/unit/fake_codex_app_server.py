@@ -12,12 +12,14 @@ Every request is appended to $CODEX_HOME/fake-requests.jsonl.
 FAKE_CODEX_FAIL=1 makes it exit at once; FAKE_CODEX_DROP_WRITE=1 makes
 batchWrite answer ok and record nothing; FAKE_CODEX_HIDE_AFTER_WRITE=1
 makes hooks/list list nothing once a batchWrite came; FAKE_CODEX_HANG=1
-reads its input and never answers, as a stuck app-server would.
+reads its input, never answers and does not end at EOF, as a stuck
+app-server would.
 """
 import hashlib
 import json
 import os
 import sys
+import time
 
 LABELS = {"PreToolUse": "pre_tool_use", "PostToolUse": "post_tool_use", "SessionStart": "session_start",
           "PostCompact": "post_compact", "PreCompact": "pre_compact", "Stop": "stop",
@@ -89,3 +91,8 @@ for line in sys.stdin:
         print(json.dumps({"id": rid, "error": {"code": -32601, "message": "unknown method " + str(method)}}), flush=True)
         continue
     print(json.dumps({"id": rid, "result": result}), flush=True)
+
+# A stuck app-server does not end when its input closes, either: only a
+# signal ends it.
+while os.environ.get("FAKE_CODEX_HANG") == "1":
+    time.sleep(60)
