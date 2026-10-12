@@ -2449,6 +2449,38 @@ run_helper send --name alphafox "Check your Agent Mail inbox."
 check "nhm owning another herdr server leaves this one to the Bash" \
     bash -c '[[ "$1" -eq 0 ]] && grep -q "^herdr agent prompt alphafox" "$2"' _ "$RC" "$STUB_DIR/calls"
 
+# acfs-9hkh.72: wake holds the owner lock from the prompt through the save
+# of the new cursor, so a takeover that exports in between (it takes the
+# lock exclusively) cannot read the old cursor and wake the agent again.
+# wake_save replaces the state file with mv: an mv first on PATH records
+# whether the lock is held when it saves a wake state.
+wake_case wakeowner
+mkdir -p "$NHM_INST"
+printf 'id = "inst-0123456789ab"\nsession = "default"\nsocket_path = "/stub.sock"\nenrolled_at = 2026-10-12T04:00:00Z\n' >"$NHM_INST/instance.toml"
+rm -f "$NHM_INST/owner.toml"
+printf '%s\n' "$NHM_INST/owner.lock" >"$STUB_DIR/owner_lock_probe"
+cat >"$WORK/probebin/mv" <<STUB
+#!/usr/bin/env bash
+case "\${*: -1}" in
+    */state/wake/*.json)
+        if flock -n -x "\$(cat "\$STUB_DIR/owner_lock_probe")" true; then seen=free; else seen=held; fi
+        printf 'wake save %s %s\n' "\$(basename "\${*: -1}")" "\$seen" >>"\$STUB_DIR/owner_lock_calls" ;;
+esac
+exec $(command -v mv) "\$@"
+STUB
+chmod +x "$WORK/probebin/mv"
+deliver AlphaFox 1
+PATH="$WORK/probebin:$PATH" run_wake
+deliver AlphaFox 5
+: >"$STUB_DIR/owner_lock_calls"
+PATH="$WORK/probebin:$PATH" run_wake
+check "wake prompts and saves the new cursor under one hold of the owner lock" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qx "agent prompt held" "$2" && grep -qx "wake save AlphaFox.json held" "$2"' \
+    _ "$RC" "$STUB_DIR/owner_lock_calls"
+check "after the wake, the state holds the new cursor" \
+    bash -c '[[ "$(jq -r .cursor "$1")" == 5 ]]' _ "$(wake_state AlphaFox)"
+rm -f "$WORK/probebin/mv"
+
 echo "owner (acfs-9hkh.27)"
 # A fake nhm in NHM_BIN_DIR stands for an installed nhm.
 mkdir -p "$WORK/nhmbin"

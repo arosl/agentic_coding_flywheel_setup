@@ -1932,13 +1932,25 @@ herdr_agents_wake_one() {
         herdr_agents_note "would wake $target ($mail_name): $reason"
         return 0
     fi
+    # One hold of the owner lock across the prompt and the save
+    # (acfs-9hkh.72): a takeover exports the cursor under the lock, so it
+    # sees the agent either not woken or woken with its new cursor, never
+    # woken with the old one (which would make nhm wake it again).
+    herdr_agents_owned herdr_agents_wake_deliver "$mail_name" "$target" "$file" "$state" "$scan" "$overdue" "$now" "$reason"
+}
+
+# Prompt agent $2 ($1 in Agent Mail) to read its mail and save its state
+# $4 in file $3: on success the new cursor $5, overdue acks $6 and wake
+# time $7; on failure only the wake time, so the next cycle after the gap
+# tries again. $8 says why. Runs under the owner lock (wake_one).
+herdr_agents_wake_deliver() {
+    local mail_name="$1" target="$2" file="$3" state="$4" scan="$5" overdue="$6" now="$7" reason="$8"
     if herdr_agents_prompt_one "$target" "$HERDR_AGENTS_WAKE_PROMPT" "$HERDR_AGENTS_PROMPT_TIMEOUT_MS" false quiet; then
         herdr_agents_note "$(date -u +%Y-%m-%dT%H:%M:%SZ) woke $target ($mail_name): $reason"
         herdr_agents_wake_save "$file" \
             "$(jq -c --argjson c "$scan" --argjson o "$overdue" --argjson t "$now" '.cursor = $c | .overdue = $o | .last_wake = $t' <<<"$state")"
         return 0
     fi
-    # The cursor stays, so the next cycle after the gap tries again.
     herdr_agents_note "$(date -u +%Y-%m-%dT%H:%M:%SZ) could not wake $target ($mail_name): $reason"
     herdr_agents_wake_save "$file" "$(jq -c --argjson t "$now" '.last_wake = $t' <<<"$state")"
     return 1
