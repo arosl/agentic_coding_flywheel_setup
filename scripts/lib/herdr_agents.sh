@@ -502,10 +502,11 @@ herdr_agents_owner_acquire() {
         # A takeover or handback waiting for the exclusive lock keeps
         # owner.lock.intent fresh; the Bash, like nhm, takes no new shared
         # hold while it is, so the switch is never starved. A marker older
-        # than 120 s is a dead switch's.
-        local intent="$dir/owner.lock.intent" deadline=$((SECONDS + HERDR_AGENTS_OWNER_WAIT)) mtime=""
+        # than 120 s is a dead switch's; one from the future (a clock step)
+        # is stale too, as in nhm.
+        local intent="$dir/owner.lock.intent" deadline=$((SECONDS + HERDR_AGENTS_OWNER_WAIT)) mtime="" age=0
         while [[ -f "$intent" && ! -L "$intent" ]] && mtime="$(stat -c %Y -- "$intent" 2>/dev/null)" \
-                && (( $(date +%s) - mtime < 120 )); do
+                && age=$(( $(date +%s) - mtime )) && (( age >= 0 && age < 120 )); do
             if (( SECONDS >= deadline )); then
                 HERDR_AGENTS_OWNER_REASON="an nhm takeover or handback is waiting for nhm's owner lock ($intent) for ${HERDR_AGENTS_OWNER_WAIT}s"
                 return 1

@@ -2447,6 +2447,13 @@ ACFS_AGENTS_OWNER_WAIT=1 run_helper send --name alphafox "Check your Agent Mail 
 rm -f "$NHM_INST/owner.lock.intent"
 check "a stale intent marker (a dead switch's) holds nobody" \
     bash -c '[[ "$1" -eq 0 ]] && grep -q "^herdr agent prompt alphafox" "$2"' _ "$RC" "$STUB_DIR/calls"
+printf '1\n' >"$NHM_INST/owner.lock.intent"
+touch -d '+1 hour' "$NHM_INST/owner.lock.intent"
+: >"$STUB_DIR/calls"
+ACFS_AGENTS_OWNER_WAIT=1 run_helper send --name alphafox "Check your Agent Mail inbox."
+rm -f "$NHM_INST/owner.lock.intent"
+check "an intent marker from the future (a clock step) holds nobody either" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "^herdr agent prompt alphafox" "$2"' _ "$RC" "$STUB_DIR/calls"
 
 # A stale copy of an instance directory never counts, as in nhm.
 owner_case ownerbak none
