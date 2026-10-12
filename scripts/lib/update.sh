@@ -7881,8 +7881,11 @@ update_nhm_maintain_timer() {
         return 0
     fi
     # Without nhm the timer is removed: its unit would fail every 15 s.
-    local verb="install"
-    update_binary_exists nhm || verb="remove"
+    # The helper gets the nhm this lookup found, so both agree on it,
+    # wherever it is installed (acfs-9hkh.84).
+    local verb="install" nhm_path=""
+    nhm_path="$(update_binary_path nhm 2>/dev/null || true)"
+    [[ -n "$nhm_path" ]] || verb="remove"
     if update_is_read_only_mode; then
         log_item "skip" "$desc" "dry-run: would $verb nhm-maintain.timer"
         return 0
@@ -7893,7 +7896,7 @@ update_nhm_maintain_timer() {
         log_item "warn" "$desc" "run as ${target_user:-the target user}: bash $helper $verb"
         return 0
     fi
-    timeout 120 bash "$helper" "$verb" </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1 || rc=$?
+    NHM_MAINTAIN_NHM="$nhm_path" timeout 120 bash "$helper" "$verb" </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1 || rc=$?
     if [[ "$verb" == remove ]]; then
         log_item "skip" "$desc" "nhm is not installed; ACFS's nhm-maintain.timer is removed"
         return 0

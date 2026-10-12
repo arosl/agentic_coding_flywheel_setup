@@ -55,7 +55,17 @@ EOF
 
 nhm_maintain_timer_note() { printf 'nhm_maintain_timer: %s\n' "$*" >&2; }
 
-nhm_maintain_timer_nhm() { printf '%s/nhm\n' "${NHM_BIN_DIR:-$HOME/.local/bin}"; }
+# The nhm binary: NHM_MAINTAIN_NHM when the caller resolved it (acfs
+# update passes the nhm its own lookup found, so an nhm outside
+# ~/.local/bin is the same one for both, acfs-9hkh.84), else where ACFS
+# installs it.
+nhm_maintain_timer_nhm() {
+    if [[ "${NHM_MAINTAIN_NHM:-}" == /* ]]; then
+        printf '%s\n' "$NHM_MAINTAIN_NHM"
+        return 0
+    fi
+    printf '%s/nhm\n' "${NHM_BIN_DIR:-$HOME/.local/bin}"
+}
 
 nhm_maintain_timer_unit_dir() { printf '%s/systemd/user\n' "${XDG_CONFIG_HOME:-$HOME/.config}"; }
 

@@ -265,7 +265,9 @@ run_update() {
         # shellcheck source=/dev/null
         source "$REPO_ROOT/scripts/lib/update.sh" >/dev/null 2>&1
         INSTALLED=" $* "
-        update_binary_exists() { [[ "$INSTALLED" == *" $1 "* ]]; }
+        # NHM_AT puts the installed nhm somewhere other than ~/.local/bin.
+        update_binary_path() { [[ "$INSTALLED" == *" $1 "* ]] && printf '%s\n' "${NHM_AT:-$HOMEDIR/.local/bin/$1}"; }
+        update_binary_exists() { update_binary_path "$1" >/dev/null; }
         update_runtime_acfs_home() { printf '%s\n' "$HOMEDIR/.acfs"; }
         update_target_user() { printf 'ubuntu\n'; }
         update_current_user() { if [[ "${SAME_USER:-1}" == 1 ]]; then printf 'ubuntu\n'; else printf 'root\n'; fi; }
@@ -290,6 +292,15 @@ run_update
 check "nhm gone: the timer is removed" \
     bash -c '[[ "$1" == *"ITEM skip|nhm maintain timer|nhm is not installed; ACFS'"'"'s nhm-maintain.timer is removed"* && ! -e "$2" ]]' \
     _ "$OUT" "$(UNITS)/nhm-maintain.timer"
+# acfs-9hkh.84: an nhm that update finds outside ~/.local/bin is the one
+# the helper checks and the service runs.
+fixture maintain
+mkdir -p "$HOMEDIR/opt/bin"
+mv "$HOMEDIR/.local/bin/nhm" "$HOMEDIR/opt/bin/nhm"
+NHM_AT="$HOMEDIR/opt/bin/nhm" run_update nhm
+check "an nhm outside ~/.local/bin: installs, and the service runs that nhm" \
+    bash -c '[[ "$1" == *"ITEM ok|nhm maintain timer|"*"RC 0"* ]] && grep -qF "ExecStart=$3 maintain --once" "$2"' \
+    _ "$OUT" "$(UNITS)/nhm-maintain.service" "$HOMEDIR/opt/bin/nhm"
 fixture old
 run_update nhm
 check "an nhm without maintain: skip, never a failure" \
