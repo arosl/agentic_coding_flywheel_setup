@@ -7907,6 +7907,7 @@ update_nhm_maintain_timer() {
         4) log_item "skip" "$desc" "no systemd user manager; nhm's board or 'nhm maintain --loop' runs the pass" ;;
         5) log_item "skip" "$desc" "nhm-maintain.timer is masked; left as it is" ;;
         6) log_item "warn" "$desc" "nhm is not enrolled for the default herdr server: nhm admin instance enroll --session default" ;;
+        7) log_item "skip" "$desc" "nhm-maintain units of the user's own are there; left as they are" ;;
         *) log_item "warn" "$desc" "could not enable nhm-maintain.timer; see the update log" ;;
     esac
     return 0
