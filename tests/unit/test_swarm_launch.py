@@ -74,6 +74,39 @@ if name == "curl":
         text = {"name": names[state["next"] - 2], "registration_token": "tok-" + names[state["next"] - 2]}
     print(json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": json.dumps(text)}], "isError": False}}))
     sys.exit(0)
+if name == "nhm":
+    # nhm's --robot-spawn (acfs-9hkh.27), in the shape of
+    # tests/fixtures/nhm/robot_spawn*.json: one agent per tab of a new
+    # workspace labelled with the session, each with its Agent Mail name.
+    session = next(a for a in args if a.startswith("--robot-spawn=")).split("=", 1)[1]
+    assert session == os.environ["LAUNCH_TEST_LABEL"] and "--spawn-dir=" + str(root / "repo") in args
+    assert {"--spawn-no-user", "--spawn-safety", "--spawn-wait", "--robot-format=json"} <= set(args)
+    assert not any(a.startswith("--spawn-prompt") or a == "--spawn-assign-work" for a in args)
+    kinds = []
+    for flag, kind in (("--spawn-cc=", "claude"), ("--spawn-cod=", "codex"), ("--spawn-agy=", "agy")):
+        kinds += [kind] * sum(int(a[len(flag):]) for a in args if a.startswith(flag))
+    head = {"success": True, "session": session, "working_dir": str(root / "repo"),
+            "effective_project_key": str(root / "repo"), "assignments": [],
+            "admission": {"decision": "refuse" if mode == "nhm-refuse" else "admit"}}
+    if "--dry-run" in args:
+        print(json.dumps({**head, "dry_run": True, "agents": [], "would_create": [
+            {"pane": "1.%d" % i, "type": k, "ready": False} for i, k in enumerate(kinds, 1)]}))
+        sys.exit(0)
+    assert (root / "intent.json").exists()
+    names = ["GreenCastle", "AmberFox", "CopperHill"]
+    state["workspaces"].append({"workspace_id": "w9", "label": session})
+    agents = []
+    for i, kind in enumerate(kinds):
+        n = state["next"]
+        state["next"] += 1
+        state["agents"].append({"workspace_id": "w9", "tab_id": "w9:t%d" % n, "pane_id": "w9:p%d" % n,
+            "name": names[i].lower(), "agent": kind, "agent_status": "idle", "cwd": str(root / "repo"),
+            "terminal_id": "term_%d" % n})
+        agents.append({"pane": "1.%d" % (i + 1), "pane_id": "w9:p%d" % n, "agent_mail_name": names[i],
+            "name": names[i].lower(), "type": kind, "ready": not (mode == "nhm-not-ready" and kind == "codex")})
+    save()
+    print(json.dumps({**head, "agents": agents}))
+    sys.exit(0)
 assert name == "herdr"
 if args[:2] == ["status", "server"]:
     print("server:\n  status: " + ("stopped" if mode == "server-down" else "running")); sys.exit(0)
@@ -167,6 +200,9 @@ class LaunchTests(unittest.TestCase):
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"], LAUNCH_TEST_ROOT=str(self.root),
                         ACFS_HOME=str(self.root / "no-acfs-home"), CODEX_HOME=str(codex_home),
                         HERDR_AGENTS_PROC_ROOT=str(proc),
+                        # The owner probe (acfs-9hkh.27) finds no nhm instance
+                        # here, so the launch takes the acfs agents path.
+                        XDG_STATE_HOME=str(self.root / "state"), NHM_BIN_DIR=str(self.root / "no-nhm"),
                         # Only the curl fixture answers; a live Agent Mail is never reached.
                         AGENT_MAIL_URL="http://127.0.0.1:9/acfs-test-stub/mcp/")
         self.env.pop("HERDR_WORKSPACE_ID", None)
@@ -419,6 +455,80 @@ class LaunchTests(unittest.TestCase):
         self.receipt.chmod(0o600)
         self.assertEqual(self.invoke()[0], 2)
         self.assertEqual(self.calls(), [])
+
+
+class NhmLaunchTests(LaunchTests.__base__):
+    """acfs-9hkh.27, ruling b2: where nhm owns the herdr server, upstream's
+    --robot-spawn runs with nhm, and each slot's live herdr identity goes into
+    the same receipt as on the acfs agents path."""
+
+    setUp = LaunchTests.setUp
+    args, request, review_hash, label = LaunchTests.args, LaunchTests.request, LaunchTests.review_hash, LaunchTests.label
+    calls, herdr_calls, invoke = LaunchTests.calls, LaunchTests.herdr_calls, LaunchTests.invoke
+
+    def own(self, owner="nhm"):
+        nhm = self.bin / "nhm"
+        nhm.write_text(FIXTURE)
+        nhm.chmod(0o755)
+        inst = self.root / "state" / "nhm" / "inst-0123456789ab"
+        inst.mkdir(parents=True)
+        socket = str(self.root / "herdr.sock")
+        (inst / "instance.toml").write_text('id = "inst-0123456789ab"\nsocket_path = "%s"\n' % socket)
+        (inst / "owner.toml").write_text('owner = "%s"\ngeneration = 1\n' % owner)
+        self.env.update(NHM_BIN_DIR=str(self.bin), HERDR_SOCKET_PATH=socket)
+
+    def test_preview_runs_nhms_dry_run_and_starts_nothing(self):
+        self.own()
+        code, report = self.invoke()
+        self.assertEqual((code, report["status"], report["backend"]), (0, "preview", "nhm"), report)
+        self.assertNotIn("herdr_plan", report)
+        self.assertEqual(report["nhm_argv"], ["nhm", "--robot-spawn=" + self.label(), "--spawn-dir=" + str(self.repo),
+            "--spawn-cc=1", "--spawn-cod=1", "--spawn-no-user", "--spawn-safety", "--spawn-wait", "--timeout=60s",
+            "--robot-format=json"])
+        self.assertEqual([a[-1] for n, a in self.calls() if n == "nhm"], ["--dry-run"])
+        self.assertEqual(self.herdr_calls("workspace", "create"), [])
+        self.assertFalse(self.receipt.exists())
+
+    def test_launch_records_the_same_targets_as_the_acfs_agents_path(self):
+        self.own()
+        code, report = self.invoke(launch=True)
+        self.assertEqual((code, report["status"], report["backend"]), (0, "ready", "nhm"), report)
+        # nhm starts claude before codex; each slot takes the next agent of its kind.
+        self.assertEqual(report["preparation_targets"], ["1:AmberFox:codex:w9:p3", "2:GreenCastle:claude:w9:p2"])
+        # nhm made the workspace, the agents and their Agent Mail names.
+        self.assertEqual(self.herdr_calls("workspace", "create") + self.herdr_calls("agent", "start"), [])
+        self.assertEqual([n for n, _ in self.calls() if n == "curl"], [])
+        targets = json.loads((self.root / "intent.json.result.json").read_text())["targets"]
+        self.assertEqual([(t["slot"], t["agent_name"], t["agent_type"], t["herdr_name"], t["workspace_label"],
+                           t["pane_id"], t["shell_pid"]) for t in targets],
+                         [(1, "BlueLake", "codex", "amberfox", self.label(), "w9:p3", 1003),
+                          (2, "RedFox", "claude", "greencastle", self.label(), "w9:p2", 1002)])
+        # A repeat only re-verifies the saved panes; nhm never spawns again.
+        code, report = self.invoke(launch=True)
+        self.assertEqual((code, report["status"], report["reconciled_only"]), (0, "ready", True), report)
+        self.assertEqual(len([a for n, a in self.calls() if n == "nhm" and "--dry-run" not in a]), 1)
+
+    def test_agent_not_ready_keeps_the_intent_and_never_relaunches(self):
+        self.own()
+        code, report = self.invoke(mode="nhm-not-ready", launch=True)
+        self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
+        self.assertIn("not ready", report["error"])
+        self.assertTrue(self.receipt.exists())
+        self.assertFalse((self.root / "intent.json.result.json").exists())
+
+    def test_refused_admission_stops_before_any_receipt(self):
+        self.own()
+        code, report = self.invoke(mode="nhm-refuse", launch=True)
+        self.assertEqual((code, report["status"]), (2, "error"), report)
+        self.assertIn("admission", report["error"])
+        self.assertFalse(self.receipt.exists())
+
+    def test_acfs_bash_owner_keeps_the_acfs_agents_path(self):
+        self.own("acfs-bash")
+        code, report = self.invoke()
+        self.assertEqual((code, report["backend"]), (0, "acfs-bash"), report)
+        self.assertIn("herdr_plan", report)
+        self.assertEqual([n for n, _ in self.calls() if n == "nhm"], [])
 
 
 if __name__ == "__main__":

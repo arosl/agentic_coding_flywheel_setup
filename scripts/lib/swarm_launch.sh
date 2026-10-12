@@ -5,6 +5,7 @@ command -v python3 >/dev/null 2>&1 || { echo 'Error: python3 is required' >&2; e
 exec python3 -I - "${BASH_SOURCE[0]}" "$@" <<'PY'
 """Admission-checked herdr startup with a create-only, never-relaunch receipt."""
 import argparse
+from collections import Counter
 from contextlib import contextmanager
 import fcntl
 import hashlib
@@ -211,14 +212,29 @@ def helper_script():
     return helper
 
 
-def preflight(request):
+def backend(request):
+    """Who starts the agents (acfs-9hkh.27, ruling b2): nhm only when
+    herdr_agents.sh owner says nhm (installed, enrolled for this herdr server,
+    and its owner). Anything else, a failed probe included, is acfs-bash."""
+    try:
+        code, data = run([binary("bash"), str(helper_script()), "owner"], request["repo"])
+        lines = data.decode("utf-8").splitlines()
+        return "nhm" if code == 0 and lines and lines[-1] == "nhm" else "acfs-bash"
+    except (LaunchError, OSError, UnicodeError):
+        return "acfs-bash"
+
+
+def preflight(request, owner):
     """Create-only, as ntm's --spawn-safety was: a new workspace for every launch,
     and none may already carry this launch's label."""
     herdr = binary("herdr")
-    # spawn names each agent through Agent Mail's HTTP endpoint, over curl.
-    binary("curl")
-    binary("jq")
-    helper_script()
+    if owner == "nhm":
+        binary("nhm")
+    else:
+        # spawn names each agent through Agent Mail's HTTP endpoint, over curl.
+        binary("curl")
+        binary("jq")
+        helper_script()
     code, data = run([herdr, "status", "server"], request["repo"])
     require(code == 0 and re.search(rb"(?m)^\s*status: running\s*$", data),
             "The herdr server is not running; start herdr, then preview again.")
@@ -241,10 +257,84 @@ def spawn_command(request, workspace_id, agent_type):
             "--kind", agent_type, "--count", "1", "--no-prompt", "--json"]
 
 
-def live_agents(herdr, request, workspace_id):
+def live_agents(herdr, request, workspace_id=None):
     agents = herdr_result(herdr, ["agent", "list"], request["repo"], "Unable to list herdr agents.").get("agents")
     require(isinstance(agents, list) and all(isinstance(a, dict) for a in agents), "Unable to list herdr agents.")
-    return [a for a in agents if a.get("workspace_id") == workspace_id]
+    return [a for a in agents if workspace_id is None or a.get("workspace_id") == workspace_id]
+
+
+def spawn_argv(request):
+    # Upstream's spawn_argv with nhm in ntm's place (ruling b2). The session
+    # is this launch's workspace label, so both paths name one workspace.
+    counts = Counter(a["agent_type"] for a in request["agents"])
+    argv = ["nhm", "--robot-spawn=" + workspace_label(request), "--spawn-dir=" + request["repo"],
+            "--spawn-cc=" + str(counts["claude"]), "--spawn-cod=" + str(counts["codex"])]
+    if counts["agy"]:
+        argv.append("--spawn-agy=" + str(counts["agy"]))
+    return argv + ["--spawn-no-user", "--spawn-safety", "--spawn-wait", "--timeout=60s", "--robot-format=json"]
+
+
+def spawn_response(data, request, dry_run):
+    # Upstream's check of ntm's --robot-spawn result, on nhm's (the caller
+    # fixtures in tests/fixtures/nhm/), with agy among the kinds.
+    result = parse(data)
+    require(isinstance(result, dict) and result.get("success") is True
+            and result.get("session") == workspace_label(request) and result.get("working_dir") == request["repo"]
+            and result.get("effective_project_key", request["repo"]) == request["repo"]
+            and result.get("dry_run", False) is dry_run and not result.get("assignments")
+            and not result.get("error"), "nhm did not confirm the exact requested native-agent launch.")
+    pressure = result.get("admission")
+    require(isinstance(pressure, dict) and pressure.get("decision") == "admit",
+            "nhm resource admission is unavailable or does not admit this launch.")
+    agents = result.get("would_create" if dry_run else "agents")
+    require(isinstance(agents, list) and len(agents) == len(request["agents"])
+            and all(isinstance(a, dict) and a.get("type") in AGENT_TYPES
+                    and isinstance(a.get("pane"), str) and re.fullmatch(r"[0-9]+\.[0-9]+", a["pane"])
+                    and not a.get("error") for a in agents), "nhm returned unexpected agent topology.")
+    require(len({a["pane"] for a in agents}) == len(agents)
+            and Counter(a["type"] for a in agents) == Counter(a["agent_type"] for a in request["agents"]),
+            "nhm returned duplicate panes or the wrong agent mix.")
+    require(dry_run or all(a.get("ready") is True for a in agents),
+            "Some native agents are not ready; inspect the retained workspace, do not relaunch.")
+    return agents
+
+
+def nhm_preview(nhm, request):
+    """Upstream's dry run before any receipt: nhm's admission must admit."""
+    code, data = run([nhm, *spawn_argv(request)[1:], "--dry-run"], request["repo"], timeout=90)
+    require(code == 0, "nhm launch preview failed; no launch receipt was created.")
+    spawn_response(data, request, True)
+
+
+def nhm_launch_agents(herdr, nhm, request):
+    """nhm starts every agent, each with its Agent Mail identity; each slot then
+    gets the same live herdr identity as acfs agents spawn's path records."""
+    label = workspace_label(request)
+    code, data = run([nhm, *spawn_argv(request)[1:]], request["repo"], timeout=60 + 90 * len(request["agents"]))
+    require(code == 0, "nhm launch did not complete; inspect the retained workspace.")
+    agents = spawn_response(data, request, False)
+    require(all(isinstance(a.get("agent_mail_name"), str) and re.fullmatch(MAIL_NAME, a["agent_mail_name"])
+                and isinstance(a.get("name"), str) and re.fullmatch(HERDR_NAME, a["name"])
+                and a["name"] == a["agent_mail_name"].lower()
+                and isinstance(a.get("pane_id"), str) and re.fullmatch(HERDR_ID, a["pane_id"]) for a in agents),
+            "nhm returned an invalid agent identity.")
+    rows = live_agents(herdr, request)
+    by_type = {kind: iter([a for a in agents if a["type"] == kind]) for kind in AGENT_TYPES}
+    targets = []
+    for slot, assigned in enumerate(request["agents"], 1):
+        agent = next(by_type[assigned["agent_type"]])
+        matches = [r for r in rows if r.get("pane_id") == agent["pane_id"]]
+        require(len(matches) == 1 and isinstance(matches[0].get("workspace_id"), str)
+                and re.fullmatch(HERDR_ID, matches[0]["workspace_id"]), "Unable to verify a started native agent.")
+        live = observe(herdr, request, matches[0])
+        require(live["agent_type"] == assigned["agent_type"], "Agent pane type changed during startup.")
+        targets.append({"slot": slot, "agent_name": assigned["agent_name"], "agent_type": assigned["agent_type"],
+                        "agent_mail_name": agent["agent_mail_name"], "herdr_name": agent["name"],
+                        "workspace_id": live["workspace_id"], "workspace_label": label, "tab_id": live["tab_id"],
+                        "pane_id": live["pane_id"], "terminal_id": live["terminal_id"],
+                        "shell_pid": live["shell_pid"], "launched_state": live["state"]})
+    distinct_targets(targets)
+    return targets
 
 
 def runs_agent(process, agent_type):
@@ -793,11 +883,17 @@ def main():
         else:
             require(read_receipt(fd, receipt.name + ".result.json") is None, "Result path already exists; it was not changed.")
             report["admission"] = admission(request)
-            herdr = preflight(request)
+            owner = backend(request)
+            herdr = preflight(request, owner)
             label = workspace_label(request)
-            report["herdr_plan"] = {"workspace_label": label,
-                "workspace_create": ["herdr", "workspace", "create", "--cwd", str(repo), "--label", label, "--no-focus"],
-                "spawn": [spawn_command(request, "<workspace>", a["agent_type"]) for a in request["agents"]]}
+            report["backend"] = owner
+            if owner == "nhm":
+                nhm_preview(binary("nhm"), request)
+                report["nhm_argv"] = spawn_argv(request)
+            else:
+                report["herdr_plan"] = {"workspace_label": label,
+                    "workspace_create": ["herdr", "workspace", "create", "--cwd", str(repo), "--label", label, "--no-focus"],
+                    "spawn": [spawn_command(request, "<workspace>", a["agent_type"]) for a in request["agents"]]}
             if not args.launch:
                 command = ["acfs", "swarm", "launch", "--repo", str(repo), "--session", args.session,
                            "--receipt", str(receipt), "--profile", args.profile, "--workload", args.workload]
@@ -812,7 +908,10 @@ def main():
                 publish(fd, receipt.name, {"schema": SCHEMA, "request": request})
                 report.update(status="unconfirmed", starts_agents=True, reconciled_only=False)
                 try:
-                    targets = launch_agents(herdr, request)
+                    if owner == "nhm":
+                        targets = nhm_launch_agents(herdr, binary("nhm"), request)
+                    else:
+                        targets = launch_agents(herdr, request)
                     publish(fd, receipt.name + ".result.json", {"schema": SCHEMA, "request": request, "targets": targets})
                     report.update(status="ready", targets=targets, agent_mail_registered=True)
                 except (LaunchError, OSError, UnicodeError, KeyboardInterrupt) as exc:
