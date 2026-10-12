@@ -10,8 +10,9 @@
 # ~/.local/bin/nhm-hook, so an nhm update never changes the lines.
 #
 # Registering is idempotent and appends only. Codex keys hook trust by an
-# entry's position in hooks.json, so existing entries are never moved; an
-# nhm entry with an older command is left where it is.
+# entry's position in hooks.json, so existing entries are never moved.
+# ACFS never edits a hook group that holds a handler of the user's; an
+# nhm-hook handler inside such a group stays, and the doctor names it.
 #
 # Codex runs a hook only when config.toml holds its current trusted_hash.
 # `trust codex` records that for ACFS's own nhm-hook entries, through
@@ -28,6 +29,8 @@
 #                                                upgrade an older nhm line)
 #   nhm_hooks.sh unregister claude|codex [FILE] (remove ACFS's exact lines;
 #                                                Codex: trailing ones only)
+#   nhm_hooks.sh stray claude|codex FILE        (list nhm-hook handlers inside
+#                                                the user's own hook groups)
 #   nhm_hooks.sh trust codex [FILE] [--dry-run] (FILE is $CODEX_HOME/hooks.json;
 #                                                default ~/.codex/hooks.json)
 # ============================================================
@@ -51,6 +54,9 @@ Usage:
                                              Remove the lines register wrote
                                              (Codex: only those no other
                                              entry follows)
+  nhm_hooks.sh stray claude|codex FILE       Print "<event> <group> <handler>"
+                                             for each nhm-hook handler inside
+                                             your own hook groups
   nhm_hooks.sh trust codex [FILE] [--dry-run]
                                              Record Codex's trust for the
                                              nhm-hook entries of FILE
@@ -83,38 +89,42 @@ nhm_hooks_lines() {
     esac
 }
 
-# The jq definitions that register and registered share. ACFS's line for
-# an event is exact: its handler is {type, command, timeout} as register
-# writes it, in a group with the line's matcher and no other key; that is
-# what trust (and the doctor) count. An older nhm line is one whose whole
-# command is nhm-hook (any path, an older timeout or matcher) with the verb
-# as its only argument. A user's command that merely contains nhm-hook
-# (`myscript; nhm-hook sessionstart`) is neither.
+# The jq definitions that register, registered, stray and unregister
+# share. The rule (acfs-9hkh.53): ACFS never edits a group that holds a
+# handler of the user's.
+#
+# - ACFS's line for an event is exact: a group that is exactly what
+#   register writes, {matcher?, hooks: [{type, command, timeout}]}, and
+#   nothing else. That is what registered, trust and the doctor count.
+# - An nhm handler is one whose command is one of ACFS's own install
+#   paths for the verb ($known: ~/.local/bin/nhm-hook and
+#   $NHM_BIN_DIR/nhm-hook, the only paths ACFS ever wrote), with any
+#   timeout. A path the user chose is the user's.
+# - A pure group is ACFS's own: the line's matcher, no other key, and
+#   only nhm handlers. register may rewrite it; unregister may remove it.
+# - A stray is an nhm handler inside any other group: the user's group.
+#   It stays as it is; the doctor names it.
 nhm_hooks_jq_defs() {
     cat <<'JQ'
-def nhmish: type == "object"
-  and ((.command? // "") | type) == "string"
-  and ((.command? // "") | test("^[[:space:]]*([^[:space:];&|#<>`$()]*/)?nhm-hook[[:space:]]+" + $verb + "[[:space:]]*$"));
+def nhmish: type == "object" and ((.type // "command") == "command")
+  and ((.command? // null) | type) == "string" and (.command as $c | $known | index($c) != null);
 def handler: {type: "command", command: $cmd, timeout: $timeout};
 def entry: (if $matcher == "" then {} else {matcher: $matcher} end) + {hooks: [handler]};
 def group_fits: type == "object" and ((.matcher // "") == $matcher) and ((keys - ["matcher", "hooks"]) | length) == 0;
-def exact_at: [(.hooks?[$event]? // []) | arrays | to_entries[] | .key as $gi | .value
-    | select(group_fits) | (.hooks // []) | arrays | to_entries[] | select(.value == handler) | [$gi, .key]];
-def nhmish_at: [(.hooks?[$event]? // []) | arrays | to_entries[] | .key as $gi | .value
-    | select(type == "object" and (.hooks | type) == "array") | .hooks | to_entries[] | select(.value | nhmish) | [$gi, .key]];
+def pure: group_fits and (.hooks | type) == "array" and (.hooks | length) > 0 and all(.hooks[]; nhmish);
+def groups: (.hooks?[$event]? // []) | arrays | to_entries[];
+def exact_at: [groups | select(.value == entry) | .key];
+def older_at: [groups | select(.value != entry and (.value | pure)) | .key];
+def stray_at: [groups | .key as $gi | .value | select(type == "object" and (.hooks | type) == "array" and (pure | not))
+    | .hooks | to_entries[] | select(.value | nhmish) | [$gi, .key]];
 JQ
 }
 
 # The jq program that makes ACFS's line for one event exact. It keeps an
-# exact line as it is. It upgrades an older nhm line in place, so Codex's
-# position-keyed trust then trusts the upgraded line, when its group fits.
-# When the older line is alone in a group of the user's (another matcher,
-# or keys of the user's own), only its handler is upgraded: the group
-# keeps its matcher and keys, so it does not count as ACFS's line, and the
-# exact line is appended too. nhm-hook drops a repeated event, so a
-# second run is harmless. An older line that shares a group with the
-# user's handlers under another matcher stays, and the exact line is
-# appended. Otherwise it appends.
+# exact line as it is. It rewrites a pure group in place (an older
+# timeout, or the other known path), so Codex's position-keyed trust then
+# trusts the same position. Otherwise it appends the exact line; a stray
+# nhm handler inside the user's group stays untouched.
 nhm_hooks_register_filter() {
     nhm_hooks_jq_defs
     cat <<'JQ'
@@ -122,15 +132,17 @@ if type != "object" then error("the file's top level is not a JSON object")
 elif has("hooks") and (.hooks | type) != "object" then error("\"hooks\" is not a JSON object")
 elif (.hooks? // {} | has($event)) and (.hooks[$event] | type) != "array" then error("\"hooks.\($event)\" is not an array")
 elif (exact_at | length) > 0 then .
-elif (nhmish_at | length) > 0 then
-  nhmish_at[0] as [$gi, $hi]
-  | if (.hooks[$event][$gi] | group_fits) then .hooks[$event][$gi].hooks[$hi] = handler
-    elif (.hooks[$event][$gi].hooks | length) == 1 then .hooks[$event][$gi].hooks[$hi] = handler | .hooks[$event] += [entry]
-    else .hooks[$event] += [entry]
-    end
+elif (older_at | length) > 0 then .hooks[$event][older_at[0]] = entry
 else .hooks[$event] = ((.hooks[$event] // []) + [entry])
 end
 JQ
+}
+
+# The JSON list of ACFS's own command lines for a verb: the paths an ACFS
+# release ever wrote.
+nhm_hooks_known() {
+    local verb="$1"
+    jq -cn --arg a "$HOME/.local/bin/nhm-hook $verb" --arg b "$(nhm_hooks_command "$verb")" '[$a, $b] | unique'
 }
 
 nhm_hooks_command() {
@@ -194,8 +206,8 @@ nhm_hooks_register() {
         [[ -n "$event" ]] || continue
         cmd="$(nhm_hooks_command "$verb")"
         # jq's stderr is kept apart, so nothing it prints can reach the file.
-        if ! updated="$(jq --arg event "$event" --arg matcher "$matcher" --arg verb "$verb" --arg cmd "$cmd" \
-                --argjson timeout "$NHM_HOOKS_TIMEOUT_SECONDS" \
+        if ! updated="$(jq --arg event "$event" --arg matcher "$matcher" --arg cmd "$cmd" \
+                --argjson timeout "$NHM_HOOKS_TIMEOUT_SECONDS" --argjson known "$(nhm_hooks_known "$verb")" \
                 "$(nhm_hooks_register_filter)" <<<"$updated" 2>/dev/null)"; then
             nhm_hooks_note "left $file unchanged: it is not a hooks file jq can extend (see: jq . $file)"
             return 1
@@ -215,8 +227,9 @@ nhm_hooks_register() {
 }
 
 # registered: exit 0 when every line of the kind is exact (as trust and
-# the doctor count it); 3 when a line exists only as an older nhm line,
-# which `register` upgrades in place; 1 when a line is missing.
+# the doctor count it); 3 when a line exists only as a pure group that
+# `register` rewrites in place; 1 when a line is missing (register
+# appends it; a stray in the user's group does not count).
 nhm_hooks_registered() {
     local kind="${1:-}" file="${2:-}" event="" matcher="" verb="" state="" upgrade=false
 
@@ -225,10 +238,10 @@ nhm_hooks_registered() {
     nhm_hooks_lines "$kind" >/dev/null 2>&1 || return 2
     while IFS='|' read -r event verb matcher; do
         [[ -n "$event" ]] || continue
-        state="$(jq -r --arg event "$event" --arg matcher "$matcher" --arg verb "$verb" \
+        state="$(jq -r --arg event "$event" --arg matcher "$matcher" \
             --arg cmd "$(nhm_hooks_command "$verb")" --argjson timeout "$NHM_HOOKS_TIMEOUT_SECONDS" \
-            "$(nhm_hooks_jq_defs)"'
-            if (exact_at | length) > 0 then "exact" elif (nhmish_at | length) > 0 then "older" else "missing" end
+            --argjson known "$(nhm_hooks_known "$verb")" "$(nhm_hooks_jq_defs)"'
+            if (exact_at | length) > 0 then "exact" elif (older_at | length) > 0 then "older" else "missing" end
         ' "$file" 2>/dev/null)" || return 1
         case "$state" in
             exact) ;;
@@ -240,27 +253,21 @@ nhm_hooks_registered() {
     return 0
 }
 
-# The jq program that removes ACFS's own handler for one event: exactly
-# the handler `register` writes, in whatever group it is (register may
-# have upgraded it inside a group of the user's), and nothing else (a
-# handler the user edited, an older nhm command, or a user line that
-# mentions nhm-hook stays). A group the removal leaves empty goes; the
-# group's other handlers and keys stay. For Codex it removes only
-# trailing groups that hold nothing but ACFS's handler, since Codex keys
-# trust by position and a change before another entry would move or
-# untrust it. With $count it prints how many of ACFS's handlers the
-# event still has instead.
+# The jq program that removes ACFS's own groups for one event: exact
+# lines and pure groups (nhm_hooks_jq_defs), nothing else. A group that
+# holds a handler of the user's is never edited, so a stray nhm handler in
+# it stays. For Codex it removes only trailing groups, since Codex keys
+# trust by position and removing one would move every entry after it.
+# With $count it prints "<ACFS groups left> <strays>" instead.
 nhm_hooks_unregister_filter() {
+    nhm_hooks_jq_defs
     cat <<'JQ'
-def handler: {type: "command", command: $cmd, timeout: $timeout};
-def has_ours: type == "object" and (.hooks | type) == "array" and any(.hooks[]; . == handler);
-def only_ours: has_ours and all(.hooks[]; . == handler);
-def strip: if has_ours then (.hooks |= map(select(. != handler))) | select((.hooks | length) > 0) else . end;
-def drop_trailing: if length > 0 and (.[-1] | only_ours) then .[:-1] | drop_trailing else . end;
+def ours: . == entry or pure;
+def drop_trailing: if length > 0 and (.[-1] | ours) then .[:-1] | drop_trailing else . end;
 if type != "object" or ((.hooks? // {}) | type) != "object" or ((.hooks? // {})[$event] | type) != "array"
-then (if $count then 0 else . end)
-elif $count then [.hooks[$event][] | select(has_ours) | .hooks[] | select(. == handler)] | length
-else .hooks[$event] |= (if $codex then drop_trailing else map(strip) end)
+then (if $count then "0 0" else . end)
+elif $count then "\([.hooks[$event][] | select(ours)] | length) \(stray_at | length)"
+else .hooks[$event] |= (if $codex then drop_trailing else map(select(ours | not)) end)
   | if (.hooks[$event] | length) == 0 then del(.hooks[$event]) else . end
 end
 JQ
@@ -270,7 +277,8 @@ JQ
 # nhm-hook is gone and the lines would point at nothing in every turn.
 nhm_hooks_unregister() {
     local kind="${1:-}" file="${2:-}"
-    local target="" current="" updated="" event="" matcher="" verb="" cmd="" left=0 n=0 is_codex=false
+    local target="" current="" updated="" event="" matcher="" verb="" cmd="" known="" counts=""
+    local left=0 strays=0 n=0 s=0 is_codex=false
 
     case "$kind" in
         claude) [[ -n "$file" ]] || file="$HOME/.claude/settings.json" ;;
@@ -291,16 +299,21 @@ nhm_hooks_unregister() {
     while IFS='|' read -r event verb matcher; do
         [[ -n "$event" ]] || continue
         cmd="$(nhm_hooks_command "$verb")"
+        known="$(nhm_hooks_known "$verb")"
         if ! updated="$(jq --arg event "$event" --arg matcher "$matcher" --arg cmd "$cmd" \
-                --argjson timeout "$NHM_HOOKS_TIMEOUT_SECONDS" --argjson codex "$is_codex" --argjson count false \
+                --argjson timeout "$NHM_HOOKS_TIMEOUT_SECONDS" --argjson known "$known" \
+                --argjson codex "$is_codex" --argjson count false \
                 "$(nhm_hooks_unregister_filter)" <<<"$updated" 2>/dev/null)"; then
             nhm_hooks_note "left $file unchanged: jq cannot read it (see: jq . $file)"
             return 1
         fi
-        n="$(jq --arg event "$event" --arg matcher "$matcher" --arg cmd "$cmd" \
-                --argjson timeout "$NHM_HOOKS_TIMEOUT_SECONDS" --argjson codex "$is_codex" --argjson count true \
-                "$(nhm_hooks_unregister_filter)" <<<"$updated" 2>/dev/null)" || n=0
-        left=$((left + n))
+        counts="$(jq -r --arg event "$event" --arg matcher "$matcher" --arg cmd "$cmd" \
+                --argjson timeout "$NHM_HOOKS_TIMEOUT_SECONDS" --argjson known "$known" \
+                --argjson codex "$is_codex" --argjson count true \
+                "$(nhm_hooks_unregister_filter)" <<<"$updated" 2>/dev/null)" || counts="0 0"
+        read -r n s <<<"$counts"
+        left=$((left + ${n:-0}))
+        strays=$((strays + ${s:-0}))
     done < <(nhm_hooks_lines "$kind")
 
     if [[ "$(jq -c . <<<"$current")" != "$(jq -c . <<<"$updated")" ]]; then
@@ -310,7 +323,30 @@ nhm_hooks_unregister() {
     if (( left > 0 )); then
         nhm_hooks_note "left $left nhm hook lines in $file: other entries follow them, and Codex keys trust by position, so removing them would untrust those entries"
     fi
+    if (( strays > 0 )); then
+        nhm_hooks_note "left $strays nhm-hook handler(s) inside your own hook groups in $file: ACFS never edits your groups; remove them by hand"
+    fi
     return 0
+}
+
+# stray claude|codex FILE: print "<event> <group> <handler>" for each nhm
+# handler inside a group of the user's (nhm_hooks_jq_defs). ACFS never
+# edits such a group; the doctor names each one, to be removed by hand.
+nhm_hooks_stray() {
+    local kind="${1:-}" file="${2:-}" event="" matcher="" verb=""
+
+    nhm_hooks_lines "$kind" >/dev/null 2>&1 || { nhm_hooks_usage >&2; return 2; }
+    [[ -f "$file" ]] || return 0
+    command -v jq >/dev/null 2>&1 || { nhm_hooks_note "jq not found"; return 1; }
+    while IFS='|' read -r event verb matcher; do
+        [[ -n "$event" ]] || continue
+        jq -r --arg event "$event" --arg matcher "$matcher" --arg cmd "$(nhm_hooks_command "$verb")" \
+            --argjson timeout "$NHM_HOOKS_TIMEOUT_SECONDS" --argjson known "$(nhm_hooks_known "$verb")" \
+            "$(nhm_hooks_jq_defs)"'
+            if (.hooks? | type) == "object" and (.hooks[$event] | type) == "array"
+            then stray_at[] | "\($event) \(.[0]) \(.[1])" else empty end
+        ' "$file" 2>/dev/null || { nhm_hooks_note "cannot read $file"; return 1; }
+    done < <(nhm_hooks_lines "$kind")
 }
 
 # The app-server driver of `trust codex`. Arguments: the hooks file, the
@@ -347,14 +383,14 @@ def ours():
         if want["event"] not in LABELS or not isinstance(groups, list):
             continue
         handler = {"type": "command", "command": want["command"], "timeout": want["timeout"]}
+        entry = {"hooks": [handler]}
+        if want["matcher"]:
+            entry["matcher"] = want["matcher"]
+        # Only a group that is exactly what register writes: a group that
+        # holds a handler of the user's is the user's (acfs-9hkh.53).
         for gi, group in enumerate(groups):
-            if not isinstance(group, dict) or group.get("matcher", "") != want["matcher"]:
-                continue
-            if set(group) - {"matcher", "hooks"}:
-                continue
-            for hi, h in enumerate(group.get("hooks") or []):
-                if h == handler:
-                    found.add((LABELS[want["event"]], gi, hi))
+            if group == entry:
+                found.add((LABELS[want["event"]], gi, 0))
     return found
 
 
@@ -526,6 +562,7 @@ nhm_hooks_main() {
         register) nhm_hooks_register "$@" ;;
         registered) nhm_hooks_registered "$@" ;;
         unregister) nhm_hooks_unregister "$@" ;;
+        stray) nhm_hooks_stray "$@" ;;
         trust) nhm_hooks_trust "$@" ;;
         -h|--help|help) nhm_hooks_usage ;;
         *) nhm_hooks_usage >&2; return 2 ;;

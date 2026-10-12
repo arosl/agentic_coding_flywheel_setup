@@ -31,6 +31,8 @@ check() {
     if "$@"; then pass "$description"; else fail "$description"; fi
 }
 jq_true() { jq -e "$1" "$2" >/dev/null; }
+# jq_ok [jq options] FILTER FILE: jq_true with options.
+jq_ok() { jq -e "$@" >/dev/null; }
 
 # ------------------------------------------------------------
 # Claude Code: a settings file with other hooks and settings
@@ -77,21 +79,31 @@ check "codex: the existing SessionStart entry stays first" \
     jq_true '.hooks.SessionStart[0].hooks[0].command == "herdr-codex-hook" and (.hooks.SessionStart | length) == 2' "$WORK/hooks.json"
 check "codex: PostCompact runs nhm-hook sessionstart" \
     jq_true '.hooks.PostCompact[0].hooks[0].command | endswith("/nhm-hook sessionstart")' "$WORK/hooks.json"
-# An older nhm line (another path or timeout) is upgraded in place to the
-# exact line, so trust (position-keyed) and the doctor see what register
-# wrote. The user's handlers stay as they are.
-printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"herdr-x"}]},{"hooks":[{"type":"command","command":"/old/nhm-hook sessionstart"}]}]}}' >"$WORK/old.json"
+# An older ACFS line (ACFS's own path, an older timeout) in a pure group
+# (ACFS's matcher, no other key, only nhm handlers) is rewritten in place
+# to the exact line, so trust (position-keyed) and the doctor see what
+# register wrote. acfs-9hkh.53: ACFS never edits a group that holds a
+# handler of the user's, and an nhm-hook path ACFS never wrote is the
+# user's.
+jq -n --arg c "$HOME/.local/bin/nhm-hook sessionstart" \
+    '{hooks: {SessionStart: [{hooks: [{type: "command", command: "herdr-x"}]}, {hooks: [{type: "command", command: $c, timeout: 10}]}]}}' >"$WORK/old.json"
 check "registered: a line that is missing (no PostToolUse) is exit 1, not an upgrade" \
     bash -c 'bash "$1" registered claude "$2"; test $? -eq 1' _ "$HOOKS" "$WORK/old.json"
 bash "$HOOKS" register claude "$WORK/old.json" 2>/dev/null
-check "an older nhm line alone in its group is upgraded in place" \
+check "an older ACFS line in a pure group is rewritten in place" \
     jq_true '(.hooks.SessionStart | length) == 2 and .hooks.SessionStart[0].hooks[0].command == "herdr-x"
         and .hooks.SessionStart[1] == {hooks: [{type: "command", command: (env.HOME + "/.local/bin/nhm-hook sessionstart"), timeout: 5}]}' "$WORK/old.json"
-printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"user-a"},{"type":"command","command":"/old/nhm-hook sessionstart","timeout":10}]}]}}' >"$WORK/old2.json"
+jq -n --arg c "$HOME/.local/bin/nhm-hook sessionstart" \
+    '{hooks: {SessionStart: [{hooks: [{type: "command", command: "user-a"}, {type: "command", command: $c, timeout: 10}]}]}}' >"$WORK/old2.json"
+cp "$WORK/old2.json" "$WORK/old2.orig"
 bash "$HOOKS" register claude "$WORK/old2.json" 2>/dev/null
-check "an older nhm line in a fitting group is replaced where it is, beside the user's handler" \
-    jq_true '(.hooks.SessionStart | length) == 1 and .hooks.SessionStart[0].hooks[0].command == "user-a"
-        and .hooks.SessionStart[0].hooks[1] == {type: "command", command: (env.HOME + "/.local/bin/nhm-hook sessionstart"), timeout: 5}' "$WORK/old2.json"
+check "an ACFS handler beside the user's handler stays untouched, and the exact line is appended" \
+    jq_ok --slurpfile o "$WORK/old2.orig" '(.hooks.SessionStart | length) == 2 and .hooks.SessionStart[0] == $o[0].hooks.SessionStart[0]
+        and .hooks.SessionStart[1] == {hooks: [{type: "command", command: (env.HOME + "/.local/bin/nhm-hook sessionstart"), timeout: 5}]}' "$WORK/old2.json"
+printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/opt/x/nhm-hook sessionstart"}]}]}}' >"$WORK/userpath.json"
+bash "$HOOKS" register claude "$WORK/userpath.json" 2>/dev/null
+check "an nhm-hook at a path the user chose is the user's: kept as written, the exact line appended" \
+    jq_true '(.hooks.SessionStart | length) == 2 and .hooks.SessionStart[0].hooks[0] == {type: "command", command: "/opt/x/nhm-hook sessionstart"}' "$WORK/userpath.json"
 printf '%s\n' '{"hooks":{"SessionStart":[{"matcher":"compact","hooks":[{"type":"command","command":"user-a"},{"type":"command","command":"/old/nhm-hook sessionstart"}]}]}}' >"$WORK/old3.json"
 bash "$HOOKS" register claude "$WORK/old3.json" 2>/dev/null
 check "an older nhm line that shares another matcher's group stays, and the exact line is appended" \
@@ -167,26 +179,33 @@ check "trust: a write Codex does not keep fails" bash -c 'rm -f "$1/fake-trust.j
 check "trust: an app-server that dies fails" bash -c '! FAKE_CODEX_FAIL=1 PATH="$2:$PATH" bash "$3" trust codex "$1/hooks.json" 2>/dev/null' \
     _ "$CODEX_DIR" "$FAKEBIN" "$HOOKS"
 check "trust: no codex fails" bash -c '! PATH="/usr/bin:/bin" bash "$2" trust codex "$1/hooks.json" 2>/dev/null' _ "$CODEX_DIR" "$HOOKS"
-# Review of 77cfc7c2/be761fae: older-path nhm lines are not ACFS's exact
-# lines, so trust finds none; register upgrades them in place, and trust
-# then trusts those same positions.
+# Review of 77cfc7c2/be761fae: older ACFS lines are not ACFS's exact lines,
+# so trust finds none; register rewrites the pure groups in place, and
+# trust then trusts those same positions. acfs-9hkh.53: PostToolUse's
+# first group has the user's matcher "x", so it is the user's: it stays
+# as it is, the exact line is appended, and `stray` names it.
 OLDC="$WORK/codexold"
 mkdir -p "$OLDC"
-printf '%s\n' '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo user"}]}],"PostToolUse":[{"matcher":"x","hooks":[{"type":"command","command":"/old/nhm-hook posttooluse"}]}],"SessionStart":[{"hooks":[{"type":"command","command":"/old/nhm-hook sessionstart"}]}],"PostCompact":[{"hooks":[{"type":"command","command":"/old/nhm-hook sessionstart"}]}]}}' >"$OLDC/hooks.json"
+jq -n --arg p "$HOME/.local/bin/nhm-hook posttooluse" --arg s "$HOME/.local/bin/nhm-hook sessionstart" \
+    --arg m '^mcp__.+__(register_agent|create_agent_identity|macro_start_session)$' \
+    '{hooks: {Stop: [{hooks: [{type: "command", command: "echo user"}]}],
+              PostToolUse: [{matcher: "x", hooks: [{type: "command", command: $p}]}, {matcher: $m, hooks: [{type: "command", command: $p, timeout: 10}]}],
+              SessionStart: [{hooks: [{type: "command", command: $s, timeout: 10}]}],
+              PostCompact: [{hooks: [{type: "command", command: $s}]}]}}' >"$OLDC/hooks.json"
+cp "$OLDC/hooks.json" "$OLDC/hooks.orig"
 OUT="$(PATH="$FAKEBIN:$PATH" bash "$HOOKS" trust codex "$OLDC/hooks.json" --dry-run 2>&1)"
-check "older-path lines: trust finds no line ACFS wrote" bash -c '[[ "$1" == *"has no nhm-hook entries"* ]]' _ "$OUT"
-check "older-path lines: registered says upgrade needed" bash -c 'bash "$1" registered codex "$2"; test $? -eq 3' _ "$HOOKS" "$OLDC/hooks.json"
+check "older lines: trust finds no line ACFS wrote" bash -c '[[ "$1" == *"has no nhm-hook entries"* ]]' _ "$OUT"
+check "older lines: registered says upgrade needed" bash -c 'bash "$1" registered codex "$2"; test $? -eq 3' _ "$HOOKS" "$OLDC/hooks.json"
 bash "$HOOKS" register codex "$OLDC/hooks.json" 2>/dev/null
-# PostToolUse's older line is in a group with the user's matcher "x": only
-# its handler is upgraded, the matcher stays (acfs-9hkh.53), and ACFS's
-# exact line is appended after it.
-check "older-path lines: register upgrades each in place, the user's Stop line untouched" \
-    jq_true '(.hooks.PostToolUse | length) == 2 and (.hooks.SessionStart | length) == 1 and (.hooks.PostCompact | length) == 1
-        and .hooks.Stop == [{hooks: [{type: "command", command: "echo user"}]}]
-        and .hooks.PostToolUse[0] == {matcher: "x", hooks: [{type: "command", command: (env.HOME + "/.local/bin/nhm-hook posttooluse"), timeout: 5}]}
-        and .hooks.SessionStart[0].hooks[0].command == (env.HOME + "/.local/bin/nhm-hook sessionstart")' "$OLDC/hooks.json"
+check "older lines: register rewrites the pure groups in place; the user's groups stay as they were" \
+    jq_ok --slurpfile o "$OLDC/hooks.orig" '(.hooks.PostToolUse | length) == 2 and (.hooks.SessionStart | length) == 1 and (.hooks.PostCompact | length) == 1
+        and .hooks.Stop == $o[0].hooks.Stop and .hooks.PostToolUse[0] == $o[0].hooks.PostToolUse[0]
+        and .hooks.PostToolUse[1].hooks == [{type: "command", command: (env.HOME + "/.local/bin/nhm-hook posttooluse"), timeout: 5}]
+        and .hooks.SessionStart[0] == {hooks: [{type: "command", command: (env.HOME + "/.local/bin/nhm-hook sessionstart"), timeout: 5}]}' "$OLDC/hooks.json"
+check "stray: names ACFS's handler inside the user's group" \
+    bash -c '[[ "$(bash "$1" stray codex "$2")" == "PostToolUse 0 0" ]]' _ "$HOOKS" "$OLDC/hooks.json"
 OUT="$(PATH="$FAKEBIN:$PATH" bash "$HOOKS" trust codex "$OLDC/hooks.json" 2>&1)"
-check "older-path lines: after register, trust trusts the 2 upgraded positions and the appended PostToolUse line" \
+check "older lines: after register, trust trusts the 3 rewritten positions, never the user's group" \
     bash -c '[[ "$1" == *"trusts the 3 nhm-hook entries"* ]] && jq -e "(keys | length) == 3 and all(keys[]; test(\":(post_tool_use:1|session_start:0|post_compact:0):0$\"))" "$2/fake-trust.json" >/dev/null' \
     _ "$OUT" "$OLDC"
 # Review of b89811bd: ACFS trusts only what it wrote, the verify step needs
@@ -280,38 +299,51 @@ check "unregister: malformed JSON fails and stays unchanged" \
     bash -c '! bash "$1" unregister claude "$2" 2>/dev/null && [[ "$(cat "$2")" == "{not json" ]]' _ "$HOOKS" "$UNREG/broken.json"
 check "unregister: unknown kind is a usage error" bash -c 'bash "$1" unregister gemini 2>/dev/null; test $? -eq 2' _ "$HOOKS"
 
-# acfs-9hkh.53: an older nhm line alone in a group of the user's (another
-# matcher, a key of the user's own). register upgrades only the handler
-# and keeps the group; ACFS's exact line is appended. unregister then
-# removes ACFS's handler from both groups and says so.
+# acfs-9hkh.53: ACFS never edits a group that holds anything of the
+# user's (another matcher, other keys, other handlers). ACFS's handler
+# alone in a group with the user's matcher and key stays as it is; the
+# exact line is appended; unregister removes only the exact line and
+# reports the stray.
 SESSION_CMD="$HOME/.local/bin/nhm-hook sessionstart"
-printf '%s\n' '{"hooks":{"SessionStart":[{"matcher":"startup","note":"mine","hooks":[{"type":"command","command":"/old/nhm-hook sessionstart"}]}]}}' >"$UNREG/lone.json"
+jq -n --arg c "$SESSION_CMD" '{hooks: {SessionStart: [{matcher: "startup", note: "mine", hooks: [{type: "command", command: $c}]}]}}' >"$UNREG/lone.json"
+cp "$UNREG/lone.json" "$UNREG/lone.orig"
 bash "$HOOKS" register claude "$UNREG/lone.json" 2>/dev/null
-check "register: a lone older line in the user's group keeps its matcher and keys; only the handler is upgraded" \
-    jq_true '.hooks.SessionStart[0] == {matcher: "startup", note: "mine", hooks: [{type: "command", command: (env.HOME + "/.local/bin/nhm-hook sessionstart"), timeout: 5}]}' "$UNREG/lone.json"
-check "register: ACFS's exact line is appended after the user's group" \
-    jq_true '(.hooks.SessionStart | length) == 2 and .hooks.SessionStart[1] == {hooks: [{type: "command", command: (env.HOME + "/.local/bin/nhm-hook sessionstart"), timeout: 5}]}' "$UNREG/lone.json"
+check "register: ACFS's handler in the user's group stays as it is; the exact line is appended" \
+    jq_ok --slurpfile o "$UNREG/lone.orig" '.hooks.SessionStart[0] == $o[0].hooks.SessionStart[0] and (.hooks.SessionStart | length) == 2
+        and .hooks.SessionStart[1] == {hooks: [{type: "command", command: (env.HOME + "/.local/bin/nhm-hook sessionstart"), timeout: 5}]}' "$UNREG/lone.json"
 check "registered: every line exact" bash "$HOOKS" registered claude "$UNREG/lone.json"
+check "stray: names the handler in the user's group" \
+    bash -c '[[ "$(bash "$1" stray claude "$2")" == "SessionStart 0 0" ]]' _ "$HOOKS" "$UNREG/lone.json"
 cp "$UNREG/lone.json" "$UNREG/lone.once"
 bash "$HOOKS" register claude "$UNREG/lone.json" 2>/dev/null
 check "register: a second run changes nothing" cmp -s "$UNREG/lone.json" "$UNREG/lone.once"
 OUT="$(bash "$HOOKS" unregister claude "$UNREG/lone.json" 2>&1)"
-check "unregister claude: ACFS's handler goes from the user's group too" \
-    jq_true '[.. | objects | .command? // empty | select(test("nhm-hook"))] | length == 0' "$UNREG/lone.json"
-check "unregister claude: it says it removed the lines and leaves none" \
-    bash -c '[[ "$1" == *"removed the nhm hook lines"* && "$1" != *"left "* ]]' _ "$OUT"
-# The user's other handler and keys stay when ACFS's handler leaves their group.
-jq --arg c "$SESSION_CMD" '{hooks: {SessionStart: [{matcher: "startup", note: "mine", hooks: [{type: "command", command: "user-a"}, {type: "command", command: $c, timeout: 5}]}]}}' \
-    -n >"$UNREG/shared.json"
+check "unregister claude: the exact line goes; the user's group stays as it was" \
+    cmp -s <(jq -S . "$UNREG/lone.json") <(jq -S . "$UNREG/lone.orig")
+check "unregister claude: it says what it removed and names the stray it left" \
+    bash -c '[[ "$1" == *"removed the nhm hook lines"* && "$1" == *"left 1 nhm-hook handler(s) inside your own hook groups"* ]]' _ "$OUT"
+# A group with the user's handler beside ACFS's: never edited.
+jq -n --arg c "$SESSION_CMD" '{hooks: {SessionStart: [{hooks: [{type: "command", command: "user-a"}, {type: "command", command: $c, timeout: 5}]}]}}' >"$UNREG/shared.json"
+cp "$UNREG/shared.json" "$UNREG/shared.orig"
 bash "$HOOKS" unregister claude "$UNREG/shared.json" 2>/dev/null
-check "unregister claude: the user's handler, matcher and keys stay" \
-    jq_true '.hooks.SessionStart == [{matcher: "startup", note: "mine", hooks: [{type: "command", command: "user-a"}]}]' "$UNREG/shared.json"
-# Codex: ACFS's handler in a group another entry follows stays, and is reported.
-jq --arg c "$SESSION_CMD" '{hooks: {SessionStart: [{matcher: "startup", hooks: [{type: "command", command: $c, timeout: 5}]}, {hooks: [{type: "command", command: "user-after"}]}]}}' \
-    -n >"$UNREG/codex-user.json"
+check "unregister claude: a group with the user's handler stays whole" cmp -s "$UNREG/shared.json" "$UNREG/shared.orig"
+# SageOak's probe (review of 1946e6d0): register then unregister leaves
+# the user's group exactly as it was, for Claude and Codex.
+for kind in claude codex; do
+    printf '%s\n' '{"hooks":{"SessionStart":[{"matcher":"startup","x":1,"hooks":[{"command":"nhm-hook sessionstart"}]}]}}' >"$UNREG/probe-$kind.json"
+    cp "$UNREG/probe-$kind.json" "$UNREG/probe-$kind.orig"
+    bash "$HOOKS" register "$kind" "$UNREG/probe-$kind.json" 2>/dev/null
+    check "probe ($kind): register keeps the user's group as it was" \
+        jq_ok --slurpfile o "$UNREG/probe-$kind.orig" '.hooks.SessionStart[0] == $o[0].hooks.SessionStart[0]' "$UNREG/probe-$kind.json"
+    bash "$HOOKS" unregister "$kind" "$UNREG/probe-$kind.json" 2>/dev/null
+    check "probe ($kind): register then unregister gives the file back" \
+        cmp -s <(jq -S . "$UNREG/probe-$kind.json") <(jq -S . "$UNREG/probe-$kind.orig")
+done
+# Codex: a pure ACFS group another entry follows stays, and is reported.
+jq -n --arg c "$SESSION_CMD" '{hooks: {SessionStart: [{hooks: [{type: "command", command: $c, timeout: 5}]}, {hooks: [{type: "command", command: "user-after"}]}]}}' >"$UNREG/codex-user.json"
 cp "$UNREG/codex-user.json" "$UNREG/codex-user.orig"
 OUT="$(bash "$HOOKS" unregister codex "$UNREG/codex-user.json" 2>&1)"
-check "unregister codex: a handler another entry follows stays, the file unchanged" cmp -s "$UNREG/codex-user.json" "$UNREG/codex-user.orig"
+check "unregister codex: ACFS's line another entry follows stays, the file unchanged" cmp -s "$UNREG/codex-user.json" "$UNREG/codex-user.orig"
 check "unregister codex: it reports the line it left, not a removal" \
     bash -c '[[ "$1" == *"left 1 nhm hook lines"* && "$1" != *"removed"* ]]' _ "$OUT"
 

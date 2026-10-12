@@ -94,12 +94,16 @@ fixture yes claude
 printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/elsewhere/nhm-hook sessionstart"}]}],"PostToolUse":[{"hooks":[{"type":"command","command":"/elsewhere/nhm-hook posttooluse"}]}],"PostCompact":[{"hooks":[{"type":"command","command":"/elsewhere/nhm-hook sessionstart"}]}]}}' \
     >"$WORK/home/.codex/hooks.json"
 out="$(run_check codex)"
-check_case "nhm lines at another path are not reported as trusted: they need register's upgrade" \
-    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"older nhm hook lines for Codex need an upgrade"* ]]' _ "$out"
+check_case "nhm-hook at a path ACFS never wrote is the user's: ACFS's lines count as missing" \
+    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"hook lines missing for Codex"* ]]' _ "$out"
 
+# Older ACFS lines: ACFS's own path, an older timeout, in pure groups.
 fixture yes claude
-printf '%s\n' '{"hooks":{"PostToolUse":[{"matcher":"x","hooks":[{"type":"command","command":"/old/nhm-hook posttooluse"}]}],"SessionStart":[{"hooks":[{"type":"command","command":"/old/nhm-hook sessionstart"}]}],"PostCompact":[{"hooks":[{"type":"command","command":"/old/nhm-hook sessionstart"}]}]}}' \
-    >"$WORK/home/.codex/hooks.json"
+jq -n --arg p "$WORK/home/.local/bin/nhm-hook posttooluse" --arg s "$WORK/home/.local/bin/nhm-hook sessionstart" \
+    --arg m '^mcp__.+__(register_agent|create_agent_identity|macro_start_session)$' \
+    '{hooks: {PostToolUse: [{matcher: $m, hooks: [{type: "command", command: $p, timeout: 10}]}],
+              SessionStart: [{hooks: [{type: "command", command: $s, timeout: 10}]}],
+              PostCompact: [{hooks: [{type: "command", command: $s}]}]}}' >"$WORK/home/.codex/hooks.json"
 out="$(run_check codex)"
 check_case "older-path lines warn: upgrade with register, then trust" \
     bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"older nhm hook lines for Codex need an upgrade"*\|*"register codex (or acfs update)"*"trust codex" ]]' _ "$out"
@@ -109,6 +113,18 @@ PATH="$FAKEBIN:$PATH" HOME="$WORK/home" CODEX_HOME="$WORK/home/.codex" \
 out="$(run_check codex)"
 check_case "after register and trust, register, trust and the doctor agree: trusted" \
     bash -c '[[ "$1" == stack.nhm.setup\|pass\|*"Codex (trusted)"* ]]' _ "$out"
+
+# acfs-9hkh.53: ACFS's handler inside the user's own group stays there;
+# the doctor names the event, the group and the file.
+fixture yes claude
+jq --arg s "$WORK/home/.local/bin/nhm-hook sessionstart" \
+    '.hooks.SessionStart = [{matcher: "startup", hooks: [{type: "command", command: "user-a"}, {type: "command", command: $s}]}] + .hooks.SessionStart' \
+    "$WORK/home/.claude/settings.json" >"$WORK/settings.tmp"
+mv "$WORK/settings.tmp" "$WORK/home/.claude/settings.json"
+out="$(run_check claude)"
+check_case "a stray nhm-hook line in the user's group warns: remove it by hand" \
+    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"older nhm-hook line inside your own hook group (SessionStart, group 0) in $2/.claude/settings.json: remove it by hand; it fires twice"*\|*"by hand"* ]]' \
+    _ "$out" "$WORK/home"
 
 fixture yes both
 out="$(FAKE_CODEX_FAIL=1 run_check codex)"

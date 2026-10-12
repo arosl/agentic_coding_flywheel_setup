@@ -3122,6 +3122,8 @@ check_nhm() {
                    fixes+=("bash $helper register codex") ;;
             esac
         fi
+        doctor_binary_exists "claude" && _acfs_doctor_nhm_strays "$helper" "$home" claude "$home/.claude/settings.json"
+        doctor_binary_exists "codex" && _acfs_doctor_nhm_strays "$helper" "$home" codex "$home/.codex/hooks.json"
     fi
 
     if (( ${#missing[@]} == 0 )); then
@@ -3132,6 +3134,22 @@ check_nhm() {
         check "stack.nhm.setup" "$label" "warn" "$(_acfs_doctor_join_by "; " "${missing[@]}")" \
             "Run: $(_acfs_doctor_join_by " && " "${fixes[@]}")"
     fi
+}
+
+# nhm-hook handlers inside the user's own hook groups (acfs-9hkh.53):
+# ACFS never edits such a group, so register leaves the handler and
+# appends its own line, and the hook runs twice. `nhm_hooks.sh stray`
+# lists each as "<event> <group> <handler>"; an installed helper without
+# `stray` lists nothing. Adds to check_nhm's missing and fixes.
+_acfs_doctor_nhm_strays() {
+    local helper="$1" home="$2" kind="$3" file="$4" event="" gi="" hi="" found=0
+    while read -r event gi hi; do
+        [[ -n "$event" && -n "$hi" ]] || continue
+        missing+=("an older nhm-hook line inside your own hook group ($event, group $gi) in $file: remove it by hand; it fires twice")
+        found=$((found + 1))
+    done < <(HOME="$home" bash "$helper" stray "$kind" "$file" </dev/null 2>/dev/null || true)
+    (( found == 0 )) || fixes+=("remove those nhm-hook handlers from $file by hand")
+    return 0
 }
 
 # Whether Codex trusts the nhm hook lines: Codex runs an untrusted hook
