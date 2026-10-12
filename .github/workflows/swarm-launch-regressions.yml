@@ -24,6 +24,8 @@ on:
       - 'tests/unit/newproj/test_herdr_launch.py'
       - 'scripts/lib/newproj_screens/screen_success.sh'
       - 'tests/fixtures/herdr/**'
+      - 'tests/fixtures/nhm/**'
+      - 'tests/unit/test_nhm_caller_fixtures.py'
       - '.github/workflows/swarm-launch-regressions.yml'
   workflow_dispatch:
 
@@ -65,6 +67,7 @@ jobs:
           python3 -B tests/unit/test_swarm_packet_delivery_batch.py -v
           python3 -B tests/unit/test_swarm_launch_handoff.py -v
           python3 -B tests/unit/newproj/test_herdr_launch.py -v
+          python3 -B tests/unit/test_nhm_caller_fixtures.py -v
           TARGET_USER="$(id -un)" bash scripts/lib/doctor.sh swarm launch --help > /tmp/acfs-launch-help
           grep -F -- '--expect-sha256' /tmp/acfs-launch-help
           grep -F -- '--launch' /tmp/acfs-launch-help

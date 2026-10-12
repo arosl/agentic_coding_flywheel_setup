@@ -1,0 +1,14 @@
+{
+  "session": "demo",
+  "repo": "/srv/projects/demo",
+  "agents": [
+    {"agent_type": "claude"},
+    {"agent_type": "codex"}
+  ],
+  "pane": "1.2",
+  "agent_type": "codex",
+  "operation_id": "packet-demo-0001",
+  "payload": "Work on bead demo-1.\n",
+  "payload_sha256": "0c65add8a9d510f73354c868d3ff7ccdb925a76301559dff63fa81a2e01a8ddd",
+  "payload_bytes": 21
+}

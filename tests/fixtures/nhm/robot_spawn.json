@@ -1,0 +1,28 @@
+{
+  "success": true,
+  "timestamp": "2026-10-12T06:30:00Z",
+  "session": "demo",
+  "created_at": "2026-10-12T06:30:00Z",
+  "working_dir": "/srv/projects/demo",
+  "effective_project_key": "/srv/projects/demo",
+  "agents": [
+    {"pane": "1.1", "pane_id": "w1:p2", "agent_mail_name": "BlueLake", "name": "bluelake", "type": "claude",
+     "title": "BlueLake (claude)", "ready": true, "startup_ms": 4200},
+    {"pane": "1.2", "pane_id": "w1:p3", "agent_mail_name": "RedFox", "name": "redfox", "type": "codex",
+     "title": "RedFox (codex)", "ready": true, "startup_ms": 6100}
+  ],
+  "layout": "tiled",
+  "total_startup_ms": 10300,
+  "assignments": [],
+  "stagger": {
+    "mode": "fixed",
+    "interval_ms": 2000,
+    "schedule": [
+      {"pane": "1.1", "agent_type": "claude", "order": 1, "delay_ms": 0},
+      {"pane": "1.2", "agent_type": "codex", "order": 2, "delay_ms": 2000}
+    ]
+  },
+  "admission": {"serialized": false, "decision": "admit", "reason": "within the operator profile",
+                "session": "demo", "requested_agents": 2},
+  "monitor_started": false
+}

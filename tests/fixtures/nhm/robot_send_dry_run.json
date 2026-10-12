@@ -1,0 +1,18 @@
+{
+  "success": true,
+  "timestamp": "2026-10-12T06:31:00Z",
+  "session": "demo",
+  "sent_at": "2026-10-12T06:31:00Z",
+  "blocked": false,
+  "redaction": {"mode": "off", "findings": 0},
+  "warnings": [],
+  "targets": [],
+  "successful": [],
+  "failed": [],
+  "message_preview": "Work on bead demo-1.",
+  "dry_run": true,
+  "would_send_to": ["1.2"],
+  "cass_injection": {"enabled": false, "items_found": 0, "items_injected": 0, "tokens_added": 0,
+                     "skipped_reason": "off"},
+  "memory_injection": {"enabled": false, "tokens_added": 0, "skipped_reason": "off"}
+}

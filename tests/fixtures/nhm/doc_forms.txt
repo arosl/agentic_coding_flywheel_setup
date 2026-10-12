@@ -1,0 +1,48 @@
+# The nhm forms that lessons 05, 06, 07 and 20 and the swarm scripts will
+# use once they switch from ntm (acfs-9hkh.27, acfs-9hkh.33): upstream's
+# lesson forms with ntm renamed to nhm, and upstream's swarm argv.
+# tests/unit/test_nhm_docs_conformance.py parses each one against nhm's
+# real command tree (syntax only: no herdr server is reachable).
+#
+# A line is one form, or:
+#   deferred <bead> <form>   a form nhm does not have yet; reported, not run
+#   replaced <ntm form> => <nhm form>   ntm's form, and the nhm form a lesson uses instead
+# Paths in forms are /dev/null where nhm reads a file.
+
+# Lesson 05 (upstream 05_ntm_core.md)
+nhm list
+nhm send myproject "Analyze this codebase and summarize what it does"
+nhm send myproject --cc "Focus on the API layer"
+nhm send myproject --cod "Focus on the frontend"
+nhm send test-session "Say hello and confirm you're working"
+nhm spawn myproject --cc=2 --cod=1 --agy=1
+nhm spawn test-session --cc=1 --no-cass-context
+deferred acfs-9hkh.20 nhm attach myproject
+deferred acfs-9hkh.18 nhm deps -v
+deferred acfs-9hkh.18 nhm tutorial
+
+# Lesson 06 (upstream 06_ntm_command_palette.md)
+nhm palette --list
+nhm palette --show fresh_review
+nhm send myproject "Review the changes in src/ for edge cases"
+nhm send myproject -t code_review --file /dev/null
+replaced ntm template list => nhm palette --list
+
+# Lesson 07 (upstream 07_flywheel_loop.md)
+nhm --help
+nhm spawn my-first-project --cc=2 --cod=1 --agy=1
+nhm spawn myproject --cc=2 --cod=1
+nhm send my-first-project "Let's build something awesome."
+
+# Lesson 20 (upstream 20_newproj.md)
+nhm spawn myapp --cc=2
+deferred acfs-9hkh.20 nhm attach myapp
+
+# The swarm scripts (upstream swarm_launch.sh, swarm_packet.sh, swarm_status.sh)
+nhm --robot-spawn=demo --spawn-dir=/srv/projects/demo --spawn-cc=1 --spawn-cod=1 --spawn-no-user --spawn-safety --spawn-wait --timeout=60s --robot-format=json
+nhm --robot-spawn=demo --spawn-dir=/srv/projects/demo --spawn-cc=1 --spawn-cod=1 --spawn-no-user --spawn-safety --spawn-wait --timeout=60s --robot-format=json --dry-run
+nhm --robot-send=demo --panes=1.2 --type=codex --msg-file=- --op-id=packet-demo-0001 --robot-format=json --no-cass --with-memory=false
+nhm --robot-send=demo --panes=1.2 --type=codex --msg-file=- --robot-format=json --no-cass --with-memory=false --dry-run
+nhm --robot-send-receipt=packet-demo-0001 --robot-format=json
+nhm --robot-status
+nhm --robot-snapshot

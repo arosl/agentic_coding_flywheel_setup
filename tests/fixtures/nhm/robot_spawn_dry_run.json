@@ -1,0 +1,20 @@
+{
+  "success": true,
+  "timestamp": "2026-10-12T06:29:00Z",
+  "session": "demo",
+  "created_at": "2026-10-12T06:29:00Z",
+  "working_dir": "/srv/projects/demo",
+  "effective_project_key": "/srv/projects/demo",
+  "agents": [],
+  "layout": "tiled",
+  "total_startup_ms": 0,
+  "dry_run": true,
+  "would_create": [
+    {"pane": "1.1", "type": "claude", "title": "claude", "ready": false, "startup_ms": 0},
+    {"pane": "1.2", "type": "codex", "title": "codex", "ready": false, "startup_ms": 0}
+  ],
+  "assignments": [],
+  "admission": {"serialized": false, "decision": "admit", "reason": "within the operator profile",
+                "session": "demo", "requested_agents": 2},
+  "monitor_started": false
+}

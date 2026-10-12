@@ -1,0 +1,14 @@
+{
+  "success": true,
+  "timestamp": "2026-10-12T06:33:00Z",
+  "schema_id": "ntm:robot:status:v1",
+  "schema_version": "ntm.robot.status.v2",
+  "generated_at": "2026-10-12T06:33:00Z",
+  "system": {"version": "0.1.2", "commit": "668c529", "build_date": "2026-10-12", "go_version": "go1.26.0",
+             "os": "linux", "arch": "amd64", "tmux_available": false},
+  "sessions": [
+    {"name": "demo", "attached": true, "agent_count": 2, "health": {"status": "ok"}}
+  ],
+  "summary": {"total_sessions": 1, "total_agents": 2, "attached_count": 1, "claude_count": 1, "codex_count": 1,
+              "gemini_count": 0, "antigravity_count": 0, "grok_count": 0, "cursor_count": 0, "windsurf_count": 0}
+}
