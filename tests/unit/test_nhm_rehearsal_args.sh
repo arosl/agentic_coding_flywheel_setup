@@ -2,11 +2,10 @@
 # ============================================================
 # tests/vm/test_nhm_rehearsal.sh: what it does before it makes anything
 #
-# A rehearsal run is the operator's call (plan-v8 section 7), so the
-# harness must refuse, without one call to incus and without an evidence
-# directory, when --authorised is missing or any argument is wrong. With
-# good arguments and an Incus it cannot reach, it skips (exit 77) after
-# read-only calls only. A fake incus first on PATH records every call.
+# The harness runs in a bwrap sandbox, and each run is named and
+# authorised (--authorised). It must refuse, with exit 2 and without
+# making its sandbox root, when --authorised is missing or any argument is
+# wrong, and refuse a root that exists. Nothing here runs the sandbox.
 #
 # Usage: bash tests/unit/test_nhm_rehearsal_args.sh
 # ============================================================
@@ -23,56 +22,43 @@ FAIL=0
 pass() { PASS=$((PASS + 1)); printf '  ok   %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n' "$1"; }
 
-mkdir -p "$WORK/bin"
-cat >"$WORK/bin/incus" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"$INCUS_CALLS"
-exit 1
-EOF
-chmod +x "$WORK/bin/incus"
-export INCUS_CALLS="$WORK/calls"
-
-# run EXPECTED-EXIT DESCRIPTION ARGS...: runs the harness with its own
-# evidence directory and checks the exit code, the calls and the evidence.
+SANDBOX="$WORK/sandbox"
+# run EXPECTED-EXIT DESCRIPTION ARGS...: the harness with its own sandbox
+# root; checks the exit code, and that a refusal made no root.
 run() {
     local want="$1" what="$2" rc=0
     shift 2
-    : >"$INCUS_CALLS"
-    PATH="$WORK/bin:$PATH" bash "$HARNESS" --evidence "$WORK/evidence" "$@" >"$WORK/out" 2>&1 || rc=$?
+    NHM_SANDBOX_PARENT="$WORK" bash "$HARNESS" --root "$SANDBOX" "$@" >"$WORK/out" 2>&1 || rc=$?
     if [[ "$rc" -ne "$want" ]]; then
         fail "$what: exit $rc, want $want: $(tail -n 2 "$WORK/out")"
         return
     fi
-    if [[ "$want" -eq 2 && -s "$INCUS_CALLS" ]]; then
-        fail "$what: incus was called: $(cat "$INCUS_CALLS")"
-        return
-    fi
-    if grep -Evq '^(info|image info)( |$)' "$INCUS_CALLS"; then
-        fail "$what: a call that changes something: $(grep -Ev '^(info|image info)( |$)' "$INCUS_CALLS")"
-        return
-    fi
-    if [[ -e "$WORK/evidence" ]]; then
-        fail "$what: an evidence directory was made"
+    if [[ "$want" -eq 2 && -e "$SANDBOX" && ! -e "$WORK/keep" ]]; then
+        fail "$what: the sandbox root was made"
         return
     fi
     pass "$what"
 }
 
 echo "== refusals before anything"
-run 2 "no --authorised" rehearsal-1
-run 2 "an --authorised id with a space" --authorised "go ahead" rehearsal-1
-run 2 "an unknown release" --authorised r1 --release 0.9 rehearsal-1
-run 2 "a step outside the release" --authorised r1 --steps E02 rehearsal-1
-run 2 "a bad instance name" --authorised r1 Bad_Name
-run 2 "no instance name" --authorised r1
-run 2 "an unknown option" --authorised r1 --force rehearsal-1
+run 2 "no --authorised" --nhm-version 0.1.2
+run 2 "an --authorised id with a space" --authorised "go ahead" --nhm-version 0.1.2
+run 2 "no nhm source" --authorised r1
+run 2 "two nhm sources" --authorised r1 --nhm-version 0.1.2 --nhm-build "$WORK"
+run 2 "a bad nhm version" --authorised r1 --nhm-version latest
+run 2 "an unknown release" --authorised r1 --nhm-version 0.1.2 --release 0.9
+run 2 "a step outside the release" --authorised r1 --nhm-version 0.1.2 --steps E02
+run 2 "an unknown argument" --authorised r1 --nhm-version 0.1.2 --force
+run 2 "a positional argument (no instance any more)" --authorised r1 --nhm-version 0.1.2 rehearsal-1
 
-echo "== an Incus it cannot reach"
-run 77 "good arguments, no Incus daemon: a skip after read-only calls" --authorised r1 --steps E00,E01 rehearsal-1
-if grep -q 'RESULT: skip' "$WORK/out"; then
-    pass "the skip says RESULT: skip"
+echo "== an existing root"
+mkdir -p "$SANDBOX"
+: >"$WORK/keep"
+run 2 "a sandbox root that exists is refused" --authorised r1 --nhm-version 0.1.2
+if [[ -z "$(ls -A "$SANDBOX")" ]]; then
+    pass "nothing was written into it"
 else
-    fail "the skip says RESULT: skip: $(tail -n 1 "$WORK/out")"
+    fail "something was written into it: $(ls -A "$SANDBOX")"
 fi
 
 echo
