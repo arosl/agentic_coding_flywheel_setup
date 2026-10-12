@@ -166,7 +166,7 @@ OUT="$(trust --dry-run 2>&1)"
 check "trust --dry-run names the three nhm entries" bash -c '[[ $(grep -c "would trust" <<<"$1") -eq 3 ]]' _ "$OUT"
 check "trust --dry-run writes nothing" test "$(batch_writes)" = 0
 OUT="$(trust 2>&1)"
-check "trust: Codex trusts the nhm entries" bash -c '[[ "$1" == *"trusts the 3 nhm-hook entries"*"(3 newly)"* ]]' _ "$OUT"
+check "trust: Codex trusts the nhm entries" bash -c '[[ "$1" == *"trusts the 3 ACFS entries"*"(3 newly)"* ]]' _ "$OUT"
 check "trust: one batchWrite of hooks.state" test "$(batch_writes)" = 1
 check "trust: only nhm-hook entries were trusted, never the user's own" \
     jq_true '(keys | length) == 3 and all(keys[]; test(":(post_tool_use|session_start|post_compact):0:0$"))' "$CODEX_DIR/fake-trust.json"
@@ -218,7 +218,7 @@ check "stray: names ACFS's handler inside the user's group" \
     bash -c '[[ "$(bash "$1" stray codex "$2")" == "PostToolUse 0 0 user-group twice" ]]' _ "$HOOKS" "$OLDC/hooks.json"
 OUT="$(PATH="$FAKEBIN:$PATH" bash "$HOOKS" trust codex "$OLDC/hooks.json" 2>&1)"
 check "older lines: after register, trust trusts the 3 rewritten positions, never the user's group" \
-    bash -c '[[ "$1" == *"trusts the 3 nhm-hook entries"* ]] && jq -e "(keys | length) == 3 and all(keys[]; test(\":(post_tool_use:1|session_start:0|post_compact:0):0$\"))" "$2/fake-trust.json" >/dev/null' \
+    bash -c '[[ "$1" == *"trusts the 3 ACFS entries"* ]] && jq -e "(keys | length) == 3 and all(keys[]; test(\":(post_tool_use:1|session_start:0|post_compact:0):0$\"))" "$2/fake-trust.json" >/dev/null' \
     _ "$OUT" "$OLDC"
 # Review of b89811bd: ACFS trusts only what it wrote, the verify step needs
 # every entry, and a stuck app-server behind a wrapper cannot hang it.
@@ -378,6 +378,83 @@ OUT="$(bash "$HOOKS" unregister codex "$UNREG/codex-user.json" 2>&1)"
 check "unregister codex: ACFS's line another entry follows stays, the file unchanged" cmp -s "$UNREG/codex-user.json" "$UNREG/codex-user.orig"
 check "unregister codex: it reports the line it left, not a removal" \
     bash -c '[[ "$1" == *"left 1 nhm hook lines"* && "$1" != *"removed"* ]]' _ "$OUT"
+
+# ------------------------------------------------------------
+# codex-dcg: dcg's Bash guard in Codex's hooks.json (acfs-9hkh.81),
+# byte for byte as dcg's own installer writes it
+# ------------------------------------------------------------
+DCGD="$WORK/codex-dcg"
+mkdir -p "$DCGD" "$HOME/.local/bin"
+DCG="$HOME/.local/bin/dcg"
+DCG_ENTRY="$(jq -cn --arg c "$DCG" '{matcher: "Bash", hooks: [{type: "command", command: $c}]}')"
+dcg_count() { jq '[.hooks.PreToolUse[]? | .hooks[]? | select(.command | test("/dcg$"))] | length' "$1"; }
+
+check "codex-dcg register: no dcg installed refuses, and writes nothing" \
+    bash -c '! bash "$1" codex-dcg register "$2/none.json" 2>/dev/null && [[ ! -e "$2/none.json" ]]' _ "$HOOKS" "$DCGD"
+printf '#!/bin/sh\nexit 0\n' >"$DCG"
+chmod +x "$DCG"
+
+printf '%s\n' '{"hooks":{"PreToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"user-edit"}]}]}}' >"$DCGD/plain.json"
+bash "$HOOKS" codex-dcg register "$DCGD/plain.json" 2>/dev/null
+check "codex-dcg register: dcg's exact line is appended after the user's group" \
+    jq_ok --argjson e "$DCG_ENTRY" '.hooks.PreToolUse == [{"matcher":"Edit","hooks":[{"type":"command","command":"user-edit"}]}, $e]' "$DCGD/plain.json"
+check "codex-dcg registered: 0 for the line register wrote" bash "$HOOKS" codex-dcg registered "$DCGD/plain.json"
+cp "$DCGD/plain.json" "$DCGD/plain.before"
+bash "$HOOKS" codex-dcg register "$DCGD/plain.json" 2>/dev/null
+check "codex-dcg register again: nothing changes" cmp -s "$DCGD/plain.json" "$DCGD/plain.before"
+
+# dcg's installer puts dcg first in the user's Bash group: that counts,
+# and ACFS adds no second copy.
+jq -n --arg c "$DCG" '{hooks: {PreToolUse: [{matcher: "Bash", hooks: [{type: "command", command: $c}, {type: "command", command: "user-bash"}]}]}}' >"$DCGD/dcgfirst.json"
+cp "$DCGD/dcgfirst.json" "$DCGD/dcgfirst.before"
+check "codex-dcg registered: 0 for dcg's installer form inside the user's Bash group" \
+    bash "$HOOKS" codex-dcg registered "$DCGD/dcgfirst.json"
+bash "$HOOKS" codex-dcg register "$DCGD/dcgfirst.json" 2>/dev/null
+check "codex-dcg register: dcg's installer form stays as it is" cmp -s "$DCGD/dcgfirst.json" "$DCGD/dcgfirst.before"
+
+# A dcg at another path is the user's: registered says 3, register adds none.
+printf '%s\n' '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/opt/tools/dcg"}]}]}}' >"$DCGD/other.json"
+cp "$DCGD/other.json" "$DCGD/other.before"
+check "codex-dcg registered: 3 when only a dcg at another path guards Bash" \
+    bash -c 'bash "$1" codex-dcg registered "$2"; [[ $? -eq 3 ]]' _ "$HOOKS" "$DCGD/other.json"
+bash "$HOOKS" codex-dcg register "$DCGD/other.json" 2>/dev/null
+check "codex-dcg register: no second dcg next to the user's" bash -c '[[ $(jq "[.hooks.PreToolUse[].hooks[]] | length" "$1") -eq 1 ]] && cmp -s "$1" "$2"' _ "$DCGD/other.json" "$DCGD/other.before"
+check "codex-dcg registered: 1 when no dcg guards Bash" \
+    bash -c 'printf "{}\n" >"$2/empty.json"; bash "$1" codex-dcg registered "$2/empty.json"; [[ $? -eq 1 ]]' _ "$HOOKS" "$DCGD"
+check "codex-dcg registered: a dcg handler in a group that is not Bash's does not count" \
+    bash -c 'jq -n --arg c "$3" "{hooks: {PreToolUse: [{matcher: \"Edit\", hooks: [{type: \"command\", command: \$c}]}]}}" >"$2/edit.json"; bash "$1" codex-dcg registered "$2/edit.json"; [[ $? -eq 1 ]]' _ "$HOOKS" "$DCGD" "$DCG"
+printf '{not json\n' >"$DCGD/bad.json"
+check "codex-dcg register: a file jq cannot read stays unchanged" \
+    bash -c '! bash "$1" codex-dcg register "$2/bad.json" 2>/dev/null && [[ "$(cat "$2/bad.json")" == "{not json" ]]' _ "$HOOKS" "$DCGD"
+
+# trust codex trusts dcg's guard where it stands, never the user's handler
+# beside it.
+TDCG="$WORK/codex-dcg-trust"
+mkdir -p "$TDCG"
+cp "$DCGD/dcgfirst.json" "$TDCG/hooks.json"
+bash "$HOOKS" register codex "$TDCG/hooks.json" 2>/dev/null
+OUT="$(PATH="$FAKEBIN:$PATH" bash "$HOOKS" trust codex "$TDCG/hooks.json" 2>&1)"
+check "trust: dcg's guard is trusted with the nhm entries" \
+    bash -c '[[ "$1" == *"trusts the 4 ACFS entries"* ]] && jq -e "keys | any(test(\":pre_tool_use:0:0$\"))" "$2/fake-trust.json" >/dev/null' _ "$OUT" "$TDCG"
+check "trust: the user's handler in dcg's Bash group stays untrusted" \
+    jq_true 'keys | all(test(":pre_tool_use:0:1$") | not)' "$TDCG/fake-trust.json"
+
+# unregister (dcg gone): only a trailing pure group goes.
+cp "$DCGD/plain.before" "$DCGD/unreg.json"
+bash "$HOOKS" codex-dcg unregister "$DCGD/unreg.json" 2>/dev/null
+check "codex-dcg unregister: the trailing line goes, the user's group stays" \
+    jq_ok '.hooks.PreToolUse == [{"matcher":"Edit","hooks":[{"type":"command","command":"user-edit"}]}]' "$DCGD/unreg.json"
+jq --arg c "$DCG" '.hooks.PreToolUse += [{matcher: "Write", hooks: [{type: "command", command: "user-after"}]}]' "$DCGD/plain.before" >"$DCGD/followed.json"
+cp "$DCGD/followed.json" "$DCGD/followed.before"
+OUT="$(bash "$HOOKS" codex-dcg unregister "$DCGD/followed.json" 2>&1)"
+check "codex-dcg unregister: a line another entry follows stays, and is reported" \
+    bash -c 'cmp -s "$1" "$2" && [[ "$3" == *"left dcg'"'"'s Bash guard"* ]]' _ "$DCGD/followed.json" "$DCGD/followed.before" "$OUT"
+cp "$DCGD/dcgfirst.before" "$DCGD/shared.json"
+bash "$HOOKS" codex-dcg unregister "$DCGD/shared.json" 2>/dev/null
+check "codex-dcg unregister: dcg in the user's group is never edited" cmp -s "$DCGD/shared.json" "$DCGD/dcgfirst.before"
+check "codex-dcg: one dcg handler in each file, never two" \
+    bash -c 'for f in "$@"; do [[ $(jq "[.hooks.PreToolUse[]? | .hooks[]? | select(.command | test(\"/dcg\$\"))] | length" "$f") -le 1 ]] || exit 1; done' _ "$DCGD"/plain.json "$DCGD"/dcgfirst.json "$TDCG/hooks.json"
+unset -f dcg_count
 
 echo
 echo "nhm_hooks: $PASS passed, $FAIL failed"

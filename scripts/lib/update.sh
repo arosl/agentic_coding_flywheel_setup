@@ -7805,6 +7805,68 @@ update_nhm_hooks() {
     return 0
 }
 
+# dcg's Bash guard for Codex (stack.dcg; nhm_hooks.sh codex-dcg,
+# acfs-9hkh.81): `dcg install` configures Claude Code only, and dcg's own
+# installer writes Codex's line only when it finds codex. Register that
+# exact line when dcg and codex are both installed, and record its trust
+# (F.25); remove ACFS's line only when dcg is gone.
+update_codex_dcg_hook() {
+    local desc="dcg guard for Codex"
+    local helper="" target_user="" current_user="" target_home="" file="" rc=0
+
+    [[ "${UPDATE_STACK:-true}" == "true" ]] || return 0
+    helper="$(update_runtime_acfs_home 2>/dev/null || true)/scripts/lib/nhm_hooks.sh"
+    if [[ ! -r "$helper" ]]; then
+        log_item "skip" "$desc" "nhm_hooks.sh is not installed"
+        return 0
+    fi
+    if update_is_read_only_mode; then
+        log_item "skip" "$desc" "dry-run: would add dcg's Bash guard to Codex's hooks.json"
+        return 0
+    fi
+    target_user="$(update_target_user 2>/dev/null || true)"
+    current_user="$(update_current_user 2>/dev/null || true)"
+    if [[ -z "$target_user" || "$current_user" != "$target_user" ]]; then
+        log_item "warn" "$desc" "run as ${target_user:-the target user}: bash $helper codex-dcg register"
+        return 0
+    fi
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    if [[ -z "$target_home" ]]; then
+        log_item "warn" "$desc" "no home for $target_user"
+        return 0
+    fi
+    file="$target_home/.codex/hooks.json"
+    if [[ ! -x "$target_home/.local/bin/dcg" ]]; then
+        # The line would point at nothing in every Bash call.
+        HOME="$target_home" bash "$helper" codex-dcg unregister "$file" </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1 ||
+            log_item "warn" "$desc" "could not remove dcg's line from $file; see the update log"
+        log_item "skip" "$desc" "dcg is not installed"
+        return 0
+    fi
+    if ! update_binary_exists codex; then
+        log_item "skip" "$desc" "Codex is not installed"
+        return 0
+    fi
+    if ! HOME="$target_home" bash "$helper" codex-dcg register "$file" </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1; then
+        log_item "warn" "$desc" "could not add dcg's line to $file; see the update log"
+        return 0
+    fi
+    HOME="$target_home" bash "$helper" codex-dcg registered "$file" </dev/null >/dev/null 2>&1 || rc=$?
+    case "$rc" in
+        0) ;;
+        3) log_item "ok" "$desc" "a dcg at another path guards Codex's Bash calls"; return 0 ;;
+        *) log_item "warn" "$desc" "dcg's line is not in $file; see the update log"; return 0 ;;
+    esac
+    # timeout bounds the helper, which bounds Codex's app-server (60 s).
+    if timeout 90 env HOME="$target_home" bash "$helper" trust codex "$file" </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1; then
+        log_item "ok" "$desc" "in Codex's hooks.json, and trusted"
+    else
+        log_item "ok" "$desc" "in Codex's hooks.json"
+        log_detail "Codex asks to trust dcg's guard once: open /hooks in Codex"
+    fi
+    return 0
+}
+
 # nhm's maintenance pass (scripts/lib/nhm_maintain_timer.sh, F.29):
 # nhm-maintain.timer runs `nhm maintain --once` every 15 s. It runs after
 # update_nhm, so the nhm that update just installed decides: an nhm
@@ -9463,6 +9525,7 @@ main() {
     update_stack
     update_agent_mail_stop_hook
     update_nhm_hooks
+    update_codex_dcg_hook
     update_nhm_maintain_timer
     update_root_tool_ownership
     update_root_agents_md

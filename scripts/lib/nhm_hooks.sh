@@ -15,7 +15,8 @@
 # nhm-hook handler inside such a group stays, and the doctor names it.
 #
 # Codex runs a hook only when config.toml holds its current trusted_hash.
-# `trust codex` records that for ACFS's own nhm-hook entries, through
+# `trust codex` records that for ACFS's own entries (the nhm-hook lines,
+# and dcg's Bash guard: codex-dcg below), through
 # Codex's own write path (plan-v8 F.25): `codex app-server` on stdio,
 # hooks/list, then config/batchWrite with each entry's currentHash under
 # hooks.state. It trusts no other entry. A Codex that cannot do that
@@ -46,6 +47,12 @@ NHM_HOOKS_REGISTRATION_MATCHER='^mcp__.+__(register_agent|create_agent_identity|
 nhm_hooks_usage() {
     cat <<'EOF'
 Usage:
+  nhm_hooks.sh codex-dcg register|registered|unregister [FILE]
+                                             dcg's Bash guard line in Codex's
+                                             hooks.json (stack.dcg), as dcg's
+                                             installer writes it; registered:
+                                             0 there, 3 a dcg at another path,
+                                             1 missing
   nhm_hooks.sh register claude|codex [FILE]  Add the nhm-hook lines to FILE
                                              (default ~/.claude/settings.json
                                              or ~/.codex/hooks.json)
@@ -62,8 +69,9 @@ Usage:
                                              second copy of ACFS's line
                                              (duplicate); runs: twice or once
   nhm_hooks.sh trust codex [FILE] [--dry-run]
-                                             Record Codex's trust for the
-                                             nhm-hook entries of FILE
+                                             Record Codex's trust for ACFS's
+                                             entries of FILE: the nhm-hook
+                                             lines and dcg's Bash guard
                                              (default ~/.codex/hooks.json)
 EOF
 }
@@ -360,6 +368,118 @@ nhm_hooks_stray() {
     done < <(nhm_hooks_lines "$kind")
 }
 
+# ---- dcg's Bash guard in Codex's hooks.json (stack.dcg; acfs-9hkh.81) ----
+#
+# dcg runs as a Codex PreToolUse hook (Codex 0.125+), but `dcg install`
+# configures Claude Code only. dcg's own installer (the verified installer
+# stack.dcg runs) merges the line into $HOME/.codex/hooks.json when it
+# finds codex: matcher "Bash", one handler {type: "command", command:
+# "$HOME/.local/bin/dcg"} with no timeout, dcg first among the Bash
+# handlers, and its "already there" test compares that exact command. So
+# ACFS's line is byte for byte dcg's: otherwise the two would each add
+# one, dcg would run twice, and every update would move entries and lose
+# Codex's position-keyed trust.
+#
+# - registered: 0 when a Bash group's first handler is exactly that line
+#   (dcg's form, which may sit in a group of the user's); 3 when only a
+#   dcg at another path guards Bash (the user's; ACFS adds no second);
+#   1 when no dcg guards Bash.
+# - register: appends a pure group only when no dcg guards Bash; it never
+#   edits a group that holds another handler.
+# - unregister: for when dcg is gone; removes only trailing pure groups
+#   (Codex keys trust by position).
+# - trust codex records the line's trust with the nhm-hook entries'.
+
+nhm_hooks_dcg_command() {
+    printf '%s/.local/bin/dcg' "$HOME"
+}
+
+# jq definitions of the dcg line ($cmd: its command).
+nhm_hooks_dcg_jq_defs() {
+    cat <<'JQ'
+def dcg_handler: {type: "command", command: $cmd};
+def dcg_entry: {matcher: "Bash", hooks: [dcg_handler]};
+def pre: (.hooks?.PreToolUse? // []) | arrays;
+def bash_group: type == "object" and .matcher == "Bash" and (.hooks | type) == "array";
+def is_dcg: type == "object" and ((.command? // null) | type) == "string"
+  and ((.command | split(" ")[0] | split("/") | last) == "dcg");
+def ours_at: [pre | to_entries[] | select((.value | bash_group) and (.value.hooks[0]? == dcg_handler)) | .key];
+def any_dcg: [pre[] | select(bash_group) | .hooks[] | select(is_dcg)] | length > 0;
+JQ
+}
+
+nhm_hooks_codex_dcg() {
+    local verb="${1:-}" file="${2:-}" target="" current="" updated="" cmd="" state=""
+    [[ -n "$file" ]] || file="${CODEX_HOME:-$HOME/.codex}/hooks.json"
+    command -v jq >/dev/null 2>&1 || { nhm_hooks_note "jq not found"; return 1; }
+    cmd="$(nhm_hooks_dcg_command)"
+    target="$file"
+    if [[ -L "$file" ]]; then
+        target="$(readlink -f -- "$file")" || { nhm_hooks_note "cannot resolve $file"; return 1; }
+    fi
+    if [[ -e "$target" ]]; then
+        [[ -f "$target" ]] || { nhm_hooks_note "$target is not a regular file"; return 1; }
+        current="$(cat -- "$target")" || return 1
+    fi
+    [[ -n "${current//[[:space:]]/}" ]] || current='{}'
+    case "$verb" in
+        registered)
+            [[ -e "$target" ]] || return 1
+            state="$(jq -r --arg cmd "$cmd" "$(nhm_hooks_dcg_jq_defs)"'
+                if (ours_at | length) > 0 then "exact" elif any_dcg then "other" else "missing" end
+            ' <<<"$current" 2>/dev/null)" || return 1
+            case "$state" in
+                exact) return 0 ;;
+                other) return 3 ;;
+                *) return 1 ;;
+            esac
+            ;;
+        register)
+            [[ "$cmd" =~ ^/[A-Za-z0-9._/+-]+$ ]] || { nhm_hooks_note "refusing to register: unsafe path $cmd"; return 1; }
+            [[ -x "$cmd" ]] || { nhm_hooks_note "no dcg at $cmd: install dcg first"; return 1; }
+            if ! updated="$(jq --arg cmd "$cmd" "$(nhm_hooks_dcg_jq_defs)"'
+                if type != "object" then error("the top level is not a JSON object")
+                elif has("hooks") and (.hooks | type) != "object" then error("\"hooks\" is not a JSON object")
+                elif (.hooks? // {} | has("PreToolUse")) and (.hooks.PreToolUse | type) != "array" then error("\"hooks.PreToolUse\" is not an array")
+                elif any_dcg then .
+                else .hooks.PreToolUse = ((.hooks.PreToolUse // []) + [dcg_entry])
+                end
+            ' <<<"$current" 2>/dev/null)"; then
+                nhm_hooks_note "left $file unchanged: it is not a hooks file jq can extend (see: jq . $file)"
+                return 1
+            fi
+            if [[ -e "$target" ]] && [[ "$(jq -c . <<<"$current")" == "$(jq -c . <<<"$updated")" ]]; then
+                nhm_hooks_note "$file already has dcg's Bash guard"
+                return 0
+            fi
+            mkdir -p -- "$(dirname -- "$target")" || return 1
+            nhm_hooks_write "$target" "$updated" || return 1
+            nhm_hooks_note "added dcg's Bash guard to $file; Codex runs it once trusted (nhm_hooks.sh trust codex, or Codex's /hooks)"
+            ;;
+        unregister)
+            [[ -e "$target" ]] || return 0
+            if ! updated="$(jq --arg cmd "$cmd" "$(nhm_hooks_dcg_jq_defs)"'
+                def drop_trailing: if length > 0 and (.[-1] == dcg_entry) then .[:-1] | drop_trailing else . end;
+                if type != "object" or ((.hooks? // {}) | type) != "object" or ((.hooks? // {}).PreToolUse | type) != "array" then .
+                else .hooks.PreToolUse |= drop_trailing
+                  | if (.hooks.PreToolUse | length) == 0 then del(.hooks.PreToolUse) else . end
+                end
+            ' <<<"$current" 2>/dev/null)"; then
+                nhm_hooks_note "left $file unchanged: jq cannot read it (see: jq . $file)"
+                return 1
+            fi
+            if [[ "$(jq -c . <<<"$current")" != "$(jq -c . <<<"$updated")" ]]; then
+                nhm_hooks_write "$target" "$updated" || return 1
+                nhm_hooks_note "removed dcg's Bash guard from $file"
+            fi
+            if [[ "$(jq -r --arg cmd "$cmd" "$(nhm_hooks_dcg_jq_defs)"'ours_at | length' <<<"$updated" 2>/dev/null)" != 0 ]]; then
+                nhm_hooks_note "left dcg's Bash guard in $file: other entries follow it, or it shares a group with your handlers"
+            fi
+            ;;
+        *) nhm_hooks_usage >&2; return 2 ;;
+    esac
+}
+
 # The app-server driver of `trust codex`. Arguments: the hooks file, the
 # codex binary, "dry-run" or "write", and the JSON list of the entries
 # `register` writes ({event, command, matcher, timeout}). It talks
@@ -405,6 +525,16 @@ def ours():
         groups = hooks.get(want["event"])
         if want["event"] not in LABELS or not isinstance(groups, list):
             continue
+        if want.get("first"):
+            # dcg's Bash guard: the first handler of a Bash group, exactly
+            # as dcg's installer writes it (it may share the group with
+            # handlers of the user's, which stay untrusted).
+            handler = {"type": "command", "command": want["command"]}
+            for gi, group in enumerate(groups):
+                if (isinstance(group, dict) and group.get("matcher") == want["matcher"]
+                        and isinstance(group.get("hooks"), list) and group["hooks"][:1] == [handler]):
+                    found.add((LABELS[want["event"]], gi, 0))
+            continue
         handler = {"type": "command", "command": want["command"], "timeout": want["timeout"]}
         entry = {"hooks": [handler]}
         if want["matcher"]:
@@ -434,7 +564,7 @@ except HooksFileError as e:
     note(str(e))
     sys.exit(1)
 if not mine:
-    note(f"{hooks_file} has no nhm-hook entries that ACFS wrote")
+    note(f"{hooks_file} has no nhm-hook entries that ACFS wrote, and no dcg Bash guard")
     sys.exit(0)
 proc = None
 killer = None
@@ -497,7 +627,7 @@ try:
             if h.get("trustStatus") in ("untrusted", "modified") and h.get("currentHash")}
     missing = len(mine) - len(before)
     if missing:
-        note(f"Codex does not list {missing} nhm-hook entries of {hooks_file}")
+        note(f"Codex does not list {missing} ACFS entries of {hooks_file}")
     if mode == "dry-run":
         for k in sorted(todo):
             note("would trust " + k)
@@ -511,7 +641,7 @@ try:
         if untrusted or len(after) != len(mine):
             note("not trusted: " + ", ".join(untrusted or [f"Codex lists {len(after)} of the {len(mine)} ACFS entries"]))
         else:
-            note(f"Codex trusts the {len(after)} nhm-hook entries of {hooks_file}" +
+            note(f"Codex trusts the {len(after)} ACFS entries of {hooks_file}" +
                  (f" ({len(todo)} newly)" if todo else ""))
             status = 0
 except (RuntimeError, OSError, ValueError, KeyError) as e:
@@ -541,8 +671,9 @@ sys.exit(status)
 PY
 }
 
-# The JSON list of the Codex entries `register` writes:
-# [{event, command, matcher, timeout}, ...].
+# The JSON list of ACFS's Codex entries, the ones `trust codex` trusts:
+# [{event, command, matcher, timeout, first?}, ...]. first: dcg's Bash
+# guard, the first handler of a Bash group (codex-dcg).
 nhm_hooks_codex_spec() {
     local event="" verb="" matcher="" spec="[]"
     while IFS='|' read -r event verb matcher; do
@@ -550,6 +681,9 @@ nhm_hooks_codex_spec() {
         spec="$(jq -c --arg e "$event" --arg c "$(nhm_hooks_command "$verb")" --arg m "$matcher" \
             --argjson t "$NHM_HOOKS_TIMEOUT_SECONDS" '. + [{event: $e, command: $c, matcher: $m, timeout: $t}]' <<<"$spec")" || return 1
     done < <(nhm_hooks_lines codex)
+    # dcg's Bash guard (codex-dcg): trusted where the file holds it.
+    spec="$(jq -c --arg c "$(nhm_hooks_dcg_command)" \
+        '. + [{event: "PreToolUse", command: $c, matcher: "Bash", timeout: null, first: true}]' <<<"$spec")" || return 1
     printf '%s\n' "$spec"
 }
 
@@ -591,6 +725,7 @@ nhm_hooks_main() {
         unregister) nhm_hooks_unregister "$@" ;;
         stray) nhm_hooks_stray "$@" ;;
         trust) nhm_hooks_trust "$@" ;;
+        codex-dcg) nhm_hooks_codex_dcg "$@" ;;
         -h|--help|help) nhm_hooks_usage ;;
         *) nhm_hooks_usage >&2; return 2 ;;
     esac

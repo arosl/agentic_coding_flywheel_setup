@@ -10757,6 +10757,39 @@ acfs_merge_existing_json_config_as_target() {
 # there, no line is added and the lines an earlier run added are removed,
 # so no turn hits a hook that points at nothing. When the check itself
 # cannot run as the target user, nothing changes.
+# dcg's Bash guard for Codex (stack.dcg; nhm_hooks.sh codex-dcg,
+# acfs-9hkh.81). `dcg install` configures Claude Code only; dcg's own
+# installer adds Codex's line only when it found codex. Register that
+# exact line when dcg and codex are both installed, and record its trust
+# (F.25). Without dcg, remove ACFS's line: it would point at nothing.
+acfs_install_codex_dcg_hook() {
+    local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh" dcg_rc=0
+    [[ -f "$nhm_hooks" ]] || return 0
+    # 0: dcg is there; 3: it is not; anything else: the check did not run.
+    # shellcheck disable=SC2016 # expanded by the target user's bash
+    run_as_target bash -c 'test -x "$HOME/.local/bin/dcg" || exit 3' || dcg_rc=$?
+    if [[ "$dcg_rc" -eq 3 ]]; then
+        run_as_target bash "$nhm_hooks" codex-dcg unregister "$TARGET_HOME/.codex/hooks.json" || \
+            log_warn "could not remove dcg's Bash guard from Codex's hooks.json"
+        return 0
+    fi
+    [[ "$dcg_rc" -eq 0 ]] || { log_warn "could not check for dcg as $TARGET_USER; Codex's dcg guard is unchanged"; return 0; }
+    acfs_legacy_module_selected "stack.dcg" || return 0
+    binary_installed "codex" || return 0
+    if ! try_step "Adding dcg's Bash guard to Codex's hooks" \
+            run_as_target bash "$nhm_hooks" codex-dcg register "$TARGET_HOME/.codex/hooks.json"; then
+        log_warn "adding dcg's Bash guard for Codex failed (optional)"
+        return 0
+    fi
+    # timeout: the helper bounds Codex's app-server itself (60 s); this
+    # bounds the helper, so no install can hang on it.
+    if run_as_target timeout 90 bash "$nhm_hooks" trust codex "$TARGET_HOME/.codex/hooks.json"; then
+        log_detail "Codex trusts dcg's Bash guard"
+    else
+        log_detail "Codex asks to trust dcg's Bash guard once: open /hooks in Codex"
+    fi
+}
+
 acfs_install_nhm_hook_lines() {
     local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh" hook_rc=0
     [[ -f "$nhm_hooks" ]] || return 0
@@ -11128,6 +11161,7 @@ finalize() {
     fi
 
     acfs_install_nhm_hook_lines
+    acfs_install_codex_dcg_hook
     acfs_install_nhm_maintain_timer
 
     # Configure workspace trust for coding agents (fixes #159)

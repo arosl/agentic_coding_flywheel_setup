@@ -10,14 +10,14 @@
 ACFS_INTERNAL_CHECKSUMS_SCHEMA=1
 
 declare -gA ACFS_INTERNAL_CHECKSUMS=(
-  [install.sh]="9fad4c1ac1b28be861992e50541624735690f0e9b72ffe95462b2771cdf139d0"
+  [install.sh]="419c32b367d5801379eb1d66f7477fff420bdbdfc7423dc560ff779754318233"
   [checksums.yaml]="51cdaac26a8226622d0cba67b39fd00ff1af8e2459ecaf465a56469824b40240"
   [scripts/preflight.sh]="f8b5829f2be4cbe08b6d33316fa07fe1b5a951b570819e38a1cb6ffe283d5902"
   [scripts/lib/security.sh]="9be2be3625c233571893965e69a789caf17dbefbcbe60fdfc9032a050b7a4a93"
   [scripts/lib/holds.sh]="7aca60222e56ce4034739b92ed3332c7118d918526d60ce189f59c595a930015"
   [scripts/lib/github_api.sh]="80699922df2e924694f5682457e614dedf9181d7c071472cc8a6db4f17373d3d"
   [scripts/lib/contract.sh]="22c148f44ddbaccd559196196ef903f26f65fc77e3b1b6b4efc62b77d3b97aa3"
-  [scripts/lib/update.sh]="d9798ca6c5d1a9bba47db60e0f55f5e6531827fa778e601d4312070b4187f640"
+  [scripts/lib/update.sh]="f80971a77552f7e8d04037f62534ac82648aa8add83b677c028b46349c54b54f"
   [scripts/lib/doctor.sh]="968d04802a6009ca51470aa6e5a44fd4d1f0917c6c1aa6ea244e7e28de82af6f"
   [scripts/lib/acfs-services.sh]="75a8bff497a9982859f0b67726e644fba0ac01863bbcb77561853eb250dcae57"
   [scripts/lib/doctor_fix.sh]="ea1f13be46bf9f3df0630362b6027f12aca271e8df4eeddcd8d36f1019615b2c"
@@ -64,7 +64,7 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/completions/acfs.bash]="73820478d589fd890715eb71864353ae09c3ad19d549363fa72c335a170e63ff"
   [scripts/generate-root-agents-md.sh]="725a036f9a0695bb3423c1f54030f626f7c6b43c0f73233ff87ca604960de356"
   [scripts/lib/agent_mail_hook.sh]="bf45ae55002af558862d56b95061b52ceb88b15a7f3783ce4bfcca8463461c13"
-  [scripts/lib/nhm_hooks.sh]="6e88100a0b9eb53ab0fa756f42e6d0f94a1919bb857d365c7ae6e71f4758ec17"
+  [scripts/lib/nhm_hooks.sh]="16e8ac62f37e0d9fbca0cb6b6fc26c96b2d08f870eb75767f3386edca1e70f78"
   [scripts/lib/nhm_maintain_timer.sh]="2c7e222b383b26878bf11f18b21765b41d97b07ed572dedffada38f34e76738a"
   [scripts/lib/agent_quota.sh]="0fabea807e89bc5e5f74de125202b7a046b6f6018cd16e2f3494d389ad97fd00"
   [scripts/lib/agy_e2e_harness.sh]="99c2cd036ba51f2c109327438afc25fd47b29f0f49ec3b1e3ae7d1ab88990222"
