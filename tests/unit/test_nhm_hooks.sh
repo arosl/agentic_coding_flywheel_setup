@@ -179,6 +179,18 @@ check "trust: a write Codex does not keep fails" bash -c 'rm -f "$1/fake-trust.j
 check "trust: an app-server that dies fails" bash -c '! FAKE_CODEX_FAIL=1 PATH="$2:$PATH" bash "$3" trust codex "$1/hooks.json" 2>/dev/null' \
     _ "$CODEX_DIR" "$FAKEBIN" "$HOOKS"
 check "trust: no codex fails" bash -c '! PATH="/usr/bin:/bin" bash "$2" trust codex "$1/hooks.json" 2>/dev/null' _ "$CODEX_DIR" "$HOOKS"
+# acfs-9hkh.60: a hooks file the driver cannot read fails with a note,
+# never a Python traceback; a non-object "hooks" holds no ACFS entries.
+for bad in '{not json' '[1, 2]'; do
+    printf '%s\n' "$bad" >"$WORK/trust-bad.json"
+    OUT="$(PATH="$FAKEBIN:$PATH" bash "$HOOKS" trust codex "$WORK/trust-bad.json" --dry-run 2>&1)" && rc=0 || rc=$?
+    check "trust: '$bad' fails with a note, no traceback" \
+        bash -c '[[ $2 -eq 1 && "$1" == *"nhm_hooks: "* && "$1" != *Traceback* ]]' _ "$OUT" "$rc"
+done
+printf '{"hooks": []}\n' >"$WORK/trust-bad.json"
+OUT="$(PATH="$FAKEBIN:$PATH" bash "$HOOKS" trust codex "$WORK/trust-bad.json" --dry-run 2>&1)" && rc=0 || rc=$?
+check "trust: a non-object hooks has no ACFS entries" \
+    bash -c '[[ $2 -eq 0 && "$1" == *"has no nhm-hook entries"* && "$1" != *Traceback* ]]' _ "$OUT" "$rc"
 # Review of 77cfc7c2/be761fae: older ACFS lines are not ACFS's exact lines,
 # so trust finds none; register rewrites the pure groups in place, and
 # trust then trusts those same positions. acfs-9hkh.53: PostToolUse's
@@ -203,7 +215,7 @@ check "older lines: register rewrites the pure groups in place; the user's group
         and .hooks.PostToolUse[1].hooks == [{type: "command", command: (env.HOME + "/.local/bin/nhm-hook posttooluse"), timeout: 5}]
         and .hooks.SessionStart[0] == {hooks: [{type: "command", command: (env.HOME + "/.local/bin/nhm-hook sessionstart"), timeout: 5}]}' "$OLDC/hooks.json"
 check "stray: names ACFS's handler inside the user's group" \
-    bash -c '[[ "$(bash "$1" stray codex "$2")" == "PostToolUse 0 0" ]]' _ "$HOOKS" "$OLDC/hooks.json"
+    bash -c '[[ "$(bash "$1" stray codex "$2")" == "PostToolUse 0 0 user-group twice" ]]' _ "$HOOKS" "$OLDC/hooks.json"
 OUT="$(PATH="$FAKEBIN:$PATH" bash "$HOOKS" trust codex "$OLDC/hooks.json" 2>&1)"
 check "older lines: after register, trust trusts the 3 rewritten positions, never the user's group" \
     bash -c '[[ "$1" == *"trusts the 3 nhm-hook entries"* ]] && jq -e "(keys | length) == 3 and all(keys[]; test(\":(post_tool_use:1|session_start:0|post_compact:0):0$\"))" "$2/fake-trust.json" >/dev/null' \
@@ -313,7 +325,9 @@ check "register: ACFS's handler in the user's group stays as it is; the exact li
         and .hooks.SessionStart[1] == {hooks: [{type: "command", command: (env.HOME + "/.local/bin/nhm-hook sessionstart"), timeout: 5}]}' "$UNREG/lone.json"
 check "registered: every line exact" bash "$HOOKS" registered claude "$UNREG/lone.json"
 check "stray: names the handler in the user's group" \
-    bash -c '[[ "$(bash "$1" stray claude "$2")" == "SessionStart 0 0" ]]' _ "$HOOKS" "$UNREG/lone.json"
+    bash -c '[[ "$(bash "$1" stray claude "$2")" == "SessionStart 0 0 user-group twice" ]]' _ "$HOOKS" "$UNREG/lone.json"
+check "stray: before register, the handler in the user's group runs once" \
+    bash -c '[[ "$(bash "$1" stray claude "$2")" == "SessionStart 0 0 user-group once" ]]' _ "$HOOKS" "$UNREG/lone.orig"
 cp "$UNREG/lone.json" "$UNREG/lone.once"
 bash "$HOOKS" register claude "$UNREG/lone.json" 2>/dev/null
 check "register: a second run changes nothing" cmp -s "$UNREG/lone.json" "$UNREG/lone.once"
@@ -322,6 +336,15 @@ check "unregister claude: the exact line goes; the user's group stays as it was"
     cmp -s <(jq -S . "$UNREG/lone.json") <(jq -S . "$UNREG/lone.orig")
 check "unregister claude: it says what it removed and names the stray it left" \
     bash -c '[[ "$1" == *"removed the nhm hook lines"* && "$1" == *"left 1 nhm-hook handler(s) inside your own hook groups"* ]]' _ "$OUT"
+# acfs-9hkh.60: a second exact group (a hand edit) runs the hook twice;
+# stray names it, and Claude's unregister removes both.
+jq '.hooks.SessionStart += [.hooks.SessionStart[1]]' "$UNREG/lone.once" >"$UNREG/dup.tmp"
+mv "$UNREG/dup.tmp" "$UNREG/dup.json"
+check "stray: a second exact line is a duplicate" \
+    bash -c '[[ "$(bash "$1" stray claude "$2")" == *"SessionStart 2 0 duplicate twice"* ]]' _ "$HOOKS" "$UNREG/dup.json"
+bash "$HOOKS" unregister claude "$UNREG/dup.json" 2>/dev/null
+check "unregister claude: both exact lines go" \
+    jq_true '[.hooks.SessionStart[] | select(.matcher != "startup")] | length == 0' "$UNREG/dup.json"
 # A group with the user's handler beside ACFS's: never edited.
 jq -n --arg c "$SESSION_CMD" '{hooks: {SessionStart: [{hooks: [{type: "command", command: "user-a"}, {type: "command", command: $c, timeout: 5}]}]}}' >"$UNREG/shared.json"
 cp "$UNREG/shared.json" "$UNREG/shared.orig"

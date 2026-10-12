@@ -30,7 +30,8 @@
 #   nhm_hooks.sh unregister claude|codex [FILE] (remove ACFS's exact lines;
 #                                                Codex: trailing ones only)
 #   nhm_hooks.sh stray claude|codex FILE        (list nhm-hook handlers inside
-#                                                the user's own hook groups)
+#                                                the user's own hook groups,
+#                                                and duplicate ACFS lines)
 #   nhm_hooks.sh trust codex [FILE] [--dry-run] (FILE is $CODEX_HOME/hooks.json;
 #                                                default ~/.codex/hooks.json)
 # ============================================================
@@ -54,9 +55,12 @@ Usage:
                                              Remove the lines register wrote
                                              (Codex: only those no other
                                              entry follows)
-  nhm_hooks.sh stray claude|codex FILE       Print "<event> <group> <handler>"
-                                             for each nhm-hook handler inside
-                                             your own hook groups
+  nhm_hooks.sh stray claude|codex FILE       Print "<event> <group> <handler>
+                                             <kind> <runs>" for each nhm-hook
+                                             handler inside your own hook
+                                             groups (kind user-group) and each
+                                             second copy of ACFS's line
+                                             (duplicate); runs: twice or once
   nhm_hooks.sh trust codex [FILE] [--dry-run]
                                              Record Codex's trust for the
                                              nhm-hook entries of FILE
@@ -117,6 +121,7 @@ def exact_at: [groups | select(.value == entry) | .key];
 def older_at: [groups | select(.value != entry and (.value | pure)) | .key];
 def stray_at: [groups | .key as $gi | .value | select(type == "object" and (.hooks | type) == "array" and (pure | not))
     | .hooks | to_entries[] | select(.value | nhmish) | [$gi, .key]];
+def duplicate_at: exact_at[1:];
 JQ
 }
 
@@ -329,9 +334,12 @@ nhm_hooks_unregister() {
     return 0
 }
 
-# stray claude|codex FILE: print "<event> <group> <handler>" for each nhm
-# handler inside a group of the user's (nhm_hooks_jq_defs). ACFS never
-# edits such a group; the doctor names each one, to be removed by hand.
+# stray claude|codex FILE: print "<event> <group> <handler> <kind> <runs>"
+# (positions from 0) for each nhm handler that runs besides ACFS's one exact
+# line: kind "user-group", inside a group of the user's (nhm_hooks_jq_defs),
+# or "duplicate", a second exact group (only a hand edit makes one). runs
+# is "twice" when ACFS's exact line is there too, else "once". ACFS never
+# edits the user's group; the doctor names each one, to be removed by hand.
 nhm_hooks_stray() {
     local kind="${1:-}" file="${2:-}" event="" matcher="" verb=""
 
@@ -344,7 +352,10 @@ nhm_hooks_stray() {
             --argjson timeout "$NHM_HOOKS_TIMEOUT_SECONDS" --argjson known "$(nhm_hooks_known "$verb")" \
             "$(nhm_hooks_jq_defs)"'
             if (.hooks? | type) == "object" and (.hooks[$event] | type) == "array"
-            then stray_at[] | "\($event) \(.[0]) \(.[1])" else empty end
+            then (if (exact_at | length) > 0 then "twice" else "once" end) as $runs
+              | (stray_at[] | "\($event) \(.[0]) \(.[1]) user-group \($runs)"),
+                (duplicate_at[] | "\($event) \(.) 0 duplicate twice")
+            else empty end
         ' "$file" 2>/dev/null || { nhm_hooks_note "cannot read $file"; return 1; }
     done < <(nhm_hooks_lines "$kind")
 }
@@ -373,10 +384,22 @@ def note(msg):
     print("nhm_hooks: " + msg, file=sys.stderr)
 
 
+class HooksFileError(ValueError):
+    """The hooks file cannot be read as a JSON object."""
+
+
 def ours():
     """The positions of the entries that are exactly what register writes."""
-    with open(hooks_file, encoding="utf-8") as f:
-        hooks = json.load(f).get("hooks", {})
+    try:
+        with open(hooks_file, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        raise HooksFileError(f"cannot read {hooks_file}: {e}") from None
+    if not isinstance(data, dict):
+        raise HooksFileError(f"{hooks_file}: the top level is not a JSON object")
+    hooks = data.get("hooks", {})
+    if not isinstance(hooks, dict):
+        return set()
     found = set()
     for want in spec:
         groups = hooks.get(want["event"])
@@ -405,7 +428,11 @@ for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
     signal.signal(sig, on_signal)
 
 real = os.path.realpath(hooks_file)
-mine = ours()
+try:
+    mine = ours()
+except HooksFileError as e:
+    note(str(e))
+    sys.exit(1)
 if not mine:
     note(f"{hooks_file} has no nhm-hook entries that ACFS wrote")
     sys.exit(0)

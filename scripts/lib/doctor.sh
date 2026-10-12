@@ -3136,16 +3136,23 @@ check_nhm() {
     fi
 }
 
-# nhm-hook handlers inside the user's own hook groups (acfs-9hkh.53):
-# ACFS never edits such a group, so register leaves the handler and
-# appends its own line, and the hook runs twice. `nhm_hooks.sh stray`
-# lists each as "<event> <group> <handler>"; an installed helper without
-# `stray` lists nothing. Adds to check_nhm's missing and fixes.
+# nhm-hook handlers that run besides ACFS's one exact line (acfs-9hkh.53,
+# .60): one inside the user's own hook group, which ACFS never edits, or a
+# second copy of ACFS's line. `nhm_hooks.sh stray` lists each as "<event>
+# <group> <handler> <kind> <runs>", positions from 0; the warning counts
+# groups from 1 and says "fires twice" only when it does. An installed
+# helper without `stray` lists nothing. Adds to check_nhm's missing and
+# fixes.
 _acfs_doctor_nhm_strays() {
-    local helper="$1" home="$2" kind="$3" file="$4" event="" gi="" hi="" found=0
-    while read -r event gi hi; do
-        [[ -n "$event" && -n "$hi" ]] || continue
-        missing+=("an older nhm-hook line inside your own hook group ($event, group $gi) in $file: remove it by hand; it fires twice")
+    local helper="$1" home="$2" kind="$3" file="$4" event="" gi="" hi="" what="" runs="" line="" found=0
+    while read -r event gi hi what runs; do
+        [[ -n "$event" && "$gi" =~ ^[0-9]+$ && -n "$hi" ]] || continue
+        case "$what" in
+            duplicate) line="a second copy of ACFS's nhm-hook line ($event, group $((gi + 1))) in $file: remove it by hand; it fires twice" ;;
+            *) line="an older nhm-hook line inside your own hook group ($event, group $((gi + 1))) in $file: remove it by hand"
+               [[ "$runs" != twice ]] || line+="; it fires twice" ;;
+        esac
+        missing+=("$line")
         found=$((found + 1))
     done < <(HOME="$home" bash "$helper" stray "$kind" "$file" </dev/null 2>/dev/null || true)
     (( found == 0 )) || fixes+=("remove those nhm-hook handlers from $file by hand")

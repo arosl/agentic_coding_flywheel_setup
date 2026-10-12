@@ -1249,6 +1249,9 @@ if [[ "${ACFS_FORCE_INSTALL_HELPERS_SECURITY_REDEFINE:-0}" == "1" ]] || ! declar
             [[ -n "${ACFS_RAW:-}" ]] && env_args+=("ACFS_RAW=$ACFS_RAW")
             [[ -n "${ACFS_VERSION:-}" ]] && env_args+=("ACFS_VERSION=$ACFS_VERSION")
             [[ -n "${ACFS_REF:-}" ]] && env_args+=("ACFS_REF=$ACFS_REF")
+            # stack.nhm's install, verify and hook lines read it as the
+            # target user (acfs-9hkh.60).
+            [[ -n "${NHM_BIN_DIR:-}" ]] && env_args+=("NHM_BIN_DIR=$NHM_BIN_DIR")
         fi
 
         command_argv=("$@")

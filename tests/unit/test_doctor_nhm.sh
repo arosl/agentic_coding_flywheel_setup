@@ -123,7 +123,17 @@ jq --arg s "$WORK/home/.local/bin/nhm-hook sessionstart" \
 mv "$WORK/settings.tmp" "$WORK/home/.claude/settings.json"
 out="$(run_check claude)"
 check_case "a stray nhm-hook line in the user's group warns: remove it by hand" \
-    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"older nhm-hook line inside your own hook group (SessionStart, group 0) in $2/.claude/settings.json: remove it by hand; it fires twice"*\|*"by hand"* ]]' \
+    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"older nhm-hook line inside your own hook group (SessionStart, group 1) in $2/.claude/settings.json: remove it by hand; it fires twice"*\|*"by hand"* ]]' \
+    _ "$out" "$WORK/home"
+
+# acfs-9hkh.60: a second copy of ACFS's exact line warns too; groups count
+# from 1.
+fixture yes claude
+jq '.hooks.SessionStart += [.hooks.SessionStart[-1]]' "$WORK/home/.claude/settings.json" >"$WORK/settings.tmp"
+mv "$WORK/settings.tmp" "$WORK/home/.claude/settings.json"
+out="$(run_check claude)"
+check_case "a duplicate ACFS line warns: a second copy, it fires twice" \
+    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"a second copy of ACFS'"'"'s nhm-hook line (SessionStart, group 2) in $2/.claude/settings.json: remove it by hand; it fires twice"* ]]' \
     _ "$out" "$WORK/home"
 
 fixture yes both

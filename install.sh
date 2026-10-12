@@ -5491,6 +5491,9 @@ run_as_target() {
         if [[ -n "${ACFS_RAW:-}" ]]; then env_args+=("ACFS_RAW=$ACFS_RAW"); fi
         if [[ -n "${ACFS_VERSION:-}" ]]; then env_args+=("ACFS_VERSION=$ACFS_VERSION"); fi
         if [[ -n "${ACFS_REF:-}" ]]; then env_args+=("ACFS_REF=$ACFS_REF"); fi
+        # stack.nhm's install, verify and hook lines read it as the target
+        # user (acfs-9hkh.60).
+        if [[ -n "${NHM_BIN_DIR:-}" ]]; then env_args+=("NHM_BIN_DIR=$NHM_BIN_DIR"); fi
     fi
 
     command_argv=("$@")
