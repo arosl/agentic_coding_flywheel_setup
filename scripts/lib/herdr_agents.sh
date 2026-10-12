@@ -26,6 +26,7 @@
 #   acfs agents reap [--idle MIN] [--workspace ID] [--project KEY | --all-workspaces] [--loop [--interval SEC]] [--dry-run]
 #   acfs agents quota [--json] | quota check <kind> | quota record-claude   (agent_quota.sh)
 #   acfs agents sweep [--hours N] [--dir DIR] [--name-regex ERE] [--dry-run]   (temp_sweep.sh)
+#   acfs agents export | import FILE   (the state nhm takes over and hands back)
 # ============================================================
 
 set -euo pipefail
@@ -75,6 +76,8 @@ Usage:
                     [--loop [--interval SEC]] [--dry-run]
   acfs agents quota [--json] | quota check KIND [--limit PERCENT] | quota record-claude
   acfs agents sweep [--hours N] [--dir DIR] [--name-regex ERE] [--dry-run]
+  acfs agents export
+  acfs agents import FILE
 
 spawn  Start agents, each in its own tab of a herdr workspace. Each agent gets
        an Agent Mail identity first; its herdr name is that name lowercased and
@@ -267,6 +270,23 @@ sweep  Remove the temp dirs tests and browsers left in /tmp and $TMPDIR:
        only test-made names, owned by you, unchanged for --hours (6), holding
        no git worktree and used by no process (temp_sweep.sh; see
        'acfs agents sweep --help'). --dry-run lists them.
+export Print the state these commands keep, as JSON (format
+       acfs-agents-state, version 1), for nhm admin takeover to import:
+       where each kept registration token is (its file, never its value),
+       each agent's wake state, and agents.toml's keep list. Read-only.
+import Write the state of an export file back, for nhm admin handback:
+       tokens (each entry's "file" holds the token), wake state, and a
+       check that agents.toml keeps every name the file keeps. It checks
+       the whole file first and writes nothing if any entry is wrong.
+       Only nhm runs it, under its exclusive owner lock.
+
+nhm    Once nhm (arosl/nhm) is enrolled for this herdr server, its
+       owner.toml says who changes agents here. spawn, send, retire,
+       recycle, wake, limits and reap take nhm's owner lock shared and run
+       only while the owner is acfs-bash (also when owner.toml is missing);
+       when nhm owns the server, spawn, send, retire and recycle refuse, and
+       wake, limits and reap stop with a note. A corrupt owner.toml refuses
+       them all. A server nhm is not enrolled for is unaffected.
 
 The workspace is --workspace, else $HERDR_WORKSPACE_ID. --cwd defaults to the
 git top level of the current directory, which is also the Agent Mail project key.
@@ -316,6 +336,103 @@ herdr_agents_resolve_workspace() {
     [[ -n "$workspace" ]] || workspace="${HERDR_WORKSPACE_ID:-}"
     [[ -n "$workspace" ]] || herdr_agents_die "no workspace: pass --workspace ID (see 'herdr workspace list'), or run inside herdr"
     printf '%s\n' "$workspace"
+}
+
+# ------------------------------------------------------------
+# The owner switch with nhm (acfs-9hkh.26; nhm plan-v8 section 1, F.24)
+#
+# nhm keeps a directory per herdr server it is enrolled for,
+# ${XDG_STATE_HOME:-~/.local/state}/nhm/inst-*/, whose instance.toml names
+# the server's socket. owner.toml there says who changes agents on that
+# server: owner = "acfs-bash" (also when the file is missing) or "nhm".
+# Every mutator here takes owner.lock beside it shared (flock -s), checks
+# the owner, and keeps the lock until it is done. nhm admin takeover and
+# handback take it exclusive, so they wait for a running mutator, and no
+# mutator starts while they switch. A server nhm is not enrolled for is
+# the Bash's alone. A corrupt owner.toml refuses every mutation.
+# ------------------------------------------------------------
+HERDR_AGENTS_OWNER_WAIT="${ACFS_AGENTS_OWNER_WAIT:-10}"
+HERDR_AGENTS_OWNER_FD=""
+
+# The socket of the herdr server this script talks to, as nhm records it:
+# absolute, with . and .. resolved but symlinks kept.
+herdr_agents_owner_socket() {
+    local socket="${HERDR_SOCKET_PATH:-}"
+    if [[ -z "$socket" ]]; then
+        socket="$(herdr status server 2>/dev/null | sed -n 's/^[[:space:]]*socket: \(\/.*\)$/\1/p' | head -n 1)" || true
+    fi
+    [[ -n "$socket" ]] || return 1
+    realpath -s -m -- "$socket"
+}
+
+# The nhm instance directory enrolled for this herdr server, or nothing.
+herdr_agents_owner_dir() {
+    local root file socket
+    root="${XDG_STATE_HOME:-$HOME/.local/state}/nhm"
+    compgen -G "$root/inst-*/instance.toml" >/dev/null || return 0
+    socket="$(herdr_agents_owner_socket)" || return 0
+    for file in "$root"/inst-*/instance.toml; do
+        # nhm writes the key as: socket_path = "<path>"
+        if [[ "$(sed -n 's/^socket_path = "\(.*\)"$/\1/p' "$file")" == "$socket" ]]; then
+            printf '%s\n' "${file%/*}"
+            return 0
+        fi
+    done
+}
+
+# Print who owns nhm instance $1: acfs-bash or nhm. Fails when its
+# owner.toml is not what nhm writes: one owner, one generation, and
+# optionally updated_at, blank lines and comments.
+herdr_agents_owner_read() {
+    local file="$1/owner.toml"
+    [[ -e "$file" ]] || { printf 'acfs-bash\n'; return 0; }
+    awk '
+        /^[[:space:]]*(#.*)?$/ { next }
+        /^owner = "(acfs-bash|nhm)"$/ { owner = $3; owners++; next }
+        /^generation = [0-9]+$/ { generations++; next }
+        /^updated_at = / { next }
+        { bad = 1 }
+        END {
+            if (bad || owners != 1 || generations != 1) exit 1
+            gsub(/"/, "", owner)
+            print owner
+        }' "$file"
+}
+
+# Drop the owner lock, if this process holds it.
+herdr_agents_owner_release() {
+    [[ -n "$HERDR_AGENTS_OWNER_FD" ]] || return 0
+    exec {HERDR_AGENTS_OWNER_FD}>&-
+    HERDR_AGENTS_OWNER_FD=""
+}
+
+# Take the owner lock shared until this process ends (or owner_release),
+# and go on only while the Bash owns the herdr server. When nhm owns it,
+# $1 = refuse (the default) dies; $1 = skip exits 0 with a note, for the
+# loops and timers that should stop, not fail. Calling it again while the
+# lock is held does nothing.
+herdr_agents_owner_guard() {
+    local mode="${1:-refuse}" dir owner
+    [[ -z "$HERDR_AGENTS_OWNER_FD" ]] || return 0
+    dir="$(herdr_agents_owner_dir)"
+    [[ -n "$dir" ]] || return 0
+    herdr_agents_require flock
+    exec {HERDR_AGENTS_OWNER_FD}>>"$dir/owner.lock"
+    if ! flock -s -w "$HERDR_AGENTS_OWNER_WAIT" "$HERDR_AGENTS_OWNER_FD"; then
+        herdr_agents_owner_release
+        herdr_agents_die "nhm's owner lock $dir/owner.lock stayed busy for ${HERDR_AGENTS_OWNER_WAIT}s: an nhm takeover or handback is running; try again when it is done"
+    fi
+    if ! owner="$(herdr_agents_owner_read "$dir")"; then
+        herdr_agents_owner_release
+        herdr_agents_die "$dir/owner.toml is corrupt, so every agent change on this herdr server is refused until it is repaired"
+    fi
+    [[ "$owner" == nhm ]] || return 0
+    herdr_agents_owner_release
+    if [[ "$mode" == skip ]]; then
+        herdr_agents_note "nhm owns this herdr server ($dir/owner.toml); acfs agents leaves it to nhm"
+        exit 0
+    fi
+    herdr_agents_die "nhm owns this herdr server ($dir/owner.toml): use nhm, not acfs agents, to change its agents"
 }
 
 # The Agent Mail program name for a herdr agent kind.
@@ -607,7 +724,13 @@ herdr_agents_codex_outside_herdr() {
     for var in "${!HERDR_@}"; do
         [[ "$var" == HERDR_AGENTS_* ]] || unset_args+=(-u "$var")
     done
-    env "${unset_args[@]}" codex "$@"
+    # The daemon outlives this script: it must not inherit nhm's owner
+    # lock, or a takeover would wait for it forever.
+    if [[ -n "$HERDR_AGENTS_OWNER_FD" ]]; then
+        env "${unset_args[@]}" codex "$@" {HERDR_AGENTS_OWNER_FD}>&-
+    else
+        env "${unset_args[@]}" codex "$@"
+    fi
 }
 
 # One JSON object describing the daemon: running, pid, leaked_herdr_vars
@@ -817,6 +940,7 @@ herdr_agents_spawn() {
 
     herdr_agents_require herdr jq
     [[ "$dry_run" == true ]] || herdr_agents_require curl sha256sum
+    [[ "$dry_run" == true ]] || herdr_agents_owner_guard
     workspace="$(herdr_agents_resolve_workspace "$workspace")"
     # An agent spawned on a plan whose window is nearly used up stalls at its
     # first turns (acfs-ybg). Checked once per kind, before anything exists.
@@ -1357,6 +1481,7 @@ herdr_agents_send() {
         herdr_agents_die "send needs --all, --kind KIND or --name NAME"
     fi
     herdr_agents_require herdr jq
+    herdr_agents_owner_guard
     timeout="${timeout:-$HERDR_AGENTS_PROMPT_TIMEOUT_MS}"
 
     # A template is checked whole before anything is sent: a placeholder it
@@ -1715,13 +1840,18 @@ herdr_agents_wake() {
     flock -n "$lock_fd" || herdr_agents_die "another acfs agents wake is running for $project"
 
     if [[ "$loop" == false ]]; then
+        [[ "$dry_run" == true ]] || herdr_agents_owner_guard skip
         herdr_agents_wake_cycle "$workspace" "$project" "$state_dir" "$dry_run"
         return
     fi
     herdr_agents_note "waking idle agents in workspace $workspace on new mail, every ${interval}s"
     while :; do
+        # The owner lock is held per cycle, never across the sleep; the
+        # loop ends once nhm owns the server.
+        [[ "$dry_run" == true ]] || herdr_agents_owner_guard skip
         # A failed cycle (herdr or am unreachable) ends only that cycle.
         ( herdr_agents_wake_cycle "$workspace" "$project" "$state_dir" "$dry_run" ) || true
+        herdr_agents_owner_release
         sleep "$interval"
     done
 }
@@ -1841,13 +1971,18 @@ herdr_agents_limits() {
     flock -n "$lock_fd" || herdr_agents_die "another acfs agents limits is running for workspace $workspace"
 
     if [[ "$loop" == false ]]; then
+        [[ "$dry_run" == true ]] || herdr_agents_owner_guard skip
         herdr_agents_limits_cycle "$workspace" "$lines" "$state_dir" "$mail_from" "$project" "$dry_run"
         return
     fi
     herdr_agents_note "watching workspace $workspace for agents stopped at a limit, every ${interval}s"
     while :; do
+        # The owner lock is held per cycle, never across the sleep; the
+        # loop ends once nhm owns the server.
+        [[ "$dry_run" == true ]] || herdr_agents_owner_guard skip
         # A failed cycle (herdr or am unreachable) ends only that cycle.
         ( herdr_agents_limits_cycle "$workspace" "$lines" "$state_dir" "$mail_from" "$project" "$dry_run" ) || true
+        herdr_agents_owner_release
         sleep "$interval"
     done
 }
@@ -1919,11 +2054,17 @@ herdr_agents_token_file() {
 }
 
 # Keep token $3 of agent $2 in project $1, readable only by this user.
+# The directory's .project file names the project, for export.
 herdr_agents_token_save() {
     local file dir tmp
     file="$(herdr_agents_token_file "$1" "$2")" || return 1
     dir="${file%/*}"
     (umask 077 && mkdir -p "$dir") || return 1
+    if [[ -d "$1" ]]; then
+        (cd "$1" && pwd -P) >"$dir/.project" || return 1
+    else
+        printf '%s\n' "$1" >"$dir/.project" || return 1
+    fi
     tmp="$(umask 077 && mktemp "$dir/.token.XXXXXX")" || return 1
     if ! printf '%s\n' "$3" >"$tmp" || ! mv -f "$tmp" "$file"; then
         rm -f "$tmp"
@@ -1999,6 +2140,7 @@ herdr_agents_retire() {
     done
     [[ -n "$mail_name" ]] || herdr_agents_die "retire needs the agent's Agent Mail name"
     herdr_agents_require herdr jq am git
+    [[ "$dry_run" == true ]] || herdr_agents_owner_guard
     if [[ -z "$cwd" ]]; then
         cwd="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
     fi
@@ -2261,6 +2403,7 @@ herdr_agents_recycle() {
         project="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
     fi
     herdr_agents_require herdr jq
+    [[ "$dry_run" == true ]] || herdr_agents_owner_guard
     local rc=0
     herdr_agents_recycle_one "$mail_name" "$workspace" "$project" "$template" "$timeout" "$dry_run" || rc=$?
     return "$rc"
@@ -2628,14 +2771,164 @@ herdr_agents_reap() {
     flock -n "$lock_fd" || herdr_agents_die "another acfs agents reap is running"
 
     if [[ "$loop" == false ]]; then
+        [[ "$dry_run" == true ]] || herdr_agents_owner_guard skip
         herdr_agents_reap_sweep "$workspace" "$idle" "$dry_run" "$file" "$project"
         return
     fi
     herdr_agents_note "reaping agents between turns for ${idle} min in ${project:-every project}${workspace:+, workspace $workspace}, every ${interval}s"
     while :; do
+        # The owner lock is held per sweep, never across the sleep; the
+        # loop ends once nhm owns the server.
+        [[ "$dry_run" == true ]] || herdr_agents_owner_guard skip
         ( herdr_agents_reap_sweep "$workspace" "$idle" "$dry_run" "$file" "$project" ) || true
+        herdr_agents_owner_release
         sleep "$interval"
     done
+}
+
+# ------------------------------------------------------------
+# export / import: the state nhm admin takeover imports and nhm admin
+# handback writes back (acfs-9hkh.26). Format acfs-agents-state, version 1:
+#   {"format": "acfs-agents-state", "version": 1, "exported_at": "<UTC>",
+#    "acfs_home": "<dir>",
+#    "tokens": [{"project_key": "<dir>"|null, "project_hash": "<16 hex>",
+#                "name": "<MailName>", "file": "<path of the token>"}],
+#    "wake":   [{"project_key": "<key>"|null, "project_hash": "<16 hex>",
+#                "name": "<MailName>",
+#                "state": {"cursor": N, "last_wake": N, "overdue": [N...]}}],
+#    "keep":   ["<MailName>", ...]}
+# A token is never in the file, only where it is. project_key is null for
+# state kept before the project was recorded beside it.
+# ------------------------------------------------------------
+HERDR_AGENTS_EXPORT_FORMAT="acfs-agents-state"
+HERDR_AGENTS_EXPORT_VERSION=1
+HERDR_AGENTS_WAKE_STATE_FILTER='(.cursor | type) == "number" and (.last_wake | type) == "number" and (.overdue | type) == "array"'
+
+# The first line of file $1 as a JSON string, or null when there is none.
+herdr_agents_export_project() {
+    local value=""
+    [[ -r "$1" ]] && value="$(head -n 1 "$1")"
+    jq -n --arg v "$value" 'if $v == "" then null else $v end'
+}
+
+herdr_agents_export() {
+    case "${1:-}" in
+        "") ;;
+        -h|--help) herdr_agents_usage; return 0 ;;
+        *) herdr_agents_die "export takes no arguments" ;;
+    esac
+    herdr_agents_require jq
+    local state="${ACFS_HOME:-$HOME/.acfs}/state" dir file name project keep
+    local tokens="[]" wake="[]"
+    for dir in "$state"/tokens/*/; do
+        [[ -d "$dir" ]] || continue
+        dir="${dir%/}"
+        project="$(herdr_agents_export_project "$dir/.project")"
+        for file in "$dir"/*; do
+            name="${file##*/}"
+            [[ -f "$file" && "$name" =~ ^[A-Za-z][A-Za-z0-9]*$ ]] || continue
+            tokens="$(jq -c --argjson p "$project" --arg h "${dir##*/}" --arg n "$name" --arg f "$file" \
+                '. + [{project_key: $p, project_hash: $h, name: $n, file: $f}]' <<<"$tokens")"
+        done
+    done
+    for dir in "$state"/wake/*/; do
+        [[ -d "$dir" ]] || continue
+        dir="${dir%/}"
+        project="$(herdr_agents_export_project "$dir/project")"
+        for file in "$dir"/*.json; do
+            name="${file##*/}"
+            name="${name%.json}"
+            [[ -f "$file" && "$name" =~ ^[A-Za-z][A-Za-z0-9_-]{0,63}$ ]] || continue
+            # wake treats a state it cannot read as no state at all.
+            if ! jq -e "$HERDR_AGENTS_WAKE_STATE_FILTER" "$file" >/dev/null 2>&1; then
+                herdr_agents_note "export: $file is not a wake state; left out"
+                continue
+            fi
+            wake="$(jq -c --argjson p "$project" --arg h "${dir##*/}" --arg n "$name" --slurpfile s "$file" \
+                '. + [{project_key: $p, project_hash: $h, name: $n, state: $s[0]}]' <<<"$wake")"
+        done
+    done
+    keep="$(herdr_agents_reap_config)" || herdr_agents_die "export: agents.toml's keep list cannot be read"
+    jq -n --arg format "$HERDR_AGENTS_EXPORT_FORMAT" --argjson version "$HERDR_AGENTS_EXPORT_VERSION" \
+        --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg home "${ACFS_HOME:-$HOME/.acfs}" \
+        --argjson tokens "$tokens" --argjson wake "$wake" --argjson keep "$keep" \
+        '{format: $format, version: $version, exported_at: $at, acfs_home: $home,
+          tokens: $tokens, wake: $wake, keep: $keep}'
+}
+
+herdr_agents_import() {
+    local file=""
+    case "${1:-}" in
+        -h|--help) herdr_agents_usage; return 0 ;;
+        "") herdr_agents_die "import needs an export file" ;;
+        *) file="$1" ;;
+    esac
+    [[ $# -le 1 ]] || herdr_agents_die "import takes one export file"
+    herdr_agents_require jq sha256sum
+    [[ -r "$file" ]] || herdr_agents_die "import: cannot read $file"
+    local data keep missing i count project name src token
+    local -a errors=() token_values=()
+    data="$(jq -c . "$file" 2>/dev/null)" || herdr_agents_die "import: $file is not JSON"
+    jq -e --arg f "$HERDR_AGENTS_EXPORT_FORMAT" --argjson v "$HERDR_AGENTS_EXPORT_VERSION" \
+        '.format == $f and .version == $v and (.tokens | type) == "array"
+         and (.wake | type) == "array" and (.keep | type) == "array"' <<<"$data" >/dev/null \
+        || herdr_agents_die "import: $file is not $HERDR_AGENTS_EXPORT_FORMAT version $HERDR_AGENTS_EXPORT_VERSION"
+
+    # Check everything before anything is written.
+    count="$(jq '.tokens | length' <<<"$data")"
+    for ((i = 0; i < count; i++)); do
+        project="$(jq -r ".tokens[$i].project_key // empty" <<<"$data")"
+        name="$(jq -r ".tokens[$i].name // empty" <<<"$data")"
+        src="$(jq -r ".tokens[$i].file // empty" <<<"$data")"
+        token=""
+        if [[ -z "$project" || ! "$name" =~ ^[A-Za-z][A-Za-z0-9]*$ ]]; then
+            errors+=("tokens[$i]: needs project_key and an Agent Mail name")
+        elif [[ ! -r "$src" ]] || ! token="$(head -n 1 "$src")" || [[ -z "$token" ]]; then
+            errors+=("tokens[$i] ($name): no token in ${src:-its file}")
+        fi
+        token_values+=("$token")
+    done
+    local wake_errors line
+    wake_errors="$(jq -r --arg re '^[A-Za-z][A-Za-z0-9_-]{0,63}$' '
+        def good_state: type == "object" and (.cursor | type) == "number"
+            and (.last_wake | type) == "number" and (.overdue | type) == "array";
+        .wake | to_entries[] | .key as $i | .value
+        | select((.project_key | type) != "string" or .project_key == ""
+                 or (.name | type) != "string" or (.name | test($re) | not)
+                 or (.state | good_state | not))
+        | "wake[\($i)]: needs project_key, an Agent Mail name and a wake state"' <<<"$data")" \
+        || errors+=("wake: the entries cannot be checked")
+    while IFS= read -r line; do
+        [[ -z "$line" ]] || errors+=("$line")
+    done <<<"$wake_errors"
+    keep="$(herdr_agents_reap_config)" || errors+=("agents.toml's keep list cannot be read")
+    if [[ -n "$keep" ]]; then
+        missing="$(jq -r --argjson now "$keep" '.keep | map(select(type == "string"))
+            | map(select(ascii_downcase as $n | ($now | map(ascii_downcase) | index($n)) == null)) | join(", ")' <<<"$data")"
+        [[ -z "$missing" ]] || errors+=("agents.toml does not keep $missing; add them to [reap] keep first")
+    fi
+    if (( ${#errors[@]} > 0 )); then
+        printf 'acfs agents import: %s\n' "${errors[@]}" >&2
+        herdr_agents_die "import: nothing written"
+    fi
+
+    for ((i = 0; i < count; i++)); do
+        project="$(jq -r ".tokens[$i].project_key" <<<"$data")"
+        name="$(jq -r ".tokens[$i].name" <<<"$data")"
+        herdr_agents_token_save "$project" "$name" "${token_values[$i]}" \
+            || herdr_agents_die "import: could not keep $name's token"
+    done
+    local state_dir
+    count="$(jq '.wake | length' <<<"$data")"
+    for ((i = 0; i < count; i++)); do
+        project="$(jq -r ".wake[$i].project_key" <<<"$data")"
+        name="$(jq -r ".wake[$i].name" <<<"$data")"
+        state_dir="${ACFS_HOME:-$HOME/.acfs}/state/wake/$(printf '%s' "$project" | sha256sum | cut -c1-16)"
+        mkdir -p "$state_dir"
+        printf '%s\n' "$project" >"$state_dir/project"
+        herdr_agents_wake_save "$state_dir/$name.json" "$(jq -c ".wake[$i].state" <<<"$data")"
+    done
+    herdr_agents_note "imported $(jq '.tokens | length' <<<"$data") token(s) and $count wake state(s) from $file"
 }
 
 herdr_agents_main() {
@@ -2654,6 +2947,8 @@ herdr_agents_main() {
         reap) herdr_agents_reap "$@" ;;
         quota) exec bash "$HERDR_AGENTS_SCRIPT_DIR/agent_quota.sh" "$@" ;;
         sweep) exec bash "$HERDR_AGENTS_SCRIPT_DIR/temp_sweep.sh" "$@" ;;
+        export) herdr_agents_export "$@" ;;
+        import) herdr_agents_import "$@" ;;
         help|-h|--help) herdr_agents_usage ;;
         *) herdr_agents_usage >&2; return 1 ;;
     esac

@@ -90,6 +90,12 @@ case "$1 $2" in
             [[ ! -e "$STUB_DIR/${code}_$3" ]] || fail_with "$code" "agent $3: $code"
         done
         printf '%s' "$4" >"$STUB_DIR/prompt_$3"
+        # owner_lock_probe names nhm's owner.lock: record whether an
+        # exclusive lock on it is refused while the prompt is sent.
+        if [[ -s "$STUB_DIR/owner_lock_probe" ]]; then
+            if flock -n -x "$(cat "$STUB_DIR/owner_lock_probe")" true; then echo free; else echo held; fi \
+                >>"$STUB_DIR/owner_lock_seen"
+        fi
         # /clear and /new start a fresh session with an empty input box,
         # unless no_reset_<name> says the command did not take.
         if [[ "$4" == /clear || "$4" == /new ]] && [[ ! -e "$STUB_DIR/no_reset_$3" ]]; then
@@ -391,6 +397,7 @@ RUN_WRAPPER=()
 run_helper() {
     RC=0
     PATH="$WORK/bin:$PATH" HOME="$WORK/home" ACFS_HOME="$WORK/acfs-home" \
+        XDG_STATE_HOME="$WORK/home/.local/state" \
         CODEX_HOME="$STUB_DIR/codex-home" HERDR_AGENTS_PROC_ROOT="$STUB_DIR/proc" \
         ACFS_AGENTS_CAPACITY_SCRIPT="${ACFS_AGENTS_CAPACITY_SCRIPT:-$WORK/capacity.sh}" \
         HERDR_AGENTS_DAEMON_WAIT_TRIES=3 HERDR_AGENTS_DAEMON_WAIT_INTERVAL=0 \
@@ -2196,6 +2203,162 @@ run_helper spawn --claude 1 --cwd "$WORK/repo" --with-cass --no-prompt
 check "spawn refuses --with-cass with --no-prompt, before it creates anything" \
     bash -c '[[ "$1" -ne 0 ]] && grep -qF -- "--with-memory and --with-cass need a prompt" <<<"$2" && ! grep -q "^herdr tab create" "$3"' \
     _ "$RC" "$ERR" "$STUB_DIR/calls"
+
+echo "the owner switch with nhm (acfs-9hkh.26)"
+# An nhm instance enrolled for the stub's socket (run_helper sets
+# HERDR_SOCKET_PATH=/stub.sock), with owner.toml as nhm writes it: $1 is
+# the owner, or "none" for no owner.toml, or "corrupt".
+NHM_INST="$WORK/home/.local/state/nhm/inst-0123456789ab"
+NHM_OTHER="$WORK/home/.local/state/nhm/inst-ba9876543210"
+owner_case() {
+    reset_stub "$1"
+    write_list
+    mkdir -p "$NHM_INST" "$NHM_OTHER"
+    printf 'id = "inst-0123456789ab"\nsession = "default"\nsocket_path = "/stub.sock"\nenrolled_at = 2026-10-12T04:00:00Z\n' >"$NHM_INST/instance.toml"
+    printf 'id = "inst-ba9876543210"\nsession = "other"\nsocket_path = "/other.sock"\nenrolled_at = 2026-10-12T04:00:00Z\n' >"$NHM_OTHER/instance.toml"
+    printf 'owner = "nhm"\ngeneration = 7\nupdated_at = 2026-10-12T04:00:00Z\n' >"$NHM_OTHER/owner.toml"
+    case "$2" in
+        none) rm -f "$NHM_INST/owner.toml" ;;
+        corrupt) printf 'owner = "nhm"\nepoch = 2\n' >"$NHM_INST/owner.toml" ;;
+        *) printf 'owner = "%s"\ngeneration = 3\nupdated_at = 2026-10-12T04:00:00Z\n' "$2" >"$NHM_INST/owner.toml" ;;
+    esac
+}
+
+owner_case ownernone none
+printf '%s\n' "$NHM_INST/owner.lock" >"$STUB_DIR/owner_lock_probe"
+run_helper send --name alphafox "Check your Agent Mail inbox."
+check "with no owner.toml the Bash owns the server: send sends" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "^herdr agent prompt alphafox" "$2"' _ "$RC" "$STUB_DIR/calls"
+check "send holds the owner lock shared while it prompts, so a takeover cannot start" \
+    test "$(cat "$STUB_DIR/owner_lock_seen" 2>/dev/null)" = held
+
+owner_case ownerbash acfs-bash
+run_helper send --name alphafox "Check your Agent Mail inbox."
+check "owner acfs-bash: send sends" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "^herdr agent prompt alphafox" "$2"' _ "$RC" "$STUB_DIR/calls"
+
+owner_case ownernhm nhm
+run_helper send --name alphafox "Check your Agent Mail inbox."
+check "owner nhm: send refuses and prompts nobody" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "nhm owns this herdr server" <<<"$2" && ! grep -q "^herdr agent prompt" "$3"' \
+    _ "$RC" "$ERR" "$STUB_DIR/calls"
+run_helper spawn --claude 1 --cwd "$WORK/repo"
+check "owner nhm: spawn refuses before it creates a tab or an identity" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "nhm owns this herdr server" <<<"$2" && ! grep -q "^herdr tab create\|create_agent_identity" "$3"' \
+    _ "$RC" "$ERR" "$STUB_DIR/calls"
+run_helper spawn --claude 1 --cwd "$WORK/repo" --dry-run
+check "owner nhm: spawn --dry-run still says what it would do" \
+    bash -c '[[ "$1" -eq 0 ]] && ! grep -qF "nhm owns" <<<"$2"' _ "$RC" "$ERR"
+run_helper retire AlphaFox --workspace w9 --cwd "$WORK/repo"
+check "owner nhm: retire refuses" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "nhm owns this herdr server" <<<"$2"' _ "$RC" "$ERR"
+run_helper recycle AlphaFox --workspace w9 --project "$WORK/repo"
+check "owner nhm: recycle refuses" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "nhm owns this herdr server" <<<"$2" && ! grep -q "^herdr agent prompt" "$3"' \
+    _ "$RC" "$ERR" "$STUB_DIR/calls"
+run_helper wake --workspace w9 --project /proj/ownernhm
+check "owner nhm: wake stops with a note and exit 0, and prompts nobody" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qF "acfs agents leaves it to nhm" <<<"$2" && ! grep -q "^herdr agent prompt" "$3"' \
+    _ "$RC" "$ERR" "$STUB_DIR/calls"
+RUN_WRAPPER=(timeout 10)
+run_helper wake --workspace w9 --project /proj/ownernhm --loop --interval 1
+RUN_WRAPPER=()
+check "owner nhm: wake --loop ends at once with exit 0" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qF "acfs agents leaves it to nhm" <<<"$2"' _ "$RC" "$ERR"
+
+owner_case ownercorrupt corrupt
+run_helper send --name alphafox "Check your Agent Mail inbox."
+check "a corrupt owner.toml refuses send" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "owner.toml is corrupt" <<<"$2" && ! grep -q "^herdr agent prompt" "$3"' \
+    _ "$RC" "$ERR" "$STUB_DIR/calls"
+run_helper wake --workspace w9 --project /proj/ownercorrupt
+check "a corrupt owner.toml refuses wake too" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "owner.toml is corrupt" <<<"$2"' _ "$RC" "$ERR"
+
+owner_case ownerbusy acfs-bash
+flock -x "$NHM_INST/owner.lock" sleep 5 &
+holder=$!
+for _ in $(seq 1 50); do flock -n -s "$NHM_INST/owner.lock" true || break; sleep 0.05; done
+ACFS_AGENTS_OWNER_WAIT=1 run_helper send --name alphafox "Check your Agent Mail inbox."
+kill "$holder" 2>/dev/null || true
+wait "$holder" 2>/dev/null || true
+check "while a takeover holds the lock, send waits, then refuses and prompts nobody" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "stayed busy for 1s" <<<"$2" && ! grep -q "^herdr agent prompt" "$3"' \
+    _ "$RC" "$ERR" "$STUB_DIR/calls"
+
+# nhm owns /other.sock, not this server.
+owner_case ownerother none
+rm -rf "$NHM_INST"
+run_helper send --name alphafox "Check your Agent Mail inbox."
+check "nhm owning another herdr server leaves this one to the Bash" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "^herdr agent prompt alphafox" "$2"' _ "$RC" "$STUB_DIR/calls"
+
+echo "export and import (acfs-9hkh.26)"
+reset_stub export
+EXPORT_HOME="$WORK/acfs-home"
+EXPORT_PROJECT="$WORK/repo"
+EXPORT_HASH="$(printf '%s' "$EXPORT_PROJECT" | sha256sum | cut -c1-16)"
+mkdir -p "$EXPORT_HOME/state/tokens/$EXPORT_HASH" "$EXPORT_HOME/state/wake/$EXPORT_HASH" "$EXPORT_HOME/state/tokens/0000000000000000"
+printf 'tok-alpha-secret\n' >"$EXPORT_HOME/state/tokens/$EXPORT_HASH/AlphaFox"
+printf '%s\n' "$EXPORT_PROJECT" >"$EXPORT_HOME/state/tokens/$EXPORT_HASH/.project"
+printf 'tok-old-secret\n' >"$EXPORT_HOME/state/tokens/0000000000000000/BetaOwl"
+printf '%s\n' "$EXPORT_PROJECT" >"$EXPORT_HOME/state/wake/$EXPORT_HASH/project"
+printf '{"cursor":41,"last_wake":1760000000,"overdue":[7]}\n' >"$EXPORT_HOME/state/wake/$EXPORT_HASH/AlphaFox.json"
+printf 'not json\n' >"$EXPORT_HOME/state/wake/$EXPORT_HASH/BetaOwl.json"
+printf '[reap]\nkeep = ["GreenCastle"]\n' >"$STUB_DIR/agents.toml"
+ACFS_AGENTS_CONFIG="$STUB_DIR/agents.toml" run_helper export
+cp "$STUB_DIR/out" "$STUB_DIR/export.json"
+check "export prints acfs-agents-state version 1" \
+    bash -c '[[ "$1" -eq 0 ]] && jq -e ".format == \"acfs-agents-state\" and .version == 1" <<<"$2" >/dev/null' _ "$RC" "$OUT"
+check "export lists each kept token by its file and project, and an old one with project_key null" \
+    jq -e --arg p "$EXPORT_PROJECT" --arg f "$EXPORT_HOME/state/tokens/$EXPORT_HASH/AlphaFox" \
+        '([.tokens[] | select(.name == "AlphaFox" and .project_key == $p and .file == $f)] | length == 1)
+         and ([.tokens[] | select(.name == "BetaOwl" and .project_key == null)] | length == 1)' "$STUB_DIR/export.json"
+check "export never prints a token" \
+    bash -c '! grep -q "tok-alpha-secret\|tok-old-secret" "$1"' _ "$STUB_DIR/export.json"
+check "export carries each wake state and leaves out one it cannot read" \
+    bash -c 'jq -e --arg p "$2" --arg h "$3" "[.wake[] | select(.project_hash == \$h)]
+            == [{project_key: \$p, project_hash: \$h, name: \"AlphaFox\", state: {cursor: 41, last_wake: 1760000000, overdue: [7]}}]" "$1" >/dev/null \
+        && grep -qF "BetaOwl.json is not a wake state" <<<"$4"' _ "$STUB_DIR/export.json" "$EXPORT_PROJECT" "$EXPORT_HASH" "$ERR"
+check "export carries agents.toml's keep list" \
+    jq -e '.keep == ["GreenCastle"]' "$STUB_DIR/export.json"
+
+# Import into an empty ACFS home, as nhm admin handback would.
+run_import() {
+    RC=0
+    PATH="$WORK/bin:$PATH" HOME="$WORK/home" ACFS_HOME="$1" XDG_STATE_HOME="$WORK/home/.local/state" \
+        ACFS_AGENTS_CONFIG="$2" bash "$HELPER" import "$3" >"$STUB_DIR/out" 2>"$STUB_DIR/err" || RC=$?
+    ERR="$(cat "$STUB_DIR/err")"
+}
+jq '.tokens |= map(select(.project_key != null))' "$STUB_DIR/export.json" >"$STUB_DIR/handback.json"
+run_import "$WORK/import-home" "$STUB_DIR/agents.toml" "$STUB_DIR/handback.json"
+check "import writes the tokens back where spawn keeps them, readable only by you" \
+    bash -c '[[ "$1" -eq 0 ]] && [[ "$(cat "$2/state/tokens/$3/AlphaFox")" == tok-alpha-secret ]] \
+        && [[ "$(stat -c %a "$2/state/tokens/$3/AlphaFox")" == 600 ]] && [[ "$(cat "$2/state/tokens/$3/.project")" == "$4" ]]' \
+    _ "$RC" "$WORK/import-home" "$EXPORT_HASH" "$EXPORT_PROJECT"
+check "import writes the wake states back where wake reads them" \
+    bash -c 'jq -e ".cursor == 41 and .overdue == [7]" "$1/state/wake/$2/AlphaFox.json" >/dev/null && [[ "$(cat "$1/state/wake/$2/project")" == "$3" ]]' \
+    _ "$WORK/import-home" "$EXPORT_HASH" "$EXPORT_PROJECT"
+
+run_import "$WORK/import-bad" "$STUB_DIR/agents.toml" "$STUB_DIR/export.json"
+check "import refuses a token entry without a project, and writes nothing" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qE "tokens\[[0-9]+\]: needs project_key" <<<"$2" && [[ ! -e "$3" ]]' _ "$RC" "$ERR" "$WORK/import-bad"
+jq '.tokens[0].file = "/nonexistent/token"' "$STUB_DIR/handback.json" >"$STUB_DIR/missing.json"
+run_import "$WORK/import-bad" "$STUB_DIR/agents.toml" "$STUB_DIR/missing.json"
+check "import refuses a token file it cannot read, and writes nothing" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "no token in /nonexistent/token" <<<"$2" && [[ ! -e "$3" ]]' _ "$RC" "$ERR" "$WORK/import-bad"
+jq '.wake[0].state.cursor = "x"' "$STUB_DIR/handback.json" >"$STUB_DIR/badwake.json"
+run_import "$WORK/import-bad" "$STUB_DIR/agents.toml" "$STUB_DIR/badwake.json"
+check "import refuses a malformed wake state, and writes nothing" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "wake[0]: needs project_key" <<<"$2" && [[ ! -e "$3" ]]' _ "$RC" "$ERR" "$WORK/import-bad"
+printf '[reap]\nkeep = []\n' >"$STUB_DIR/nokeep.toml"
+run_import "$WORK/import-bad" "$STUB_DIR/nokeep.toml" "$STUB_DIR/handback.json"
+check "import refuses to lose a kept name, and writes nothing" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "agents.toml does not keep GreenCastle" <<<"$2" && [[ ! -e "$3" ]]' _ "$RC" "$ERR" "$WORK/import-bad"
+printf '{"format":"other","version":1}\n' >"$STUB_DIR/other.json"
+run_import "$WORK/import-bad" "$STUB_DIR/agents.toml" "$STUB_DIR/other.json"
+check "import refuses a file of another format" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "is not acfs-agents-state version 1" <<<"$2"' _ "$RC" "$ERR"
 
 echo
 echo "passed: $PASS, failed: $FAIL"
