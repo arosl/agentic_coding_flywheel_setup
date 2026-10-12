@@ -51,12 +51,17 @@ chmod +x "$FAKEBIN/codex"
 # run_update <function> <installed binaries...>: a fresh fixture home with
 # ACFS's copy of nhm_hooks.sh, then the function with the given binaries
 # "installed". Env knobs: SAME_USER (default 1), READ_ONLY, NO_HELPER,
-# PIN_URL (replaces KNOWN_INSTALLERS[nhm]).
+# NO_HOOK_BIN (no ~/.local/bin/nhm-hook), PIN_URL (replaces
+# KNOWN_INSTALLERS[nhm]).
 run_update() {
     local fn="$1"; shift
     FIX_HOME="$(mktemp -d -p "$ROOT")"
     mkdir -p "$FIX_HOME/.acfs/scripts/lib" "$FIX_HOME/.claude" "$FIX_HOME/.codex" "$FIX_HOME/.local/bin"
     [[ -n "${NO_HELPER:-}" ]] || cp "$REPO_ROOT/scripts/lib/nhm_hooks.sh" "$FIX_HOME/.acfs/scripts/lib/"
+    if [[ -z "${NO_HOOK_BIN:-}" ]]; then
+        printf '#!/bin/sh\nexit 0\n' > "$FIX_HOME/.local/bin/nhm-hook"
+        chmod 0755 "$FIX_HOME/.local/bin/nhm-hook"
+    fi
     printf '{\n  "model": "opus",\n  "hooks": {}\n}\n' > "$FIX_HOME/.claude/settings.json"
     OUT="$(
         export HOME="$FIX_HOME" TARGET_HOME="$FIX_HOME" UPDATE_LOG_FILE="$ROOT/update.log" PATH="$FAKEBIN:$PATH"
@@ -130,6 +135,12 @@ check "hooks: no nhm skips" has "ITEM skip|nhm hook lines|nhm is not installed"
 
 NO_HELPER=1 run_update update_nhm_hooks nhm claude
 check "hooks: no helper skips" has "ITEM skip|nhm hook lines|nhm_hooks.sh is not installed"
+
+NO_HOOK_BIN=1 run_update update_nhm_hooks nhm claude codex
+check "hooks: no ~/.local/bin/nhm-hook warns" has "ITEM warn|nhm hook lines|nhm-hook is not installed"
+check "hooks: and adds no line that points at nothing" \
+    bash -c '! bash "$1" registered claude "$2" && test ! -e "$3"' _ "$REPO_ROOT/scripts/lib/nhm_hooks.sh" \
+    "$FIX_HOME/.claude/settings.json" "$FIX_HOME/.codex/hooks.json"
 
 SAME_USER=0 run_update update_nhm_hooks nhm claude
 check "hooks: another user only warns with the command" has "ITEM warn|nhm hook lines|run as ubuntu: bash"

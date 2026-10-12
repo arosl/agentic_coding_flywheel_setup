@@ -7728,6 +7728,12 @@ update_nhm_hooks() {
         log_item "warn" "$desc" "no home for $target_user"
         return 0
     fi
+    # The lines run ~/.local/bin/nhm-hook; without it they would point at
+    # nothing in every turn.
+    if [[ ! -x "$target_home/.local/bin/nhm-hook" ]]; then
+        log_item "warn" "$desc" "nhm-hook is not installed in $target_home/.local/bin; the lines are not registered"
+        return 0
+    fi
 
     for agent in claude codex; do
         update_binary_exists "$agent" || continue
