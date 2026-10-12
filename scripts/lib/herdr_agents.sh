@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# ACFS herdr agents - spawn, prompt and list coding agents in herdr
+# ACFS herdr agents - spawn and prompt coding agents in herdr
 #
 # What ntm spawn/send did, over herdr 0.9's own commands. herdr has no
 # multi-agent spawn and no broadcast: each agent is a tab plus
@@ -16,7 +16,6 @@
 # Usage:
 #   acfs agents spawn [--claude N] [--codex N] [--agy N] [--pi N] [--kind K [--count N]]...
 #   acfs agents send (--all | --kind K | --name N)... [--with-memory] [--with-cass] (<prompt> | --template KEY|FILE [--thread ID])
-#   acfs agents list [--workspace ID] [--kind K] [--json]
 #   acfs agents inbox [--agent NAME] [--project KEY] [--keep-unread]
 #   acfs agents wake [--workspace ID] [--project KEY] [--loop [--interval SEC]] [--dry-run]
 #   acfs agents limits [--workspace ID] [--lines N] [--mail-from NAME [--project KEY]] [--loop [--interval SEC]] [--dry-run]
@@ -62,7 +61,6 @@ Usage:
   acfs agents send  (--all | --kind KIND | --name NAME)... [--workspace ID]
                     [--wait] [--timeout MS] [--with-memory] [--with-cass]
                     (<prompt> | --template KEY|FILE [--thread ID])
-  acfs agents list  [--workspace ID] [--kind KIND] [--json]
   acfs agents inbox [--agent NAME] [--project KEY] [--keep-unread]
   acfs agents wake  [--workspace ID] [--project KEY] [--loop [--interval SEC]] [--dry-run]
   acfs agents limits [--workspace ID] [--lines N] [--mail-from NAME [--project KEY]]
@@ -137,7 +135,10 @@ send   Prompt every matching agent, and wait until each is seen working, which
        (default 5), the prompt goes as it is, with a note saying why.
        spawn takes both too and puts the context after the identity line;
        --no-prompt refuses them.
-list   Show the agents herdr knows about.
+list   Moved to nhm (acfs-9hkh.25): 'nhm list' shows every bound agent,
+       'nhm status [workspace]' one row per agent with its state and mail.
+       nhm imports the agents spawn starts (at enroll and from their
+       hooks); 'herdr agent list' shows every agent herdr runs.
 inbox  Print every unread Agent Mail message sent to the agent (To or bcc,
        not cc), oldest first and grouped by thread, with bodies, then mark
        each one read, so that unread means not yet seen. am's own inbox shows
@@ -1441,7 +1442,7 @@ herdr_agents_context() {
 }
 
 # ------------------------------------------------------------
-# list / send
+# send
 # ------------------------------------------------------------
 
 # Agents from `herdr agent list`, filtered: $1 workspace ("" = all), $2 a
@@ -1454,42 +1455,6 @@ herdr_agents_select() {
          | select(($kinds | length) == 0 or (.agent as $k | $kinds | index($k)))
          | select(($names | length) == 0 or ((.name // "") as $n | $names | index($n)))]
     ' <<<"$HERDR_AGENTS_OUT"
-}
-
-herdr_agents_list() {
-    local workspace="" json=false kinds="[]"
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --workspace) [[ $# -ge 2 ]] || herdr_agents_die "--workspace needs a value"; workspace="$2"; shift 2 ;;
-            --kind) [[ $# -ge 2 ]] || herdr_agents_die "--kind needs a value"; kinds="$(jq -c --arg k "$2" '. + [$k]' <<<"$kinds")"; shift 2 ;;
-            --json) json=true; shift ;;
-            -h|--help) herdr_agents_usage; return 0 ;;
-            *) herdr_agents_die "unknown list option: $1" ;;
-        esac
-    done
-    herdr_agents_require herdr jq
-
-    local agents
-    agents="$(herdr_agents_select "$workspace" "$kinds" "[]")"
-    if [[ "$json" == true ]]; then
-        printf '%s\n' "$agents"
-        return 0
-    fi
-    if [[ "$(jq 'length' <<<"$agents")" == 0 ]]; then
-        herdr_agents_note "no agents"
-        return 0
-    fi
-    jq -r '(["NAME", "KIND", "STATUS", "PANE", "TAB"] | @tsv),
-           (.[] | [(.name // "-"), .agent, (.agent_status // "unknown"), .pane_id, .tab_id] | @tsv)' <<<"$agents" \
-        | awk -F '\t' '
-            { rows[NR] = $0; for (i = 1; i <= NF; i++) if (length($i) > width[i]) width[i] = length($i) }
-            END {
-                for (r = 1; r <= NR; r++) {
-                    n = split(rows[r], cell, "\t"); line = ""
-                    for (i = 1; i < n; i++) line = line sprintf("%-" width[i] "s  ", cell[i])
-                    print line cell[n]
-                }
-            }'
 }
 
 # The text of send --template $1: the file $1 when it names a path (it
@@ -1649,7 +1614,7 @@ herdr_agents_send() {
             continue
         fi
         skipped=$((skipped + 1))
-        herdr_agents_note "skipped $name (agent_not_found): herdr lists no such agent${workspace:+ in workspace $workspace}, and no unnamed agent sits in a tab labelled with that name (see 'acfs agents list')"
+        herdr_agents_note "skipped $name (agent_not_found): herdr lists no such agent${workspace:+ in workspace $workspace}, and no unnamed agent sits in a tab labelled with that name (see 'herdr agent list')"
     done <<<"$missing"
     count="$(jq 'length' <<<"$agents")"
     if (( count == 0 && skipped == 0 )); then
@@ -1742,7 +1707,7 @@ herdr_agents_prompt_one() {
         agent_blocked)
             herdr_agents_note "skipped $target: blocked at an approval or question; answer it in its pane first" ;;
         agent_not_found)
-            herdr_agents_note "skipped $target (agent_not_found): herdr no longer knows that name (see 'acfs agents list')" ;;
+            herdr_agents_note "skipped $target (agent_not_found): herdr no longer knows that name (see 'herdr agent list')" ;;
         agent_prompt_stalled)
             herdr_agents_note "not submitted to $target (agent_prompt_stalled): it did not start working after the prompt"
             herdr_agents_explain_stall "$target" ;;
@@ -2459,7 +2424,7 @@ herdr_agents_recycle_one() {
     agents="$(herdr_agents_select "$workspace" "[]" "$(jq -nc --arg n "$herdr_name" '[$n]')")" || return 1
     count="$(jq 'length' <<<"$agents")"
     if (( count != 1 )); then
-        herdr_agents_note "recycle: herdr lists $count agents named $herdr_name${workspace:+ in workspace $workspace}; its herdr name may have dropped (see 'acfs agents list')"
+        herdr_agents_note "recycle: herdr lists $count agents named $herdr_name${workspace:+ in workspace $workspace}; its herdr name may have dropped (see 'herdr agent list')"
         return 1
     fi
     agent="$(jq -c '.[0]' <<<"$agents")"
@@ -3145,7 +3110,9 @@ herdr_agents_main() {
     case "$subcommand" in
         spawn) herdr_agents_spawn "$@" ;;
         send) herdr_agents_send "$@" ;;
-        list|ls) herdr_agents_list "$@" ;;
+        list|ls)
+            # Moved to nhm (acfs-9hkh.25); the Bash verb is gone.
+            herdr_agents_die "list moved to nhm: run 'nhm list' (every bound agent) or 'nhm status [workspace]' (one row per agent); 'herdr agent list' shows every agent herdr runs" ;;
         inbox) herdr_agents_inbox "$@" ;;
         wake) herdr_agents_wake "$@" ;;
         limits) herdr_agents_limits "$@" ;;

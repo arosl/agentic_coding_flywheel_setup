@@ -325,7 +325,7 @@ newproj_start_herdr() {
             all(.[]; type == "object" and .status == $want)))
     ' >/dev/null 2>&1 <<< "$response"; then
         echo "herdr did not confirm the requested agents. No automatic retry or cleanup was attempted." >&2
-        printf 'Inspect acfs agents list --workspace %s and acfs doctor; a partial workspace may need attention.\n' "$workspace" >&2
+        printf 'Inspect nhm status %s (or herdr agent list) and acfs doctor; a partial workspace may need attention.\n' "$workspace" >&2
         return 1
     fi
     if [[ "$work" == true ]]; then

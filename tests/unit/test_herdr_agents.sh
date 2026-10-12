@@ -1220,13 +1220,18 @@ run_helper send --all --workspace w2 --template nudge --thread t
 check "an agent whose workspace has no label is skipped for {{session}}" \
     bash -c '[[ "$1" -ne 0 && ! -e "$2/prompt_w2:p1" ]] && grep -q "skipped w2:p1: its workspace w2 has no label" <<<"$3"' _ "$RC" "$STUB_DIR" "$ERR"
 
+# acfs-9hkh.25: list moved to nhm. Its vectors live in nhm's suite:
+# TestListVerb (every bound agent, as JSON) and TestStatusVerb (one
+# workspace by label or id; an unknown one refused). The --kind filter has
+# no nhm form; nhm's rows show each agent's kind.
 reset_stub list
 write_list
-run_helper list --workspace w9 --kind codex --json
-check "list filters by workspace and kind" test "$(jq -r '[.[].name] | join(",")' <<<"$OUT")" = "betaowl,gammayak"
-run_helper list
-check "list prints a table with every agent" \
-    bash -c 'head -1 <<<"$1" | grep -q "^NAME *KIND *STATUS *PANE *TAB$" && [[ $(wc -l <<<"$1") -eq 5 ]]' _ "$OUT"
+for verb in list ls; do
+    run_helper "$verb" --workspace w9 --json
+    check "acfs agents $verb is gone: it names nhm list and nhm status, and asks herdr nothing" \
+        bash -c '[[ "$1" -ne 0 && -z "$2" ]] && grep -qF "run '"'"'nhm list'"'"'" <<<"$3" && grep -qF "nhm status [workspace]" <<<"$3" \
+            && ! grep -q "^herdr" "$4"' _ "$RC" "$OUT" "$ERR" "$STUB_DIR/calls"
+done
 
 # acfs-gen.5: inbox lists every unread message to the agent, oldest first,
 # then marks each read.
