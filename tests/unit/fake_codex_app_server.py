@@ -10,7 +10,9 @@ trust that config/batchWrite recorded in $CODEX_HOME/fake-trust.json.
 Every request is appended to $CODEX_HOME/fake-requests.jsonl.
 
 FAKE_CODEX_FAIL=1 makes it exit at once; FAKE_CODEX_DROP_WRITE=1 makes
-batchWrite answer ok and record nothing.
+batchWrite answer ok and record nothing; FAKE_CODEX_HIDE_AFTER_WRITE=1
+makes hooks/list list nothing once a batchWrite came; FAKE_CODEX_HANG=1
+reads its input and never answers, as a stuck app-server would.
 """
 import hashlib
 import json
@@ -58,7 +60,10 @@ def hooks():
     return out
 
 
+written = False
 for line in sys.stdin:
+    if os.environ.get("FAKE_CODEX_HANG") == "1":
+        continue
     msg = json.loads(line)
     with open(os.path.join(home, "fake-requests.jsonl"), "a", encoding="utf-8") as log:
         log.write(json.dumps(msg) + "\n")
@@ -68,8 +73,10 @@ for line in sys.stdin:
     if method == "initialize":
         result = {"userAgent": "fake"}
     elif method == "hooks/list":
-        result = {"data": [{"cwd": msg["params"]["cwds"][0], "hooks": hooks(), "errors": []}]}
+        listed = [] if written and os.environ.get("FAKE_CODEX_HIDE_AFTER_WRITE") == "1" else hooks()
+        result = {"data": [{"cwd": msg["params"]["cwds"][0], "hooks": listed, "errors": []}]}
     elif method == "config/batchWrite":
+        written = True
         if os.environ.get("FAKE_CODEX_DROP_WRITE") != "1":
             known = trust()
             for edit in msg["params"]["edits"]:

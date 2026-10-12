@@ -142,6 +142,37 @@ check "trust: a write Codex does not keep fails" bash -c 'rm -f "$1/fake-trust.j
 check "trust: an app-server that dies fails" bash -c '! FAKE_CODEX_FAIL=1 PATH="$2:$PATH" bash "$3" trust codex "$1/hooks.json" 2>/dev/null' \
     _ "$CODEX_DIR" "$FAKEBIN" "$HOOKS"
 check "trust: no codex fails" bash -c '! PATH="/usr/bin:/bin" bash "$2" trust codex "$1/hooks.json" 2>/dev/null' _ "$CODEX_DIR" "$HOOKS"
+# Review of b89811bd: ACFS trusts only what it wrote, the verify step needs
+# every entry, and a stuck app-server behind a wrapper cannot hang it.
+TRUST2="$WORK/codex2"
+mkdir -p "$TRUST2"
+bash "$HOOKS" register codex "$TRUST2/hooks.json" 2>/dev/null
+# The user's own line that mentions nhm-hook, and an nhm entry the user edited.
+jq --arg cmd "myscript; $HOME/.local/bin/nhm-hook sessionstart" \
+    '.hooks.SessionStart += [{hooks: [{type: "command", command: $cmd, timeout: 5}]}]
+     | .hooks.PostCompact[0].hooks[0].timeout = 9' "$TRUST2/hooks.json" >"$TRUST2/hooks.tmp"
+mv "$TRUST2/hooks.tmp" "$TRUST2/hooks.json"
+PATH="$FAKEBIN:$PATH" bash "$HOOKS" trust codex "$TRUST2/hooks.json" 2>/dev/null
+check "trust: a user line that mentions nhm-hook stays untrusted" \
+    jq_true 'keys | all(test(":session_start:1:0$") | not)' "$TRUST2/fake-trust.json"
+check "trust: an nhm entry the user edited stays untrusted" \
+    jq_true '(keys | length) == 2 and all(keys[]; test(":(post_tool_use|session_start):0:0$"))' "$TRUST2/fake-trust.json"
+check "trust: a second list that drops entries fails" bash -c 'rm -f "$1/fake-trust.json"; ! FAKE_CODEX_HIDE_AFTER_WRITE=1 PATH="$2:$PATH" bash "$3" trust codex "$1/hooks.json" 2>/dev/null' \
+    _ "$CODEX_DIR" "$FAKEBIN" "$HOOKS"
+# A wrapper whose child holds stdout open and never answers: only killing
+# the process group ends it.
+HANGBIN="$WORK/hangbin"
+mkdir -p "$HANGBIN"
+printf '#!/bin/sh\nFAKE_CODEX_HANG=1 python3 "%s" "$@" &\nwait\n' "$ROOT/tests/unit/fake_codex_app_server.py" >"$HANGBIN/codex"
+chmod +x "$HANGBIN/codex"
+check "trust: a stuck app-server behind a wrapper ends at the timeout" bash -c '
+    start=$SECONDS
+    NHM_HOOKS_TRUST_TIMEOUT=2 PATH="$2:$PATH" timeout 30 bash "$3" trust codex "$1/hooks.json" 2>/dev/null
+    rc=$?
+    [[ $rc -ne 0 && $rc -ne 124 && $((SECONDS - start)) -lt 20 ]]' _ "$CODEX_DIR" "$HANGBIN" "$HOOKS"
+check "trust: no process of the stuck app-server is left" \
+    bash -c '! pgrep -f "[f]ake_codex_app_server.py app-server" >/dev/null'
+
 printf '%s\n' '{"hooks":{}}' >"$WORK/empty-hooks.json"
 check "trust: a file without nhm entries has nothing to do" \
     bash -c 'PATH="$1:$PATH" bash "$2" trust codex "$3" 2>/dev/null' _ "$FAKEBIN" "$HOOKS" "$WORK/empty-hooks.json"

@@ -10,14 +10,14 @@
 ACFS_INTERNAL_CHECKSUMS_SCHEMA=1
 
 declare -gA ACFS_INTERNAL_CHECKSUMS=(
-  [install.sh]="c466e20b98bc9e40057e840c0e9c0b7fd443b8cdcf238538f54960daf1a2176e"
+  [install.sh]="9aecba16c32572b68f4acfcb565fc7c2b663805d75246d27577650ad04551c57"
   [checksums.yaml]="5bc15f49af144a160bae2db02f5b844960e4b4056b435fedeb901af045554729"
   [scripts/preflight.sh]="f8b5829f2be4cbe08b6d33316fa07fe1b5a951b570819e38a1cb6ffe283d5902"
   [scripts/lib/security.sh]="280d5b6d6bd21168afc6495700046b80ebb6f37f51652d1b23f4280f2b38d777"
   [scripts/lib/holds.sh]="7aca60222e56ce4034739b92ed3332c7118d918526d60ce189f59c595a930015"
   [scripts/lib/github_api.sh]="80699922df2e924694f5682457e614dedf9181d7c071472cc8a6db4f17373d3d"
   [scripts/lib/contract.sh]="22c148f44ddbaccd559196196ef903f26f65fc77e3b1b6b4efc62b77d3b97aa3"
-  [scripts/lib/update.sh]="8eed8ad2f74343f07e044c51b806f2ae8ad7708fca7774371f617d6240d80266"
+  [scripts/lib/update.sh]="4a563139bf2a03ed10a72cce6347258fa11d54fceea6aabb20a25881e3c80237"
   [scripts/lib/doctor.sh]="766a0b3684dc1ee16d63417b73a58743946690170f6a1004f9c0e2fc9da6545d"
   [scripts/lib/acfs-services.sh]="75a8bff497a9982859f0b67726e644fba0ac01863bbcb77561853eb250dcae57"
   [scripts/lib/doctor_fix.sh]="ea1f13be46bf9f3df0630362b6027f12aca271e8df4eeddcd8d36f1019615b2c"
@@ -64,7 +64,7 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/completions/acfs.bash]="73820478d589fd890715eb71864353ae09c3ad19d549363fa72c335a170e63ff"
   [scripts/generate-root-agents-md.sh]="725a036f9a0695bb3423c1f54030f626f7c6b43c0f73233ff87ca604960de356"
   [scripts/lib/agent_mail_hook.sh]="bf45ae55002af558862d56b95061b52ceb88b15a7f3783ce4bfcca8463461c13"
-  [scripts/lib/nhm_hooks.sh]="696af2ee2a159aa69f8d112cd680a68f2636ac3e9d1fda3323d8dce720a63c58"
+  [scripts/lib/nhm_hooks.sh]="c7796d777f14fa7edfa9c21abc12b3f381f4e974deb2f95c2bfa7982a6765f9b"
   [scripts/lib/agent_quota.sh]="0fabea807e89bc5e5f74de125202b7a046b6f6018cd16e2f3494d389ad97fd00"
   [scripts/lib/agy_e2e_harness.sh]="99c2cd036ba51f2c109327438afc25fd47b29f0f49ec3b1e3ae7d1ab88990222"
   [scripts/lib/agy_locked.py]="e92e30cf33f925bb666512b81f7c96134442914b6d4b846e4212be0e1e4db245"

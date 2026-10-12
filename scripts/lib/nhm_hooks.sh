@@ -187,16 +187,20 @@ nhm_hooks_registered() {
 }
 
 # The app-server driver of `trust codex`. Arguments: the hooks file, the
-# codex binary, "dry-run" or "write". It talks JSON-RPC lines to `codex
-# app-server` (as Codex's TUI does), trusts only the entries of the hooks
-# file that run nhm-hook, and checks the result with a second hooks/list.
-# Exit 0: every nhm entry is trusted (or would be, with dry-run); 1: not.
+# codex binary, "dry-run" or "write", and the JSON list of the entries
+# `register` writes ({event, command, matcher, timeout}). It talks
+# JSON-RPC lines to `codex app-server` (as Codex's TUI does), trusts only
+# the entries that are exactly what `register` writes (an entry the user
+# edited, or a user line that mentions nhm-hook, is not ACFS's), and
+# checks with a second hooks/list that every one of them is trusted.
+# The app-server runs in a session of its own and is killed as a process
+# group: ACFS's codex is a wrapper whose child holds stdout open.
+# Exit 0: every ACFS entry is trusted (or would be, with dry-run); 1: not.
 nhm_hooks_trust_driver() {
     cat <<'PY'
-import json, os, re, subprocess, sys, threading
+import json, os, signal, subprocess, sys, threading
 
-hooks_file, codex, mode = sys.argv[1], sys.argv[2], sys.argv[3]
-OURS = re.compile(r"(^|[\s/])nhm-hook\s+[a-z]+(\s|$)")
+hooks_file, codex, mode, spec = sys.argv[1], sys.argv[2], sys.argv[3], json.loads(sys.argv[4])
 LABELS = {"PreToolUse": "pre_tool_use", "PostToolUse": "post_tool_use", "SessionStart": "session_start",
           "PostCompact": "post_compact", "PreCompact": "pre_compact", "Stop": "stop",
           "UserPromptSubmit": "user_prompt_submit", "SessionEnd": "session_end"}
@@ -207,26 +211,43 @@ def note(msg):
 
 
 def ours():
+    """The positions of the entries that are exactly what register writes."""
     with open(hooks_file, encoding="utf-8") as f:
         hooks = json.load(f).get("hooks", {})
     found = set()
-    for event, groups in hooks.items():
-        for gi, group in enumerate(groups if isinstance(groups, list) else []):
-            for hi, h in enumerate(group.get("hooks", []) if isinstance(group, dict) else []):
-                if isinstance(h, dict) and isinstance(h.get("command"), str) and OURS.search(h["command"]) \
-                        and event in LABELS:
-                    found.add((LABELS[event], gi, hi))
+    for want in spec:
+        groups = hooks.get(want["event"])
+        if want["event"] not in LABELS or not isinstance(groups, list):
+            continue
+        handler = {"type": "command", "command": want["command"], "timeout": want["timeout"]}
+        for gi, group in enumerate(groups):
+            if not isinstance(group, dict) or group.get("matcher", "") != want["matcher"]:
+                continue
+            if set(group) - {"matcher", "hooks"}:
+                continue
+            for hi, h in enumerate(group.get("hooks") or []):
+                if h == handler:
+                    found.add((LABELS[want["event"]], gi, hi))
     return found
 
 
 real = os.path.realpath(hooks_file)
 mine = ours()
 if not mine:
-    note(f"{hooks_file} has no nhm-hook entries to trust")
+    note(f"{hooks_file} has no nhm-hook entries that ACFS wrote")
     sys.exit(0)
 proc = subprocess.Popen([codex, "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                        stderr=subprocess.DEVNULL, text=True, cwd=os.path.dirname(real))
-killer = threading.Timer(60, proc.kill)
+                        stderr=subprocess.DEVNULL, text=True, cwd=os.path.dirname(real), start_new_session=True)
+
+
+def kill_group(sig):
+    try:
+        os.killpg(proc.pid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+killer = threading.Timer(float(os.environ.get("NHM_HOOKS_TRUST_TIMEOUT") or 60), kill_group, args=(signal.SIGKILL,))
 killer.start()
 seq = [0]
 
@@ -283,8 +304,8 @@ try:
                                        "filePath": None, "expectedVersion": None, "reloadUserConfig": True})
         after = listed()
         untrusted = sorted(k for k, h in after.items() if h.get("trustStatus") != "trusted")
-        if untrusted or missing:
-            note("not trusted: " + ", ".join(untrusted or ["entries Codex does not list"]))
+        if untrusted or len(after) != len(mine):
+            note("not trusted: " + ", ".join(untrusted or [f"Codex lists {len(after)} of the {len(mine)} ACFS entries"]))
         else:
             note(f"Codex trusts the {len(after)} nhm-hook entries of {hooks_file}" +
                  (f" ({len(todo)} newly)" if todo else ""))
@@ -297,13 +318,30 @@ finally:
         proc.stdin.close()
     except OSError:
         pass
-    proc.terminate()
+    kill_group(signal.SIGTERM)
     try:
-        proc.wait(timeout=10)
+        proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        pass
+    kill_group(signal.SIGKILL)
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
 sys.exit(status)
 PY
+}
+
+# The JSON list of the Codex entries `register` writes:
+# [{event, command, matcher, timeout}, ...].
+nhm_hooks_codex_spec() {
+    local event="" verb="" matcher="" spec="[]"
+    while IFS='|' read -r event verb matcher; do
+        [[ -n "$event" ]] || continue
+        spec="$(jq -c --arg e "$event" --arg c "$(nhm_hooks_command "$verb")" --arg m "$matcher" \
+            --argjson t "$NHM_HOOKS_TIMEOUT_SECONDS" '. + [{event: $e, command: $c, matcher: $m, timeout: $t}]' <<<"$spec")" || return 1
+    done < <(nhm_hooks_lines codex)
+    printf '%s\n' "$spec"
 }
 
 # trust codex [FILE] [--dry-run]: record Codex's trust for the nhm-hook
@@ -312,7 +350,7 @@ PY
 # set to FILE's directory, so it reads that file and writes that
 # config.toml.
 nhm_hooks_trust() {
-    local kind="${1:-}" file="" dry_run=false arg="" codex_bin="" target=""
+    local kind="${1:-}" file="" dry_run=false arg="" codex_bin="" target="" spec=""
     [[ "$kind" == codex ]] || { nhm_hooks_usage >&2; return 2; }
     shift
     for arg in "$@"; do
@@ -325,10 +363,14 @@ nhm_hooks_trust() {
     [[ -n "$file" ]] || file="${CODEX_HOME:-$HOME/.codex}/hooks.json"
     [[ -f "$file" ]] || { nhm_hooks_note "$file does not exist: register first"; return 1; }
     command -v python3 >/dev/null 2>&1 || { nhm_hooks_note "python3 not found; trust the nhm hook lines in Codex's /hooks"; return 1; }
+    command -v jq >/dev/null 2>&1 || { nhm_hooks_note "jq not found"; return 1; }
     codex_bin="$(command -v codex 2>/dev/null)" || { nhm_hooks_note "codex not found"; return 1; }
     target="$(readlink -f -- "$file")" || { nhm_hooks_note "cannot resolve $file"; return 1; }
-    CODEX_HOME="$(dirname -- "$target")" python3 -c "$(nhm_hooks_trust_driver)" \
-        "$target" "$codex_bin" "$([[ "$dry_run" == true ]] && echo dry-run || echo write)" </dev/null
+    spec="$(nhm_hooks_codex_spec)" || return 1
+    # -I: isolated mode, so no json.py in the caller's directory (acfs
+    # update's) is imported in place of the standard library's.
+    CODEX_HOME="$(dirname -- "$target")" python3 -I -c "$(nhm_hooks_trust_driver)" \
+        "$target" "$codex_bin" "$([[ "$dry_run" == true ]] && echo dry-run || echo write)" "$spec" </dev/null
 }
 
 nhm_hooks_main() {

@@ -11060,7 +11060,9 @@ finalize() {
         if binary_installed "codex"; then
             if try_step "Registering the nhm hook lines for Codex" \
                     run_as_target bash "$nhm_hooks" register codex "$TARGET_HOME/.codex/hooks.json"; then
-                if run_as_target bash "$nhm_hooks" trust codex "$TARGET_HOME/.codex/hooks.json"; then
+                # timeout: the helper bounds Codex's app-server itself (60 s);
+                # this bounds the helper, so no install can hang on it.
+                if run_as_target timeout 90 bash "$nhm_hooks" trust codex "$TARGET_HOME/.codex/hooks.json"; then
                     log_detail "Codex trusts the nhm hook lines"
                 else
                     log_detail "Codex asks to trust the nhm hook lines once: open /hooks in Codex"

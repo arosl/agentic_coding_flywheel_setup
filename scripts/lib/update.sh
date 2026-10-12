@@ -7743,7 +7743,8 @@ update_nhm_hooks() {
         esac
         if bash "$helper" register "$agent" "$file" </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1; then
             registered+="${registered:+, }$agent"
-            if [[ "$agent" == codex ]] && ! bash "$helper" trust codex "$file" </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1; then
+            # timeout bounds the helper, which bounds Codex's app-server (60 s).
+            if [[ "$agent" == codex ]] && ! timeout 90 bash "$helper" trust codex "$file" </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1; then
                 codex_untrusted=true
             fi
         else
