@@ -139,7 +139,8 @@ OUT="$(calls)"
 check "a second install: exit 0, no reload for unchanged units" \
     bash -c '[[ "$2" -eq 0 && "$1" != *daemon-reload* && "$1" == *"enable --now"* ]]' _ "$OUT" "$RC"
 
-printf 'stale\n' >"$(UNITS)/nhm-maintain.timer"
+# A stale unit of ACFS's own (its header kept) is rewritten.
+printf '%s\nstale\n' "# Written by ACFS (scripts/lib/nhm_maintain_timer.sh); a drop-in changes it." >"$(UNITS)/nhm-maintain.timer"
 : >"$SYSD/calls"
 helper install
 OUT="$(calls)"
@@ -402,6 +403,93 @@ fixture maintain
 before="$(find "$HOMEDIR" -type f | sort)"
 run_doctor >/dev/null
 check "the check writes nothing" test "$(find "$HOMEDIR" -type f | sort)" = "$before"
+
+echo
+echo "acfs-9hkh.84: the timer lows (BlueLake)"
+
+# Paths are cleaned as nhm cleans them: a trailing or doubled "/" in
+# XDG_STATE_HOME, or in the enrolled socket path, still matches.
+fixture maintain "" no
+mkdir -p "$HOMEDIR/.local/state/nhm/inst-0123456789ab"
+printf 'id = "inst-0123456789ab"\nsession = "default"\nsocket_path = "%s"\n' "$HOMEDIR/.config//herdr/./herdr.sock" \
+    >"$HOMEDIR/.local/state/nhm/inst-0123456789ab/instance.toml"
+RC=0
+OUT="$(PATH="$FAKEBIN:$PATH" HOME="$HOMEDIR" XDG_CONFIG_HOME="" XDG_STATE_HOME="$HOMEDIR/.local/state/" NHM_BIN_DIR="" \
+    NHM_TIMER_SYSTEMCTL_MACHINE="" bash "$HOMEDIR/.acfs/scripts/lib/nhm_maintain_timer.sh" install 2>&1)" || RC=$?
+check "a trailing / in XDG_STATE_HOME and a doubled / in the enrolled socket: enabled" test "$RC" -eq 0
+OUT="$(cat "$(UNITS)/nhm-maintain.service" 2>/dev/null)"
+check "the unit names the clean socket and state root" \
+    has "ready $HOMEDIR/.local/bin/nhm $HOMEDIR/.config/herdr/herdr.sock $HOMEDIR/.local/state/nhm"
+
+# The socket is the one nhm enrolled as session "default", not one built
+# from today's XDG_CONFIG_HOME.
+fixture maintain "" no
+mkdir -p "$HOMEDIR/.local/state/nhm/inst-0123456789ab" "$HOMEDIR/elsewhere"
+printf 'id = "inst-0123456789ab"\nsession = "default"\nsocket_path = "%s"\n' "$HOMEDIR/elsewhere/herdr.sock" \
+    >"$HOMEDIR/.local/state/nhm/inst-0123456789ab/instance.toml"
+RC=0
+OUT="$(PATH="$FAKEBIN:$PATH" HOME="$HOMEDIR" XDG_CONFIG_HOME="$HOMEDIR/other-config" XDG_STATE_HOME="" NHM_BIN_DIR="" \
+    NHM_TIMER_SYSTEMCTL_MACHINE="" bash "$HOMEDIR/.acfs/scripts/lib/nhm_maintain_timer.sh" install 2>&1)" || RC=$?
+check "an XDG_CONFIG_HOME that differs from the enrolment's: the enrolled socket is used" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q -- "--socket $2/elsewhere/herdr.sock" "$3"' _ "$RC" "$HOMEDIR" \
+    "$HOMEDIR/other-config/systemd/user/nhm-maintain.service"
+fixture maintain "" no
+mkdir -p "$HOMEDIR/.local/state/nhm/inst-0123456789ab"
+printf 'id = "inst-0123456789ab"\nsession = "work"\nsocket_path = "%s"\n' "$SOCK" \
+    >"$HOMEDIR/.local/state/nhm/inst-0123456789ab/instance.toml"
+helper install
+check "only a server enrolled as another session: exit 6" test "$RC" -eq 6 -a ! -e "$(UNITS)/nhm-maintain.timer"
+
+# A unit of the user's own is never overwritten, as remove never deletes it.
+fixture maintain
+mkdir -p "$(UNITS)"
+printf '[Service]\nExecStart=/usr/local/bin/my-nhm-pass\n' >"$(UNITS)/nhm-maintain.service"
+helper install
+check "a user's own service unit: exit 7, kept, no timer written" \
+    bash -c '[[ "$1" -eq 7 && ! -e "$3/nhm-maintain.timer" ]] && grep -q my-nhm-pass "$3/nhm-maintain.service"' _ "$RC" "" "$(UNITS)"
+helper status
+check "a user's own service only: status says no ACFS timer (missing, exit 1)" test "$RC" -eq 1 -a "$OUT" = missing
+fixture maintain
+mkdir -p "$(UNITS)"
+printf '[Timer]\nOnCalendar=hourly\n' >"$(UNITS)/nhm-maintain.timer"
+helper status
+check "a user's own timer: status user-unit, exit 7" test "$RC" -eq 7 -a "$OUT" = user-unit
+OUT="$(run_doctor)"
+check "the doctor skips a user's own units" has "stack.nhm.maintain|skip|nhm-maintain units of your own"
+
+# Without a user manager, remove also drops the enable link that would
+# dangle; another link stays.
+fixture maintain
+helper install
+mkdir -p "$(UNITS)/timers.target.wants"
+ln -s "$(UNITS)/nhm-maintain.timer" "$(UNITS)/timers.target.wants/nhm-maintain.timer"
+ln -s "$(UNITS)/other.timer" "$(UNITS)/timers.target.wants/other.timer"
+FAKE_SYSTEMD_DOWN=1 helper remove
+check "remove without a user manager drops the dangling enable link" \
+    test ! -L "$(UNITS)/timers.target.wants/nhm-maintain.timer" -a -L "$(UNITS)/timers.target.wants/other.timer"
+
+# Run as root for another user, the doctor never runs that user's nhm as
+# root: runuser runs it as the target.
+fixture maintain
+cat >"$FAKEBIN/runuser" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$SYSD/runuser"
+[[ "\$1" == -u && "\$3" == -- ]] || exit 99
+shift 3
+exec "\$@"
+EOF
+chmod +x "$FAKEBIN/runuser"
+: >"$SYSD/runuser"
+OUT="$(PATH="$FAKEBIN:$PATH" HOME="$HOMEDIR" XDG_CONFIG_HOME="" XDG_STATE_HOME="" NHM_TIMER_SYSTEMCTL_MACHINE="someoneelse@.host" \
+    bash -c 'source "$1"; nhm_maintain_timer_has_maintain "$2" && echo yes' _ \
+    "$HOMEDIR/.acfs/scripts/lib/nhm_maintain_timer.sh" "$HOMEDIR/.local/bin/nhm" 2>&1)"
+if [[ "$EUID" -eq 0 ]]; then
+    check "as root for another user, nhm runs through runuser -u <target>" \
+        bash -c '[[ "$1" == yes ]] && grep -q -- "-u someoneelse -- " "$2"' _ "$OUT" "$SYSD/runuser"
+else
+    check "not root: nhm runs directly, without runuser" bash -c '[[ "$1" == yes && ! -s "$2" ]]' _ "$OUT" "$SYSD/runuser"
+fi
+rm -f "$FAKEBIN/runuser"
 
 echo
 echo "nhm maintain timer: $TESTS_PASSED passed, $TESTS_FAILED failed"

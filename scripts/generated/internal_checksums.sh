@@ -10,7 +10,7 @@
 ACFS_INTERNAL_CHECKSUMS_SCHEMA=1
 
 declare -gA ACFS_INTERNAL_CHECKSUMS=(
-  [install.sh]="419c32b367d5801379eb1d66f7477fff420bdbdfc7423dc560ff779754318233"
+  [install.sh]="745a8e97d0f91bf3bc42b8768af0915fcdccd224592716c26bef08192ec93e30"
   [checksums.yaml]="51cdaac26a8226622d0cba67b39fd00ff1af8e2459ecaf465a56469824b40240"
   [scripts/preflight.sh]="f8b5829f2be4cbe08b6d33316fa07fe1b5a951b570819e38a1cb6ffe283d5902"
   [scripts/lib/security.sh]="9be2be3625c233571893965e69a789caf17dbefbcbe60fdfc9032a050b7a4a93"
@@ -18,7 +18,7 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/lib/github_api.sh]="80699922df2e924694f5682457e614dedf9181d7c071472cc8a6db4f17373d3d"
   [scripts/lib/contract.sh]="22c148f44ddbaccd559196196ef903f26f65fc77e3b1b6b4efc62b77d3b97aa3"
   [scripts/lib/update.sh]="7625df19eafdb4a4d80aa2c43130e02169a80f42953d65328c35304ec7f0960e"
-  [scripts/lib/doctor.sh]="674e721dcc39948f01ab98013f21ad1e0cc275f5b725ee22112ef6d826c22d2e"
+  [scripts/lib/doctor.sh]="4915cf346f4d480fdbe0828219da040c9107862049b365032c6574c5b0286597"
   [scripts/lib/acfs-services.sh]="75a8bff497a9982859f0b67726e644fba0ac01863bbcb77561853eb250dcae57"
   [scripts/lib/doctor_fix.sh]="ea1f13be46bf9f3df0630362b6027f12aca271e8df4eeddcd8d36f1019615b2c"
   [scripts/lib/offline_artifact_pack.sh]="123d0bffad48fdc501f456e2cf06907d4ad66821492b8d112327c66269efd38d"
@@ -65,7 +65,7 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/generate-root-agents-md.sh]="725a036f9a0695bb3423c1f54030f626f7c6b43c0f73233ff87ca604960de356"
   [scripts/lib/agent_mail_hook.sh]="bf45ae55002af558862d56b95061b52ceb88b15a7f3783ce4bfcca8463461c13"
   [scripts/lib/nhm_hooks.sh]="16e8ac62f37e0d9fbca0cb6b6fc26c96b2d08f870eb75767f3386edca1e70f78"
-  [scripts/lib/nhm_maintain_timer.sh]="7a452e27537bdb9ba6a58afaf14854e89995ed0f29155a3c9bf907c7154177fb"
+  [scripts/lib/nhm_maintain_timer.sh]="8994d6b0b119932a20a50515ec8e832651fb8efaf6ead86f2c08d78d5dc3d44a"
   [scripts/lib/agent_quota.sh]="0fabea807e89bc5e5f74de125202b7a046b6f6018cd16e2f3494d389ad97fd00"
   [scripts/lib/agy_e2e_harness.sh]="99c2cd036ba51f2c109327438afc25fd47b29f0f49ec3b1e3ae7d1ab88990222"
   [scripts/lib/agy_locked.py]="e92e30cf33f925bb666512b81f7c96134442914b6d4b846e4212be0e1e4db245"

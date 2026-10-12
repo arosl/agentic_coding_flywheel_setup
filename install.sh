@@ -10855,7 +10855,7 @@ acfs_install_nhm_maintain_timer() {
     run_as_target timeout 120 bash "$nhm_timer" install || timer_rc=$?
     case "$timer_rc" in
         0) log_detail "nhm-maintain.timer runs nhm maintain --once every 15 s" ;;
-        3|4|5|6) log_detail "nhm-maintain.timer not enabled (see above); nhm's board or 'nhm maintain --loop' runs the pass" ;;
+        3|4|5|6|7) log_detail "nhm-maintain.timer not enabled (see above); nhm's board or 'nhm maintain --loop' runs the pass" ;;
         *) log_warn "could not enable nhm-maintain.timer (optional); acfs doctor shows it" ;;
     esac
     return 0

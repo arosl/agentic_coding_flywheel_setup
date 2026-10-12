@@ -3217,6 +3217,7 @@ check_nhm_maintain() {
         3) check "stack.nhm.maintain" "$label" "skip" "this nhm has no 'maintain'; the next nhm update adds the timer" ;;
         4) check "stack.nhm.maintain" "$label" "skip" "no systemd user manager; $others" ;;
         5) check "stack.nhm.maintain" "$label" "skip" "nhm-maintain.timer is masked (opt-out); $others" ;;
+        7) check "stack.nhm.maintain" "$label" "skip" "nhm-maintain units of your own are installed; ACFS leaves them as they are" ;;
         6) check "stack.nhm.maintain" "$label" "warn" "nhm is not enrolled for the default herdr server, so the timer skips every pass" \
             "Run: nhm admin instance enroll --session default" ;;
         2) check "stack.nhm.maintain" "$label" "warn" "the timer's unit exists, but the user manager does not answer; $others" \
