@@ -11,13 +11,21 @@
 #
 # Registering is idempotent and appends only. Codex keys hook trust by an
 # entry's position in hooks.json, so existing entries are never moved; an
-# nhm entry with an older command is left where it is. Codex runs a new
-# hook only after the user trusts it once in its /hooks screen.
+# nhm entry with an older command is left where it is.
+#
+# Codex runs a hook only when config.toml holds its current trusted_hash.
+# `trust codex` records that for ACFS's own nhm-hook entries, through
+# Codex's own write path (plan-v8 F.25): `codex app-server` on stdio,
+# hooks/list, then config/batchWrite with each entry's currentHash under
+# hooks.state. It trusts no other entry. A Codex that cannot do that
+# leaves the user's /hooks screen as the way.
 #
 # Usage:
 #   nhm_hooks.sh register claude|codex [FILE]   (default ~/.claude/settings.json
 #                                                or ~/.codex/hooks.json)
 #   nhm_hooks.sh registered claude|codex FILE   (exit 0 if FILE has every line)
+#   nhm_hooks.sh trust codex [FILE] [--dry-run] (FILE is $CODEX_HOME/hooks.json;
+#                                                default ~/.codex/hooks.json)
 # ============================================================
 
 set -uo pipefail
@@ -34,6 +42,10 @@ Usage:
                                              (default ~/.claude/settings.json
                                              or ~/.codex/hooks.json)
   nhm_hooks.sh registered claude|codex FILE  Exit 0 if FILE has every line
+  nhm_hooks.sh trust codex [FILE] [--dry-run]
+                                             Record Codex's trust for the
+                                             nhm-hook entries of FILE
+                                             (default ~/.codex/hooks.json)
 EOF
 }
 
@@ -151,7 +163,7 @@ nhm_hooks_register() {
         return 1
     fi
     line="added the nhm hook lines to $file"
-    [[ "$kind" != codex ]] || line+="; trust them once in Codex's /hooks"
+    [[ "$kind" != codex ]] || line+="; Codex runs them once trusted (nhm_hooks.sh trust codex, or Codex's /hooks)"
     nhm_hooks_note "$line"
 }
 
@@ -174,12 +186,158 @@ nhm_hooks_registered() {
     return 0
 }
 
+# The app-server driver of `trust codex`. Arguments: the hooks file, the
+# codex binary, "dry-run" or "write". It talks JSON-RPC lines to `codex
+# app-server` (as Codex's TUI does), trusts only the entries of the hooks
+# file that run nhm-hook, and checks the result with a second hooks/list.
+# Exit 0: every nhm entry is trusted (or would be, with dry-run); 1: not.
+nhm_hooks_trust_driver() {
+    cat <<'PY'
+import json, os, re, subprocess, sys, threading
+
+hooks_file, codex, mode = sys.argv[1], sys.argv[2], sys.argv[3]
+OURS = re.compile(r"(^|[\s/])nhm-hook\s+[a-z]+(\s|$)")
+LABELS = {"PreToolUse": "pre_tool_use", "PostToolUse": "post_tool_use", "SessionStart": "session_start",
+          "PostCompact": "post_compact", "PreCompact": "pre_compact", "Stop": "stop",
+          "UserPromptSubmit": "user_prompt_submit", "SessionEnd": "session_end"}
+
+
+def note(msg):
+    print("nhm_hooks: " + msg, file=sys.stderr)
+
+
+def ours():
+    with open(hooks_file, encoding="utf-8") as f:
+        hooks = json.load(f).get("hooks", {})
+    found = set()
+    for event, groups in hooks.items():
+        for gi, group in enumerate(groups if isinstance(groups, list) else []):
+            for hi, h in enumerate(group.get("hooks", []) if isinstance(group, dict) else []):
+                if isinstance(h, dict) and isinstance(h.get("command"), str) and OURS.search(h["command"]) \
+                        and event in LABELS:
+                    found.add((LABELS[event], gi, hi))
+    return found
+
+
+real = os.path.realpath(hooks_file)
+mine = ours()
+if not mine:
+    note(f"{hooks_file} has no nhm-hook entries to trust")
+    sys.exit(0)
+proc = subprocess.Popen([codex, "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL, text=True, cwd=os.path.dirname(real))
+killer = threading.Timer(60, proc.kill)
+killer.start()
+seq = [0]
+
+
+def call(method, params):
+    seq[0] += 1
+    rid = seq[0]
+    proc.stdin.write(json.dumps({"id": rid, "method": method, "params": params}) + "\n")
+    proc.stdin.flush()
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            raise RuntimeError(f"codex app-server ended during {method}")
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if msg.get("id") == rid:
+            if "error" in msg:
+                raise RuntimeError(f"{method}: {msg['error']}")
+            return msg.get("result") or {}
+
+
+def listed():
+    out = {}
+    for entry in call("hooks/list", {"cwds": [os.path.dirname(real)]}).get("data", []):
+        for h in entry.get("hooks", []):
+            path, label, gi, hi = (h.get("key", "").rsplit(":", 3) + ["", "", "", ""])[:4]
+            if not (gi.isdigit() and hi.isdigit()) or os.path.realpath(path) != real:
+                continue
+            if (label, int(gi), int(hi)) in mine:
+                out[h["key"]] = h
+    return out
+
+
+status = 1
+try:
+    call("initialize", {"clientInfo": {"name": "acfs-nhm-hooks", "title": None, "version": "1"}, "capabilities": None})
+    proc.stdin.write(json.dumps({"method": "initialized"}) + "\n")
+    proc.stdin.flush()
+    before = listed()
+    todo = {k: {"trusted_hash": h["currentHash"]} for k, h in before.items()
+            if h.get("trustStatus") in ("untrusted", "modified") and h.get("currentHash")}
+    missing = len(mine) - len(before)
+    if missing:
+        note(f"Codex does not list {missing} nhm-hook entries of {hooks_file}")
+    if mode == "dry-run":
+        for k in sorted(todo):
+            note("would trust " + k)
+        status = 0 if not missing else 1
+    else:
+        if todo:
+            call("config/batchWrite", {"edits": [{"keyPath": "hooks.state", "value": todo, "mergeStrategy": "upsert"}],
+                                       "filePath": None, "expectedVersion": None, "reloadUserConfig": True})
+        after = listed()
+        untrusted = sorted(k for k, h in after.items() if h.get("trustStatus") != "trusted")
+        if untrusted or missing:
+            note("not trusted: " + ", ".join(untrusted or ["entries Codex does not list"]))
+        else:
+            note(f"Codex trusts the {len(after)} nhm-hook entries of {hooks_file}" +
+                 (f" ({len(todo)} newly)" if todo else ""))
+            status = 0
+except (RuntimeError, OSError, ValueError, KeyError) as e:
+    note(f"could not record Codex's trust: {e}")
+finally:
+    killer.cancel()
+    try:
+        proc.stdin.close()
+    except OSError:
+        pass
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+sys.exit(status)
+PY
+}
+
+# trust codex [FILE] [--dry-run]: record Codex's trust for the nhm-hook
+# entries of FILE through Codex's app-server. FILE must be the user layer's
+# hooks.json, $CODEX_HOME/hooks.json; the app-server runs with CODEX_HOME
+# set to FILE's directory, so it reads that file and writes that
+# config.toml.
+nhm_hooks_trust() {
+    local kind="${1:-}" file="" dry_run=false arg="" codex_bin="" target=""
+    [[ "$kind" == codex ]] || { nhm_hooks_usage >&2; return 2; }
+    shift
+    for arg in "$@"; do
+        case "$arg" in
+            --dry-run) dry_run=true ;;
+            -*) nhm_hooks_usage >&2; return 2 ;;
+            *) [[ -z "$file" ]] || { nhm_hooks_usage >&2; return 2; }; file="$arg" ;;
+        esac
+    done
+    [[ -n "$file" ]] || file="${CODEX_HOME:-$HOME/.codex}/hooks.json"
+    [[ -f "$file" ]] || { nhm_hooks_note "$file does not exist: register first"; return 1; }
+    command -v python3 >/dev/null 2>&1 || { nhm_hooks_note "python3 not found; trust the nhm hook lines in Codex's /hooks"; return 1; }
+    codex_bin="$(command -v codex 2>/dev/null)" || { nhm_hooks_note "codex not found"; return 1; }
+    target="$(readlink -f -- "$file")" || { nhm_hooks_note "cannot resolve $file"; return 1; }
+    CODEX_HOME="$(dirname -- "$target")" python3 -c "$(nhm_hooks_trust_driver)" \
+        "$target" "$codex_bin" "$([[ "$dry_run" == true ]] && echo dry-run || echo write)" </dev/null
+}
+
 nhm_hooks_main() {
     local subcommand="${1:-}"
     [[ $# -eq 0 ]] || shift
     case "$subcommand" in
         register) nhm_hooks_register "$@" ;;
         registered) nhm_hooks_registered "$@" ;;
+        trust) nhm_hooks_trust "$@" ;;
         -h|--help|help) nhm_hooks_usage ;;
         *) nhm_hooks_usage >&2; return 2 ;;
     esac

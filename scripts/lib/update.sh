@@ -7696,11 +7696,12 @@ update_nhm() {
 }
 
 # nhm's hook lines (scripts/lib/nhm_hooks.sh): register them for the
-# installed agent CLIs. Idempotent; appends only.
+# installed agent CLIs, and record Codex's trust for ACFS's own entries
+# through Codex's app-server (F.25). Idempotent; appends only.
 update_nhm_hooks() {
     local desc="nhm hook lines"
     local helper="" target_user="" current_user="" target_home="" agent="" file=""
-    local registered="" failed="" codex_new=false
+    local registered="" failed="" codex_untrusted=false
 
     [[ "${UPDATE_STACK:-true}" == "true" ]] || return 0
     if ! update_binary_exists nhm; then
@@ -7734,14 +7735,13 @@ update_nhm_hooks() {
             claude) file="$target_home/.claude/settings.json" ;;
             codex) file="$target_home/.codex/hooks.json" ;;
         esac
-        if [[ "$agent" == codex ]] && ! bash "$helper" registered codex "$file" </dev/null >/dev/null 2>&1; then
-            codex_new=true
-        fi
         if bash "$helper" register "$agent" "$file" </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1; then
             registered+="${registered:+, }$agent"
+            if [[ "$agent" == codex ]] && ! bash "$helper" trust codex "$file" </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1; then
+                codex_untrusted=true
+            fi
         else
             failed+="${failed:+, }$agent"
-            [[ "$agent" != codex ]] || codex_new=false
         fi
     done
     if [[ -n "$failed" ]]; then
@@ -7751,7 +7751,7 @@ update_nhm_hooks() {
     else
         log_item "skip" "$desc" "neither Claude Code nor Codex is installed"
     fi
-    if [[ "$codex_new" == true ]]; then
+    if [[ "$codex_untrusted" == true ]]; then
         log_detail "Codex asks to trust the nhm hook lines once: open /hooks in Codex"
     fi
     return 0

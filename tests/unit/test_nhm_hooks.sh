@@ -5,7 +5,8 @@
 # Proves that registering adds every nhm-hook line, is idempotent, keeps
 # everything else in the file, never moves an existing entry (Codex keys
 # hook trust by position), edits a symlinked file where it points, and
-# leaves a file it cannot read unchanged.
+# leaves a file it cannot read unchanged. And that `trust codex` records
+# Codex's trust for ACFS's own entries only, through a fake app-server.
 #
 # Usage: bash tests/unit/test_nhm_hooks.sh
 # ============================================================
@@ -107,6 +108,45 @@ printf '{not json\n' >"$WORK/broken.json"
 check "refuses malformed JSON" bash -c '! bash "$1" register claude "$2" 2>/dev/null' _ "$HOOKS" "$WORK/broken.json"
 check "refuses an unsafe bin dir" bash -c '! NHM_BIN_DIR="/tmp/a b" bash "$1" register claude "$2/unsafe.json" 2>/dev/null && test ! -e "$2/unsafe.json"' _ "$HOOKS" "$WORK"
 check "unknown kind: usage error" bash -c 'bash "$1" register gemini 2>/dev/null; test $? -eq 2' _ "$HOOKS"
+
+# ------------------------------------------------------------
+# trust codex: Codex's trust for ACFS's own entries, through a fake
+# `codex app-server` (tests/unit/fake_codex_app_server.py)
+# ------------------------------------------------------------
+FAKEBIN="$WORK/fakebin"
+mkdir -p "$FAKEBIN"
+printf '#!/bin/sh\nexec python3 "%s" "$@"\n' "$ROOT/tests/unit/fake_codex_app_server.py" >"$FAKEBIN/codex"
+chmod +x "$FAKEBIN/codex"
+CODEX_DIR="$WORK/codexhome"
+mkdir -p "$CODEX_DIR"
+# A user hook ACFS does not own comes first; ACFS must not trust it.
+printf '%s\n' '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo other","timeout":5}]}]}}' >"$CODEX_DIR/hooks.json"
+bash "$HOOKS" register codex "$CODEX_DIR/hooks.json" 2>/dev/null
+trust() { PATH="$FAKEBIN:$PATH" bash "$HOOKS" trust codex "$CODEX_DIR/hooks.json" "$@"; }
+batch_writes() { grep -c '"config/batchWrite"' "$CODEX_DIR/fake-requests.jsonl" 2>/dev/null || true; }
+
+OUT="$(trust --dry-run 2>&1)"
+check "trust --dry-run names the three nhm entries" bash -c '[[ $(grep -c "would trust" <<<"$1") -eq 3 ]]' _ "$OUT"
+check "trust --dry-run writes nothing" test "$(batch_writes)" = 0
+OUT="$(trust 2>&1)"
+check "trust: Codex trusts the nhm entries" bash -c '[[ "$1" == *"trusts the 3 nhm-hook entries"*"(3 newly)"* ]]' _ "$OUT"
+check "trust: one batchWrite of hooks.state" test "$(batch_writes)" = 1
+check "trust: only nhm-hook entries were trusted, never the user's own" \
+    jq_true '(keys | length) == 3 and all(keys[]; test(":(post_tool_use|session_start|post_compact):0:0$"))' "$CODEX_DIR/fake-trust.json"
+OUT="$(trust 2>&1)"
+check "trust again: nothing to write" bash -c '[[ "$1" != *newly* && $2 -eq 1 ]]' _ "$OUT" "$(batch_writes)"
+check "trust: the app-server runs with CODEX_HOME at the file's directory" \
+    grep -q '"cwds": \["'"$CODEX_DIR"'"\]' "$CODEX_DIR/fake-requests.jsonl"
+check "trust: a write Codex does not keep fails" bash -c 'rm -f "$1/fake-trust.json"; ! FAKE_CODEX_DROP_WRITE=1 PATH="$2:$PATH" bash "$3" trust codex "$1/hooks.json" 2>/dev/null' \
+    _ "$CODEX_DIR" "$FAKEBIN" "$HOOKS"
+check "trust: an app-server that dies fails" bash -c '! FAKE_CODEX_FAIL=1 PATH="$2:$PATH" bash "$3" trust codex "$1/hooks.json" 2>/dev/null' \
+    _ "$CODEX_DIR" "$FAKEBIN" "$HOOKS"
+check "trust: no codex fails" bash -c '! PATH="/usr/bin:/bin" bash "$2" trust codex "$1/hooks.json" 2>/dev/null' _ "$CODEX_DIR" "$HOOKS"
+printf '%s\n' '{"hooks":{}}' >"$WORK/empty-hooks.json"
+check "trust: a file without nhm entries has nothing to do" \
+    bash -c 'PATH="$1:$PATH" bash "$2" trust codex "$3" 2>/dev/null' _ "$FAKEBIN" "$HOOKS" "$WORK/empty-hooks.json"
+check "trust: a missing file fails" bash -c '! bash "$1" trust codex "$2/nope.json" 2>/dev/null' _ "$HOOKS" "$WORK"
+check "trust claude: usage error" bash -c 'bash "$1" trust claude 2>/dev/null; test $? -eq 2' _ "$HOOKS"
 
 echo
 echo "nhm_hooks: $PASS passed, $FAIL failed"

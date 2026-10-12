@@ -41,6 +41,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# A fake `codex app-server` first on PATH: trust codex talks to it, never
+# to a real Codex (FAKE_CODEX_FAIL=1 makes it die).
+FAKEBIN="$ROOT/fakebin"
+mkdir -p "$FAKEBIN"
+printf '#!/bin/sh\nexec python3 "%s" "$@"\n' "$REPO_ROOT/tests/unit/fake_codex_app_server.py" >"$FAKEBIN/codex"
+chmod +x "$FAKEBIN/codex"
+
 # run_update <function> <installed binaries...>: a fresh fixture home with
 # ACFS's copy of nhm_hooks.sh, then the function with the given binaries
 # "installed". Env knobs: SAME_USER (default 1), READ_ONLY, NO_HELPER,
@@ -52,13 +59,13 @@ run_update() {
     [[ -n "${NO_HELPER:-}" ]] || cp "$REPO_ROOT/scripts/lib/nhm_hooks.sh" "$FIX_HOME/.acfs/scripts/lib/"
     printf '{\n  "model": "opus",\n  "hooks": {}\n}\n' > "$FIX_HOME/.claude/settings.json"
     OUT="$(
-        export HOME="$FIX_HOME" TARGET_HOME="$FIX_HOME" UPDATE_LOG_FILE="$ROOT/update.log"
-        unset TARGET_USER ACFS_HOME XDG_CONFIG_HOME NHM_BIN_DIR
+        export HOME="$FIX_HOME" TARGET_HOME="$FIX_HOME" UPDATE_LOG_FILE="$ROOT/update.log" PATH="$FAKEBIN:$PATH"
+        unset TARGET_USER ACFS_HOME XDG_CONFIG_HOME NHM_BIN_DIR CODEX_HOME
         # shellcheck source=/dev/null
         source "$REPO_ROOT/scripts/lib/update.sh" >/dev/null 2>&1
         # shellcheck source=/dev/null
         source "$REPO_ROOT/scripts/lib/security.sh" >/dev/null 2>&1
-        [[ -z "${PIN_URL:-}" ]] || KNOWN_INSTALLERS[nhm]="$PIN_URL"
+        [[ -z "${PIN_URL:-}" ]] || KNOWN_INSTALLERS["nhm"]="$PIN_URL"
         INSTALLED=" $* "
         update_binary_exists() { [[ "$INSTALLED" == *" $1 "* ]]; }
         update_binary_path() { [[ "$INSTALLED" == *" $1 "* ]] && printf '%s\n' "$FIX_HOME/.local/bin/$1"; }
@@ -105,9 +112,15 @@ run_update update_nhm_hooks nhm claude codex
 check "hooks: Claude Code gets the lines" registered_in claude "$FIX_HOME/.claude/settings.json"
 check "hooks: Codex gets the lines" registered_in codex "$FIX_HOME/.codex/hooks.json"
 check "hooks: reports both" has "ITEM ok|nhm hook lines|registered for claude, codex"
-check "hooks: tells to trust them in Codex" has "DETAIL Codex asks to trust the nhm hook lines once"
+check "hooks: Codex trust recorded, so no /hooks step" lacks "DETAIL Codex asks to trust"
+trust_entries() { jq -e '(keys | length) == 3' "$FIX_HOME/.codex/fake-trust.json" >/dev/null; }
+check "hooks: trust holds the three nhm entries" trust_entries
 OUT="$(cat "$FIX_HOME/.claude/settings.json")"
 check "hooks: other settings are kept" has '"model": "opus"'
+
+FAKE_CODEX_FAIL=1 run_update update_nhm_hooks nhm codex
+check "hooks: Codex trust not recorded names /hooks" has "DETAIL Codex asks to trust the nhm hook lines once"
+check "hooks: and the lines are still registered" has "ITEM ok|nhm hook lines|registered for codex"
 
 run_update update_nhm_hooks nhm
 check "hooks: no agent CLI skips" has "ITEM skip|nhm hook lines|neither Claude Code nor Codex is installed"

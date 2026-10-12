@@ -11042,7 +11042,9 @@ finalize() {
     # nhm's hook lines (stack.nhm): PostToolUse on Agent Mail's registration
     # tools and SessionStart (Codex: also PostCompact) run nhm-hook, which
     # names panes and keeps names through compaction. Idempotent; appends
-    # only. Codex runs them after the user trusts them once in /hooks.
+    # only. Codex runs a hook only once it is trusted: ACFS records that
+    # trust for its own entries through Codex's app-server (F.25), and
+    # names /hooks in Codex when it cannot.
     local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh"
     if acfs_legacy_module_selected "stack.nhm" && [[ -f "$nhm_hooks" ]]; then
         if binary_installed "claude"; then
@@ -11053,7 +11055,11 @@ finalize() {
         if binary_installed "codex"; then
             if try_step "Registering the nhm hook lines for Codex" \
                     run_as_target bash "$nhm_hooks" register codex "$TARGET_HOME/.codex/hooks.json"; then
-                log_detail "Codex asks to trust the nhm hook lines once: open /hooks in Codex"
+                if run_as_target bash "$nhm_hooks" trust codex "$TARGET_HOME/.codex/hooks.json"; then
+                    log_detail "Codex trusts the nhm hook lines"
+                else
+                    log_detail "Codex asks to trust the nhm hook lines once: open /hooks in Codex"
+                fi
             else
                 log_warn "nhm hook registration for Codex failed (optional)"
             fi
