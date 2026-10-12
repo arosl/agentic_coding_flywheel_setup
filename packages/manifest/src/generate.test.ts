@@ -620,7 +620,7 @@ describe("Generated verified installer args", () => {
       );
     }
     expect(nhm).toContain(
-      `run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.1.3' "\${verified_installer_checksum_args[@]}"`,
+      `run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.1.4' "\${verified_installer_checksum_args[@]}"`,
     );
     // A bad pin clears expected_sha256, which keeps the installer from running.
     expect(nhm).toMatch(/has no valid pin 'nhm_archive_linux_amd64'"\n\s+ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"\n\s+expected_sha256=""/);
@@ -632,12 +632,14 @@ describe("Generated verified installer args", () => {
     const parsed = parseManifestFile(MANIFEST_PATH);
     expect(parsed.success).toBe(true);
     const step = parsed.data!.modules.find((m) => m.id === "stack.nhm")!.install[0]!;
-    const run = (socketJson: string) => {
+    const run = (socketJson: string, fail: "" | "enroll" | "restore" = "") => {
       const bin = temporaryHome("acfs-nhm-step-");
-      // A fake nhm: it logs each call and answers enroll --json.
+      // A fake nhm: it logs each call and answers enroll --json; fail makes
+      // that verb exit 1.
       writeFileSync(
         resolve(bin, "nhm"),
         `#!/bin/bash\nprintf '%s\\n' "$*" >> "${bin}/calls"\n` +
+          `if [[ "$*" == *"${fail || "no-such-verb"}"* ]]; then exit 1; fi\n` +
           `if [[ "$*" == *"enroll"*"--json"* ]]; then printf '%s\\n' '${socketJson}'; fi\n`,
       );
       chmodSync(resolve(bin, "nhm"), 0o755);
@@ -659,6 +661,18 @@ describe("Generated verified installer args", () => {
     expect(none.status).toBe(0);
     expect(none.calls).toBe("admin instance enroll --session default --json\n");
     expect(none.stderr).toContain("restore skipped");
+    // Failures warn and never fail the module (acfs-9hkh.89).
+    const enrollFails = run('{"result":{"socket_path":"/run/test/herdr.sock"}}', "enroll");
+    expect(enrollFails.status).toBe(0);
+    expect(enrollFails.calls).toBe("admin instance enroll --session default --json\n");
+    expect(enrollFails.stderr).toContain("could not enroll");
+    const notJson = run("enrolled, but not JSON");
+    expect(notJson.status).toBe(0);
+    expect(notJson.calls).not.toContain("restore");
+    expect(notJson.stderr).toContain("restore skipped");
+    const restoreFails = run('{"result":{"socket_path":"/run/test/herdr.sock"}}', "restore");
+    expect(restoreFails.status).toBe(0);
+    expect(restoreFails.stderr).toContain("nhm admin restore failed; run:");
   });
 
   test("stack.cass prepares and uses a target-owned installer TMPDIR", () => {

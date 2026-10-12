@@ -103,7 +103,13 @@ run_update() {
         update_target_home() { printf '%s\n' "$FIX_HOME"; }
         # enroll --json, which update_nhm reads for the socket (NO_SOCKET
         # makes it report none).
+        # Each call is logged to $FIX_HOME/target-calls; ENROLL_FAIL makes
+        # enroll exit 1.
         update_run_in_target_context() {
+            printf '%s\n' "$*" >> "$FIX_HOME/target-calls"
+            if [[ " $* " == *" enroll "* && -n "${ENROLL_FAIL:-}" ]]; then
+                return 1
+            fi
             if [[ " $* " == *" enroll "*" --json "* && -z "${NO_SOCKET:-}" ]]; then
                 printf '{"command":"admin instance enroll","result":{"socket_path":"/run/test/herdr.sock"}}\n'
             fi
@@ -130,7 +136,7 @@ run_update update_nhm nhm
 NHM_AMD64="linux-amd64=$(awk '/^  nhm_archive_linux_amd64:$/ { f = 1 } f && /sha256:/ { gsub(/[" ]|sha256:/, ""); print; exit }' "$REPO_ROOT/checksums.yaml")"
 NHM_ARM64="linux-arm64=$(awk '/^  nhm_archive_linux_arm64:$/ { f = 1 } f && /sha256:/ { gsub(/[" ]|sha256:/, ""); print; exit }' "$REPO_ROOT/checksums.yaml")"
 check "update_nhm: installs the release the pinned URL names, with its archive pins from checksums.yaml" \
-    has "RUN nhm 0.1.3: update_run_verified_installer nhm --version 0.1.3 --archive-sha256 $NHM_AMD64 --archive-sha256 $NHM_ARM64"
+    has "RUN nhm 0.1.4: update_run_verified_installer nhm --version 0.1.4 --archive-sha256 $NHM_AMD64 --archive-sha256 $NHM_ARM64"
 
 DROP_PIN=nhm_archive_linux_arm64 run_update update_nhm nhm
 check "update_nhm: a missing archive pin installs nothing" lacks "RUN nhm 0"
@@ -163,8 +169,9 @@ check "stack.nhm's args and installed_check name the version security.sh's URL p
     _ "$manifest_args" "" "" "$REPO_ROOT"
 
 run_update update_nhm nhm
-check "update_nhm: enrolls the default herdr server as the target user" \
-    has "RUN nhm enroll: update_run_in_target_context  $FIX_HOME/.local/bin/nhm admin instance enroll --session default"
+check "update_nhm: enrolls the default herdr server once, as the target user (acfs-9hkh.89)" \
+    bash -c '[[ "$(grep -c " admin instance enroll " "$1")" == 1 ]] &&
+        grep -qxF " $2 admin instance enroll --session default --json" "$1"' _ "$FIX_HOME/target-calls" "$FIX_HOME/.local/bin/nhm"
 check "update_nhm: runs nhm's restore on the socket enroll reports (acfs-9hkh.40)" \
     has "RUN nhm restore: update_run_in_target_context  $FIX_HOME/.local/bin/nhm admin restore --socket /run/test/herdr.sock"
 check "update_nhm: returns 0" has "RC 0"
@@ -172,6 +179,10 @@ check "update_nhm: returns 0" has "RC 0"
 NO_SOCKET=1 run_update update_nhm nhm
 check "update_nhm: no socket from enroll runs no restore" lacks "RUN nhm restore"
 check "update_nhm: and says how to run it" has "ITEM warn|nhm|nhm reported no herdr socket"
+
+ENROLL_FAIL=1 run_update update_nhm nhm
+check "update_nhm: a failed enroll warns and runs no restore (acfs-9hkh.89)" \
+    bash -c '[[ "$1" == *"ITEM warn|nhm|nhm could not enroll"* && "$1" != *"RUN nhm restore"* && "$1" == *"RC 0"* ]]' _ "$OUT"
 
 PIN_URL="https://raw.githubusercontent.com/arosl/nhm/main/install.sh" run_update update_nhm nhm
 check "update_nhm: an unpinned URL installs nothing" lacks "RUN nhm"

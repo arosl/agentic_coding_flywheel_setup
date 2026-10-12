@@ -927,7 +927,7 @@ acfs_generated_install_stack_nhm() {
                         elif ! "$verified_installer_chmod_bin" 0444 "$verified_installer_file"; then
                             log_error "stack.nhm: failed to make verified installer staging file read-only"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
-                        elif run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.1.3' "${verified_installer_checksum_args[@]}"; then
+                        elif run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.1.4' "${verified_installer_checksum_args[@]}"; then
                             install_success=true
                         else
                             log_error "stack.nhm: verified installer execution failed"
@@ -978,15 +978,17 @@ acfs_generated_install_stack_nhm() {
 # The install may run before herdr starts; enroll records the
 # socket anyway. An explicit --session ignores the pane this runs in.
 nhm="${NHM_BIN_DIR:-$HOME/.local/bin}/nhm"
-enrolled="$("$nhm" admin instance enroll --session default --json)"
 # restore is nhm's startup hook (acfs-9hkh.40): it restores nothing
 # while ACFS's Bash owns the server, and after the takeover it
 # applies the bindings again. It needs the socket enroll reports.
-socket="$(jq -r '.result.socket_path // empty' <<<"$enrolled")"
-if [[ -n "$socket" ]]; then
-  "$nhm" admin restore --socket "$socket"
-else
-  echo "nhm reported no herdr socket; restore skipped" >&2
+# Neither fails the module (acfs-9hkh.89), as in acfs update: nhm
+# is installed, and a warning names the command to run again.
+if ! enrolled="$("$nhm" admin instance enroll --session default --json)"; then
+  echo "warning: nhm could not enroll the default herdr server; run: $nhm admin instance enroll --session default" >&2
+elif ! socket="$(jq -r '.result.socket_path // empty' <<<"$enrolled" 2>/dev/null)" || [[ -z "$socket" ]]; then
+  echo "warning: nhm reported no herdr socket; restore skipped" >&2
+elif ! "$nhm" admin restore --socket "$socket"; then
+  echo "warning: nhm admin restore failed; run: $nhm admin restore --socket $socket" >&2
 fi
 INSTALL_STACK_NHM
         then
