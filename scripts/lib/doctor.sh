@@ -3205,12 +3205,20 @@ check_nhm_maintain() {
         check "stack.nhm.maintain" "$label" "warn" "nhm_maintain_timer.sh is not installed; $others" "Run: acfs update"
         return
     fi
-    HOME="$home" timeout 30 bash "$helper" status </dev/null >/dev/null 2>&1 || rc=$?
+    # Run as another user (root), the doctor asks TARGET_USER's manager, as
+    # the nightly-timer check does, and reads the target's default paths.
+    local -a env_args=(HOME="$home")
+    if [[ -n "${TARGET_USER:-}" && "$TARGET_USER" != "$(id -un 2>/dev/null || true)" ]]; then
+        env_args=(-u XDG_CONFIG_HOME -u XDG_STATE_HOME HOME="$home" NHM_TIMER_SYSTEMCTL_MACHINE="${TARGET_USER}@.host")
+    fi
+    env "${env_args[@]}" timeout 30 bash "$helper" status </dev/null >/dev/null 2>&1 || rc=$?
     case "$rc" in
         0) check "stack.nhm.maintain" "$label" "pass" "nhm-maintain.timer runs nhm maintain --once every 15 s" ;;
         3) check "stack.nhm.maintain" "$label" "skip" "this nhm has no 'maintain'; the next nhm update adds the timer" ;;
         4) check "stack.nhm.maintain" "$label" "skip" "no systemd user manager; $others" ;;
         5) check "stack.nhm.maintain" "$label" "skip" "nhm-maintain.timer is masked (opt-out); $others" ;;
+        6) check "stack.nhm.maintain" "$label" "warn" "nhm is not enrolled for the default herdr server, so the timer skips every pass" \
+            "Run: nhm admin instance enroll --session default" ;;
         2) check "stack.nhm.maintain" "$label" "warn" "the timer's unit exists, but the user manager does not answer; $others" \
             "loginctl enable-linger \$(whoami) && systemctl --user enable --now nhm-maintain.timer" ;;
         *) check "stack.nhm.maintain" "$label" "warn" "nhm-maintain.timer is not enabled; $others" \

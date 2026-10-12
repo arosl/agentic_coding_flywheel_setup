@@ -7813,31 +7813,35 @@ update_nhm_maintain_timer() {
     local desc="nhm maintain timer" helper="" target_user="" current_user="" rc=0
 
     [[ "${UPDATE_STACK:-true}" == "true" ]] || return 0
-    if ! update_binary_exists nhm; then
-        log_item "skip" "$desc" "nhm is not installed"
-        return 0
-    fi
     helper="$(update_runtime_acfs_home 2>/dev/null || true)/scripts/lib/nhm_maintain_timer.sh"
     if [[ ! -r "$helper" ]]; then
         log_item "skip" "$desc" "nhm_maintain_timer.sh is not installed"
         return 0
     fi
+    # Without nhm the timer is removed: its unit would fail every 15 s.
+    local verb="install"
+    update_binary_exists nhm || verb="remove"
     if update_is_read_only_mode; then
-        log_item "skip" "$desc" "dry-run: would install and enable nhm-maintain.timer"
+        log_item "skip" "$desc" "dry-run: would $verb nhm-maintain.timer"
         return 0
     fi
     target_user="$(update_target_user 2>/dev/null || true)"
     current_user="$(update_current_user 2>/dev/null || true)"
     if [[ -z "$target_user" || "$current_user" != "$target_user" ]]; then
-        log_item "warn" "$desc" "run as ${target_user:-the target user}: bash $helper install"
+        log_item "warn" "$desc" "run as ${target_user:-the target user}: bash $helper $verb"
         return 0
     fi
-    timeout 120 bash "$helper" install </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1 || rc=$?
+    timeout 120 bash "$helper" "$verb" </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1 || rc=$?
+    if [[ "$verb" == remove ]]; then
+        log_item "skip" "$desc" "nhm is not installed; ACFS's nhm-maintain.timer is removed"
+        return 0
+    fi
     case "$rc" in
         0) log_item "ok" "$desc" "runs nhm maintain --once every 15 s" ;;
         3) log_item "skip" "$desc" "this nhm has no 'maintain'; a later nhm update adds the timer" ;;
         4) log_item "skip" "$desc" "no systemd user manager; nhm's board or 'nhm maintain --loop' runs the pass" ;;
         5) log_item "skip" "$desc" "nhm-maintain.timer is masked; left as it is" ;;
+        6) log_item "warn" "$desc" "nhm is not enrolled for the default herdr server: nhm admin instance enroll --session default" ;;
         *) log_item "warn" "$desc" "could not enable nhm-maintain.timer; see the update log" ;;
     esac
     return 0

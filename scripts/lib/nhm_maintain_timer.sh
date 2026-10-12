@@ -9,32 +9,47 @@
 # must run it. nhm holds its own singleton lock, so a pass that outlasts
 # 15 s never runs twice, and under ACFS's Bash the pass does nothing.
 #
-# The units are ACFS's: install rewrites them when they differ. Change
-# them with a drop-in (systemctl --user edit nhm-maintain.service), or
-# mask the timer to opt out; install respects a mask.
+# A pass runs only when it can do its work: the service's ExecCondition
+# (`ready`) skips it quietly, never as a failure, unless nhm is installed,
+# the default herdr server's socket is there, and nhm is enrolled for that
+# server. So no state of the machine puts an error in the journal every
+# 15 s.
 #
-# Install needs an nhm with `maintain` (newer than 0.1.1); with an older
-# one it changes nothing, and the next nhm update installs the timer.
+# The units are ACFS's: install rewrites them when they differ, and remove
+# deletes only files with ACFS's header. Change them with a drop-in
+# (systemctl --user edit nhm-maintain.service), or mask the timer to opt
+# out; install and remove leave a mask alone.
 #
 # Usage:
 #   nhm_maintain_timer.sh install   write the units and enable the timer
+#   nhm_maintain_timer.sh remove    disable the timer and delete the units
 #   nhm_maintain_timer.sh status    say whether the timer runs (read-only)
-# Exit codes (both): 0 enabled; 1 not installed or not enabled (install:
-# failed); 2 the unit exists, the user manager is unreachable (status
-# only); 3 no nhm with maintain; 4 no systemd user manager; 5 masked;
-# 64 a usage error.
+#   nhm_maintain_timer.sh ready NHM SOCKET STATE_ROOT
+#                                   the service's ExecCondition (read-only)
+# Exit codes: 0 enabled (remove: done; ready: run the pass); 1 not
+# installed or not enabled (install: failed; ready: skip); 2 the unit
+# exists, the user manager is unreachable (status only); 3 no nhm with
+# maintain; 4 no systemd user manager; 5 masked; 6 nhm is not enrolled for
+# the default herdr server; 64 a usage error.
+# NHM_TIMER_SYSTEMCTL_MACHINE=user@.host makes status ask that user's
+# manager (doctor run as root).
 # ============================================================
 
 set -uo pipefail
 
 NHM_MAINTAIN_TIMER_UNIT="nhm-maintain"
+# The first line of every unit ACFS writes; remove deletes only these.
+NHM_MAINTAIN_TIMER_HEADER="# Written by ACFS (scripts/lib/nhm_maintain_timer.sh); a drop-in changes it."
 
 nhm_maintain_timer_usage() {
     cat <<'EOF'
 Usage:
   nhm_maintain_timer.sh install   Write nhm-maintain.service and .timer to
                                   ~/.config/systemd/user and enable the timer
+  nhm_maintain_timer.sh remove    Disable the timer and delete ACFS's units
   nhm_maintain_timer.sh status    Say whether the timer runs (read-only)
+  nhm_maintain_timer.sh ready NHM SOCKET STATE_ROOT
+                                  Exit 0 when a pass can run (ExecCondition)
 EOF
 }
 
@@ -43,6 +58,23 @@ nhm_maintain_timer_note() { printf 'nhm_maintain_timer: %s\n' "$*" >&2; }
 nhm_maintain_timer_nhm() { printf '%s/nhm\n' "${NHM_BIN_DIR:-$HOME/.local/bin}"; }
 
 nhm_maintain_timer_unit_dir() { printf '%s/systemd/user\n' "${XDG_CONFIG_HOME:-$HOME/.config}"; }
+
+# The default herdr server's socket, as `nhm admin instance enroll
+# --session default` names it.
+nhm_maintain_timer_socket() { printf '%s/herdr/herdr.sock\n' "${XDG_CONFIG_HOME:-$HOME/.config}"; }
+
+# nhm's state root (internal/store StateRoot).
+nhm_maintain_timer_state_root() { printf '%s/nhm\n' "${XDG_STATE_HOME:-$HOME/.local/state}"; }
+
+# The systemctl command for this user's manager, or the one that
+# NHM_TIMER_SYSTEMCTL_MACHINE names.
+nhm_maintain_timer_systemctl() {
+    if [[ -n "${NHM_TIMER_SYSTEMCTL_MACHINE:-}" ]]; then
+        timeout 10 systemctl --machine="$NHM_TIMER_SYSTEMCTL_MACHINE" --user "$@"
+    else
+        timeout 30 systemctl --user "$@"
+    fi
+}
 
 # Whether the installed nhm has `maintain`: its usage names the verb (an
 # older nhm says "unknown command").
@@ -53,15 +85,40 @@ nhm_maintain_timer_has_maintain() {
     [[ "$usage" == *"Usage: nhm maintain"* ]]
 }
 
+# Whether nhm is enrolled for SOCKET: an instance.toml under STATE_ROOT
+# names it (nhm's store.Lookup compares the same path).
+nhm_maintain_timer_enrolled() {
+    local socket="$1" root="$2" toml=""
+    for toml in "$root"/*/instance.toml; do
+        [[ -f "$toml" ]] || continue
+        if grep -qxF "socket_path = \"$socket\"" "$toml" 2>/dev/null; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Whether this user's systemd manager answers.
 nhm_maintain_timer_systemd() {
-    command -v systemctl >/dev/null 2>&1 && timeout 10 systemctl --user show-environment >/dev/null 2>&1
+    command -v systemctl >/dev/null 2>&1 && nhm_maintain_timer_systemctl show-environment >/dev/null 2>&1
+}
+
+nhm_maintain_timer_masked() {
+    local state=""
+    state="$(nhm_maintain_timer_systemctl is-enabled "$NHM_MAINTAIN_TIMER_UNIT.timer" 2>/dev/null)"
+    [[ "$state" == masked* ]]
+}
+
+# A path a unit file can hold: absolute, without what systemd splits on
+# or expands (space, %, $, quotes, backslash).
+nhm_maintain_timer_unit_safe() {
+    [[ "$1" == /* && ! "$1" =~ [[:space:]%\$\"\'\\] ]]
 }
 
 nhm_maintain_timer_service() {
-    local nhm="$1"
+    local nhm="$1" socket="$2" root="$3" helper="$4"
     cat <<EOF
-# Written by ACFS (scripts/lib/nhm_maintain_timer.sh); a drop-in changes it.
+$NHM_MAINTAIN_TIMER_HEADER
 [Unit]
 Description=nhm: the maintenance pass (due wakes, inboxes, pane names)
 Documentation=https://github.com/arosl/nhm
@@ -69,8 +126,9 @@ Documentation=https://github.com/arosl/nhm
 [Service]
 Type=oneshot
 Environment=PATH=%h/.local/bin:%h/.acfs/bin:%h/.cargo/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
-# No herdr server: nothing to do, and no failed unit every 15 s.
-ExecStart=/bin/sh -c 'test -S "\$\$1" || exit 0; exec "\$\$0" maintain --once --socket "\$\$1"' $nhm %E/herdr/herdr.sock
+# No nhm, no herdr server or no enrolment: the pass is skipped, not failed.
+ExecCondition=/bin/bash $helper ready $nhm $socket $root
+ExecStart=$nhm maintain --once --socket $socket
 TimeoutStartSec=60
 # The journal keeps nhm's warnings and errors, not a line per pass.
 StandardOutput=null
@@ -80,8 +138,8 @@ EOF
 }
 
 nhm_maintain_timer_timer() {
-    cat <<'EOF'
-# Written by ACFS (scripts/lib/nhm_maintain_timer.sh); a drop-in changes it.
+    cat <<EOF
+$NHM_MAINTAIN_TIMER_HEADER
 [Unit]
 Description=nhm: run nhm maintain --once every 15 s
 Documentation=https://github.com/arosl/nhm
@@ -98,7 +156,7 @@ EOF
 # write_if_changed <file> <content>: 0 written, 1 unchanged, 2 failed.
 nhm_maintain_timer_write() {
     local file="$1" content="$2" tmp=""
-    if [[ -f "$file" ]] && [[ "$(cat -- "$file")" == "$content" ]]; then
+    if [[ -f "$file" && ! -L "$file" ]] && [[ "$(cat -- "$file")" == "$content" ]]; then
         return 1
     fi
     tmp="$(mktemp "$file.XXXXXX")" || return 2
@@ -109,30 +167,49 @@ nhm_maintain_timer_write() {
     return 0
 }
 
+# Whether FILE is a unit ACFS wrote: a regular file whose first line is
+# ACFS's header. A mask (a link to /dev/null) and a user's own unit are not.
+nhm_maintain_timer_ours() {
+    local file="$1" first=""
+    [[ -f "$file" && ! -L "$file" ]] || return 1
+    IFS= read -r first <"$file" || true
+    [[ "$first" == "$NHM_MAINTAIN_TIMER_HEADER" ]]
+}
+
 nhm_maintain_timer_install() {
-    local nhm="" dir="" rc=0 changed=false state=""
+    local nhm="" socket="" root="" helper="" dir="" rc=0 changed=false
     nhm="$(nhm_maintain_timer_nhm)"
+    socket="$(nhm_maintain_timer_socket)"
+    root="$(nhm_maintain_timer_state_root)"
+    helper="$(readlink -f -- "${BASH_SOURCE[0]}")"
     if ! nhm_maintain_timer_has_maintain "$nhm"; then
+        # An older nhm, or none: units from a newer one would fail.
+        nhm_maintain_timer_remove >/dev/null 2>&1
         nhm_maintain_timer_note "$nhm has no 'maintain'; the next nhm update installs the timer"
         return 3
     fi
-    # systemd splits ExecStart on spaces and expands % and $.
-    if [[ "$nhm" =~ [[:space:]%\$\"\'\\] ]]; then
-        nhm_maintain_timer_note "the path $nhm cannot go into a unit file; run nhm maintain --loop instead"
-        return 1
-    fi
+    local p
+    for p in "$nhm" "$socket" "$root" "$helper"; do
+        if ! nhm_maintain_timer_unit_safe "$p"; then
+            nhm_maintain_timer_note "the path $p cannot go into a unit file; run nhm maintain --loop instead"
+            return 1
+        fi
+    done
     if ! nhm_maintain_timer_systemd; then
         nhm_maintain_timer_note "no systemd user manager; run nhm maintain --loop, or open nhm's board"
         return 4
     fi
-    state="$(timeout 10 systemctl --user is-enabled "$NHM_MAINTAIN_TIMER_UNIT.timer" 2>/dev/null)"
-    if [[ "$state" == masked* ]]; then
+    if nhm_maintain_timer_masked; then
         nhm_maintain_timer_note "$NHM_MAINTAIN_TIMER_UNIT.timer is masked: left as it is (systemctl --user unmask $NHM_MAINTAIN_TIMER_UNIT.timer to let ACFS run it)"
         return 5
     fi
+    if ! nhm_maintain_timer_enrolled "$socket" "$root"; then
+        nhm_maintain_timer_note "nhm is not enrolled for $socket; run: nhm admin instance enroll --session default (the next install or update enables the timer)"
+        return 6
+    fi
     dir="$(nhm_maintain_timer_unit_dir)"
     mkdir -p -- "$dir" || { nhm_maintain_timer_note "cannot create $dir"; return 1; }
-    nhm_maintain_timer_write "$dir/$NHM_MAINTAIN_TIMER_UNIT.service" "$(nhm_maintain_timer_service "$nhm")"
+    nhm_maintain_timer_write "$dir/$NHM_MAINTAIN_TIMER_UNIT.service" "$(nhm_maintain_timer_service "$nhm" "$socket" "$root" "$helper")"
     rc=$?
     (( rc == 2 )) && return 1
     (( rc == 0 )) && changed=true
@@ -141,13 +218,43 @@ nhm_maintain_timer_install() {
     (( rc == 2 )) && return 1
     (( rc == 0 )) && changed=true
     if [[ "$changed" == true ]]; then
-        timeout 30 systemctl --user daemon-reload || { nhm_maintain_timer_note "systemctl --user daemon-reload failed"; return 1; }
+        nhm_maintain_timer_systemctl daemon-reload || { nhm_maintain_timer_note "systemctl --user daemon-reload failed"; return 1; }
     fi
-    if ! timeout 30 systemctl --user enable --now "$NHM_MAINTAIN_TIMER_UNIT.timer" >/dev/null 2>&1; then
+    if ! nhm_maintain_timer_systemctl enable --now "$NHM_MAINTAIN_TIMER_UNIT.timer" >/dev/null 2>&1; then
         nhm_maintain_timer_note "systemctl --user enable --now $NHM_MAINTAIN_TIMER_UNIT.timer failed"
         return 1
     fi
     return 0
+}
+
+# remove disables the timer and deletes ACFS's units, for a machine where
+# nhm is gone or stack.nhm is not selected. A mask and a user's own unit
+# stay. Idempotent: no units, nothing to do.
+nhm_maintain_timer_remove() {
+    local dir="" f="" removed=false systemd=false
+    dir="$(nhm_maintain_timer_unit_dir)"
+    nhm_maintain_timer_systemd && systemd=true
+    if [[ "$systemd" == true ]] && nhm_maintain_timer_ours "$dir/$NHM_MAINTAIN_TIMER_UNIT.timer"; then
+        nhm_maintain_timer_systemctl disable --now "$NHM_MAINTAIN_TIMER_UNIT.timer" >/dev/null 2>&1 || true
+    fi
+    for f in "$dir/$NHM_MAINTAIN_TIMER_UNIT.timer" "$dir/$NHM_MAINTAIN_TIMER_UNIT.service"; do
+        if nhm_maintain_timer_ours "$f"; then
+            rm -f -- "$f" && removed=true
+        fi
+    done
+    if [[ "$removed" == true && "$systemd" == true ]]; then
+        nhm_maintain_timer_systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+    return 0
+}
+
+# ready is the service's ExecCondition: 0 runs the pass; 1 skips it, which
+# systemd does not count as a failure.
+nhm_maintain_timer_ready() {
+    local nhm="${1:-}" socket="${2:-}" root="${3:-}"
+    [[ -n "$nhm" && -n "$socket" && -n "$root" ]] || return 1
+    [[ -x "$nhm" && -S "$socket" ]] || return 1
+    nhm_maintain_timer_enrolled "$socket" "$root"
 }
 
 nhm_maintain_timer_status() {
@@ -170,15 +277,19 @@ nhm_maintain_timer_status() {
         echo "no-systemd"
         return 4
     fi
-    state="$(timeout 10 systemctl --user is-enabled "$NHM_MAINTAIN_TIMER_UNIT.timer" 2>/dev/null)"
+    state="$(nhm_maintain_timer_systemctl is-enabled "$NHM_MAINTAIN_TIMER_UNIT.timer" 2>/dev/null)"
     case "$state" in
         enabled*)
-            if timeout 10 systemctl --user is-active --quiet "$NHM_MAINTAIN_TIMER_UNIT.timer" 2>/dev/null; then
-                echo "enabled"
-                return 0
+            if ! nhm_maintain_timer_systemctl is-active --quiet "$NHM_MAINTAIN_TIMER_UNIT.timer" 2>/dev/null; then
+                echo "inactive"
+                return 1
             fi
-            echo "inactive"
-            return 1 ;;
+            if ! nhm_maintain_timer_enrolled "$(nhm_maintain_timer_socket)" "$(nhm_maintain_timer_state_root)"; then
+                echo "not-enrolled"
+                return 6
+            fi
+            echo "enabled"
+            return 0 ;;
         masked*) echo "masked"; return 5 ;;
         *) echo "missing"; return 1 ;;
     esac
@@ -187,10 +298,17 @@ nhm_maintain_timer_status() {
 nhm_maintain_timer_main() {
     local subcommand="${1:-}"
     [[ $# -eq 0 ]] || shift
-    [[ $# -eq 0 ]] || { nhm_maintain_timer_usage >&2; return 64; }
+    case "$subcommand" in
+        install|remove|status)
+            [[ $# -eq 0 ]] || { nhm_maintain_timer_usage >&2; return 64; } ;;
+        ready)
+            [[ $# -eq 3 ]] || { nhm_maintain_timer_usage >&2; return 64; } ;;
+    esac
     case "$subcommand" in
         install) nhm_maintain_timer_install ;;
+        remove) nhm_maintain_timer_remove ;;
         status) nhm_maintain_timer_status ;;
+        ready) nhm_maintain_timer_ready "$@" ;;
         -h|--help|help) nhm_maintain_timer_usage ;;
         *) nhm_maintain_timer_usage >&2; return 64 ;;
     esac

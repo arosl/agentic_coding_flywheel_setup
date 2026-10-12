@@ -10799,6 +10799,35 @@ acfs_install_nhm_hook_lines() {
     fi
 }
 
+# nhm's maintenance pass (stack.nhm, F.29): nhm-maintain.timer runs `nhm
+# maintain --once` every 15 s (scripts/lib/nhm_maintain_timer.sh). The
+# helper enables it only for an nhm with `maintain` that is enrolled for
+# the default herdr server. Without nhm, or with stack.nhm not selected,
+# it removes the timer, so no unit fails every 15 s. doctor reports it.
+acfs_install_nhm_maintain_timer() {
+    local nhm_timer="$ACFS_HOME/scripts/lib/nhm_maintain_timer.sh" nhm_rc=0 timer_rc=0
+    [[ -f "$nhm_timer" ]] || return 0
+    # 0: nhm is there; 3: it is not; anything else: the check did not run.
+    # shellcheck disable=SC2016 # expanded by the target user's bash
+    run_as_target bash -c 'test -x "${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" || exit 3' || nhm_rc=$?
+    if [[ "$nhm_rc" -ne 0 && "$nhm_rc" -ne 3 ]]; then
+        log_warn "could not check for nhm as $TARGET_USER; nhm-maintain.timer is unchanged"
+        return 0
+    fi
+    if [[ "$nhm_rc" -eq 3 ]] || ! acfs_legacy_module_selected "stack.nhm"; then
+        run_as_target timeout 60 bash "$nhm_timer" remove || \
+            log_warn "could not remove nhm-maintain.timer; acfs doctor shows it"
+        return 0
+    fi
+    run_as_target timeout 120 bash "$nhm_timer" install || timer_rc=$?
+    case "$timer_rc" in
+        0) log_detail "nhm-maintain.timer runs nhm maintain --once every 15 s" ;;
+        3|4|5|6) log_detail "nhm-maintain.timer not enabled (see above); nhm's board or 'nhm maintain --loop' runs the pass" ;;
+        *) log_warn "could not enable nhm-maintain.timer (optional); acfs doctor shows it" ;;
+    esac
+    return 0
+}
+
 finalize() {
     set_phase "finalize" "Final Wiring"
     log_step "9/9" "Finalizing installation..."
@@ -11099,20 +11128,7 @@ finalize() {
     fi
 
     acfs_install_nhm_hook_lines
-
-    # nhm's maintenance pass (stack.nhm, F.29): nhm-maintain.timer runs
-    # `nhm maintain --once` every 15 s. The helper changes nothing for an
-    # nhm without `maintain` or a masked timer; doctor reports the state.
-    local nhm_timer="$ACFS_HOME/scripts/lib/nhm_maintain_timer.sh"
-    if acfs_legacy_module_selected "stack.nhm" && [[ -f "$nhm_timer" ]]; then
-        local nhm_timer_rc=0
-        run_as_target timeout 120 bash "$nhm_timer" install || nhm_timer_rc=$?
-        case "$nhm_timer_rc" in
-            0) log_detail "nhm-maintain.timer runs nhm maintain --once every 15 s" ;;
-            3|4|5) log_detail "nhm-maintain.timer not enabled (see above); nhm's board or 'nhm maintain --loop' runs the pass" ;;
-            *) log_warn "could not enable nhm-maintain.timer (optional); acfs doctor shows it" ;;
-        esac
-    fi
+    acfs_install_nhm_maintain_timer
 
     # Configure workspace trust for coding agents (fixes #159)
     # In vibe/yolo mode, Claude Code requires explicit workspace trust to avoid
