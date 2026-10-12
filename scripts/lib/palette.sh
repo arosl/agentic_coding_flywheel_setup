@@ -106,6 +106,10 @@ a running herdr server. It refuses a key the file already uses. --auto,
 which the installer and acfs update run, changes nothing when the file has
 that block (bound or unbound), binds the palette itself, or uses the key.
 unbind leaves the block empty, so --auto never binds it again.
+
+The key lives in the herdr server's config. A client attached from another
+machine with 'herdr --remote' uses that machine's keys instead; attach with
+'herdr --remote <host> --remote-keybindings server' to get F6 there.
 EOF
 }
 
@@ -531,17 +535,31 @@ palette_config_has_block() {
     [[ -f "$1" ]] && grep -qF -- "$PALETTE_BLOCK_BEGIN" "$1"
 }
 
+# Whether config file $1 has a begin marker with no end marker after it.
+# Rewriting such a file would drop everything after the begin marker.
+palette_config_block_unterminated() {
+    [[ -f "$1" ]] || return 1
+    awk -v begin="$PALETTE_BLOCK_BEGIN" -v end="$PALETTE_BLOCK_END" '
+        index($0, begin) == 1 { inside = 1; next }
+        inside && index($0, end) == 1 { inside = 0 }
+        END { exit !inside }
+    ' "$1"
+}
+
 # Whether config file $1, outside the block, assigns key $2 to anything
-# (`key = "f6"` in a [[keys.command]], `zoom = "f6"` in [keys]), ignoring case.
+# (`key = "f6"` in a [[keys.command]], `zoom = "f6"` or `zoom = ["f6", ...]`
+# in [keys], over one line or several), ignoring case: any quoted value
+# that is exactly the key.
 palette_config_uses_key() {
     palette_config_outside_block "$1" | awk -v want="$2" '
         /^[[:space:]]*#/ { next }
         {
             line = tolower($0)
-            if (match(line, /^[[:space:]]*[a-z0-9_.]+[[:space:]]*=[[:space:]]*"[^"]*"/)) {
-                value = substr(line, RSTART, RLENGTH)
-                sub(/^[^"]*"/, "", value); sub(/"$/, "", value)
-                if (value == want) found = 1
+            # The value side of `name = value`; an array line has no name.
+            if (match(line, /^[[:space:]]*[a-z0-9_."-]+[[:space:]]*=/)) line = substr(line, RLENGTH + 1)
+            while (match(line, /"[^"]*"/)) {
+                if (substr(line, RSTART + 1, RLENGTH - 2) == want) found = 1
+                line = substr(line, RSTART + RLENGTH)
             }
         }
         END { exit !found }'
@@ -581,11 +599,26 @@ palette_block() {
     printf '%s\n' "$PALETTE_BLOCK_END"
 }
 
+# What `herdr config check` reports for config file $1, one issue per line:
+# empty when herdr finds none.
+palette_config_issues() {
+    HERDR_CONFIG_PATH="$1" herdr config check 2>&1 | grep -vxF -e 'config: ok' -e 'config: issues found' || true
+}
+
 # Replace config file $1 with the file outside the block plus block $2.
-# herdr checks the result first, when it is installed; a key it calls
-# invalid leaves the file as it was.
+# A symlinked config is written through: its target changes, keeping its
+# mode, and the link stays. When herdr is installed it checks the result
+# first: any issue it reports that the old file didn't have (the key
+# conflicting with another binding, a parse error that would make herdr
+# ignore the whole file) leaves the file as it was.
 palette_config_write() {
-    local file="$1" block="$2" key="$3" dir tmp outside report
+    local file="$1" block="$2" dir tmp outside before after added
+    if [[ -L "$file" ]]; then
+        file="$(readlink -f -- "$file")" || palette_die "can't resolve the symlink $1"
+    fi
+    if palette_config_block_unterminated "$file"; then
+        palette_die "$file has '$PALETTE_BLOCK_BEGIN' with no '$PALETTE_BLOCK_END' after it; fix the block by hand first"
+    fi
     dir="$(dirname "$file")"
     mkdir -p "$dir"
     tmp="$(mktemp "$dir/.config.toml.acfs-palette.XXXXXX")"
@@ -594,16 +627,24 @@ palette_config_write() {
     outside="$(printf '%s\n' "$outside" | awk 'NF { for (; blank > 0; blank--) print ""; print; next } { blank++ }')"
     { [[ -z "$outside" ]] || printf '%s\n\n' "$outside"; printf '%s\n' "$block"; } >"$tmp"
     if [[ -f "$file" ]]; then
-        chmod "$(stat -c '%a' "$file" 2>/dev/null || stat -f '%Lp' "$file" 2>/dev/null || echo 600)" "$tmp" 2>/dev/null || true
+        chmod "$(stat -L -c '%a' "$file" 2>/dev/null || stat -L -f '%Lp' "$file" 2>/dev/null || echo 600)" "$tmp" 2>/dev/null || true
     fi
-    if [[ -n "$key" ]] && command -v herdr >/dev/null 2>&1; then
-        report="$(HERDR_CONFIG_PATH="$tmp" herdr config check 2>&1 || true)"
-        if grep -qF -- "\"$key\"" <<<"$report"; then
+    if command -v herdr >/dev/null 2>&1; then
+        before=""
+        [[ ! -f "$file" ]] || before="$(palette_config_issues "$file")"
+        after="$(palette_config_issues "$tmp")"
+        added="$(grep -vxF -f <(printf '%s\n' "$before") <<<"$after" || true)"
+        if [[ -n "$added" ]]; then
             rm -f "$tmp"
-            palette_die "herdr refuses the key $key: $(grep -F -- "\"$key\"" <<<"$report" | head -n 1)"
+            palette_die "herdr would not accept the new $file, so it is unchanged: $(printf '%s' "$added" | tr '\n' ' ')"
         fi
     fi
     mv -f "$tmp" "$file"
+}
+
+# Where a herdr client on another machine gets the key from.
+palette_remote_note() {
+    palette_note "a client attached with 'herdr --remote' uses its own machine's keys; attach with 'herdr --remote <host> --remote-keybindings server' to get $1 there"
 }
 
 # Ask a running herdr server to read its config again.
@@ -660,8 +701,9 @@ palette_bind() {
         printf 'Would write to %s:\n%s\n' "$file" "$block"
         return 0
     fi
-    palette_config_write "$file" "$block" "$key"
+    palette_config_write "$file" "$block"
     palette_note "bound $key to the command palette in $file"
+    palette_remote_note "$key"
     [[ "$reload" == false ]] || palette_reload
 }
 
@@ -679,7 +721,7 @@ palette_unbind() {
         printf 'Would write to %s:\n%s\n' "$file" "$(palette_block "")"
         return 0
     fi
-    palette_config_write "$file" "$(palette_block "")" ""
+    palette_config_write "$file" "$(palette_block "")"
     palette_note "unbound the command palette's key in $file; acfs update leaves it unbound"
     [[ "$reload" == false ]] || palette_reload
 }

@@ -146,6 +146,14 @@ the prompt text), and your prompts show up in the menu.
 F6 is the default key. `acfs palette bind --key prefix+space` picks
 another, and `acfs palette unbind` removes it.
 
+The key lives in the herdr config on your VPS. If you attach from your
+laptop with `herdr --remote`, herdr uses your laptop's keys, so add
+`--remote-keybindings server` to get F6:
+
+```bash
+herdr --remote <your-vps> --remote-keybindings server
+```
+
 ---
 
 ## Pro Tips

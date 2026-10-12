@@ -199,13 +199,27 @@ case "$1 $2" in
 JSON
         ;;
     "agent read") printf 'screen of %s\n' "$3" ;;
-    # herdr calls a key it can't parse invalid, as 0.9.3 does.
+    # The issues herdr 0.9.3 reports: a key it can't parse, a key one of its
+    # default bindings already has (here f8, unquoted), and invalid TOML
+    # (an inline keys.command next to a [[keys.command]] table), after which
+    # herdr ignores the whole file. A "stale = true" line stands for an
+    # issue the file already had.
     "config check")
-        if grep -q '"bogus' "$HERDR_CONFIG_PATH"; then
-            echo 'config: issues found'
-            echo 'invalid keybinding: keys.command[0].key = "bogus+zz"; disabling binding'
-        else
+        issues=()
+        grep -q '"bogus' "$HERDR_CONFIG_PATH" \
+            && issues+=('invalid keybinding: keys.command[0].key = "bogus+zz"; disabling binding')
+        grep -qxF 'key = "f8"' "$HERDR_CONFIG_PATH" \
+            && issues+=('f8: kept keys.toggle_sidebar, disabled keys.command[0].key')
+        grep -q '^command = \[' "$HERDR_CONFIG_PATH" && grep -qxF '[[keys.command]]' "$HERDR_CONFIG_PATH" \
+            && issues+=('config parse error: TOML parse error at line 4, column 1' 'duplicate key `command` in table `keys`' '; using defaults')
+        grep -qxF 'stale = true' "$HERDR_CONFIG_PATH" \
+            && issues+=('unknown field `stale`')
+        if [[ ${#issues[@]} -eq 0 ]]; then
             echo 'config: ok'
+        else
+            echo 'config: issues found'
+            printf '%s\n' "${issues[@]}"
+            exit 1
         fi
         ;;
     "server reload-config") [[ ! -e "$STUB_DIR/no_server" ]] ;;
@@ -300,7 +314,7 @@ check "bind refuses a key the config already uses, ignoring case" \
 
 run_palette bind --key bogus+zz --no-reload
 check "bind leaves the file as it was when herdr calls the key invalid" \
-    bash -c '[[ "$1" -ne 0 ]] && grep -qF "herdr refuses the key bogus+zz" <<<"$2" && grep -qxF "key = \"prefix+space\"" "$3" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "herdr would not accept" <<<"$2" && grep -qF "bogus+zz" <<<"$2" && grep -qxF "key = \"prefix+space\"" "$3" \
         && [[ -z "$(find "$(dirname "$3")" -name ".config.toml.acfs-palette.*")" ]]' _ "$RC" "$ERR" "$HERDR_CONFIG_PATH"
 
 run_palette bind --key 'f6"; rm' --no-reload
@@ -326,6 +340,58 @@ printf '[[keys.command]]\nkey = "f7"\ntype = "popup"\ncommand = "acfs palette"\n
 run_palette bind --auto --no-reload
 check "bind --auto leaves a user's own palette binding alone" \
     bash -c '[[ "$1" -eq 0 ]] && ! grep -qF "acfs palette >>>" "$2"' _ "$RC" "$HERDR_CONFIG_PATH"
+
+printf '[keys]\nzoom = ["prefix+z", "F6"]\n' >"$HERDR_CONFIG_PATH"
+run_palette bind --auto --no-reload
+check "bind --auto binds nothing over a key in an array value" \
+    bash -c '[[ "$1" -eq 0 ]] && ! grep -qF "acfs palette >>>" "$2" && grep -qF "already uses f6" <<<"$3"' _ "$RC" "$HERDR_CONFIG_PATH" "$ERR"
+printf '[keys]\nzoom = [\n  "prefix+z",\n  "f6",\n]\n' >"$HERDR_CONFIG_PATH"
+run_palette bind --no-reload
+check "bind refuses a key in an array value over several lines" \
+    bash -c '[[ "$1" -ne 0 ]] && ! grep -qF "acfs palette >>>" "$2" && grep -qF "already uses f6" <<<"$3"' _ "$RC" "$HERDR_CONFIG_PATH" "$ERR"
+
+printf '[keys]\nzoom = "prefix+z"\n' >"$HERDR_CONFIG_PATH"
+BEFORE="$(cat "$HERDR_CONFIG_PATH")"
+run_palette bind --key f8 --no-reload
+check "bind leaves the file as it was when herdr reports the key in conflict, unquoted" \
+    bash -c '[[ "$1" -ne 0 && "$(cat "$2")" == "$3" ]] && grep -qF "f8: kept keys.toggle_sidebar" <<<"$4" \
+        && [[ -z "$(find "$(dirname "$2")" -name ".config.toml.acfs-palette.*")" ]]' _ "$RC" "$HERDR_CONFIG_PATH" "$BEFORE" "$ERR"
+
+printf '[keys]\nzoom = "prefix+z"\ncommand = [{ key = "f7", type = "popup", command = "lazygit" }]\n' >"$HERDR_CONFIG_PATH"
+BEFORE="$(cat "$HERDR_CONFIG_PATH")"
+run_palette bind --auto --no-reload
+check "bind leaves the file as it was when the result would not parse" \
+    bash -c '[[ "$1" -ne 0 && "$(cat "$2")" == "$3" ]] && grep -qF "TOML parse error" <<<"$4"' _ "$RC" "$HERDR_CONFIG_PATH" "$BEFORE" "$ERR"
+
+printf 'stale = true\n' >"$HERDR_CONFIG_PATH"
+run_palette bind --no-reload
+check "an issue the file already had doesn't stop bind" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -qxF "key = \"f6\"" "$2"' _ "$RC" "$HERDR_CONFIG_PATH"
+
+rm -f "$HERDR_CONFIG_PATH"
+mkdir -p "$WORK/dot"
+printf '[keys]\nzoom = "prefix+z"\n' >"$WORK/dot/herdr.toml"
+chmod 640 "$WORK/dot/herdr.toml"
+ln -s "$WORK/dot/herdr.toml" "$HERDR_CONFIG_PATH"
+run_palette bind --no-reload
+check "a symlinked config stays a symlink; its target gets the block and keeps its mode" \
+    bash -c '[[ "$1" -eq 0 && -L "$2" && "$(readlink "$2")" == "$3" && "$(stat -c %a "$3")" == 640 ]] \
+        && grep -qxF "key = \"f6\"" "$3" && [[ -z "$(find "$(dirname "$3")" "$(dirname "$2")" -name ".config.toml.acfs-palette.*")" ]]' \
+    _ "$RC" "$HERDR_CONFIG_PATH" "$WORK/dot/herdr.toml"
+check "bind says how a herdr --remote client gets the key" \
+    bash -c 'grep -qF -- "--remote-keybindings server" <<<"$1"' _ "$ERR"
+rm -f "$HERDR_CONFIG_PATH" "$WORK/dot/herdr.toml"
+rmdir "$WORK/dot"
+
+printf '# >>> acfs palette >>> managed by `acfs palette bind`\n[[keys.command]]\nkey = "f6"\n\n[keys]\nzoom = "ctrl+z"\n' >"$HERDR_CONFIG_PATH"
+BEFORE="$(cat "$HERDR_CONFIG_PATH")"
+run_palette unbind --no-reload
+check "unbind refuses a block with no end marker, and deletes nothing" \
+    bash -c '[[ "$1" -ne 0 && "$(cat "$2")" == "$3" ]] && grep -qF "no '"'"'# <<< acfs palette <<<'"'"'" <<<"$4"' \
+    _ "$RC" "$HERDR_CONFIG_PATH" "$BEFORE" "$ERR"
+run_palette bind --key f9 --no-reload
+check "bind refuses a block with no end marker, and deletes nothing" \
+    bash -c '[[ "$1" -ne 0 && "$(cat "$2")" == "$3" ]]' _ "$RC" "$HERDR_CONFIG_PATH" "$BEFORE"
 
 rm -f "$HERDR_CONFIG_PATH"
 rmdir "$WORK/herdr"
