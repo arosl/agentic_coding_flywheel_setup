@@ -81,6 +81,14 @@ check "codex: an older nhm entry is left where it is" bash -c '
     printf "%s\n" "{\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"/old/nhm-hook sessionstart\"}]}]}}" >"$1/old.json"
     bash "$2" register codex "$1/old.json" 2>/dev/null
     jq -e ".hooks.SessionStart | length == 1 and .[0].hooks[0].command == \"/old/nhm-hook sessionstart\"" "$1/old.json" >/dev/null' _ "$WORK" "$HOOKS"
+# acfs-9hkh.45: a user's command that only contains nhm-hook is not an nhm
+# line; ACFS's own line is still added, and registered sees it.
+for user_cmd in 'myscript; nhm-hook sessionstart' 'cmd # nhm-hook sessionstart' 'nhm-hook sessionstart --extra' 'echo $(nhm-hook sessionstart)'; do
+    jq -n --arg c "$user_cmd" '{hooks: {SessionStart: [{hooks: [{type: "command", command: $c}]}]}}' >"$WORK/user.json"
+    bash "$HOOKS" register claude "$WORK/user.json" 2>/dev/null
+    check "a user line '$user_cmd' does not stop ACFS's SessionStart line" \
+        jq_true '(.hooks.SessionStart | length) == 2 and .hooks.SessionStart[1].hooks[0].command == (env.HOME + "/.local/bin/nhm-hook sessionstart")' "$WORK/user.json"
+done
 bash "$HOOKS" register codex 2>/dev/null
 check "codex: default file ~/.codex/hooks.json" bash "$HOOKS" registered codex "$HOME/.codex/hooks.json"
 check "codex: a new file is 0600" test "$(stat -c %a "$HOME/.codex/hooks.json")" = 600

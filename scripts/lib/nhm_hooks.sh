@@ -75,12 +75,15 @@ nhm_hooks_lines() {
 }
 
 # The jq program that appends one nhm hook line to an event, unless an
-# entry under that event already runs nhm-hook with the same verb.
+# entry under that event already is an nhm line for the same verb: its
+# whole command is nhm-hook (any path, so an older nhm entry counts) with
+# the verb as its only argument. A user's command that merely contains
+# nhm-hook (`myscript; nhm-hook sessionstart`) does not count.
 nhm_hooks_register_filter() {
     cat <<'JQ'
 def ours: type == "object"
   and ((.command? // "") | type) == "string"
-  and ((.command? // "") | test("(^|[[:space:]/])nhm-hook[[:space:]]+" + $verb + "([[:space:]]|$)"));
+  and ((.command? // "") | test("^[[:space:]]*([^[:space:];&|#<>`$()]*/)?nhm-hook[[:space:]]+" + $verb + "[[:space:]]*$"));
 def entry: (if $matcher == "" then {} else {matcher: $matcher} end)
   + {hooks: [{type: "command", command: $cmd, timeout: $timeout}]};
 if type != "object" then error("the file's top level is not a JSON object")
@@ -179,7 +182,7 @@ nhm_hooks_registered() {
         jq -e --arg event "$event" --arg verb "$verb" '
             [(.hooks?[$event]? // []) | arrays | .[] | (.hooks? // []) | arrays | .[]
               | select(type == "object" and ((.command? // "") | type) == "string"
-                       and ((.command? // "") | test("(^|[[:space:]/])nhm-hook[[:space:]]+" + $verb + "([[:space:]]|$)")))]
+                       and ((.command? // "") | test("^[[:space:]]*([^[:space:];&|#<>`$()]*/)?nhm-hook[[:space:]]+" + $verb + "[[:space:]]*$")))]
             | length > 0
         ' "$file" >/dev/null 2>&1 || return 1
     done < <(nhm_hooks_lines "$kind")
