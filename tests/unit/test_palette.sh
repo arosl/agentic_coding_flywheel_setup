@@ -286,8 +286,8 @@ block_lines() { awk '/^# >>> acfs palette >>>/,/^# <<< acfs palette <<</' "$HERD
 
 : >"$STUB_DIR/calls"
 run_palette bind --auto
-check "bind --auto appends a popup on F6 that runs this script, after one blank line" \
-    bash -c '[[ "$1" -eq 0 && "$(cat "$2")" == "$3"$'"'"'\n\n'"'"'"$4" ]] && grep -qxF "key = \"f6\"" "$2" && grep -qxF "type = \"popup\"" "$2" \
+check "bind --auto appends a popup on prefix+a that runs this script, after one blank line" \
+    bash -c '[[ "$1" -eq 0 && "$(cat "$2")" == "$3"$'"'"'\n\n'"'"'"$4" ]] && grep -qxF "key = \"prefix+a\"" "$2" && grep -qxF "type = \"popup\"" "$2" \
         && grep -qxF "command = \"bash '"'"'$5'"'"'\"" "$2"' \
     _ "$RC" "$HERDR_CONFIG_PATH" "$ORIGINAL_CONFIG" "$(block_lines)" "$PALETTE"
 check "bind asks herdr to check the result, then reloads the running server" \
@@ -303,7 +303,7 @@ touch "$STUB_DIR/no_server"
 run_palette bind --key prefix+space
 check "bind --key rebinds in place, the rest of the file unchanged" \
     bash -c '[[ "$1" -eq 0 && "$(grep -c "acfs palette >>>" "$2")" == 1 ]] && grep -qxF "key = \"prefix+space\"" "$2" \
-        && ! grep -qxF "key = \"f6\"" "$2" && [[ "$(head -7 "$2")" == "$3" ]]' _ "$RC" "$HERDR_CONFIG_PATH" "$ORIGINAL_CONFIG"
+        && ! grep -qxF "key = \"prefix+a\"" "$2" && [[ "$(head -7 "$2")" == "$3" ]]' _ "$RC" "$HERDR_CONFIG_PATH" "$ORIGINAL_CONFIG"
 check "with no herdr server running, bind says how to reload" \
     bash -c 'grep -qF "herdr server reload-config" <<<"$1"' _ "$ERR"
 rm -f "$STUB_DIR/no_server"
@@ -317,7 +317,7 @@ check "bind leaves the file as it was when herdr calls the key invalid" \
     bash -c '[[ "$1" -ne 0 ]] && grep -qF "herdr would not accept" <<<"$2" && grep -qF "bogus+zz" <<<"$2" && grep -qxF "key = \"prefix+space\"" "$3" \
         && [[ -z "$(find "$(dirname "$3")" -name ".config.toml.acfs-palette.*")" ]]' _ "$RC" "$ERR" "$HERDR_CONFIG_PATH"
 
-run_palette bind --key 'f6"; rm' --no-reload
+run_palette bind --key 'prefix+a"; rm' --no-reload
 check "bind refuses a key that is not herdr key syntax" \
     bash -c '[[ "$1" -ne 0 ]] && grep -qF "not a herdr key" <<<"$2"' _ "$RC" "$ERR"
 
@@ -329,26 +329,26 @@ run_palette bind --auto --no-reload
 check "after unbind, bind --auto (acfs update) leaves it unbound" \
     bash -c '! grep -q "^\[\[keys.command\]\]" "$1"' _ "$HERDR_CONFIG_PATH"
 run_palette bind --no-reload
-check "an explicit bind after unbind binds F6 again" grep -qxF 'key = "f6"' "$HERDR_CONFIG_PATH"
+check "an explicit bind after unbind binds prefix+a again" grep -qxF 'key = "prefix+a"' "$HERDR_CONFIG_PATH"
 
-printf '[[keys.command]]\nkey = "f6"\ntype = "popup"\ncommand = "lazygit"\n' >"$HERDR_CONFIG_PATH"
+printf '[[keys.command]]\nkey = "prefix+a"\ntype = "popup"\ncommand = "lazygit"\n' >"$HERDR_CONFIG_PATH"
 run_palette bind --auto --no-reload
 check "bind --auto binds nothing over a key the user has, and says so" \
-    bash -c '[[ "$1" -eq 0 && "$(grep -c "^\[\[keys.command\]\]" "$2")" == 1 ]] && grep -qF "already uses f6" <<<"$3"' _ "$RC" "$HERDR_CONFIG_PATH" "$ERR"
+    bash -c '[[ "$1" -eq 0 && "$(grep -c "^\[\[keys.command\]\]" "$2")" == 1 ]] && grep -qF "already uses prefix+a" <<<"$3"' _ "$RC" "$HERDR_CONFIG_PATH" "$ERR"
 
 printf '[[keys.command]]\nkey = "f7"\ntype = "popup"\ncommand = "acfs palette"\n' >"$HERDR_CONFIG_PATH"
 run_palette bind --auto --no-reload
 check "bind --auto leaves a user's own palette binding alone" \
     bash -c '[[ "$1" -eq 0 ]] && ! grep -qF "acfs palette >>>" "$2"' _ "$RC" "$HERDR_CONFIG_PATH"
 
-printf '[keys]\nzoom = ["prefix+z", "F6"]\n' >"$HERDR_CONFIG_PATH"
+printf '[keys]\nzoom = ["prefix+z", "Prefix+A"]\n' >"$HERDR_CONFIG_PATH"
 run_palette bind --auto --no-reload
 check "bind --auto binds nothing over a key in an array value" \
-    bash -c '[[ "$1" -eq 0 ]] && ! grep -qF "acfs palette >>>" "$2" && grep -qF "already uses f6" <<<"$3"' _ "$RC" "$HERDR_CONFIG_PATH" "$ERR"
-printf '[keys]\nzoom = [\n  "prefix+z",\n  "f6",\n]\n' >"$HERDR_CONFIG_PATH"
+    bash -c '[[ "$1" -eq 0 ]] && ! grep -qF "acfs palette >>>" "$2" && grep -qF "already uses prefix+a" <<<"$3"' _ "$RC" "$HERDR_CONFIG_PATH" "$ERR"
+printf '[keys]\nzoom = [\n  "prefix+z",\n  "prefix+a",\n]\n' >"$HERDR_CONFIG_PATH"
 run_palette bind --no-reload
 check "bind refuses a key in an array value over several lines" \
-    bash -c '[[ "$1" -ne 0 ]] && ! grep -qF "acfs palette >>>" "$2" && grep -qF "already uses f6" <<<"$3"' _ "$RC" "$HERDR_CONFIG_PATH" "$ERR"
+    bash -c '[[ "$1" -ne 0 ]] && ! grep -qF "acfs palette >>>" "$2" && grep -qF "already uses prefix+a" <<<"$3"' _ "$RC" "$HERDR_CONFIG_PATH" "$ERR"
 
 printf '[keys]\nzoom = "prefix+z"\n' >"$HERDR_CONFIG_PATH"
 BEFORE="$(cat "$HERDR_CONFIG_PATH")"
@@ -366,7 +366,7 @@ check "bind leaves the file as it was when the result would not parse" \
 printf 'stale = true\n' >"$HERDR_CONFIG_PATH"
 run_palette bind --no-reload
 check "an issue the file already had doesn't stop bind" \
-    bash -c '[[ "$1" -eq 0 ]] && grep -qxF "key = \"f6\"" "$2"' _ "$RC" "$HERDR_CONFIG_PATH"
+    bash -c '[[ "$1" -eq 0 ]] && grep -qxF "key = \"prefix+a\"" "$2"' _ "$RC" "$HERDR_CONFIG_PATH"
 
 rm -f "$HERDR_CONFIG_PATH"
 mkdir -p "$WORK/dot"
@@ -376,14 +376,14 @@ ln -s "$WORK/dot/herdr.toml" "$HERDR_CONFIG_PATH"
 run_palette bind --no-reload
 check "a symlinked config stays a symlink; its target gets the block and keeps its mode" \
     bash -c '[[ "$1" -eq 0 && -L "$2" && "$(readlink "$2")" == "$3" && "$(stat -c %a "$3")" == 640 ]] \
-        && grep -qxF "key = \"f6\"" "$3" && [[ -z "$(find "$(dirname "$3")" "$(dirname "$2")" -name ".config.toml.acfs-palette.*")" ]]' \
+        && grep -qxF "key = \"prefix+a\"" "$3" && [[ -z "$(find "$(dirname "$3")" "$(dirname "$2")" -name ".config.toml.acfs-palette.*")" ]]' \
     _ "$RC" "$HERDR_CONFIG_PATH" "$WORK/dot/herdr.toml"
 check "bind says how a herdr --remote client gets the key" \
     bash -c 'grep -qF -- "--remote-keybindings server" <<<"$1"' _ "$ERR"
 rm -f "$HERDR_CONFIG_PATH" "$WORK/dot/herdr.toml"
 rmdir "$WORK/dot"
 
-printf '# >>> acfs palette >>> managed by `acfs palette bind`\n[[keys.command]]\nkey = "f6"\n\n[keys]\nzoom = "ctrl+z"\n' >"$HERDR_CONFIG_PATH"
+printf '# >>> acfs palette >>> managed by `acfs palette bind`\n[[keys.command]]\nkey = "prefix+a"\n\n[keys]\nzoom = "ctrl+z"\n' >"$HERDR_CONFIG_PATH"
 BEFORE="$(cat "$HERDR_CONFIG_PATH")"
 run_palette unbind --no-reload
 check "unbind refuses a block with no end marker, and deletes nothing" \

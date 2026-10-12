@@ -64,7 +64,8 @@ export function NtmPaletteLesson() {
           <CodeBlock code="acfs palette" />
         </div>
         <Paragraph>
-          In herdr, press <InlineCode>F6</InlineCode>; anywhere else, run{" "}
+          In herdr, press <InlineCode>Ctrl-b</InlineCode>, then <InlineCode>a</InlineCode>; anywhere
+          else, run{" "}
           <InlineCode>acfs palette</InlineCode>. This opens an interactive browser of all available
           prompts, with pinned and recent ones first. Browse the same prompts here:
         </Paragraph>
@@ -128,7 +129,7 @@ export function NtmPaletteLesson() {
             title="Pick and Send"
             steps={[
               <>
-                Open the palette: <InlineCode>F6</InlineCode> in herdr, or{" "}
+                Open the palette: <InlineCode>Ctrl-b a</InlineCode> in herdr, or{" "}
                 <InlineCode>acfs palette</InlineCode>
               </>,
               <>
@@ -227,7 +228,9 @@ ${PALETTE_PATH}`}
         <Paragraph>
           Use the installed file&apos;s format (<InlineCode>## Category</InlineCode>, then{" "}
           <InlineCode>### key | Label</InlineCode> and the prompt text), and your prompts show up in
-          the menu. F6 is the default key: <InlineCode>acfs palette bind --key prefix+space</InlineCode>{" "}
+          the menu. <InlineCode>Ctrl-b a</InlineCode> (<InlineCode>prefix+a</InlineCode> in
+          herdr&apos;s config) is the default key:{" "}
+          <InlineCode>acfs palette bind --key prefix+space</InlineCode>{" "}
           picks another, and <InlineCode>acfs palette unbind</InlineCode> removes it.
         </Paragraph>
       </Section>
@@ -261,7 +264,7 @@ ${PALETTE_PATH}`}
       {/* Try It Now */}
       <Section title="Try It Now" icon={<Play className="h-5 w-5" />} delay={0.4}>
         <CodeBlock
-          code={`# Open the palette (or press F6 in herdr)
+          code={`# Open the palette (or press Ctrl-b a in herdr)
 $ acfs palette
 
 # Browse the categories

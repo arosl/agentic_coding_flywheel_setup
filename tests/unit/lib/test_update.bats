@@ -16468,14 +16468,14 @@ FAKE
     unset HERDR_CONFIG_PATH
 }
 
-@test "update_herdr_palette_key binds F6 to the palette popup and reloads herdr" {
+@test "update_herdr_palette_key binds prefix+a to the palette popup and reloads herdr" {
     write_fake_herdr_for_palette_key
     DRY_RUN=false
 
     run update_herdr_palette_key
     assert_success
     assert_output --partial "herdr palette key"
-    run grep -xF 'key = "f6"' "$HOME/.config/herdr/config.toml"
+    run grep -xF 'key = "prefix+a"' "$HOME/.config/herdr/config.toml"
     assert_success
     run grep -xF "command = \"bash '$HOME/.acfs/scripts/lib/palette.sh'\"" "$HOME/.config/herdr/config.toml"
     assert_success

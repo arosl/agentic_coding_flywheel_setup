@@ -11,9 +11,10 @@
 # skipping agents blocked at a dialog and the check that each prompt was
 # submitted stay in one place.
 #
-# Inside herdr, F6 opens it in a popup over the current tab, as ntm bound
-# F6 in tmux: `acfs palette bind` writes that [[keys.command]] into herdr's
-# config.toml (the installer and acfs update run `bind --auto`), and the
+# Inside herdr, prefix+a (ctrl+b, then a) opens it in a popup over the
+# current tab, as ntm's F6 did in tmux: `acfs palette bind` writes that
+# [[keys.command]] into herdr's config.toml (the installer and acfs update
+# run `bind --auto`), and the
 # popup's HERDR_ACTIVE_* variables say which workspace and directory it was
 # opened over. Anywhere else, run `acfs palette`.
 #
@@ -49,7 +50,7 @@ PALETTE_RECENTS_MAX=8
 PALETTE_KIND_ORDER=(claude codex gemini agy pi)
 # herdr's config file and the block `bind` manages in it.
 PALETTE_HERDR_CONFIG="${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}"
-PALETTE_DEFAULT_KEY="f6"
+PALETTE_DEFAULT_KEY="prefix+a"
 PALETTE_BLOCK_BEGIN="# >>> acfs palette >>>"
 PALETTE_BLOCK_END="# <<< acfs palette <<<"
 
@@ -63,7 +64,7 @@ Usage:
   acfs palette unbind [--no-reload] [--dry-run]
 
 Open the command palette: pick a prompt, then the agents in herdr that get it.
-In herdr, F6 opens it in a popup (see bind).
+In herdr, prefix+a (ctrl+b, then a) opens it in a popup (see bind).
 
 Prompt step:
   type          fuzzy-filter prompts by label, key or category
@@ -98,8 +99,9 @@ Options:
 Palette files, first key wins: ./command_palette.md (here and at the git
 root), ~/.config/acfs/command_palette.md, ~/.acfs/onboard/docs/ntm/command_palette.md.
 
-bind writes a herdr key that opens the palette in a popup (F6, as ntm's
-palette had in tmux; --key takes herdr's key syntax, such as prefix+space)
+bind writes a herdr key that opens the palette in a popup (prefix+a, where
+ntm's palette had F6 in tmux; --key takes herdr's key syntax, such as
+prefix+space)
 into herdr's config.toml ($HERDR_CONFIG_PATH, else ~/.config/herdr/config.toml),
 between "# >>> acfs palette >>>" and "# <<< acfs palette <<<", then reloads
 a running herdr server. It refuses a key the file already uses. --auto,
@@ -109,7 +111,7 @@ unbind leaves the block empty, so --auto never binds it again.
 
 The key lives in the herdr server's config. A client attached from another
 machine with 'herdr --remote' uses that machine's keys instead; attach with
-'herdr --remote <host> --remote-keybindings server' to get F6 there.
+'herdr --remote <host> --remote-keybindings server' to get prefix+a there.
 EOF
 }
 
@@ -547,7 +549,8 @@ palette_config_block_unterminated() {
 }
 
 # Whether config file $1, outside the block, assigns key $2 to anything
-# (`key = "f6"` in a [[keys.command]], `zoom = "f6"` or `zoom = ["f6", ...]`
+# (`key = "prefix+a"` in a [[keys.command]], `zoom = "prefix+a"` or
+# `zoom = ["prefix+a", ...]`
 # in [keys], over one line or several), ignoring case: any quoted value
 # that is exactly the key.
 palette_config_uses_key() {
@@ -660,7 +663,7 @@ palette_bind() {
     local key="$PALETTE_DEFAULT_KEY" auto=false reload=true dry_run=false file="$PALETTE_HERDR_CONFIG" block
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --key) [[ $# -ge 2 && -n "$2" ]] || palette_die "--key needs a key, such as f6 or prefix+space"; key="${2,,}"; shift 2 ;;
+            --key) [[ $# -ge 2 && -n "$2" ]] || palette_die "--key needs a key, such as prefix+a or prefix+space"; key="${2,,}"; shift 2 ;;
             --auto) auto=true; shift ;;
             --no-reload) reload=false; shift ;;
             --dry-run) dry_run=true; shift ;;
@@ -668,7 +671,7 @@ palette_bind() {
             *) palette_die "unknown bind option: $1" ;;
         esac
     done
-    [[ "$key" =~ ^[a-z0-9+.-]+$ ]] || palette_die "--key $key: not a herdr key (such as f6, ctrl+space or prefix+space)"
+    [[ "$key" =~ ^[a-z0-9+.-]+$ ]] || palette_die "--key $key: not a herdr key (such as prefix+a, ctrl+space or prefix+space)"
 
     if [[ "$auto" == true ]]; then
         if ! command -v herdr >/dev/null 2>&1; then

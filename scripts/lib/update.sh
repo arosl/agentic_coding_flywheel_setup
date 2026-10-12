@@ -7457,11 +7457,11 @@ update_herdr_integrations() {
     return 0
 }
 
-# herdr opens the command palette in a popup on F6, as ntm's did in tmux
-# (palette.sh bind --auto): unless the target user's herdr config already
-# has the palette's block (bound, or unbound by `acfs palette unbind`),
-# opens the palette some other way, or uses F6. A running herdr server
-# reloads its config. Never fails the update.
+# herdr opens the command palette in a popup on prefix+a, as ntm's F6 did
+# in tmux (palette.sh bind --auto): unless the target user's herdr config
+# already has the palette's block (bound, or unbound by `acfs palette
+# unbind`), opens the palette some other way, or uses prefix+a. A running
+# herdr server reloads its config. Never fails the update.
 update_herdr_palette_key() {
     local herdr_bin=""
     local target_home=""

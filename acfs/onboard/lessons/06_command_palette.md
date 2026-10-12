@@ -16,7 +16,7 @@ the best results from coding agents.
 
 ## View The Palette
 
-In herdr, press **F6**. Anywhere else:
+In herdr, press **Ctrl-b**, then **a**. Anywhere else:
 
 ```bash
 acfs palette
@@ -63,7 +63,7 @@ The prompts are organized into categories:
 
 ### Option 1: Pick and Send
 
-1. Open the palette: **F6** in herdr, or `acfs palette`
+1. Open the palette: **Ctrl-b a** in herdr, or `acfs palette`
 2. Select a prompt and press Enter (`ctrl-e` edits it first, `ctrl-n`
    writes a new message)
 3. Pick who gets it: `1` every agent in this workspace, `2` and up one
@@ -143,12 +143,13 @@ You can add your own prompts. The palette reads, first key wins:
 Use the installed file's format (`## Category`, then `### key | Label` and
 the prompt text), and your prompts show up in the menu.
 
-F6 is the default key. `acfs palette bind --key prefix+space` picks
-another, and `acfs palette unbind` removes it.
+Ctrl-b a (`prefix+a` in herdr's config) is the default key.
+`acfs palette bind --key prefix+space` picks another, and
+`acfs palette unbind` removes it.
 
 The key lives in the herdr config on your VPS. If you attach from your
 laptop with `herdr --remote`, herdr uses your laptop's keys, so add
-`--remote-keybindings server` to get F6:
+`--remote-keybindings server` to get Ctrl-b a:
 
 ```bash
 herdr --remote <your-vps> --remote-keybindings server
@@ -168,7 +169,7 @@ herdr --remote <your-vps> --remote-keybindings server
 ## Try It Now
 
 ```bash
-# Open the palette (or press F6 in herdr)
+# Open the palette (or press Ctrl-b a in herdr)
 acfs palette
 
 # Browse the categories

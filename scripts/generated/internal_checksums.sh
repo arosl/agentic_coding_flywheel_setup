@@ -10,14 +10,14 @@
 ACFS_INTERNAL_CHECKSUMS_SCHEMA=1
 
 declare -gA ACFS_INTERNAL_CHECKSUMS=(
-  [install.sh]="f60a7127ec39689661eae0e566da7dc5ccd3f04cb15aa86bb94e1e7f772c2864"
+  [install.sh]="378c0c5a830883ced79169388b39a26e132ff0985815d03d209135e73013cda6"
   [checksums.yaml]="34a47fa7cd0949569de253d6f04fccbd91da53e12a4b99c4ce9d4fb716efb83b"
   [scripts/preflight.sh]="f8b5829f2be4cbe08b6d33316fa07fe1b5a951b570819e38a1cb6ffe283d5902"
   [scripts/lib/security.sh]="97beab137ac0838ec840497cd565da21632752d285ea8fd30c89bfd86b58ac25"
   [scripts/lib/holds.sh]="7aca60222e56ce4034739b92ed3332c7118d918526d60ce189f59c595a930015"
   [scripts/lib/github_api.sh]="80699922df2e924694f5682457e614dedf9181d7c071472cc8a6db4f17373d3d"
   [scripts/lib/contract.sh]="22c148f44ddbaccd559196196ef903f26f65fc77e3b1b6b4efc62b77d3b97aa3"
-  [scripts/lib/update.sh]="a23cb9956ce54e193b9f48a73d1acb6387499a5e511af33c887f2776f2931f48"
+  [scripts/lib/update.sh]="3257526210f360e0599c29a380c839a64f8eaaa46895bb4dfa20fb51c6571df9"
   [scripts/lib/doctor.sh]="83cb30236a89821f62b723555366d58d39d0773ad31011127f5293b9a2fa308a"
   [scripts/lib/acfs-services.sh]="75a8bff497a9982859f0b67726e644fba0ac01863bbcb77561853eb250dcae57"
   [scripts/lib/doctor_fix.sh]="ea1f13be46bf9f3df0630362b6027f12aca271e8df4eeddcd8d36f1019615b2c"
@@ -95,7 +95,7 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/lib/newproj_screens/screen_welcome.sh]="abfe9af1248c05ce13ab8e8525f2aebd2c65ce2aa26a17b4dcee07eeb8fccfe4"
   [scripts/lib/newproj_tui.sh]="d4a7bae902f9494101cfecd5a1ddea407d37a1d0305703a891127c50a73760e6"
   [scripts/lib/notifications.sh]="2966be94dd7dc761890964a576dbce215d0b7ed43d1c6bf43289977127bc6445"
-  [scripts/lib/palette.sh]="0e67664d12c821ee8caf0a02a7982790c81d3000d6918a841bd476534ca3ea8d"
+  [scripts/lib/palette.sh]="ad9aa4b05036b1fbee7f583bcdb65297a075d428d53eccd006a7cd22d5152d1e"
   [scripts/lib/policy_lint.sh]="562fabba7db1a6ab0d5f472cffa90213ac538b7df2783f2d7bba441073d1a85f"
   [scripts/lib/provenance.sh]="70884a46e4e44258ca702e28bbb0102de9612ecfa612c5644cb42dffb246cda7"
   [scripts/lib/rescue.sh]="9552959595e4a8e0adfb8be094aaf22c41a6b22751fba6f7fbcd5f78039bbbd2"
