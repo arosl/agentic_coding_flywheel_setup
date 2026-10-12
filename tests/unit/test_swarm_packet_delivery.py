@@ -48,8 +48,11 @@ class DeliveryTests(unittest.TestCase):
         (self.bin / "br").chmod(0o755)
         self.herdr = HerdrStub([agent_row(PANE, self.repo)])
         self.addCleanup(self.herdr.close)
+        # The owner probe (acfs-9hkh.27) finds no nhm instance here, so
+        # delivery takes the herdr socket path.
         self.env = self.herdr.env(dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
-                                       FIXTURE_ROOT=str(self.root)))
+                                       FIXTURE_ROOT=str(self.root), XDG_STATE_HOME=str(self.root / "state"),
+                                       NHM_BIN_DIR=str(self.root / "no-nhm")))
         self.packet = self.root / "packet.json"
         self.receipt = self.root / "receipt.json"
         self.result = self.root / "receipt.json.result.json"
@@ -368,6 +371,120 @@ class HerdrSchemaContractTests(unittest.TestCase):
         for name, schema in self.fixture["params"].items():
             self.assertEqual(live["schemas"]["request"]["$defs"][name], schema, name)
         self.assertEqual(live["schemas"]["error_response"]["$defs"]["ErrorBody"], self.fixture["error_body"])
+
+
+# nhm's robot send in the shapes of tests/fixtures/nhm/robot_send*.json. The
+# session echoes --robot-send=; the target is the slot nhm resolves the pane to.
+NHM = r'''#!/usr/bin/env python3
+import hashlib, json, os, pathlib, sys
+root = pathlib.Path(os.environ["FIXTURE_ROOT"])
+args, mode = sys.argv[1:], os.environ.get("NHM_MODE", "ok")
+payload = sys.stdin.buffer.read()
+with (root / "nhm-calls.jsonl").open("a") as f:
+    f.write(json.dumps([args, payload.decode()]) + "\n")
+def opt(name):
+    return next(a.split("=", 1)[1] for a in args if a.startswith(name + "="))
+target = "1.1"
+if any(a.startswith("--robot-send-receipt=") for a in args):
+    state = json.loads((root / "nhm-op.json").read_text())
+    print(json.dumps({"success": True, "session": state["session"], "operation": state["operation"],
+        "outcome": {"success": True, "targets": [target], "successful": [target], "failed": []}}))
+    sys.exit(0)
+session = opt("--robot-send")
+assert opt("--panes") == "w9:p3" and opt("--type") == "claude" and "--no-cass" in args
+assert "--with-memory=false" in args and opt("--msg-file") == "-"
+if "--dry-run" in args:
+    assert not any(a.startswith("--op-id=") for a in args)
+    print(json.dumps({"success": True, "session": session, "dry_run": True, "blocked": False, "targets": [],
+        "successful": [], "failed": [], "would_send_to": [target, "1.2"] if mode == "two" else [target],
+        "cass_injection": {"enabled": False}, "memory_injection": {"enabled": False}}))
+    sys.exit(0)
+operation = {"operation_id": opt("--op-id"), "status": "completed",
+    "payload_sha256": hashlib.sha256(payload).hexdigest(), "payload_bytes": len(payload),
+    "admissions": [{"target": target, "state": "submitted"}]}
+(root / "nhm-op.json").write_text(json.dumps({"session": session, "operation": operation}))
+if mode == "lost":
+    sys.exit(1)
+print(json.dumps({"success": True, "session": session, "blocked": False, "targets": [target],
+    "successful": [target], "failed": [], "operation": operation}))
+'''
+
+
+class NhmDeliveryTests(unittest.TestCase):
+    """acfs-9hkh.27, ruling b2: where nhm owns the herdr server, delivery runs
+    upstream's --robot-send with nhm and records the herdr path's result file."""
+
+    def setUp(self):
+        self.case = DeliveryTests("test_preview_has_no_tool_calls_or_writes")
+        self.case.setUp()
+        self.addCleanup(self.case.doCleanups)
+        root = self.case.root
+        (self.case.bin / "nhm").write_text(NHM)
+        (self.case.bin / "nhm").chmod(0o755)
+        inst = root / "state" / "nhm" / "inst-0123456789ab"
+        inst.mkdir(parents=True)
+        (inst / "instance.toml").write_text('id = "inst-0123456789ab"\nsocket_path = "%s"\n'
+                                            % self.case.env["HERDR_SOCKET_PATH"])
+        self.owner = inst / "owner.toml"
+        self.owner.write_text('owner = "nhm"\ngeneration = 1\n')
+        self.case.env["NHM_BIN_DIR"] = str(self.case.bin)
+
+    def nhm_calls(self):
+        path = self.case.root / "nhm-calls.jsonl"
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def invoke(self, mode="ok", send=True):
+        return self.case.invoke(send=send, env=dict(self.case.env, NHM_MODE=mode))
+
+    def test_preview_names_the_nhm_send(self):
+        code, report = self.invoke(send=False)
+        self.assertEqual((code, report["status"], report["backend"]), (0, "preview", "nhm"), report)
+        self.assertNotIn("herdr_request", report)
+        self.assertEqual(report["nhm_argv"], ["nhm", "--robot-send=w9", "--panes=" + PANE, "--type=claude",
+            "--msg-file=-", "--op-id=work-one", "--robot-format=json", "--no-cass", "--with-memory=false"])
+        self.assertEqual(self.nhm_calls(), [])
+
+    def test_send_goes_through_nhm_once_and_records_the_result(self):
+        code, report = self.invoke()
+        self.assertEqual((code, report["status"]), (0, "submitted"), report)
+        calls = self.nhm_calls()
+        self.assertEqual(["--dry-run" in a for a, _ in calls], [True, False])
+        # The prompt goes only on stdin, never in argv; herdr is never prompted directly.
+        self.assertEqual([p for _, p in calls], [self.case.prompt] * 2)
+        self.assertTrue(all(self.case.prompt not in json.dumps(a) for a, _ in calls))
+        self.assertEqual(self.case.herdr.prompts(), [])
+        self.assertEqual(json.loads(self.case.receipt.read_text())["via"], "nhm")
+        result = json.loads(self.case.result.read_text())
+        self.assertEqual((result["status"], result["target"], result["evidence"]),
+                         ("submitted", "1.1", {"operation_id": "work-one", "nhm_target": "1.1"}))
+        code, report = self.invoke()
+        self.assertEqual((code, report["status"], report["reconciled_only"]), (0, "submitted", True), report)
+        self.assertEqual(len(self.nhm_calls()), 2)
+
+    def test_lost_answer_is_unconfirmed_then_reconciled_from_nhms_receipt(self):
+        code, report = self.invoke(mode="lost")
+        self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
+        self.assertFalse(self.case.result.exists())
+        code, report = self.invoke()
+        self.assertEqual((code, report["status"], report["reconciled_only"]), (0, "submitted", True), report)
+        sends = [a for a, _ in self.nhm_calls() if any(x.startswith("--op-id=") for x in a)]
+        self.assertEqual(len(sends), 1)
+        self.assertEqual(self.nhm_calls()[-1][0][0], "--robot-send-receipt=work-one")
+        self.assertEqual(json.loads(self.case.result.read_text())["status"], "submitted")
+
+    def test_a_dry_run_naming_two_targets_sends_nothing(self):
+        code, report = self.invoke(mode="two")
+        self.assertEqual((code, report["status"]), (2, "error"), report)
+        self.assertIn("exactly one", report["error"])
+        self.assertFalse(self.case.receipt.exists())
+        self.assertEqual(len(self.nhm_calls()), 1)
+
+    def test_acfs_bash_owner_keeps_the_herdr_path(self):
+        self.owner.write_text('owner = "acfs-bash"\ngeneration = 2\n')
+        code, report = self.invoke()
+        self.assertEqual((code, report["status"], report["backend"]), (0, "submitted", "acfs-bash"), report)
+        self.assertEqual(self.nhm_calls(), [])
+        self.assertEqual(len(self.case.herdr.prompts()), 1)
 
 
 if __name__ == "__main__":
