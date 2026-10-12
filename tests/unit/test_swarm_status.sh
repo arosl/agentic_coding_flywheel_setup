@@ -473,7 +473,10 @@ exit 1'
 [[ \"\$1\" == --robot-status ]] || exit 2
 cat '$REPO_ROOT/tests/fixtures/nhm/robot_status.json'"
     fi
-    run_and_capture "$name" env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=2 bash "$lib/swarm_status.sh" --json
+    # Its own HOME: ~/.local/bin/nhm wins over PATH, so a host's nhm there
+    # would run instead of the fake (acfs-9hkh.84).
+    mkdir -p "$stub_dir/home"
+    run_and_capture "$name" env HOME="$stub_dir/home" PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=2 bash "$lib/swarm_status.sh" --json
 }
 
 test_nhm_backend_adds_the_nhm_probe() {
