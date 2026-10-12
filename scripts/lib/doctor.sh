@@ -6405,7 +6405,7 @@ main() {
             # Coding agents in herdr (herdr_agents.sh), and quota, which it
             # hands to agent_quota.sh.
             case "${1:-}" in
-                spawn|send|list|ls|inbox|wake|limits|codex-daemon|retire|recycle|reap|sweep|quota)
+                spawn|send|list|ls|inbox|wake|limits|codex-daemon|retire|recycle|reap|sweep|quota|export|import|owner)
                     local herdr_agents_script=""
                     herdr_agents_script="$(_acfs_doctor_find_lib_script "herdr_agents.sh" 2>/dev/null || true)"
                     if [[ -n "$herdr_agents_script" ]]; then
