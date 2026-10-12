@@ -40,6 +40,12 @@
 
 set -euo pipefail
 
+# herdr runs a popup with the herdr server's environment, whose PATH may
+# lack ~/.local/bin, where ACFS installs herdr (acfs-simw).
+if [[ -n "${HOME:-}" && -d "$HOME/.local/bin" && ":${PATH:-}:" != *":$HOME/.local/bin:"* ]]; then
+    PATH="$HOME/.local/bin:${PATH:-}"
+fi
+
 PALETTE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PALETTE_SELF="$PALETTE_SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 PALETTE_AGENTS_SCRIPT="${ACFS_PALETTE_AGENTS_SCRIPT:-$PALETTE_SCRIPT_DIR/herdr_agents.sh}"
