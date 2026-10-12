@@ -499,8 +499,21 @@ herdr_agents_owner_acquire() {
     dir="$(herdr_agents_owner_dir)"
     if [[ -n "$dir" ]]; then
         herdr_agents_require flock
+        # A takeover or handback waiting for the exclusive lock keeps
+        # owner.lock.intent fresh; the Bash, like nhm, takes no new shared
+        # hold while it is, so the switch is never starved. A marker older
+        # than 120 s is a dead switch's.
+        local intent="$dir/owner.lock.intent" deadline=$((SECONDS + HERDR_AGENTS_OWNER_WAIT)) mtime=""
+        while [[ -f "$intent" && ! -L "$intent" ]] && mtime="$(stat -c %Y -- "$intent" 2>/dev/null)" \
+                && (( $(date +%s) - mtime < 120 )); do
+            if (( SECONDS >= deadline )); then
+                HERDR_AGENTS_OWNER_REASON="an nhm takeover or handback is waiting for nhm's owner lock ($intent) for ${HERDR_AGENTS_OWNER_WAIT}s"
+                return 1
+            fi
+            sleep 0.1
+        done
         exec {HERDR_AGENTS_OWNER_FD}>>"$dir/owner.lock"
-        if ! flock -s -w "$HERDR_AGENTS_OWNER_WAIT" "$HERDR_AGENTS_OWNER_FD"; then
+        if ! flock -s -w "$(( deadline > SECONDS ? deadline - SECONDS : 1 ))" "$HERDR_AGENTS_OWNER_FD"; then
             exec {HERDR_AGENTS_OWNER_FD}>&-
             HERDR_AGENTS_OWNER_FD=""
             HERDR_AGENTS_OWNER_REASON="nhm's owner lock $dir/owner.lock stayed busy for ${HERDR_AGENTS_OWNER_WAIT}s: an nhm takeover or handback is running"

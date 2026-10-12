@@ -2429,6 +2429,24 @@ kill "$holder" 2>/dev/null || true
 wait "$holder" 2>/dev/null || true
 check "while a takeover holds the lock, an unattended reap notes it and exits 0" \
     bash -c '[[ "$1" -eq 0 ]] && grep -qF "stayed busy for 1s" <<<"$2" && grep -qF "acfs agents changes nothing" <<<"$2"' _ "$RC" "$ERR"
+# acfs-9hkh.77: a takeover waiting for the exclusive lock keeps
+# owner.lock.intent fresh, and the Bash takes no new shared hold while it
+# is (the lock itself is free here); a stale marker is ignored. The holder
+# above was killed, but its `sleep` child keeps the lock until it ends:
+# wait for the lock to be free first.
+flock -w 10 -x "$NHM_INST/owner.lock" true
+printf '1\n' >"$NHM_INST/owner.lock.intent"
+: >"$STUB_DIR/calls"
+ACFS_AGENTS_OWNER_WAIT=1 run_helper send --name alphafox "Check your Agent Mail inbox."
+check "while a takeover waits for the lock (a fresh intent marker), send refuses and prompts nobody" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -qF "is waiting for nhm'"'"'s owner lock" <<<"$2" && ! grep -q "^herdr agent prompt" "$3"' \
+    _ "$RC" "$ERR" "$STUB_DIR/calls"
+touch -d '-5 minutes' "$NHM_INST/owner.lock.intent"
+: >"$STUB_DIR/calls"
+ACFS_AGENTS_OWNER_WAIT=1 run_helper send --name alphafox "Check your Agent Mail inbox."
+rm -f "$NHM_INST/owner.lock.intent"
+check "a stale intent marker (a dead switch's) holds nobody" \
+    bash -c '[[ "$1" -eq 0 ]] && grep -q "^herdr agent prompt alphafox" "$2"' _ "$RC" "$STUB_DIR/calls"
 
 # A stale copy of an instance directory never counts, as in nhm.
 owner_case ownerbak none
