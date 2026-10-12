@@ -3845,6 +3845,7 @@ acfs_load_internal_checksums_data() {
         scripts/completions/acfs.bash
         scripts/generate-root-agents-md.sh
         scripts/lib/agent_mail_hook.sh
+        scripts/lib/nhm_hooks.sh
         scripts/lib/agent_quota.sh
         scripts/lib/agy_e2e_harness.sh
         scripts/lib/agy_locked.py
@@ -10609,6 +10610,10 @@ UNIT_EOF
     # install step adds a herdr integration only for agent CLIs already on PATH.
     acfs_legacy_run_manifest_module "tools.herdr" || stack_phase_rc=1
 
+    # nhm (stack.nhm), the herdr wrapper. It needs herdr and Agent Mail,
+    # both installed above; its install enrolls the default herdr server.
+    acfs_legacy_run_manifest_module "stack.nhm" || stack_phase_rc=1
+
     # Network Observer (rano)
     if binary_installed "rano"; then
         log_detail "RANO already installed"
@@ -10862,6 +10867,7 @@ finalize() {
     try_step "Installing herdr_agents.sh" install_asset "scripts/lib/herdr_agents.sh" "$ACFS_HOME/scripts/lib/herdr_agents.sh" || return 1
     try_step "Installing palette.sh" install_asset "scripts/lib/palette.sh" "$ACFS_HOME/scripts/lib/palette.sh" || return 1
     try_step "Installing agent_mail_hook.sh" install_asset "scripts/lib/agent_mail_hook.sh" "$ACFS_HOME/scripts/lib/agent_mail_hook.sh" || return 1
+    try_step "Installing nhm_hooks.sh" install_asset "scripts/lib/nhm_hooks.sh" "$ACFS_HOME/scripts/lib/nhm_hooks.sh" || return 1
     try_step "Installing agent_quota.sh" install_asset "scripts/lib/agent_quota.sh" "$ACFS_HOME/scripts/lib/agent_quota.sh" || return 1
     try_step "Installing temp_sweep.sh" install_asset "scripts/lib/temp_sweep.sh" "$ACFS_HOME/scripts/lib/temp_sweep.sh" || return 1
     try_step "Installing state_layer.sh" install_asset "scripts/lib/state_layer.sh" "$ACFS_HOME/scripts/lib/state_layer.sh" || return 1
@@ -11029,6 +11035,27 @@ finalize() {
                 log_detail "Codex asks to trust the Agent Mail Stop hook once: open /hooks in Codex"
             else
                 log_warn "Agent Mail Stop hook registration for Codex failed (optional)"
+            fi
+        fi
+    fi
+
+    # nhm's hook lines (stack.nhm): PostToolUse on Agent Mail's registration
+    # tools and SessionStart (Codex: also PostCompact) run nhm-hook, which
+    # names panes and keeps names through compaction. Idempotent; appends
+    # only. Codex runs them after the user trusts them once in /hooks.
+    local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh"
+    if acfs_legacy_module_selected "stack.nhm" && [[ -f "$nhm_hooks" ]]; then
+        if binary_installed "claude"; then
+            try_step "Registering the nhm hook lines for Claude Code" \
+                run_as_target bash "$nhm_hooks" register claude "$TARGET_HOME/.claude/settings.json" || \
+                log_warn "nhm hook registration for Claude Code failed (optional)"
+        fi
+        if binary_installed "codex"; then
+            if try_step "Registering the nhm hook lines for Codex" \
+                    run_as_target bash "$nhm_hooks" register codex "$TARGET_HOME/.codex/hooks.json"; then
+                log_detail "Codex asks to trust the nhm hook lines once: open /hooks in Codex"
+            else
+                log_warn "nhm hook registration for Codex failed (optional)"
             fi
         fi
     fi

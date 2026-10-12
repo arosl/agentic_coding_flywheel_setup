@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="6ebd2ddf4ddd0952f5f29256f7d75a89d69c534de9c1ff6192ba3ecbb4ea1927"
+ACFS_MANIFEST_SHA256="05c95ba3860234c1a9d38e6d40655359db9f50a45f2a58482261f72e5b63216a"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -43,6 +43,7 @@ ACFS_MODULES_IN_ORDER=(
   "cloud.vercel"
   "tools.herdr"
   "stack.mcp_agent_mail"
+  "stack.nhm"
   "stack.meta_skill"
   "stack.automated_plan_reviser"
   "stack.jeffreysprompts"
@@ -137,6 +138,7 @@ declare -gA ACFS_MODULE_PHASE=(
   ['cloud.vercel']="8"
   ['tools.herdr']="9"
   ['stack.mcp_agent_mail']="9"
+  ['stack.nhm']="9"
   ['stack.meta_skill']="9"
   ['stack.automated_plan_reviser']="9"
   ['stack.jeffreysprompts']="9"
@@ -215,6 +217,7 @@ declare -gA ACFS_MODULE_DEPS=(
   ['cloud.vercel']="lang.bun,users.ubuntu"
   ['tools.herdr']="base.system,users.ubuntu"
   ['stack.mcp_agent_mail']="lang.bun,lang.uv,users.ubuntu"
+  ['stack.nhm']="tools.herdr,stack.mcp_agent_mail,users.ubuntu"
   ['stack.meta_skill']="lang.rust,lang.uv,users.ubuntu"
   ['stack.automated_plan_reviser']="lang.rust,users.ubuntu"
   ['stack.jeffreysprompts']="users.ubuntu"
@@ -292,6 +295,7 @@ declare -gA ACFS_MODULE_FUNC=(
   ['cloud.vercel']="acfs_generated_install_cloud_vercel"
   ['tools.herdr']="acfs_generated_install_tools_herdr"
   ['stack.mcp_agent_mail']="acfs_generated_install_stack_mcp_agent_mail"
+  ['stack.nhm']="acfs_generated_install_stack_nhm"
   ['stack.meta_skill']="acfs_generated_install_stack_meta_skill"
   ['stack.automated_plan_reviser']="acfs_generated_install_stack_automated_plan_reviser"
   ['stack.jeffreysprompts']="acfs_generated_install_stack_jeffreysprompts"
@@ -370,6 +374,7 @@ declare -gA ACFS_MODULE_GENERATED=(
   ['cloud.vercel']="1"
   ['tools.herdr']="1"
   ['stack.mcp_agent_mail']="1"
+  ['stack.nhm']="1"
   ['stack.meta_skill']="1"
   ['stack.automated_plan_reviser']="1"
   ['stack.jeffreysprompts']="1"
@@ -448,6 +453,7 @@ declare -gA ACFS_MODULE_CATEGORY=(
   ['cloud.vercel']="cloud"
   ['tools.herdr']="tools"
   ['stack.mcp_agent_mail']="stack"
+  ['stack.nhm']="stack"
   ['stack.meta_skill']="stack"
   ['stack.automated_plan_reviser']="stack"
   ['stack.jeffreysprompts']="stack"
@@ -526,6 +532,7 @@ declare -gA ACFS_MODULE_TAGS=(
   ['cloud.vercel']="optional,cloud"
   ['tools.herdr']="recommended,agents"
   ['stack.mcp_agent_mail']="recommended"
+  ['stack.nhm']="recommended,agents"
   ['stack.meta_skill']="recommended,agent-skills"
   ['stack.automated_plan_reviser']="recommended,agent-tools"
   ['stack.jeffreysprompts']="recommended,agent-skills,prompts"
@@ -604,6 +611,7 @@ declare -gA ACFS_MODULE_DEFAULT=(
   ['cloud.vercel']="0"
   ['tools.herdr']="1"
   ['stack.mcp_agent_mail']="1"
+  ['stack.nhm']="1"
   ['stack.meta_skill']="1"
   ['stack.automated_plan_reviser']="1"
   ['stack.jeffreysprompts']="1"
@@ -682,6 +690,7 @@ declare -gA ACFS_MODULE_DESC=(
   ['cloud.vercel']="Vercel CLI"
   ['tools.herdr']="herdr terminal workspace manager for coding agents, with its agent integrations"
   ['stack.mcp_agent_mail']="Like gmail for coding agents; MCP HTTP server + token; installs beads tools"
+  ['stack.nhm']="nhm, the herdr wrapper (what ntm is to tmux) - names panes after Agent Mail, waits on turns, reads the swarm"
   ['stack.meta_skill']="Local-first knowledge management with hybrid semantic search (ms)"
   ['stack.automated_plan_reviser']="Automated iterative spec refinement with extended AI reasoning (apr)"
   ['stack.jeffreysprompts']="Curated battle-tested prompts for AI agents - browse and install as skills (jfp)"
@@ -767,6 +776,7 @@ done
   ['cloud.vercel']='command -v vercel'
   ['tools.herdr']='command -v herdr'
   ['stack.mcp_agent_mail']='command -v am'
+  ['stack.nhm']='"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" version --json 2>/dev/null | grep -q '\''"version": "0.1.0"'\'''
   ['stack.meta_skill']='command -v ms'
   ['stack.automated_plan_reviser']='command -v apr'
   ['stack.jeffreysprompts']='command -v jfp'
@@ -886,6 +896,7 @@ declare -gA ACFS_MODULE_INSTALLED_CHECK_RUN_AS=(
   ['cloud.vercel']="target_user"
   ['tools.herdr']="target_user"
   ['stack.mcp_agent_mail']="target_user"
+  ['stack.nhm']="target_user"
   ['stack.meta_skill']="target_user"
   ['stack.automated_plan_reviser']="target_user"
   ['stack.jeffreysprompts']="target_user"
@@ -970,6 +981,7 @@ declare -gA ACFS_MODULE_OPTIONAL=(
   ['cloud.vercel']="1"
   ['tools.herdr']="0"
   ['stack.mcp_agent_mail']="0"
+  ['stack.nhm']="0"
   ['stack.meta_skill']="0"
   ['stack.automated_plan_reviser']="1"
   ['stack.jeffreysprompts']="1"
@@ -1030,6 +1042,7 @@ declare -gA ACFS_MODULE_VERIFIED_INSTALLER_TOOL=(
   ['agents.grok']="grok"
   ['tools.herdr']="herdr"
   ['stack.mcp_agent_mail']="mcp_agent_mail"
+  ['stack.nhm']="nhm"
   ['stack.meta_skill']="ms"
   ['stack.automated_plan_reviser']="apr"
   ['stack.jeffreysprompts']="jfp"

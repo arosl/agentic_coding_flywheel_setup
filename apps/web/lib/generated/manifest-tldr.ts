@@ -523,6 +523,32 @@ export const manifestTldrTools: ManifestTldrTool[] = [
     stars: 10,
   },
   {
+    id: "stack-nhm",
+    moduleId: "stack.nhm",
+    displayName: "nhm",
+    shortName: "nhm",
+    tagline: "What ntm is to tmux, on herdr - one command line for the swarm",
+    tldrSnippet: "nhm, the herdr wrapper (what ntm is to tmux) - names panes after Agent Mail, waits on turns, reads the swarm",
+    icon: "network",
+    color: "#14B8A6",
+    href: "https://github.com/arosl/nhm",
+    features: [
+      "Panes carry their agent's Agent Mail name, at no token cost",
+      "Waits until an agent's turn completes, not just until it looks idle",
+      "ntm's robot output for scripts and other agents",
+      "Status, snapshot and attention for every agent in a workspace",
+    ],
+    techStack: [
+      "Go",
+    ],
+    useCases: [
+      "Seeing which agent is working, blocked or done, by name",
+      "Waiting on an agent's turn from a script",
+      "Giving stack tools one interface to the swarm instead of herdr calls",
+    ],
+    language: "Go",
+  },
+  {
     id: "stack-pcr",
     moduleId: "stack.pcr",
     displayName: "Post-Compact Reminder",

@@ -41,8 +41,8 @@ export interface ManifestProvenanceMetadata {
 
 export const manifestProvenance = {
   acfsVersion: "0.10.0",
-  manifestSha256: "6ebd2ddf4ddd0952f5f29256f7d75a89d69c534de9c1ff6192ba3ecbb4ea1927",
-  checksumsYamlSha256: "cb423df6d02bc01d5d9a7a97e8ed55d6c0516f654f1fd6000dcdd9ee3af0f469",
+  manifestSha256: "05c95ba3860234c1a9d38e6d40655359db9f50a45f2a58482261f72e5b63216a",
+  checksumsYamlSha256: "5bc15f49af144a160bae2db02f5b844960e4b4056b435fedeb901af045554729",
 } as const satisfies ManifestProvenanceMetadata;
 
 export const manifestModules: ManifestModuleMetadata[] = [
@@ -572,6 +572,23 @@ export const manifestModules: ManifestModuleMetadata[] = [
     ],
     tags: [
       "recommended",
+    ],
+    enabledByDefault: true,
+    optional: false,
+  },
+  {
+    id: "stack.nhm",
+    description: "nhm, the herdr wrapper (what ntm is to tmux) - names panes after Agent Mail, waits on turns, reads the swarm",
+    category: "stack",
+    phase: 9,
+    dependencies: [
+      "tools.herdr",
+      "stack.mcp_agent_mail",
+      "users.ubuntu",
+    ],
+    tags: [
+      "recommended",
+      "agents",
     ],
     enabledByDefault: true,
     optional: false,

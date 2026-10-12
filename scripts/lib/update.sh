@@ -1120,7 +1120,7 @@ get_version() {
                 version="unknown"
             fi
             ;;
-        herdr|ubs|bv|cass|cm|caam|slb|ru|dcg|apr|pt|xf|jfp|ms|br|rch|giil|csctf|srps|tru|rano|mdwb|s2p|brenner|fsfs|sbh|casr|dsr|asb|aadc|rust_proxy|ee|fmd|pi)
+        herdr|nhm|ubs|bv|cass|cm|caam|slb|ru|dcg|apr|pt|xf|jfp|ms|br|rch|giil|csctf|srps|tru|rano|mdwb|s2p|brenner|fsfs|sbh|casr|dsr|asb|aadc|rust_proxy|ee|fmd|pi)
             tool_bin="$(update_binary_path "$tool" 2>/dev/null || true)"
             if [[ -n "$tool_bin" ]]; then
                 version=$("$tool_bin" --version 2>/dev/null | head -1 || echo "unknown")
@@ -3532,6 +3532,7 @@ sync_acfs_deployed() {
         "scripts/lib/herdr_agents.sh:scripts/lib/herdr_agents.sh"
         "scripts/lib/palette.sh:scripts/lib/palette.sh"
         "scripts/lib/agent_mail_hook.sh:scripts/lib/agent_mail_hook.sh"
+        "scripts/lib/nhm_hooks.sh:scripts/lib/nhm_hooks.sh"
         "scripts/lib/agent_quota.sh:scripts/lib/agent_quota.sh"
         "scripts/lib/temp_sweep.sh:scripts/lib/temp_sweep.sh"
         "scripts/lib/coexistence.sh:scripts/lib/coexistence.sh"
@@ -7659,6 +7660,103 @@ update_agent_mail_stop_hook() {
     return 0
 }
 
+# The nhm release ACFS pins: the tag in the installer URL of
+# KNOWN_INSTALLERS (scripts/lib/security.sh), which checksums.yaml pins
+# and acfs.manifest.yaml's stack.nhm names too.
+update_nhm_pinned_version() {
+    local url="${KNOWN_INSTALLERS[nhm]:-}"
+    [[ "$url" =~ /v([0-9]+\.[0-9]+\.[0-9]+)/install\.sh$ ]] || return 1
+    printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+update_nhm() {
+    local desc="nhm" version="" bin=""
+
+    if ! version="$(update_nhm_pinned_version)"; then
+        log_item "warn" "$desc" "no pinned nhm release in security.sh's KNOWN_INSTALLERS"
+        return 0
+    fi
+    capture_version_before "nhm"
+    # run_cmd reports a failure itself (and returns 0); the version line
+    # below shows what is installed either way.
+    run_cmd "nhm $version" update_run_verified_installer nhm --version "$version"
+    if capture_version_after "nhm"; then
+        update_say "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[nhm]}" "${VERSION_AFTER[nhm]}"
+    fi
+    if update_is_read_only_mode; then
+        return 0
+    fi
+    bin="$(update_binary_path nhm 2>/dev/null || true)"
+    if [[ -z "$bin" ]]; then
+        log_item "warn" "$desc" "nhm is not on PATH after its installer ran"
+        return 0
+    fi
+    # Idempotent: an enrolled server keeps its instance.
+    run_cmd "nhm enroll" update_run_in_target_context "" "$bin" admin instance enroll --session default </dev/null || true
+}
+
+# nhm's hook lines (scripts/lib/nhm_hooks.sh): register them for the
+# installed agent CLIs. Idempotent; appends only.
+update_nhm_hooks() {
+    local desc="nhm hook lines"
+    local helper="" target_user="" current_user="" target_home="" agent="" file=""
+    local registered="" failed="" codex_new=false
+
+    [[ "${UPDATE_STACK:-true}" == "true" ]] || return 0
+    if ! update_binary_exists nhm; then
+        log_item "skip" "$desc" "nhm is not installed"
+        return 0
+    fi
+    helper="$(update_runtime_acfs_home 2>/dev/null || true)/scripts/lib/nhm_hooks.sh"
+    if [[ ! -r "$helper" ]]; then
+        log_item "skip" "$desc" "nhm_hooks.sh is not installed"
+        return 0
+    fi
+    if update_is_read_only_mode; then
+        log_item "skip" "$desc" "dry-run: would register them for the installed agents"
+        return 0
+    fi
+    target_user="$(update_target_user 2>/dev/null || true)"
+    current_user="$(update_current_user 2>/dev/null || true)"
+    if [[ -z "$target_user" || "$current_user" != "$target_user" ]]; then
+        log_item "warn" "$desc" "run as ${target_user:-the target user}: bash $helper register claude (and codex)"
+        return 0
+    fi
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    if [[ -z "$target_home" ]]; then
+        log_item "warn" "$desc" "no home for $target_user"
+        return 0
+    fi
+
+    for agent in claude codex; do
+        update_binary_exists "$agent" || continue
+        case "$agent" in
+            claude) file="$target_home/.claude/settings.json" ;;
+            codex) file="$target_home/.codex/hooks.json" ;;
+        esac
+        if [[ "$agent" == codex ]] && ! bash "$helper" registered codex "$file" </dev/null >/dev/null 2>&1; then
+            codex_new=true
+        fi
+        if bash "$helper" register "$agent" "$file" </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1; then
+            registered+="${registered:+, }$agent"
+        else
+            failed+="${failed:+, }$agent"
+            [[ "$agent" != codex ]] || codex_new=false
+        fi
+    done
+    if [[ -n "$failed" ]]; then
+        log_item "warn" "$desc" "registration failed for $failed; see the update log"
+    elif [[ -n "$registered" ]]; then
+        log_item "ok" "$desc" "registered for $registered"
+    else
+        log_item "skip" "$desc" "neither Claude Code nor Codex is installed"
+    fi
+    if [[ "$codex_new" == true ]]; then
+        log_detail "Codex asks to trust the nhm hook lines once: open /hooks in Codex"
+    fi
+    return 0
+}
+
 update_stack() {
     if [[ "$UPDATE_STACK" != "true" ]]; then
         return 0
@@ -7689,6 +7787,10 @@ update_stack() {
     fi
     update_herdr_integrations
     update_herdr_palette_key
+
+    # nhm (stack.nhm) - install the release that the pinned installer URL
+    # names, then make sure the default herdr server is enrolled.
+    update_nhm
 
     # minisign (issue #375): the MCP Agent Mail and CAAM installers fail
     # closed without it, so provision it once here, before either runs.
@@ -9262,6 +9364,7 @@ main() {
     update_shell
     update_stack
     update_agent_mail_stop_hook
+    update_nhm_hooks
     update_root_tool_ownership
     update_root_agents_md
 

@@ -1319,7 +1319,7 @@ describe("Generated script headers", () => {
     expect(countMatch).not.toBeNull();
     expect(rawEntries.length).toBe(checksums.size);
     expect(Number(countMatch?.[1])).toBe(checksums.size);
-    expect(checksums.size).toBe(128);
+    expect(checksums.size).toBe(129);
 
     const mandatoryPaths = [
       "install.sh",
@@ -1376,6 +1376,7 @@ describe("Generated script headers", () => {
       "scripts/completions/acfs.bash",
       "scripts/generate-root-agents-md.sh",
       "scripts/lib/agent_mail_hook.sh",
+      "scripts/lib/nhm_hooks.sh",
       "scripts/lib/agent_quota.sh",
       "scripts/lib/agy_e2e_harness.sh",
       "scripts/lib/agy_locked.py",

@@ -2,7 +2,8 @@ name: herdr agents (stub herdr)
 
 # The fork's own workflow. It runs scripts/lib/herdr_agents.sh (acfs agents
 # spawn/send/list) against a stub herdr and a stub am, and the Agent Mail
-# Stop hook (scripts/lib/agent_mail_hook.sh) and the quota reader
+# Stop hook (scripts/lib/agent_mail_hook.sh), nhm's hook lines
+# (scripts/lib/nhm_hooks.sh, with doctor's and acfs update's nhm steps) and the quota reader
 # (scripts/lib/agent_quota.sh) the same way, the temp sweep
 # (scripts/lib/temp_sweep.sh) against a fixture temp dir, and the gate runner
 # (scripts/tests/run_gate.sh) against a stub checkout, and doctor's
@@ -25,6 +26,11 @@ on:
       - 'scripts/lib/agent_mail_hook.sh'
       - 'tests/unit/test_agent_mail_hook.sh'
       - 'tests/unit/test_doctor_agent_mail_hook.sh'
+      - 'scripts/lib/nhm_hooks.sh'
+      - 'scripts/lib/update.sh'
+      - 'tests/unit/test_nhm_hooks.sh'
+      - 'tests/unit/test_doctor_nhm.sh'
+      - 'tests/unit/test_update_nhm.sh'
       - 'scripts/lib/agent_quota.sh'
       - 'tests/unit/test_agent_quota.sh'
       - 'tests/unit/test_doctor_agents_route.sh'
@@ -48,6 +54,11 @@ on:
       - 'scripts/lib/agent_mail_hook.sh'
       - 'tests/unit/test_agent_mail_hook.sh'
       - 'tests/unit/test_doctor_agent_mail_hook.sh'
+      - 'scripts/lib/nhm_hooks.sh'
+      - 'scripts/lib/update.sh'
+      - 'tests/unit/test_nhm_hooks.sh'
+      - 'tests/unit/test_doctor_nhm.sh'
+      - 'tests/unit/test_update_nhm.sh'
       - 'scripts/lib/agent_quota.sh'
       - 'tests/unit/test_agent_quota.sh'
       - 'tests/unit/test_doctor_agents_route.sh'
@@ -86,6 +97,12 @@ jobs:
         run: HOME="$(mktemp -d)" bash tests/unit/test_agent_mail_hook.sh
       - name: Doctor's Agent Mail Stop hook check against fixture settings
         run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_agent_mail_hook.sh
+      - name: nhm hook lines against fixture settings
+        run: HOME="$(mktemp -d)" bash tests/unit/test_nhm_hooks.sh
+      - name: Doctor's nhm check against fixture homes
+        run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_nhm.sh
+      - name: acfs update's nhm install and hook lines against stubs
+        run: HOME="$(mktemp -d)" bash tests/unit/test_update_nhm.sh
       - name: Quota reader against fixture session logs
         run: HOME="$(mktemp -d)" bash tests/unit/test_agent_quota.sh
       - name: acfs agents routing in doctor.sh against a stub helper

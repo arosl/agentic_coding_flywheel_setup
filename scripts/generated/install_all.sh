@@ -418,6 +418,7 @@ acfs_generated_install_all() {
     acfs_generated_install_tools_herdr
     log_section "Category: stack"
     acfs_generated_install_stack_mcp_agent_mail
+    acfs_generated_install_stack_nhm
     acfs_generated_install_stack_meta_skill
     acfs_generated_install_stack_automated_plan_reviser
     acfs_generated_install_stack_jeffreysprompts

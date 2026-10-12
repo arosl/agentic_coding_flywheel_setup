@@ -3072,6 +3072,58 @@ check_agent_mail_stop_hook() {
     fi
 }
 
+# nhm (stack.nhm): a herdr server is enrolled, and nhm's hook lines
+# (scripts/lib/nhm_hooks.sh) are registered for the installed agent CLIs.
+# Read-only; `nhm doctor` checks nhm itself.
+check_nhm() {
+    local label="nhm"
+    local home="" helper="" state_root="" enrolled=""
+    local -a missing=() fixes=() notes=()
+
+    if ! doctor_binary_exists "nhm"; then
+        check "stack.nhm.setup" "$label" "skip" "nhm not installed"
+        return
+    fi
+    home="$(doctor_runtime_home)"
+    helper="$home/.acfs/scripts/lib/nhm_hooks.sh"
+    state_root="${XDG_STATE_HOME:-$home/.local/state}/nhm"
+    enrolled="$(find "$state_root" -mindepth 2 -maxdepth 2 -name instance.toml -print -quit 2>/dev/null || true)"
+    if [[ -z "$enrolled" ]]; then
+        missing+=("no enrolled herdr server")
+        fixes+=("nhm admin instance enroll")
+    fi
+    if [[ ! -r "$helper" ]]; then
+        missing+=("nhm_hooks.sh is not installed")
+        fixes+=("acfs update")
+    else
+        if doctor_binary_exists "claude"; then
+            if bash "$helper" registered claude "$home/.claude/settings.json" </dev/null >/dev/null 2>&1; then
+                notes+=("hooks: Claude Code")
+            else
+                missing+=("hook lines missing for Claude Code")
+                fixes+=("bash $helper register claude")
+            fi
+        fi
+        if doctor_binary_exists "codex"; then
+            if bash "$helper" registered codex "$home/.codex/hooks.json" </dev/null >/dev/null 2>&1; then
+                notes+=("hooks: Codex (trust them once in Codex's /hooks)")
+            else
+                missing+=("hook lines missing for Codex")
+                fixes+=("bash $helper register codex")
+            fi
+        fi
+    fi
+
+    if (( ${#missing[@]} == 0 )); then
+        local detail="enrolled"
+        (( ${#notes[@]} == 0 )) || detail+="; $(_acfs_doctor_join_by "; " "${notes[@]}")"
+        check "stack.nhm.setup" "$label" "pass" "$detail"
+    else
+        check "stack.nhm.setup" "$label" "warn" "$(_acfs_doctor_join_by "; " "${missing[@]}")" \
+            "Run: $(_acfs_doctor_join_by " && " "${fixes[@]}")"
+    fi
+}
+
 _acfs_doctor_join_by() {
     local separator="$1"
     local joined="${2:-}"
@@ -3610,6 +3662,7 @@ check_stack() {
 
     # Agent Mail Stop hook for Claude Code and Codex
     check_agent_mail_stop_hook
+    check_nhm
 
     # Check acfs-nightly-update timer (systemd user unit)
     # Gracefully handle missing systemd user session (curl|bash installs as

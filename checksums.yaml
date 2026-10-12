@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-10-12T05:02:49+00:00
+# checksums.yaml - Auto-generated 2026-10-12T05:29:24+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -109,6 +109,10 @@ installers:
   ms:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/meta_skill/main/scripts/install.sh"
     sha256: "5233b2130670b8036643ce414d212fa6b610a10ec5e7cf4961df34a7fec58601"
+
+  nhm:
+    url: "https://raw.githubusercontent.com/arosl/nhm/v0.1.0/install.sh"
+    sha256: "e33fa6cb9d10d458243127d15b22689551bbbf8b15ab14cfd44fcbdaf3521d77"
 
   nvm:
     url: "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh"

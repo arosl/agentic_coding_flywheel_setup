@@ -350,7 +350,7 @@ acfs_security_init() {
 }
 
 # Category: stack
-# Generated modules: 27
+# Generated modules: 28
 
 # Like gmail for coding agents; MCP HTTP server + token; installs beads tools
 acfs_generated_install_stack_mcp_agent_mail() {
@@ -853,6 +853,145 @@ INSTALL_STACK_MCP_AGENT_MAIL
     fi
 
     log_success "stack.mcp_agent_mail installed"
+}
+
+# nhm, the herdr wrapper (what ntm is to tmux) - names panes after Agent Mail, waits on turns, reads the swarm
+acfs_generated_install_stack_nhm() {
+    local module_id="stack.nhm"
+    acfs_require_contract "module:${module_id}" || return 1
+    acfs_generated_ensure_selection || return 1
+    if ! should_run_module "${module_id}"; then
+        log_info "Skipping stack.nhm (not selected)"
+        return 0
+    fi
+    log_step "Installing stack.nhm"
+
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verified installer: stack.nhm"
+    else
+        if ! {
+            # Try security-verified install (no unverified fallback; fail closed)
+            local install_success=false
+            local verified_installer_file=""
+            local verified_installer_chmod_bin=""
+
+                # Cleared per attempt so a stale reason from an earlier module can
+                # never be misattributed to this one.
+                ACFS_LAST_MODULE_FAILURE_REASON=""
+            if acfs_security_init; then
+                local known_installers_decl=""
+                # Check if KNOWN_INSTALLERS is available as an associative array (declare -A)
+                known_installers_decl="$(declare -p KNOWN_INSTALLERS 2>/dev/null || true)"
+                if [[ "$known_installers_decl" == declare\ -A* ]]; then
+                    local tool="nhm"
+                    local url=""
+                    local expected_sha256=""
+
+                    # Safe access with explicit empty default
+                    url="${KNOWN_INSTALLERS[$tool]:-}"
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "stack.nhm: get_checksum failed for tool '$tool'"
+                        ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"
+                        expected_sha256=""
+                    fi
+
+                    if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
+                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                            log_error "stack.nhm: failed to create verified installer staging file"
+                            ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
+                            verified_installer_file=""
+                        elif ! verify_checksum "$url" "$expected_sha256" "$tool" > "$verified_installer_file"; then
+                            log_error "stack.nhm: installer verification failed"
+                            : "${ACFS_LAST_MODULE_FAILURE_REASON:=checksum}"
+                        elif ! verified_installer_chmod_bin="$(acfs_generated_system_binary_path chmod 2>/dev/null)"; then
+                            log_error "stack.nhm: trusted chmod not found for verified installer staging"
+                            ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"
+                        elif ! "$verified_installer_chmod_bin" 0444 "$verified_installer_file"; then
+                            log_error "stack.nhm: failed to make verified installer staging file read-only"
+                            ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
+                        elif run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.1.0'; then
+                            install_success=true
+                        else
+                            log_error "stack.nhm: verified installer execution failed"
+                            # Name GitHub's API rate limit when it is the likely cause (acfs-ohk).
+                            if declare -F acfs_explain_github_rate_limit >/dev/null; then acfs_explain_github_rate_limit || true; fi
+                            ACFS_LAST_MODULE_FAILURE_REASON="installer execution"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "stack.nhm: KNOWN_INSTALLERS[$tool] not found"
+                            ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "stack.nhm: checksum for '$tool' not found"
+                            ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"
+                        fi
+                    fi
+                else
+                    log_error "stack.nhm: KNOWN_INSTALLERS array not available"
+                    ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"
+                fi
+            else
+                log_error "stack.nhm: acfs_security_init failed - check security.sh and checksums.yaml"
+                ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
+            fi
+            if [[ -n "$verified_installer_file" ]]; then
+                _acfs_remove_temp_files "$verified_installer_file"
+                verified_installer_file=""
+            fi
+
+            # Verified install is required - no fallback
+            if [[ "$install_success" = "true" ]]; then
+                true
+            else
+                log_error "Verified install failed for stack.nhm"
+                false
+            fi
+        }; then
+            log_error "stack.nhm: verified installer failed"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: install: enroll the default herdr server with nhm (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_STACK_NHM'
+# acfs-summary: enroll the default herdr server with nhm
+# The install may run before herdr starts; enroll records the
+# socket anyway. An explicit --session ignores the pane this runs in.
+"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" admin instance enroll --session default
+INSTALL_STACK_NHM
+        then
+            log_error "stack.nhm: install command failed: enroll the default herdr server with nhm"
+            return 1
+        fi
+    fi
+
+    # Verify
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: \"\${NHM_BIN_DIR:-\$HOME/.local/bin}/nhm\" version (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_STACK_NHM'
+"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" version
+INSTALL_STACK_NHM
+        then
+            log_error "stack.nhm: verify failed: \"\${NHM_BIN_DIR:-\$HOME/.local/bin}/nhm\" version"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: test -x \"\${NHM_BIN_DIR:-\$HOME/.local/bin}/nhm-hook\" (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_STACK_NHM'
+test -x "${NHM_BIN_DIR:-$HOME/.local/bin}/nhm-hook"
+INSTALL_STACK_NHM
+        then
+            log_error "stack.nhm: verify failed: test -x \"\${NHM_BIN_DIR:-\$HOME/.local/bin}/nhm-hook\""
+            return 1
+        fi
+    fi
+
+    log_success "stack.nhm installed"
 }
 
 # Local-first knowledge management with hybrid semantic search (ms)

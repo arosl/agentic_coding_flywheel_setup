@@ -2347,6 +2347,61 @@ modules:
       - "If a user systemd manager is available, verification requires agent-mail.service to be active"
       - "Server liveness and readiness are verified after install"
 
+  - id: stack.nhm
+    description: nhm, the herdr wrapper (what ntm is to tmux) - names panes after Agent Mail, waits on turns, reads the swarm
+    category: stack
+    phase: 9
+    run_as: target_user
+    optional: false
+    enabled_by_default: true
+    tags: [recommended, agents]
+    web:
+      display_name: "nhm"
+      short_name: "nhm"
+      tagline: "What ntm is to tmux, on herdr - one command line for the swarm"
+      icon: "network"
+      color: "#14B8A6"
+      href: "https://github.com/arosl/nhm"
+      features:
+        - "Panes carry their agent's Agent Mail name, at no token cost"
+        - "Waits until an agent's turn completes, not just until it looks idle"
+        - "ntm's robot output for scripts and other agents"
+        - "Status, snapshot and attention for every agent in a workspace"
+      tech_stack: ["Go"]
+      use_cases:
+        - "Seeing which agent is working, blocked or done, by name"
+        - "Waiting on an agent's turn from a script"
+        - "Giving stack tools one interface to the swarm instead of herdr calls"
+      language: "Go"
+      cli_name: "nhm"
+      command_example: "nhm status"
+    dependencies:
+      - tools.herdr
+      - stack.mcp_agent_mail
+    # The version is pinned in three places that change together: the args
+    # and installed_check below, and the tag in the installer URL
+    # (scripts/lib/security.sh and checksums.yaml). acfs update installs it.
+    installed_check:
+      run_as: target_user
+      command: '"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" version --json 2>/dev/null | grep -q ''"version": "0.1.0"'''
+    verified_installer:
+      tool: nhm
+      runner: bash
+      args: ["--", "--version", "0.1.0"]
+    install:
+      - |
+        # acfs-summary: enroll the default herdr server with nhm
+        # The install may run before herdr starts; enroll records the
+        # socket anyway. An explicit --session ignores the pane this runs in.
+        "${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" admin instance enroll --session default
+    verify:
+      - '"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" version'
+      - 'test -x "${NHM_BIN_DIR:-$HOME/.local/bin}/nhm-hook"'
+    notes:
+      - "checksums.yaml pins nhm's install.sh at the release tag; the installer checks the archive against SHA256SUMS of the same tagged release"
+      - "nhm 0.1 observes: ACFS's Bash (acfs agents) keeps owning the herdr instance until the takeover, so nhm's hooks only record evidence"
+      - "install.sh and acfs update register the nhm-hook lines for Claude Code and Codex (scripts/lib/nhm_hooks.sh); Codex runs them after the user trusts them once in /hooks"
+
   - id: stack.meta_skill
     description: Local-first knowledge management with hybrid semantic search (ms)
     category: stack

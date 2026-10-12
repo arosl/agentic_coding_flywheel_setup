@@ -182,6 +182,16 @@ export const manifestCommands: ManifestCommand[] = [
     docsUrl: "https://github.com/Dicklesworthstone/meta_skill",
   },
   {
+    moduleId: "stack.nhm",
+    displayName: "nhm",
+    moduleCategory: "stack",
+    cliName: "nhm",
+    cliAliases: [],
+    description: "nhm, the herdr wrapper (what ntm is to tmux) - names panes after Agent Mail, waits on turns, reads the swarm",
+    commandExample: "nhm status",
+    docsUrl: "https://github.com/arosl/nhm",
+  },
+  {
     moduleId: "stack.pcr",
     displayName: "Post-Compact Reminder",
     moduleCategory: "stack",
