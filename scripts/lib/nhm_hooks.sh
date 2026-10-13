@@ -940,16 +940,36 @@ nhm_hooks_plugin_linked() {
     [[ -n "$root" && "$(realpath -m -- "$root")" == "$(realpath -m -- "$dir")" ]]
 }
 
-# What the default herdr server's config holds of nhm's keys: opted-out
-# (the "unbound by" block that `nhm bind --unbind` or `acfs palette unbind`
-# leaves), bound (nhm's block), or nothing.
+# The config.toml that `nhm bind --socket <the default server's socket>`
+# reads: $HERDR_CONFIG_PATH when that socket is the calling pane's server
+# ($HERDR_SOCKET_PATH), else the one next to the socket (nhm's
+# serverConfig).
+nhm_hooks_plugin_config() {
+    local dir=""
+    dir="$(nhm_hooks_plugin_herdr_dir)"
+    if [[ -n "${HERDR_CONFIG_PATH:-}" && "${HERDR_SOCKET_PATH:-}" == "$dir/herdr.sock" ]]; then
+        printf '%s\n' "$HERDR_CONFIG_PATH"
+    else
+        printf '%s/config.toml\n' "$dir"
+    fi
+}
+
+# What that config holds of nhm's keys: opted-out (the "unbound by" block
+# `nhm bind --unbind` leaves), bound (nhm's block), opted-out again for
+# the block `acfs palette unbind` leaves when nhm's block is absent (with
+# it, nhm's keys are still bound, and nhm bind keeps them as they are), or
+# nothing. A marker may be indented, as nhm reads it. nhm also skips one
+# inside a multi-line string, which this does not; nhm bind's exit 5
+# covers that case.
 nhm_hooks_plugin_keys() {
     local config=""
-    config="$(nhm_hooks_plugin_herdr_dir)/config.toml"
-    if grep -qE '^# >>> (nhm|acfs palette) >>> unbound by ' "$config" 2>/dev/null; then
+    config="$(nhm_hooks_plugin_config)"
+    if grep -qE '^[[:space:]]*# >>> nhm >>> unbound by ' "$config" 2>/dev/null; then
         echo opted-out
-    elif grep -q '^# >>> nhm >>>' "$config" 2>/dev/null; then
+    elif grep -qE '^[[:space:]]*# >>> nhm >>>' "$config" 2>/dev/null; then
         echo bound
+    elif grep -qE '^[[:space:]]*# >>> acfs palette >>> unbound by ' "$config" 2>/dev/null; then
+        echo opted-out
     fi
 }
 
@@ -1004,7 +1024,7 @@ nhm_hooks_plugin() {
     fi
     [[ "$verb" == bind ]] || return 0
     if [[ "$(nhm_hooks_plugin_keys)" == opted-out ]]; then
-        nhm_hooks_note "herdr's config opts out of nhm's keys ($(nhm_hooks_plugin_herdr_dir)/config.toml), so nothing is bound; nhm bind --force binds them"
+        nhm_hooks_note "herdr's config opts out of nhm's keys ($(nhm_hooks_plugin_config)), so nothing is bound; nhm bind --force binds them"
         return 6
     fi
     out="$("$nhm" bind --socket "$(nhm_hooks_plugin_herdr_dir)/herdr.sock" "${reload[@]}" </dev/null 2>&1)" || rc=$?

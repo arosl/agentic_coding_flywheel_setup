@@ -102,9 +102,10 @@ EOF
 
 helper() { # helper <args...>: ACFS's copy of the helper in the fixture home; sets OUT and RC
     RC=0
-    OUT="$(PATH="$BASEPATH" HOME="$HOMEDIR" XDG_CONFIG_HOME="" XDG_DATA_HOME="" \
-        bash "$HOMEDIR/.acfs/scripts/lib/nhm_hooks.sh" "$@" 2>&1)" || RC=$?
+    OUT="$(env -u HERDR_CONFIG_PATH -u HERDR_SOCKET_PATH PATH="$BASEPATH" HOME="$HOMEDIR" XDG_CONFIG_HOME="" XDG_DATA_HOME="" \
+        "${HELPER_ENV[@]}" bash "$HOMEDIR/.acfs/scripts/lib/nhm_hooks.sh" "$@" 2>&1)" || RC=$?
 }
+HELPER_ENV=()
 calls() { cat "$HOMEDIR/$1" 2>/dev/null; }
 # opt_out nhm|acfs: the block `nhm bind --unbind` or `acfs palette unbind`
 # leaves in the fixture's herdr config.
@@ -182,6 +183,40 @@ helper plugin bind
 check "nhm bind finds an opt-out (exit 5): bind exits 6 with nhm's reason" \
     bash -c '[[ "$1" -eq 6 && "$2" == *"nhm_hooks: nhm bind: herdr'"'"'s config opts out"* ]]' _ "$RC" "$OUT"
 
+# Markers as nhm reads them: indented, or with Windows line ends.
+fixture
+helper plugin link
+printf '  # >>> nhm >>> unbound by `nhm bind --unbind`\r\n  # <<< nhm <<<\r\n' >"$HOMEDIR/.config/herdr/config.toml"
+helper plugin status
+check "an indented opt-out with CRLF line ends: opted-out" test "$OUT" = opted-out
+
+# acfs palette unbind after the takeover leaves nhm's block bound: the
+# keys are nhm's, so status says bound, and nhm bind (exit 5) keeps them.
+fixture
+helper plugin link
+printf '# >>> nhm >>>\n[keys]\n# <<< nhm <<<\n' >"$HOMEDIR/.config/herdr/config.toml"
+opt_out acfs
+helper plugin status
+check "nhm's block with ACFS's unbound palette block: bound" test "$OUT" = bound
+echo optout >"$HOMEDIR/nhm-bind-mode"
+helper plugin bind
+check "and bind asks nhm, whose exit 5 leaves the keys as they are (exit 6)" \
+    bash -c '[[ "$1" -eq 6 && -s "$2/nhm-calls" ]]' _ "$RC" "$HOMEDIR"
+
+# HERDR_CONFIG_PATH names the config when the caller's pane is on the
+# default server, as nhm bind reads it.
+fixture
+helper plugin link
+OTHER="$HOMEDIR/elsewhere.toml"
+printf '%s\n' '# >>> nhm >>> unbound by `nhm bind --unbind`' '# <<< nhm <<<' >"$OTHER"
+HELPER_ENV=(HERDR_CONFIG_PATH="$OTHER" HERDR_SOCKET_PATH="$HOMEDIR/.config/herdr/herdr.sock")
+helper plugin status
+check "HERDR_CONFIG_PATH of the default server's pane: read there" test "$OUT" = opted-out
+HELPER_ENV=(HERDR_CONFIG_PATH="$OTHER" HERDR_SOCKET_PATH="$HOMEDIR/another.sock")
+helper plugin status
+check "HERDR_CONFIG_PATH of another server's pane: the default config" test "$OUT" = linked
+HELPER_ENV=()
+
 fixture
 mv "$PLUGIN" "$HOMEDIR/.local/share/nhm/plugin-real"
 ln -s "$HOMEDIR/.local/share/nhm/plugin-real" "$PLUGIN"
@@ -203,7 +238,7 @@ echo "update.sh: update_herdr_palette_key"
 run_update() {
     OUT="$(
         export HOME="$HOMEDIR" PATH="$BASEPATH"
-        unset XDG_CONFIG_HOME XDG_DATA_HOME
+        unset XDG_CONFIG_HOME XDG_DATA_HOME HERDR_CONFIG_PATH HERDR_SOCKET_PATH
         # shellcheck source=/dev/null
         source "$REPO_ROOT/scripts/lib/update.sh" >/dev/null 2>&1
         NHM_INSTALLED="${1:-yes}"
@@ -276,7 +311,7 @@ echo "install.sh: acfs_install_herdr_keys"
 run_install() {
     OUT="$(
         export HOME="$HOMEDIR" PATH="$BASEPATH" ACFS_HOME="$HOMEDIR/.acfs"
-        unset XDG_CONFIG_HOME XDG_DATA_HOME
+        unset XDG_CONFIG_HOME XDG_DATA_HOME HERDR_CONFIG_PATH HERDR_SOCKET_PATH
         SELECTED="$1"
         run_as_target() { "$@"; }
         acfs_legacy_module_selected() { [[ "$1" == stack.nhm && "$SELECTED" == yes ]]; }
@@ -314,6 +349,11 @@ check "a re-run install keeps an opt-out: no nhm bind, no palette.sh, never fail
     bash -c '[[ "$1" == *"DETAIL herdr'"'"'s config opts out of nhm'"'"'s keys"*"RC 0"* ]] && [[ ! -e "$2/nhm-calls" && ! -s "$2/palette-calls" ]]' \
     _ "$OUT" "$HOMEDIR"
 fixture
+echo optout >"$HOMEDIR/nhm-bind-mode"
+run_install yes
+check "nhm bind exits 5 at install: nhm's reason, no palette.sh, never fails" \
+    bash -c '[[ "$1" == *"DETAIL nhm bind: herdr'"'"'s config opts out"*"RC 0"* ]] && [[ ! -s "$2/palette-calls" ]]' _ "$OUT" "$HOMEDIR"
+fixture
 run_install no
 check "stack.nhm not selected: ACFS's palette only" \
     bash -c '[[ ! -e "$1/herdr-calls" && "$(cat "$1/palette-calls")" == "palette bind --auto --no-reload" ]]' _ "$HOMEDIR"
@@ -329,7 +369,8 @@ echo "doctor: stack.nhm.plugin"
 [[ "$(tail -n 1 "$DOCTOR")" == 'main "$@"' ]] || { echo "doctor.sh no longer ends in 'main \"\$@\"'" >&2; exit 1; }
 # run_doctor [nhm present: true|false]: prints "id|status|details|fix".
 run_doctor() {
-    PATH="$BASEPATH" STUB_HOME="$HOMEDIR" STUB_NHM="${1:-true}" TARGET_USER="" \
+    env -u HERDR_CONFIG_PATH -u HERDR_SOCKET_PATH \
+        PATH="$BASEPATH" STUB_HOME="$HOMEDIR" STUB_NHM="${1:-true}" TARGET_USER="" \
         XDG_CONFIG_HOME="" XDG_DATA_HOME="" bash -c '
         set +e
         # shellcheck disable=SC1090
@@ -360,6 +401,10 @@ check "bound: pass, nhm's keys, without naming keys of its own" \
 opt_out nhm
 OUT="$(run_doctor)"
 check "opted out: pass, the user's choice kept" has "stack.nhm.plugin|pass|linked; the user unbound nhm's keys"
+printf '# >>> nhm >>>\n[keys]\n# <<< nhm <<<\n' >"$HOMEDIR/.config/herdr/config.toml"
+opt_out acfs
+OUT="$(run_doctor)"
+check "nhm's block with ACFS's unbound palette block: nhm's keys are bound" has "stack.nhm.plugin|pass|linked; nhm's keys are bound"
 rm -f "$PLUGIN/herdr-plugin.toml"
 OUT="$(run_doctor)"
 check "a release without the plugin: skip" has "stack.nhm.plugin|skip|this nhm has no herdr plugin"
