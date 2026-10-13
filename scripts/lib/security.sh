@@ -470,7 +470,7 @@ declare -gA KNOWN_INSTALLERS=(
     [atuin]="https://github.com/atuinsh/atuin/releases/latest/download/atuin-installer.sh"
     [herdr]="https://herdr.dev/install.sh"
     # nhm: the release tag pins the installer; acfs.manifest.yaml names the same version.
-    [nhm]="https://raw.githubusercontent.com/arosl/nhm/v0.1.5/install.sh"
+    [nhm]="https://raw.githubusercontent.com/arosl/nhm/v0.1.6/install.sh"
     [mcp_agent_mail]="https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/refs/heads/main/install.sh"
     [ubs]="https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/main/install.sh"
     [bv]="https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh"
@@ -517,8 +517,8 @@ declare -gA KNOWN_INSTALLERS=(
 # into <os>-<arch>=<sha256> pins. nhm: the tag is the one in
 # KNOWN_INSTALLERS[nhm].
 declare -gA KNOWN_RELEASE_ARCHIVES=(
-    [nhm_archive_linux_amd64]="https://github.com/arosl/nhm/releases/download/v0.1.5/nhm-0.1.5-linux-amd64.tar.zst"
-    [nhm_archive_linux_arm64]="https://github.com/arosl/nhm/releases/download/v0.1.5/nhm-0.1.5-linux-arm64.tar.zst"
+    [nhm_archive_linux_amd64]="https://github.com/arosl/nhm/releases/download/v0.1.6/nhm-0.1.6-linux-amd64.tar.zst"
+    [nhm_archive_linux_arm64]="https://github.com/arosl/nhm/releases/download/v0.1.6/nhm-0.1.6-linux-arm64.tar.zst"
 )
 declare -g ACFS_RELEASE_ARCHIVE_MAX_BYTES=67108864
 declare -g ACFS_RELEASE_ARCHIVE_SUMS_MAX_BYTES=1048576
