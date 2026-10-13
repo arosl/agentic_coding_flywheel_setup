@@ -17,8 +17,8 @@
 # nhm reads from ACFS's palette catalog; the step installs the catalog
 # where ACFS's install puts it.
 
-# e21_asked TEXT: the mock was asked a prompt that holds TEXT (it logs a
-# prompt's first 300 characters; the broadcast is shorter).
+# e21_asked TEXT: the mock was asked a prompt that holds TEXT (it logs
+# each prompt whole).
 e21_asked() { grep -qF -- "$1" "$SANDBOX_EVIDENCE/mock-requests.jsonl" 2>/dev/null; }
 
 step_E21() {

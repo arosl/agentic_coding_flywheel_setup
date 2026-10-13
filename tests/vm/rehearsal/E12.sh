@@ -17,13 +17,11 @@ e12_deliver() {
     (cd "$HOME/e12" && bash "$(e12_lib swarm_packet.sh)" --deliver "$HOME/packet.json" --repo "$HOME/e12" "$@" 2>&1)
 }
 
-# The mock's requests so far. The mock logs only a prompt's first 300
-# characters, which a packet's title can lie beyond, so this counts all
-# of them: the agent is idle around each send, so a new request is the
-# send's.
+# e12_mock_count TEXT: the mock's requests so far whose prompt holds TEXT
+# (the mock logs each prompt whole).
 e12_mock_count() {
     local n
-    n="$(wc -l <"$SANDBOX_EVIDENCE/mock-requests.jsonl" 2>/dev/null)"
+    n="$(grep -cF -- "$1" "$SANDBOX_EVIDENCE/mock-requests.jsonl" 2>/dev/null)"
     printf '%s\n' "${n:-0}"
 }
 
@@ -57,12 +55,12 @@ step_E12() {
         and (.nhm_argv | index("--with-memory=false") != null) and (.nhm_argv[0] == "nhm")' <<<"$preview"
     sha="$(jq -r '.request.packet_sha256 // empty' <<<"$preview")"
 
-    before="$(e12_mock_count)"
+    before="$(e12_mock_count "$bead")"
     sent="$(e12_deliver --workspace "$ws" --pane-id "$pane" --agent-type claude --operation-id e12-1 --receipt "$rdir/d1.json" \
         --expect-sha256 "$sha" --send)"
     printf '%s\n' "$sent" >"$SANDBOX_EVIDENCE/e12-send.json"
     until_state "$pane" '^(idle|done)$' 60
-    check "E12: the packet reached the agent (the model was asked)" test "$(e12_mock_count)" -gt "$before"
+    check "E12: the packet reached the agent (the model was asked about the bead)" test "$(e12_mock_count "$bead")" -gt "$before"
     receipt="$(nhm --robot-send-receipt=e12-1 2>&1)"
     printf '%s\n' "$receipt" >"$SANDBOX_EVIDENCE/e12-receipt.json"
     check "E12: nhm's receipt for the operation reads submitted" \
@@ -70,12 +68,12 @@ step_E12() {
 
     # The same delivery receipt again: it reads the recorded outcome and
     # never sends again.
-    before="$(e12_mock_count)"
+    before="$(e12_mock_count "$bead")"
     again="$(e12_deliver --workspace "$ws" --pane-id "$pane" --agent-type claude --operation-id e12-1 --receipt "$rdir/d1.json" \
         --expect-sha256 "$sha" --send)"
     printf '%s\n' "$again" >"$SANDBOX_EVIDENCE/e12-again.json"
     sleep 3
-    after="$(e12_mock_count)"
+    after="$(e12_mock_count "$bead")"
     check "E12: reusing the receipt sends nothing again" test "$after" -eq "$before"
     manual "E12: acfs swarm launch through nhm (its planner refuses while RCH reports no workers; the sandbox has no network)"
     manual "E12: a forced unconfirmed delivery is never re-sent on the next run (needs a submission herdr cannot confirm)"

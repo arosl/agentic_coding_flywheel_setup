@@ -10,16 +10,21 @@ that exp.3 (Codex) and exp.4 (Claude Code) proved against the real CLIs.
 It listens on 127.0.0.1 only. --port 0 (the default) takes a free port;
 --ready FILE receives {"port", "pid", "url"} once it listens. Any API key
 is accepted, and none is ever logged: --log FILE gets one JSON line per
-request with the path, model, stream flag and the last user text (at most
-300 characters), never a header.
+request with the path, model, stream flag and the whole last user text,
+never a header.
 
 Replies: --script FILE is a JSON list, one entry per turn in order, each a
 string (the reply text) or {"text": ..., "delay": seconds}; after the last
-entry the default reply repeats. Without a script: "mock reply N", a
-compaction summary when the prompt asks for one, and a reply streamed over
-about 8 seconds when the prompt says "slow" (so herdr sees a working
-turn). Requests whose text starts with the tools' title or summary
-helpers get the same treatment, so they never consume a scripted turn.
+entry the default reply repeats. Without a script: "mock reply N". A
+reply is streamed over --reply-delay seconds (default 1.5; a script
+entry's own "delay" wins), as a real API takes a while, so herdr sees the
+agent working before the turn ends. Unscripted, a prompt with the word
+"slow" takes about 8 seconds, and one with the word "fast" is answered at
+once, a turn that can end before herdr sees it start. The tools' own helper requests,
+a compaction (Claude Code's /compact, Codex's checkpoint) and a session
+title, are answered at once and never consume a turn. They are known by
+their prompts' wording (COMPACTION, TITLE), so a prompt that only asks
+for a summary is an ordinary turn.
 
 Pointing the CLIs at it (as exp.3 and exp.4 did):
 - Claude Code: ANTHROPIC_BASE_URL=<url> and any ANTHROPIC_API_KEY.
@@ -35,27 +40,42 @@ Pointing the CLIs at it (as exp.3 and exp.4 did):
       supports_websockets = false
 
 Usage: mock_anthropic.py [--port N] [--ready FILE] [--log FILE] [--script FILE]
+                         [--reply-delay SECONDS]
 """
 
 import argparse
 import json
 import os
+import re
 import sys
 import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-LOG_TEXT = 300
+REPLY_SECONDS = 1.5
 SLOW_SECONDS = 8.0
+# The helper requests' wording, lowercased, as Claude Code 2.1 and Codex
+# 0.162 send it.
+COMPACTION = ("your task is to create a detailed summary of the conversation so far",
+              "you are performing a context checkpoint compaction")
+TITLE = ("generate a concise, single-line task title",
+         "write the title in the predominant language of the session")
+
+
+def says(text, word):
+    """Whether text holds word as a whole word."""
+    return re.search(rf"\b{word}\b", text) is not None
 
 
 class State:
-    """The script and the turn counter, shared by the handler threads."""
+    """The script, the turn counter and the reply delay, shared by the
+    handler threads."""
 
-    def __init__(self, script, log):
+    def __init__(self, script, log, delay):
         self.script = script
         self.log = log
+        self.delay = delay
         self.turn = 0
         self.lock = threading.Lock()
 
@@ -71,9 +91,9 @@ class State:
         """The reply text and its streaming delay for a request whose last
         user text is text."""
         lower = text.lower()
-        if "summar" in lower:
+        if any(p in lower for p in COMPACTION):
             return "<summary>mock compaction summary: the user asked for nothing else.</summary>", 0.0
-        if lower.startswith("generate a concise, single-line task title"):
+        if any(p in lower for p in TITLE):
             return "Mock task", 0.0
         with self.lock:
             self.turn += 1
@@ -81,9 +101,13 @@ class State:
         if n <= len(self.script):
             entry = self.script[n - 1]
             if isinstance(entry, str):
-                return entry, 0.0
-            return str(entry.get("text", "")), float(entry.get("delay", 0))
-        return f"mock reply {n}", (SLOW_SECONDS if "slow" in lower else 0.0)
+                return entry, self.delay
+            return str(entry.get("text", "")), float(entry.get("delay", self.delay))
+        if says(lower, "slow"):
+            return f"mock reply {n}", SLOW_SECONDS
+        if says(lower, "fast"):
+            return f"mock reply {n}", 0.0
+        return f"mock reply {n}", self.delay
 
 
 def anthropic_user_text(body):
@@ -187,7 +211,7 @@ class Handler(BaseHTTPRequestHandler):
     def _messages(self, path, body):
         text = anthropic_user_text(body)
         self.state.record({"method": "POST", "path": path, "model": body.get("model"), "stream": body.get("stream"),
-                           "n_messages": len(body.get("messages") or []), "user_text": text[:LOG_TEXT]})
+                           "n_messages": len(body.get("messages") or []), "user_text": text})
         reply, delay = self.state.reply(text)
         msg_id = "msg_" + uuid.uuid4().hex[:24]
         model = body.get("model") or "claude-mock"
@@ -220,7 +244,7 @@ class Handler(BaseHTTPRequestHandler):
     def _responses(self, path, body):
         text = responses_user_text(body)
         self.state.record({"method": "POST", "path": path, "model": body.get("model"), "stream": body.get("stream"),
-                           "user_text": text[:LOG_TEXT]})
+                           "user_text": text})
         reply, delay = self.state.reply(text)
         rid = "resp_" + uuid.uuid4().hex[:24]
         item_id = "msg_" + uuid.uuid4().hex[:24]
@@ -257,8 +281,8 @@ def load_script(path):
     return script
 
 
-def serve(port, ready, log, script):
-    Handler.state = State(script, log)
+def serve(port, ready, log, script, delay):
+    Handler.state = State(script, log, delay)
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
     if ready:
@@ -279,13 +303,17 @@ def main(argv=None):
     p.add_argument("--ready", help="write {port, pid, url} here once listening")
     p.add_argument("--log", help="append one JSON line per request here (no headers)")
     p.add_argument("--script", help="a JSON list of replies, one per turn")
+    p.add_argument("--reply-delay", type=float, default=REPLY_SECONDS,
+                   help=f"seconds a reply takes (default {REPLY_SECONDS}); 'slow' takes {SLOW_SECONDS:g}, 'fast' none")
     args = p.parse_args(argv)
+    if not 0 <= args.reply_delay <= 60:
+        p.error("--reply-delay takes 0 to 60 seconds")
     try:
         script = load_script(args.script)
     except (OSError, ValueError) as e:
         print(f"mock_anthropic: {e}", file=sys.stderr)
         return 2
-    serve(args.port, args.ready, args.log, script)
+    serve(args.port, args.ready, args.log, script, args.reply_delay)
     return 0
 
 

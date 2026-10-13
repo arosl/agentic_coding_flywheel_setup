@@ -457,16 +457,16 @@ robot() {
 # names map to nhm's (plan-v8 section 7): submitted_observed is
 # submitted, generation_changed is replaced. A timeout that leaves the
 # submission unconfirmed and a blocked input (a dialog) cannot be staged
-# against the mock yet: MANUAL.
+# against the mock yet: MANUAL. The mock takes about 1.5 s per turn, so
+# herdr sees a turn start; "slow" makes it about 8 s, and "fast" answers
+# at once, the fast finish.
 step_E11() {
     local pane before after
     pane="$(e11_agent)" || { echo "FAIL E11: no agent"; return; }
     robot status --robot-status
     check "E11: --robot-status lists the session" jq -e '[.. | objects | select(has("name") or has("session"))] | length > 0' \
         "$SANDBOX_EVIDENCE/e11-status.json"
-    # A turn, its ack and its receipt. The mock answers a plain prompt at
-    # once, before herdr can see the agent working, and nhm then rightly
-    # says possibly_submitted; "slow" makes the turn long enough to see.
+    # A turn, its ack and its receipt.
     settle "$pane"
     robot send-a --robot-send=e11 --all --msg="hello robot slow" --op-id=e11-a
     check "E11: a send to a ready agent is submitted" jq -e '.success and (.successful | length == 1)' "$SANDBOX_EVIDENCE/e11-send-a.json"
@@ -496,6 +496,16 @@ step_E11() {
         jq -e '(._nhm // .nhm) as $n | (.success | not) and ($n.targets[0].submission == "refused") and ($n.targets[0].gate == "busy")' \
         "$SANDBOX_EVIDENCE/e11-send-busy.json"
     until_state "$pane" '^(idle|done)$' 60
+    # A fast finish: the turn ends before herdr sees it start, so nhm
+    # cannot confirm the submission and says possibly_submitted, never
+    # submitted.
+    settle "$pane"
+    robot send-fast --robot-send=e11 --all --msg="hello robot fast" --op-id=e11-f
+    check "E11: a fast finish reads possibly_submitted (OPERATION_OUTCOME_UNKNOWN)" \
+        jq -e '(._nhm // .nhm) as $n | (.success | not) and .error_code == "OPERATION_OUTCOME_UNKNOWN"
+            and ($n.targets[0].submission == "possibly_submitted")' "$SANDBOX_EVIDENCE/e11-send-fast.json"
+    check "E11: and the prompt reached the model" grep -qF 'hello robot fast' "$SANDBOX_EVIDENCE/mock-requests.jsonl"
+    settle "$pane"
     # A replaced occupant: recycle, then the earlier operation's ack.
     robot recycle recycle "$(jq -r '.result.agents[0].mail_name' "$SANDBOX_EVIDENCE/e11-spawn.json")" --prompt "go on" --json
     robot ack-after-recycle --robot-ack=e11 --op-id=e11-a --timeout=5s
