@@ -1110,7 +1110,7 @@ declare -gA ACFS_PROFILE_MODE=(
 )
 
 declare -gA ACFS_PROFILE_ONLY_MODULES=(
-  ['minimal']="shell.omz,cli.modern,lang.bun,lang.uv,agents.claude,agents.codex,agents.antigravity,tools.herdr,stack.mcp_agent_mail,stack.ultimate_bug_scanner,stack.beads_rust,stack.beads_viewer,stack.cass,stack.cm,stack.dcg,stack.ru,stack.rch,acfs.workspace,acfs.onboard,acfs.update,acfs.doctor"
+  ['minimal']="shell.omz,cli.modern,lang.bun,lang.uv,agents.claude,agents.codex,agents.antigravity,tools.herdr,stack.nhm,stack.mcp_agent_mail,stack.ultimate_bug_scanner,stack.beads_rust,stack.beads_viewer,stack.cass,stack.cm,stack.dcg,stack.ru,stack.rch,acfs.workspace,acfs.onboard,acfs.update,acfs.doctor"
   ['cloud-only']="cloud.wrangler,cloud.supabase,cloud.vercel"
 )
 

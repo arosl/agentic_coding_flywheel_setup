@@ -128,6 +128,8 @@ test_minimal_profile_selects_expected_essentials() {
 
     # Minimal profile should include essentials like herdr, ubs, beads_rust, claude, codex, agy
     should_run_module "tools.herdr" || { fail "minimal_profile_selects_expected_essentials" "Missing tools.herdr"; return 1; }
+    # nhm owns the herdr server on every install (acfs-9hkh.93).
+    should_run_module "stack.nhm" || { fail "minimal_profile_selects_expected_essentials" "Missing stack.nhm"; return 1; }
     should_run_module "stack.ultimate_bug_scanner" || { fail "minimal_profile_selects_expected_essentials" "Missing stack.ultimate_bug_scanner"; return 1; }
     should_run_module "stack.beads_rust" || { fail "minimal_profile_selects_expected_essentials" "Missing stack.beads_rust"; return 1; }
     should_run_module "agents.antigravity" || { fail "minimal_profile_selects_expected_essentials" "Missing agents.antigravity"; return 1; }

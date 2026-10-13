@@ -2069,6 +2069,9 @@ export const WEB_SELECTION_PROFILES = [
       "agents.codex",
       "agents.antigravity",
       "tools.herdr",
+      // nhm owns the herdr server on every install (acfs-9hkh.93), in the
+      // place of upstream's stack.ntm.
+      "stack.nhm",
       "stack.mcp_agent_mail",
       "stack.ultimate_bug_scanner",
       "stack.beads_rust",

@@ -1282,6 +1282,7 @@ export const manifestSelectionProfiles: ManifestSelectionProfile[] = [
       "agents.codex",
       "agents.antigravity",
       "tools.herdr",
+      "stack.nhm",
       "stack.mcp_agent_mail",
       "stack.ultimate_bug_scanner",
       "stack.beads_rust",
