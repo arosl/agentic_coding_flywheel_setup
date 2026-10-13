@@ -2852,9 +2852,10 @@ check_core_tools() {
     check_command "tool.lsof" "lsof" "lsof" "sudo apt-get -o DPkg::Lock::Timeout=120 install -y lsof"
     check_command "tool.zstd" "zstd" "zstd" "sudo apt-get -o DPkg::Lock::Timeout=120 install -y zstd"
     check_cosign_version
-    # minisign (#375): the MCP Agent Mail (>= 0.3.31) and CAAM (>= 0.1.18)
-    # installers verify release signatures with it and fail closed without it.
-    check_command "tool.minisign" "minisign (Agent Mail/CAAM release verification)" "minisign" "$(doctor_pkg_install_hint minisign)"
+    # minisign (#375): the MCP Agent Mail (>= 0.3.31) installer verifies
+    # release signatures with it and fails closed without it. (The arosl
+    # caam fork's installer checks ACFS's archive pins instead, acfs-7mu.3.)
+    check_command "tool.minisign" "minisign (Agent Mail release verification)" "minisign" "$(doctor_pkg_install_hint minisign)"
     check_command "tool.dig" "dig (dnsutils)" "dig" "sudo apt-get -o DPkg::Lock::Timeout=120 install -y dnsutils"
     check_command "tool.nc" "nc (netcat-openbsd)" "nc" "sudo apt-get -o DPkg::Lock::Timeout=120 install -y netcat-openbsd"
     check_ast_grep

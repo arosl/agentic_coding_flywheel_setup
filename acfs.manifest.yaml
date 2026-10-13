@@ -2845,15 +2845,29 @@ modules:
       command_example: "caam status"
     dependencies:
       - lang.bun
+    # The arosl fork (acfs-7mu.3): its auth coordinator drives herdr's panes.
+    # The version is pinned in places that change together: the args and
+    # installed_check below, and the tag in the installer URL and the
+    # release archive URLs (scripts/lib/security.sh, then checksums.yaml by
+    # the canonical refresh). acfs update installs it. A fork release has
+    # only a cosign signature and Ubuntu 24.04 packages no cosign, so the
+    # installer checks the archive against ACFS's pin first, as nhm's does.
     installed_check:
       run_as: target_user
-      command: "command -v caam"
+      command: "caam --version 2>/dev/null | grep -qF 'caam 0.1.23-herdr.3 '"
     verified_installer:
       tool: caam
       runner: bash
+      args: ["--", "--version=v0.1.23-herdr.3"]
+      checksum_args:
+        - { flag: "--archive-sha256", prefix: "linux-amd64=", checksum: caam_archive_linux_amd64 }
+        - { flag: "--archive-sha256", prefix: "linux-arm64=", checksum: caam_archive_linux_arm64 }
     install: []
     verify:
       - caam status || caam --help
+    notes:
+      - "checksums.yaml pins caam's install.sh at the arosl fork's release tag; the installer checks the archive against ACFS's per-platform SHA-256 pin, then SHA256SUMS of the same release and, where cosign is installed, the fork workflow's signature"
+      - "caam auth-coordinator watches herdr's panes (--backend herdr; auto tries herdr first); caam update refuses a fork release, so acfs update installs new ones"
 
   - id: stack.slb
     description: Two-person rule for dangerous commands (optional guardrails)

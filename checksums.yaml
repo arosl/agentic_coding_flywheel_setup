@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-10-13T18:46:45+00:00
+# checksums.yaml - Auto-generated 2026-10-13T19:24:06+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -35,8 +35,16 @@ installers:
     sha256: "03f521bde89e24f615905eaaf31ec0c9820823a90610e804401cd6d71f3f5df7"
 
   caam:
-    url: "https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_account_manager/main/install.sh"
-    sha256: "b15a445cbec6471bb15453fefaf48e8d1740eb60342ad0aa5ef789868ffaba0d"
+    url: "https://raw.githubusercontent.com/arosl/coding_agent_account_manager/v0.1.23-herdr.3/install.sh"
+    sha256: "477866e47dcd0798549ced855766cca46133b30a1be799047ed10a1587dcc95c"
+
+  caam_archive_linux_amd64:
+    url: "https://github.com/arosl/coding_agent_account_manager/releases/download/v0.1.23-herdr.3/caam_0.1.23-herdr.3_linux_amd64.tar.gz"
+    sha256: "4ea3730438b1e6568d0de81929e2b2ca55edbef32cf5383e891f94c32f5c8fd7"
+
+  caam_archive_linux_arm64:
+    url: "https://github.com/arosl/coding_agent_account_manager/releases/download/v0.1.23-herdr.3/caam_0.1.23-herdr.3_linux_arm64.tar.gz"
+    sha256: "fd09bf8b0aa29e0bb5d32e450a8bd5f74e41355f18c4b53ff8a0f96190c4f770"
 
   casr:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/cross_agent_session_resumer/main/install.sh"

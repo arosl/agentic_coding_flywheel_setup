@@ -1736,10 +1736,18 @@ _setup_stack_agent_mail_gate_fixture() {
     UPDATE_HELD_TOOLS=()
     UPDATE_MINISIGN_STATUS=""
 
-    declare -gA KNOWN_INSTALLERS=([mcp_agent_mail]="https://example.test/install-am.sh")
+    declare -gA KNOWN_INSTALLERS=(
+        [mcp_agent_mail]="https://example.test/install-am.sh"
+        [caam]="https://example.test/v0.1.23-herdr.3/install.sh"
+    )
 
     update_require_security() { return 0; }
     get_checksum() { printf '%s\n' "abc123"; }
+    # caam is the arosl fork's release, pinned by archive (acfs-7mu.3).
+    acfs_release_archive_pins() {
+        [[ "${1:-}" == "caam" ]] || return 1
+        printf 'linux-amd64=%064d linux-arm64=%064d\n' 1 2
+    }
     verify_checksum() {
         : > "$HOME/mcp-agent-mail-downloaded"
         printf '%s\n' '#!/usr/bin/env bash'
@@ -1764,7 +1772,7 @@ _setup_stack_agent_mail_gate_fixture() {
     update_run_verified_installer() {
         case "${1:-}" in
             apr) : > "$HOME/apr-ran" ;;
-            caam) : > "$HOME/caam-ran" ;;
+            caam) printf '%s\n' "$*" > "$HOME/caam-ran" ;;
         esac
         return 0
     }
@@ -1807,7 +1815,7 @@ _setup_stack_agent_mail_gate_fixture() {
     [[ "${UPDATE_HELD_TOOLS[*]}" == "mcp_agent_mail" ]]
 }
 
-@test "update_stack fails MCP Agent Mail and CAAM loudly when minisign is missing and cannot be installed (#375)" {
+@test "update_stack fails MCP Agent Mail loudly when minisign is missing and cannot be installed; CAAM still updates (#375, acfs-7mu.3)" {
     _setup_stack_agent_mail_gate_fixture
     update_tool_hold_details() { UPDATE_LAST_HOLD_DETAILS=""; UPDATE_LAST_HOLD_TOOL=""; return 1; }
     update_system_binary_path() { return 1; }
@@ -1816,13 +1824,42 @@ _setup_stack_agent_mail_gate_fixture() {
     run update_stack
     assert_success
     assert_output --partial "[fail] MCP Agent Mail"
-    assert_output --partial "[fail] CAAM"
     assert_output --partial "minisign is required to verify release signatures but is not installed"
     assert_output --partial "install -y minisign"
     [[ ! -f "$HOME/mcp-agent-mail-downloaded" ]]
     [[ ! -f "$HOME/mcp-agent-mail-installer-ran" ]]
-    [[ ! -f "$HOME/caam-ran" ]]
     [[ -f "$HOME/apr-ran" ]]
+    # The arosl caam fork's installer needs ACFS's archive pins, not
+    # minisign (acfs-7mu.3), so CAAM still updates.
+    [[ "$output" != *"[fail] CAAM"* ]]
+    [[ -f "$HOME/caam-ran" ]]
+}
+
+@test "update_caam runs the pinned fork release with its archive pins (acfs-7mu.3)" {
+    _setup_stack_agent_mail_gate_fixture
+
+    update_caam > "$HOME/caam.out" 2>&1
+    run cat "$HOME/caam-ran"
+    assert_output "caam --version=v0.1.23-herdr.3 --archive-sha256 linux-amd64=$(printf '%064d' 1) --archive-sha256 linux-arm64=$(printf '%064d' 2)"
+}
+
+@test "update_caam never installs an unpinned caam (acfs-7mu.3)" {
+    _setup_stack_agent_mail_gate_fixture
+
+    # No archive pins in checksums.yaml: CAAM fails and the installer never runs.
+    acfs_release_archive_pins() { return 1; }
+    run update_caam
+    assert_success
+    assert_output --partial "[fail] CAAM"
+    assert_output --partial "no pinned caam archives in checksums.yaml"
+    [[ ! -f "$HOME/caam-ran" ]]
+
+    # An installer URL without a release tag pins no version.
+    acfs_release_archive_pins() { printf 'linux-amd64=%064d\n' 1; }
+    KNOWN_INSTALLERS[caam]="https://example.test/main/install.sh"
+    run update_caam
+    assert_output --partial "no pinned caam release in security.sh's KNOWN_INSTALLERS"
+    [[ ! -f "$HOME/caam-ran" ]]
 }
 
 @test "update_stack installs minisign through the package manager before the Agent Mail installer runs (#375)" {

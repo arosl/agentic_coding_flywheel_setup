@@ -4066,7 +4066,8 @@ update_sync_known_installer_urls_from_checksums() {
 
 update_required_checksum_tools() {
     printf '%s\n' \
-        antigravity apr asb atuin br brenner_bot bun bv caam casr cass claude cm csctf dcg dsr \
+        antigravity apr asb atuin br brenner_bot bun bv caam caam_archive_linux_amd64 \
+        caam_archive_linux_arm64 casr cass claude cm csctf dcg dsr \
         ee fmd fsfs gemini_patch giil grok herdr jfp mcp_agent_mail mdwb ms nhm \
         nhm_archive_linux_amd64 nhm_archive_linux_arm64 nvm ohmyzsh omp opencode \
         pcr pfr pi pt rano rch ru rust s2p sbh slb srps tru ubs uv xf zoxide
@@ -4862,8 +4863,9 @@ update_note_held_tool() {
 # ============================================================
 # minisign prerequisite (issue #375)
 # ============================================================
-# The mcp_agent_mail (>= 0.3.31) and caam (>= 0.1.18) installers verify
-# release signatures with minisign and fail closed without it. Fresh installs
+# The mcp_agent_mail (>= 0.3.31) installer verifies release signatures with
+# minisign and fails closed without it. (caam's did too; the arosl fork's
+# installer checks ACFS's archive pins instead: update_caam.) Fresh installs
 # provision it in the base phase; hosts installed before that get it here,
 # before any installer that needs it runs, so the nightly never fails on a
 # silent missing prerequisite.
@@ -4904,7 +4906,7 @@ update_ensure_minisign() {
     fi
 
     if [[ "$DRY_RUN" == "true" ]]; then
-        log_item "skip" "minisign" "dry-run: would install (required by the MCP Agent Mail and CAAM installers)"
+        log_item "skip" "minisign" "dry-run: would install (required by the MCP Agent Mail installer)"
         UPDATE_MINISIGN_STATUS="missing"
         return 1
     fi
@@ -7732,6 +7734,39 @@ update_agent_mail_stop_hook() {
     return 0
 }
 
+# The caam release ACFS pins, the arosl fork's (acfs-7mu.3): the tag in the
+# installer URL of KNOWN_INSTALLERS (scripts/lib/security.sh), which
+# checksums.yaml pins with each Linux archive, and acfs.manifest.yaml's
+# stack.caam names too. Fork tags carry a suffix (v0.1.23-herdr.3).
+update_caam_pinned_version() {
+    local url="${KNOWN_INSTALLERS[caam]:-}"
+    [[ "$url" =~ /(v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?)/install\.sh$ ]] || return 1
+    printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+# A fork release has only a cosign signature, and Ubuntu 24.04 packages no
+# cosign, so caam's installer checks the archive against ACFS's pin first,
+# as nhm's does; minisign is not involved. A missing or malformed pin fails
+# the step: never install unpinned.
+update_caam() {
+    local version="" pins="" pin=""
+    local -a pin_args=()
+
+    if ! update_require_security || ! version="$(update_caam_pinned_version)"; then
+        log_item "fail" "CAAM" "no pinned caam release in security.sh's KNOWN_INSTALLERS"
+        return 0
+    fi
+    if ! pins="$(acfs_release_archive_pins caam)"; then
+        log_item "fail" "CAAM" "no pinned caam archives in checksums.yaml"
+        return 0
+    fi
+    for pin in $pins; do
+        pin_args+=(--archive-sha256 "$pin")
+    done
+    # run_cmd reports a failure itself; a held CAAM skips in the shared path.
+    run_cmd "CAAM" update_run_verified_installer caam "--version=$version" "${pin_args[@]}"
+}
+
 # The nhm release ACFS pins: the tag in the installer URL of
 # KNOWN_INSTALLERS (scripts/lib/security.sh), which checksums.yaml pins
 # and acfs.manifest.yaml's stack.nhm names too.
@@ -8077,8 +8112,8 @@ update_stack() {
     update_nhm
     update_herdr_palette_key
 
-    # minisign (issue #375): the MCP Agent Mail and CAAM installers fail
-    # closed without it, so provision it once here, before either runs.
+    # minisign (issue #375): the MCP Agent Mail installer fails closed
+    # without it, so provision it once here, before it runs.
     local minisign_ready=true
     update_ensure_minisign || minisign_ready=false
 
@@ -8230,14 +8265,9 @@ update_stack() {
     # unless the CLI is still present and versionable afterward.
     update_run_verified_installer_or_existing_on_transient "CASS Memory" cm cm cm --easy-mode --verify || true
 
-    # CAAM - always install/update. Releases >= 0.1.18 are minisign-signed and
-    # the installer fails closed without minisign (#375); a held CAAM still
-    # skips through the shared path regardless.
-    if [[ "$minisign_ready" == "true" || "$DRY_RUN" == "true" ]] || update_tool_hold_details caam; then
-        run_cmd "CAAM" update_run_verified_installer caam
-    else
-        log_item "fail" "CAAM" "$(update_minisign_missing_details)"
-    fi
+    # CAAM - always install/update: the arosl fork's pinned release, whose
+    # installer needs ACFS's archive pins, not minisign (update_caam).
+    update_caam
 
     # SLB - install when absent; refresh only ACFS-managed binaries (#329).
     # An operator-audited/pinned binary is preserved unless ACFS_FORCE_SLB_UPDATE=1.

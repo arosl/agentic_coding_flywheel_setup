@@ -125,7 +125,7 @@ agent_mail|am|--version|verified_installer|https://github.com/Dicklesworthstone/
 ubs|ubs|--version|verified_installer|https://github.com/Dicklesworthstone/ultimate_bug_scanner|ubs|
 cass|cass|--version|verified_installer|https://github.com/Dicklesworthstone/coding_agent_session_search|cass|
 cm|cm|--version|verified_installer|https://github.com/Dicklesworthstone/cass_memory_system|cm|
-caam|caam|--version|verified_installer|https://github.com/Dicklesworthstone/coding_agent_account_manager|caam|
+caam|caam|--version|verified_installer|https://github.com/arosl/coding_agent_account_manager|caam|
 dcg|dcg|--version|verified_installer|https://github.com/arosl/destructive_command_guard|dcg|
 slb|slb|--version|verified_installer|https://github.com/Dicklesworthstone/simultaneous_launch_button|slb|
 ru|ru|--version|verified_installer|https://github.com/Dicklesworthstone/repo_updater|ru|

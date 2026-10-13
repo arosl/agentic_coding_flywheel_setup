@@ -2304,6 +2304,24 @@ acfs_generated_install_stack_caam() {
                         ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"
                         expected_sha256=""
                     fi
+                    local -a verified_installer_checksum_args=()
+                    local verified_installer_pin=""
+                    verified_installer_pin="$(get_checksum 'caam_archive_linux_amd64')"
+                    if [[ "$verified_installer_pin" =~ ^[0-9a-f]{64}$ ]]; then
+                        verified_installer_checksum_args+=('--archive-sha256' 'linux-amd64='"$verified_installer_pin")
+                    else
+                        log_error "stack.caam: checksums.yaml has no valid pin 'caam_archive_linux_amd64'"
+                        ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"
+                        expected_sha256=""
+                    fi
+                    verified_installer_pin="$(get_checksum 'caam_archive_linux_arm64')"
+                    if [[ "$verified_installer_pin" =~ ^[0-9a-f]{64}$ ]]; then
+                        verified_installer_checksum_args+=('--archive-sha256' 'linux-arm64='"$verified_installer_pin")
+                    else
+                        log_error "stack.caam: checksums.yaml has no valid pin 'caam_archive_linux_arm64'"
+                        ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"
+                        expected_sha256=""
+                    fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
                         if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
@@ -2319,7 +2337,7 @@ acfs_generated_install_stack_caam() {
                         elif ! "$verified_installer_chmod_bin" 0444 "$verified_installer_file"; then
                             log_error "stack.caam: failed to make verified installer staging file read-only"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
-                        elif run_as_target_runner 'bash' "$verified_installer_file"; then
+                        elif run_as_target_runner 'bash' "$verified_installer_file" '--version=v0.1.23-herdr.3' "${verified_installer_checksum_args[@]}"; then
                             install_success=true
                         else
                             log_error "stack.caam: verified installer execution failed"

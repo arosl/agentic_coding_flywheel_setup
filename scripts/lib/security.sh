@@ -563,7 +563,7 @@ declare -gA KNOWN_INSTALLERS=(
     [bv]="https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh"
     [cass]="https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_session_search/main/install.sh"
     [cm]="https://raw.githubusercontent.com/Dicklesworthstone/cass_memory_system/main/install.sh"
-    [caam]="https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_account_manager/main/install.sh"
+    [caam]="https://raw.githubusercontent.com/arosl/coding_agent_account_manager/v0.1.23-herdr.3/install.sh"
     [slb]="https://raw.githubusercontent.com/Dicklesworthstone/simultaneous_launch_button/main/scripts/install.sh"
     [dcg]="https://raw.githubusercontent.com/arosl/destructive_command_guard/main/install.sh"
     [ru]="https://raw.githubusercontent.com/arosl/repo_updater/v1.5.0-nhm.1/install.sh"
@@ -601,11 +601,15 @@ declare -gA KNOWN_INSTALLERS=(
 # refresh and --verify fetch each archive under ACFS_RELEASE_ARCHIVE_MAX_BYTES
 # and check it against the SHA256SUMS beside it in the release. A key is
 # <tool>_archive_<os>_<arch>; acfs_release_archive_pins turns a tool's keys
-# into <os>-<arch>=<sha256> pins. nhm: the tag is the one in
-# KNOWN_INSTALLERS[nhm].
+# into <os>-<arch>=<sha256> pins. nhm and caam: the tag is the one in
+# KNOWN_INSTALLERS[nhm] and KNOWN_INSTALLERS[caam]. A caam fork release has
+# only a cosign signature, and Ubuntu 24.04 packages no cosign, so caam's
+# archive pins stand in for it there (acfs-7mu.3).
 declare -gA KNOWN_RELEASE_ARCHIVES=(
     [nhm_archive_linux_amd64]="https://github.com/arosl/nhm/releases/download/v0.1.6/nhm-0.1.6-linux-amd64.tar.zst"
     [nhm_archive_linux_arm64]="https://github.com/arosl/nhm/releases/download/v0.1.6/nhm-0.1.6-linux-arm64.tar.zst"
+    [caam_archive_linux_amd64]="https://github.com/arosl/coding_agent_account_manager/releases/download/v0.1.23-herdr.3/caam_0.1.23-herdr.3_linux_amd64.tar.gz"
+    [caam_archive_linux_arm64]="https://github.com/arosl/coding_agent_account_manager/releases/download/v0.1.23-herdr.3/caam_0.1.23-herdr.3_linux_arm64.tar.gz"
 )
 declare -g ACFS_RELEASE_ARCHIVE_MAX_BYTES=67108864
 declare -g ACFS_RELEASE_ARCHIVE_SUMS_MAX_BYTES=1048576
