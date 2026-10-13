@@ -566,6 +566,95 @@ check "learning-profile: the default file is XDG_CONFIG_HOME's" \
     bash -c 'XDG_CONFIG_HOME="$2/xdg" bash "$1" learning-profile set 2>/dev/null && [[ -f "$2/xdg/nhm/config.toml" ]]' _ "$HOOKS" "$LP"
 unset -f lp toml_value all_crlf
 
+# ------------------------------------------------------------
+# statusline claude (acfs-5917): Claude Code's statusLine runs
+# nhm quota record-claude, so nhm knows Claude's windows
+# ------------------------------------------------------------
+SL="$WORK/statusline"
+mkdir -p "$SL"
+NHM_LINE="$HOME/.local/bin/nhm quota record-claude"
+sl() { bash "$HOOKS" statusline claude "$@"; }
+# sl_rc EXPECTED ARGS...: the exit code of statusline claude ARGS is EXPECTED.
+sl_rc() { local want="$1" rc=0; shift; sl "$@" >/dev/null 2>&1 || rc=$?; [[ "$rc" -eq "$want" ]]; }
+
+printf '{"model": "opus", "hooks": {"Stop": []}}\n' >"$SL/none.json"
+chmod 0600 "$SL/none.json"
+check "statusline: none set is check 1" sl_rc 1 check "$SL/none.json"
+check "statusline: check prints none" test "$(sl check "$SL/none.json" 2>/dev/null)" = none
+sl set "$SL/none.json" 2>/dev/null
+check "statusline: set writes nhm's command line" \
+    jq_ok --arg c "$NHM_LINE" '.statusLine == {type: "command", command: $c}' "$SL/none.json"
+check "statusline: other settings kept" jq_true '.model == "opus" and (.hooks.Stop | length) == 0' "$SL/none.json"
+check "statusline: the file's mode is kept" test "$(stat -c %a "$SL/none.json")" = 600
+check "statusline: check is 0 after set" sl_rc 0 check "$SL/none.json"
+cp "$SL/none.json" "$SL/none.once"
+sl set "$SL/none.json" 2>/dev/null
+check "statusline: a second set changes nothing" cmp -s "$SL/none.json" "$SL/none.once"
+
+printf '{"statusLine": {"type": "command", "command": "bash /home/u/.acfs/scripts/lib/agent_quota.sh record-claude", "padding": 0}}\n' >"$SL/old.json"
+check "statusline: ACFS's agent_quota.sh line is acfs-quota, check 1" \
+    bash -c '[[ "$(bash "$1" statusline claude check "$2" 2>/dev/null)" == acfs-quota ]]' _ "$HOOKS" "$SL/old.json"
+sl set "$SL/old.json" 2>/dev/null
+check "statusline: set replaces ACFS's old line and keeps its padding" \
+    jq_ok --arg c "$NHM_LINE" '.statusLine == {type: "command", command: $c, padding: 0}' "$SL/old.json"
+
+printf '{"statusLine": {"type": "command", "command": "~/bin/my-status --short"}}\n' >"$SL/user.json"
+cp "$SL/user.json" "$SL/user.orig"
+check "statusline: the user's own line is check 3" sl_rc 3 check "$SL/user.json"
+check "statusline: set leaves the user's own line (exit 3)" sl_rc 3 set "$SL/user.json"
+check "statusline: the user's file is unchanged" cmp -s "$SL/user.json" "$SL/user.orig"
+check "statusline: remove leaves the user's own line" \
+    bash -c 'bash "$1" statusline claude remove "$2" 2>/dev/null && cmp -s "$2" "$3"' _ "$HOOKS" "$SL/user.json" "$SL/user.orig"
+printf '{"statusLine": {"type": "static", "text": "x"}}\n' >"$SL/static.json"
+check "statusline: a statusLine of another type is the user's" sl_rc 3 check "$SL/static.json"
+
+printf '{"statusLine": {"type": "command", "command": "nhm quota record-claude"}}\n' >"$SL/bare.json"
+cp "$SL/bare.json" "$SL/bare.orig"
+check "statusline: the bare nhm command counts as nhm's" sl_rc 0 check "$SL/bare.json"
+sl set "$SL/bare.json" 2>/dev/null
+check "statusline: set keeps the bare nhm command" cmp -s "$SL/bare.json" "$SL/bare.orig"
+
+sl remove "$SL/none.json" 2>/dev/null
+check "statusline: remove deletes nhm's line and nothing else" \
+    jq_true '(has("statusLine") | not) and .model == "opus"' "$SL/none.json"
+printf '{"statusLine": {"type": "command", "command": "bash /home/u/.acfs/scripts/lib/agent_quota.sh record-claude"}}\n' >"$SL/old2.json"
+cp "$SL/old2.json" "$SL/old2.orig"
+sl remove "$SL/old2.json" 2>/dev/null
+check "statusline: remove leaves ACFS's old line (only set replaces it)" cmp -s "$SL/old2.json" "$SL/old2.orig"
+
+check "statusline: a missing file is check 1 (none)" sl_rc 1 check "$SL/new/settings.json"
+check "statusline: check does not create the file" test ! -e "$SL/new/settings.json"
+sl set "$SL/new/settings.json" 2>/dev/null
+check "statusline: set creates a 0600 file" test "$(stat -c %a "$SL/new/settings.json")" = 600
+check "statusline: the new file holds nhm's line" \
+    jq_ok --arg c "$NHM_LINE" '.statusLine.command == $c' "$SL/new/settings.json"
+
+printf '{"statusLine": ' >"$SL/broken.json"
+cp "$SL/broken.json" "$SL/broken.orig"
+check "statusline: malformed JSON is check 4" sl_rc 4 check "$SL/broken.json"
+check "statusline: set refuses malformed JSON (exit 4)" sl_rc 4 set "$SL/broken.json"
+check "statusline: the malformed file is unchanged" cmp -s "$SL/broken.json" "$SL/broken.orig"
+printf '[1, 2]\n' >"$SL/array.json"
+check "statusline: a JSON array is not a settings object" sl_rc 4 check "$SL/array.json"
+
+mkdir -p "$SL/dotfiles"
+printf '{}\n' >"$SL/dotfiles/settings.json"
+ln -s "$SL/dotfiles/settings.json" "$SL/linked.json"
+sl set "$SL/linked.json" 2>/dev/null
+check "statusline: a symlinked file stays a symlink" test -L "$SL/linked.json"
+check "statusline: the symlink's target gets nhm's line" sl_rc 0 check "$SL/dotfiles/settings.json"
+
+check "statusline: NHM_BIN_DIR names the nhm in the line" \
+    bash -c 'NHM_BIN_DIR=/opt/nhm/bin bash "$1" statusline claude set "$2" 2>/dev/null &&
+        jq -e ".statusLine.command == \"/opt/nhm/bin/nhm quota record-claude\"" "$2" >/dev/null' _ "$HOOKS" "$SL/bindir.json"
+check "statusline: an unsafe NHM_BIN_DIR is refused and nothing written" \
+    bash -c '! NHM_BIN_DIR="/tmp/a b" bash "$1" statusline claude set "$2" 2>/dev/null && test ! -e "$2"' _ "$HOOKS" "$SL/unsafe.json"
+check "statusline: an unknown action is a usage error" \
+    bash -c 'bash "$1" statusline claude toggle 2>/dev/null; test $? -eq 2' _ "$HOOKS"
+check "statusline: another kind is a usage error" \
+    bash -c 'bash "$1" statusline codex check 2>/dev/null; test $? -eq 2' _ "$HOOKS"
+unset -f sl sl_rc
+
 echo
 echo "nhm_hooks: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

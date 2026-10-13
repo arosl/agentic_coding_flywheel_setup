@@ -3292,6 +3292,38 @@ check_nhm_plugin() {
     esac
 }
 
+# Claude's quota for nhm (acfs-5917): nhm learns Claude's five-hour and
+# weekly windows only from Claude Code's statusLine, so `nhm add` can refuse
+# a full Claude plan only when the statusLine runs `nhm quota
+# record-claude`. Read-only (nhm_hooks.sh statusline claude check).
+check_nhm_quota_statusline() {
+    local label="Claude quota statusLine" home="" helper="" settings="" nhm_bin="" rc=0
+
+    if ! doctor_binary_exists "nhm" || ! doctor_binary_exists "claude"; then
+        check "agent.quota_statusline" "$label" "skip" "nhm or Claude Code not installed"
+        return
+    fi
+    home="$(doctor_runtime_home)"
+    helper="$home/.acfs/scripts/lib/nhm_hooks.sh"
+    settings="$home/.claude/settings.json"
+    nhm_bin="${NHM_BIN_DIR:-$home/.local/bin}/nhm"
+    if [[ ! -r "$helper" ]]; then
+        check "agent.quota_statusline" "$label" "warn" "nhm_hooks.sh is not installed" "Run: acfs update"
+        return
+    fi
+    HOME="$home" bash "$helper" statusline claude check "$settings" </dev/null >/dev/null 2>&1 || rc=$?
+    case "$rc" in
+        0) check "agent.quota_statusline" "$label" "pass" "Claude Code's statusLine records Claude's windows for nhm" ;;
+        3) check "agent.quota_statusline" "$label" "warn" \
+            "Claude Code's statusLine is your own, so nhm doesn't know Claude's windows and never refuses a full plan" \
+            "Feed both from one statusLine: sh -c 'i=\$(cat); printf %s \"\$i\" | $nhm_bin quota record-claude >/dev/null; printf %s \"\$i\" | <your command>'" ;;
+        4) check "agent.quota_statusline" "$label" "warn" "$settings is not a settings object" "Check: jq . $settings" ;;
+        *) check "agent.quota_statusline" "$label" "warn" \
+            "Claude Code's statusLine does not run nhm quota record-claude, so nhm doesn't know Claude's windows" \
+            "Run: bash $helper statusline claude set (or acfs update)" ;;
+    esac
+}
+
 _acfs_doctor_join_by() {
     local separator="$1"
     local joined="${2:-}"
@@ -3893,6 +3925,7 @@ check_stack() {
     check_nhm
     check_nhm_maintain
     check_nhm_plugin
+    check_nhm_quota_statusline
 
     # Check acfs-nightly-update timer (systemd user unit)
     # Gracefully handle missing systemd user session (curl|bash installs as

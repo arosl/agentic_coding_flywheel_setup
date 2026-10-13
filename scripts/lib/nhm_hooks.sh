@@ -68,6 +68,15 @@ Usage:
                                              (bind nothing); status prints
                                              no-plugin, unlinked, linked,
                                              bound or opted-out
+  nhm_hooks.sh statusline claude check|set|remove [FILE]
+                                             Claude Code's statusLine runs
+                                             nhm quota record-claude (default
+                                             ~/.claude/settings.json); check
+                                             prints nhm, acfs-quota, none or
+                                             user: 0 nhm, 1 set fixes it, 3
+                                             the user's own (set leaves it),
+                                             4 not a settings object; remove:
+                                             only nhm's line
   nhm_hooks.sh register claude|codex [FILE]  Add the nhm-hook lines to FILE
                                              (default ~/.claude/settings.json
                                              or ~/.codex/hooks.json)
@@ -1037,6 +1046,103 @@ nhm_hooks_plugin() {
     return 0
 }
 
+# Claude Code's statusLine (acfs-5917). nhm learns Claude's five-hour and
+# weekly windows only from the rate_limits that Claude Code hands its
+# statusLine command, and `nhm add` refuses a kind at 90 % of a window. So
+# the statusLine runs `nhm quota record-claude`, which saves the windows
+# and prints a short status line. ACFS sets it when none is set, and in
+# place of ACFS's older line (agent_quota.sh record-claude); a statusLine
+# of the user's stays as it is, and the doctor shows how to chain both.
+nhm_hooks_statusline_command() {
+    printf '%s/nhm quota record-claude' "${NHM_BIN_DIR:-$HOME/.local/bin}"
+}
+
+# The state of the settings JSON on stdin: nhm (nhm's line, at a path ACFS
+# writes, or bare), acfs-quota (ACFS's older agent_quota.sh line), none, or
+# user (anything else). Fails on what is not a settings object.
+nhm_hooks_statusline_state() {
+    jq -r --arg ours "$(nhm_hooks_statusline_command)" \
+        --arg home_ours "$HOME/.local/bin/nhm quota record-claude" '
+        (.statusLine // null) as $s
+        | (if ($s | type) == "object" then ($s.command // "") else "" end) as $c
+        | if $s == null then "none"
+          elif ($s | type) != "object" or ($s.type // "") != "command" then "user"
+          elif $c == $ours or $c == $home_ours or $c == "nhm quota record-claude" then "nhm"
+          elif ($c | type) == "string" and ($c | test("^bash [^ ]*/scripts/lib/agent_quota\\.sh record-claude$")) then "acfs-quota"
+          else "user" end
+    ' 2>/dev/null
+}
+
+# statusline claude check|set|remove [FILE] (default ~/.claude/settings.json).
+# check prints the state; exit 0 nhm, 1 none or acfs-quota (set fixes it),
+# 3 the user's own. set writes nhm's line for none and acfs-quota, keeping
+# the statusLine's other keys; it leaves the user's own (exit 3). remove
+# deletes nhm's line only. A file that is not a settings object: exit 4,
+# unchanged.
+nhm_hooks_statusline() {
+    local kind="${1:-}" action="${2:-}" file="${3:-}"
+    local target="" current="" updated="" state="" cmd=""
+
+    [[ "$kind" == claude ]] || { nhm_hooks_usage >&2; return 2; }
+    case "$action" in check|set|remove) ;; *) nhm_hooks_usage >&2; return 2 ;; esac
+    [[ -n "$file" ]] || file="$HOME/.claude/settings.json"
+    command -v jq >/dev/null 2>&1 || { nhm_hooks_note "jq not found"; return 1; }
+    # Claude Code runs the command through a shell: keep the path free of
+    # anything it would interpret.
+    cmd="$(nhm_hooks_statusline_command)"
+    if [[ ! "${cmd% quota record-claude}" =~ ^/[A-Za-z0-9._/+-]+$ ]]; then
+        nhm_hooks_note "refusing the statusLine: unsafe path ${cmd% quota record-claude}"
+        return 1
+    fi
+
+    # A dotfiles symlink is edited where it points, not replaced.
+    target="$file"
+    if [[ -L "$file" ]]; then
+        target="$(readlink -f -- "$file")" || { nhm_hooks_note "cannot resolve $file"; return 1; }
+    fi
+    if [[ -e "$target" ]]; then
+        [[ -f "$target" ]] || { nhm_hooks_note "$target is not a regular file"; return 1; }
+        current="$(cat -- "$target")" || return 1
+    fi
+    [[ -n "${current//[[:space:]]/}" ]] || current='{}'
+    if ! state="$(nhm_hooks_statusline_state <<<"$current")" || [[ -z "$state" ]]; then
+        nhm_hooks_note "left $file unchanged: it is not a settings object jq can read (see: jq . $file)"
+        return 4
+    fi
+
+    case "$action" in
+        check)
+            printf '%s\n' "$state"
+            case "$state" in
+                nhm) return 0 ;;
+                user) return 3 ;;
+                *) return 1 ;;
+            esac
+            ;;
+        set)
+            case "$state" in
+                nhm) nhm_hooks_note "$file already records Claude's windows for nhm"; return 0 ;;
+                user) nhm_hooks_note "left your statusLine in $file as it is; acfs doctor shows how to chain nhm's"; return 3 ;;
+            esac
+            updated="$(jq --arg cmd "$cmd" \
+                '.statusLine = ((if (.statusLine | type) == "object" then .statusLine else {} end) + {type: "command", command: $cmd})' \
+                <<<"$current" 2>/dev/null)" || { nhm_hooks_note "left $file unchanged"; return 1; }
+            ;;
+        remove)
+            [[ "$state" == nhm ]] || return 0
+            updated="$(jq 'del(.statusLine)' <<<"$current" 2>/dev/null)" || { nhm_hooks_note "left $file unchanged"; return 1; }
+            ;;
+    esac
+
+    mkdir -p -- "$(dirname -- "$target")" || return 1
+    nhm_hooks_write "$target" "$updated" || return 1
+    case "$action:$state" in
+        set:acfs-quota) nhm_hooks_note "Claude Code's statusLine in $file now runs '$cmd' (in place of ACFS's agent_quota.sh line)" ;;
+        set:*) nhm_hooks_note "Claude Code's statusLine in $file now runs '$cmd'" ;;
+        remove:*) nhm_hooks_note "removed nhm's statusLine from $file" ;;
+    esac
+}
+
 nhm_hooks_main() {
     local subcommand="${1:-}"
     [[ $# -eq 0 ]] || shift
@@ -1049,6 +1155,7 @@ nhm_hooks_main() {
         codex-dcg) nhm_hooks_codex_dcg "$@" ;;
         learning-profile) nhm_hooks_learning_profile "$@" ;;
         plugin) nhm_hooks_plugin "$@" ;;
+        statusline) nhm_hooks_statusline "$@" ;;
         -h|--help|help) nhm_hooks_usage ;;
         *) nhm_hooks_usage >&2; return 2 ;;
     esac

@@ -67,8 +67,14 @@ run_update() {
         chmod 0755 "$FIX_HOME/.local/bin/nhm-hook"
     fi
     printf '{\n  "model": "opus",\n  "hooks": {}\n}\n' > "$FIX_HOME/.claude/settings.json"
+    # STATUSLINE: a statusLine command already in Claude Code's settings.
+    if [[ -n "${STATUSLINE:-}" ]]; then
+        jq --arg c "$STATUSLINE" '.statusLine = {type: "command", command: $c}' "$FIX_HOME/.claude/settings.json" \
+            > "$FIX_HOME/.claude/settings.tmp" && mv "$FIX_HOME/.claude/settings.tmp" "$FIX_HOME/.claude/settings.json"
+    fi
     if [[ -n "${PRESEED:-}" ]]; then
         HOME="$FIX_HOME" env -u NHM_BIN_DIR bash "$REPO_ROOT/scripts/lib/nhm_hooks.sh" register claude "$FIX_HOME/.claude/settings.json" 2>/dev/null
+        HOME="$FIX_HOME" env -u NHM_BIN_DIR bash "$REPO_ROOT/scripts/lib/nhm_hooks.sh" statusline claude set "$FIX_HOME/.claude/settings.json" 2>/dev/null
         HOME="$FIX_HOME" env -u NHM_BIN_DIR bash "$REPO_ROOT/scripts/lib/nhm_hooks.sh" register codex "$FIX_HOME/.codex/hooks.json" 2>/dev/null
     fi
     if [[ -n "${DCG:-}" ]]; then
@@ -234,10 +240,27 @@ check "hooks: and removes ACFS's Claude Code lines" bash -c '! grep -q nhm-hook 
 check "hooks: and ACFS's Codex lines" bash -c '! grep -q nhm-hook "$1"' _ "$FIX_HOME/.codex/hooks.json"
 check "hooks: and keeps the other settings" grep -q '"model": "opus"' "$FIX_HOME/.claude/settings.json"
 
+check "hooks: and nhm's statusLine with them (acfs-5917)" \
+    jq -e 'has("statusLine") | not' "$FIX_HOME/.claude/settings.json"
+
 PRESEED=1 NO_HOOK_BIN=1 run_update update_nhm_hooks claude codex
 check "hooks: nhm uninstalled skips" has "ITEM skip|nhm hook lines|nhm is not installed"
 check "hooks: and still removes the lines" bash -c '! grep -q nhm-hook "$1" && ! grep -q nhm-hook "$2"' _ \
     "$FIX_HOME/.claude/settings.json" "$FIX_HOME/.codex/hooks.json"
+
+# acfs-5917: Claude Code's statusLine runs nhm quota record-claude, the
+# only way nhm learns Claude's windows.
+statusline_is() { jq -e --arg c "$1" '.statusLine.command == $c' "$FIX_HOME/.claude/settings.json" >/dev/null; }
+run_update update_nhm_hooks nhm claude
+check "statusLine: set to nhm's command" statusline_is "$FIX_HOME/.local/bin/nhm quota record-claude"
+check "statusLine: reported" has "ITEM ok|Claude statusLine|records Claude's windows for nhm's quota"
+STATUSLINE='bash /home/u/.acfs/scripts/lib/agent_quota.sh record-claude' run_update update_nhm_hooks nhm claude
+check "statusLine: ACFS's agent_quota.sh line is replaced" statusline_is "$FIX_HOME/.local/bin/nhm quota record-claude"
+STATUSLINE='/usr/local/bin/my-status' run_update update_nhm_hooks nhm claude
+check "statusLine: the user's own is kept" statusline_is '/usr/local/bin/my-status'
+check "statusLine: and reported as kept" has "ITEM skip|Claude statusLine|your own statusLine is kept"
+run_update update_nhm_hooks nhm codex
+check "statusLine: no Claude Code, no statusLine step" lacks "Claude statusLine"
 
 BIN_DIR=alt NO_HOOK_BIN=1 run_update update_nhm_hooks nhm claude
 check "hooks: nhm-hook under NHM_BIN_DIR counts" has "ITEM ok|nhm hook lines|registered for claude"

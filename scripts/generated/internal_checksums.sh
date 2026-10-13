@@ -10,15 +10,15 @@
 ACFS_INTERNAL_CHECKSUMS_SCHEMA=1
 
 declare -gA ACFS_INTERNAL_CHECKSUMS=(
-  [install.sh]="2f17d10f486cd6f896bb2666452054c1a563a6eddccc5adc93e245280bd6b14b"
+  [install.sh]="ab3f516e9567e7437d5a1afa69ce121b56e88d9e273c48bf9005d5145628b985"
   [checksums.yaml]="d555fa8bd3ae788790b3a3bea32e8670f112b6f75a00fe90d2ec09ca4bfdcb0b"
   [scripts/preflight.sh]="f8b5829f2be4cbe08b6d33316fa07fe1b5a951b570819e38a1cb6ffe283d5902"
   [scripts/lib/security.sh]="9e48d7c74f83d5f0a2564ae58d8ba1a704719d2f776892dc455ee4e04639bb06"
   [scripts/lib/holds.sh]="7aca60222e56ce4034739b92ed3332c7118d918526d60ce189f59c595a930015"
   [scripts/lib/github_api.sh]="80699922df2e924694f5682457e614dedf9181d7c071472cc8a6db4f17373d3d"
   [scripts/lib/contract.sh]="22c148f44ddbaccd559196196ef903f26f65fc77e3b1b6b4efc62b77d3b97aa3"
-  [scripts/lib/update.sh]="44b5c62704cf5a5d6773c3e791c982f5982eed678407cb9faf0b186101c7f356"
-  [scripts/lib/doctor.sh]="5741a24c4e9b44cc1aa4f7811a8e95bcbcc8ed7980ffec2244e9f990ce89d430"
+  [scripts/lib/update.sh]="10fb9fb7882691ab05db2cef8256b425a5dc461d7e22b03a5a3fec444c499355"
+  [scripts/lib/doctor.sh]="0d9d5615435209182473a8aa2e9c5c3242945f7b960b87a58b17b66cf47fcd54"
   [scripts/lib/acfs-services.sh]="75a8bff497a9982859f0b67726e644fba0ac01863bbcb77561853eb250dcae57"
   [scripts/lib/doctor_fix.sh]="ea1f13be46bf9f3df0630362b6027f12aca271e8df4eeddcd8d36f1019615b2c"
   [scripts/lib/offline_artifact_pack.sh]="123d0bffad48fdc501f456e2cf06907d4ad66821492b8d112327c66269efd38d"
@@ -64,7 +64,7 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/completions/acfs.bash]="73820478d589fd890715eb71864353ae09c3ad19d549363fa72c335a170e63ff"
   [scripts/generate-root-agents-md.sh]="725a036f9a0695bb3423c1f54030f626f7c6b43c0f73233ff87ca604960de356"
   [scripts/lib/agent_mail_hook.sh]="bf45ae55002af558862d56b95061b52ceb88b15a7f3783ce4bfcca8463461c13"
-  [scripts/lib/nhm_hooks.sh]="cdfce50747dfabd4937509cd62a159e1e49577739f34113472fedaa117ce64ef"
+  [scripts/lib/nhm_hooks.sh]="536af1156ad4de5cd2d9d437b91f645f45a356e51c7442d7833be4d6c05d260b"
   [scripts/lib/nhm_maintain_timer.sh]="e2cf3c244ab2fa4d38c4cd5de532a4605aa4db83d8040c13c42d0864de3bde21"
   [scripts/lib/agent_quota.sh]="0fabea807e89bc5e5f74de125202b7a046b6f6018cd16e2f3494d389ad97fd00"
   [scripts/lib/agy_e2e_harness.sh]="99c2cd036ba51f2c109327438afc25fd47b29f0f49ec3b1e3ae7d1ab88990222"

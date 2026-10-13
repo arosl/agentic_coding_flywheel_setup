@@ -7831,10 +7831,15 @@ update_nhm() {
 # installed agent CLIs, and record Codex's trust for ACFS's own entries
 # through Codex's app-server (F.25). Idempotent; appends only. When
 # nhm-hook is gone, it removes the lines ACFS wrote instead.
+# Claude Code's statusLine goes with them (acfs-5917): it runs `nhm quota
+# record-claude`, the only way nhm learns Claude's windows. It is set when
+# none is set or ACFS's older agent_quota.sh line is (hosts set by hand on
+# 2026-10-11); a statusLine of the user's stays, and acfs doctor shows how
+# to chain nhm's.
 update_nhm_hooks() {
     local desc="nhm hook lines"
     local helper="" target_user="" current_user="" target_home="" agent="" file="" bin_dir=""
-    local registered="" failed="" codex_untrusted=false nhm_installed=true
+    local registered="" failed="" codex_untrusted=false nhm_installed=true statusline_rc=0
 
     [[ "${UPDATE_STACK:-true}" == "true" ]] || return 0
     update_binary_exists nhm || nhm_installed=false
@@ -7879,6 +7884,8 @@ update_nhm_hooks() {
             bash "$helper" unregister "$agent" "$file" </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1 \
                 || failed+="${failed:+, }$agent"
         done
+        bash "$helper" statusline claude remove "$target_home/.claude/settings.json" </dev/null \
+            >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1 || failed+="${failed:+, }claude statusLine"
         if [[ "$nhm_installed" == true ]]; then
             log_item "warn" "$desc" "nhm-hook is not installed in $bin_dir; the lines are not registered"
         else
@@ -7919,6 +7926,15 @@ update_nhm_hooks() {
     fi
     if [[ "$codex_untrusted" == true ]]; then
         log_detail "Codex asks to trust the nhm hook lines once: open /hooks in Codex"
+    fi
+    if update_binary_exists claude; then
+        bash "$helper" statusline claude set "$target_home/.claude/settings.json" </dev/null \
+            >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1 || statusline_rc=$?
+        case "$statusline_rc" in
+            0) log_item "ok" "Claude statusLine" "records Claude's windows for nhm's quota" ;;
+            3) log_item "skip" "Claude statusLine" "your own statusLine is kept; acfs doctor shows how to chain nhm's" ;;
+            *) log_item "warn" "Claude statusLine" "could not set it for nhm's quota; see the update log" ;;
+        esac
     fi
     return 0
 }

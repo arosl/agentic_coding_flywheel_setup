@@ -119,6 +119,51 @@ registered() {
     cmp -s "$FIX/.claude/settings.json" "$BATS_TEST_TMPDIR/before.json" || fail "the settings changed"
 }
 
+# acfs-5917: Claude Code's statusLine runs nhm quota record-claude.
+statusline_command() {
+    jq -r '.statusLine.command // empty' "$FIX/.claude/settings.json"
+}
+
+@test "nhm-hook present: Claude Code's statusLine runs nhm quota record-claude" {
+    install_hook_bin
+    run_fn
+    assert_success
+    assert_output --partial "DETAIL Claude Code's statusLine records Claude's windows for nhm"
+    [[ "$(statusline_command)" == "$FIX/.local/bin/nhm quota record-claude" ]] \
+        || fail "statusLine is '$(statusline_command)'"
+    grep -q '"model": "opus"' "$FIX/.claude/settings.json" || fail "other settings were lost"
+}
+
+@test "ACFS's older agent_quota.sh statusLine is replaced by nhm's" {
+    printf '{"statusLine": {"type": "command", "command": "bash %s/.acfs/scripts/lib/agent_quota.sh record-claude"}}\n' "$FIX" \
+        > "$FIX/.claude/settings.json"
+    install_hook_bin
+    run_fn
+    assert_success
+    [[ "$(statusline_command)" == "$FIX/.local/bin/nhm quota record-claude" ]] \
+        || fail "statusLine is '$(statusline_command)'"
+}
+
+@test "a statusLine of the user's stays, and the install says so" {
+    printf '{"statusLine": {"type": "command", "command": "~/bin/my-status"}}\n' > "$FIX/.claude/settings.json"
+    install_hook_bin
+    run_fn
+    assert_success
+    assert_output --partial "DETAIL Claude Code's statusLine is your own"
+    refute_output --partial "WARN"
+    [[ "$(statusline_command)" == "~/bin/my-status" ]] || fail "the user's statusLine changed"
+}
+
+@test "nhm-hook missing: nhm's statusLine an earlier run set is removed" {
+    install_hook_bin
+    run_fn
+    [[ -n "$(statusline_command)" ]] || fail "setup: no statusLine"
+    rm -f "$FIX/.local/bin/nhm-hook"
+    run_fn
+    assert_success
+    jq -e 'has("statusLine") | not' "$FIX/.claude/settings.json" >/dev/null || fail "nhm's statusLine is left"
+}
+
 @test "stack.nhm not selected: nothing is registered" {
     install_hook_bin
     SELECTED=0 run_fn

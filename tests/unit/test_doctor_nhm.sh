@@ -201,6 +201,62 @@ before="$(find "$WORK/home" -type f | sort)"
 run_check both >/dev/null
 check_case "the check writes nothing" test "$(find "$WORK/home" -type f | sort)" = "$before"
 
+# ------------------------------------------------------------
+# agent.quota_statusline (acfs-5917): Claude Code's statusLine runs
+# nhm quota record-claude
+# ------------------------------------------------------------
+# run_sl_check <claude: true|false> <nhm: true|false> prints "id|status|details|fix".
+run_sl_check() {
+    STUB_HOME="$SLHOME" STUB_CLAUDE="$1" STUB_NHM="$2" NHM_BIN_DIR="" \
+    bash -c '
+        set +e
+        # shellcheck disable=SC1090
+        source <(sed "\$d" "$1") >/dev/null 2>&1
+        doctor_runtime_home() { printf "%s\n" "$STUB_HOME"; }
+        doctor_binary_exists() {
+            case "$1" in
+                nhm) [[ "$STUB_NHM" == true ]] ;;
+                claude) [[ "$STUB_CLAUDE" == true ]] ;;
+                *) return 1 ;;
+            esac
+        }
+        check() { printf "%s|%s|%s|%s\n" "$1" "$3" "$4" "${5:-}"; }
+        check_nhm_quota_statusline
+    ' _ "$DOCTOR"
+}
+SLHOME="$WORK/slhome"
+mkdir -p "$SLHOME/.acfs/scripts/lib" "$SLHOME/.claude"
+cp "$ROOT/scripts/lib/nhm_hooks.sh" "$SLHOME/.acfs/scripts/lib/nhm_hooks.sh"
+SLSET="$SLHOME/.claude/settings.json"
+
+printf '{}\n' >"$SLSET"
+out="$(run_sl_check true true)"
+check_case "statusLine: none set warns and names the fix" \
+    bash -c '[[ "$1" == "agent.quota_statusline|warn|"*"does not run nhm quota record-claude"*"|Run: bash "*"nhm_hooks.sh statusline claude set (or acfs update)" ]]' _ "$out"
+printf '{"statusLine": {"type": "command", "command": "bash %s/.acfs/scripts/lib/agent_quota.sh record-claude"}}\n' "$SLHOME" >"$SLSET"
+out="$(run_sl_check true true)"
+check_case "statusLine: ACFS's old agent_quota.sh line warns with the same fix" \
+    bash -c '[[ "$1" == "agent.quota_statusline|warn|"*"|Run: bash "*"statusline claude set"* ]]' _ "$out"
+HOME="$SLHOME" bash "$ROOT/scripts/lib/nhm_hooks.sh" statusline claude set "$SLSET" 2>/dev/null
+out="$(run_sl_check true true)"
+check_case "statusLine: nhm's line passes" bash -c '[[ "$1" == "agent.quota_statusline|pass|"* ]]' _ "$out"
+printf '{"statusLine": {"type": "command", "command": "~/bin/my-status"}}\n' >"$SLSET"
+out="$(run_sl_check true true)"
+check_case "statusLine: the user's own warns and shows how to chain nhm's" \
+    bash -c '[[ "$1" == "agent.quota_statusline|warn|"*"is your own"*"|Feed both"*"/.local/bin/nhm quota record-claude"*"<your command>"* ]]' _ "$out"
+printf '{"statusLine": ' >"$SLSET"
+out="$(run_sl_check true true)"
+check_case "statusLine: malformed settings warn" \
+    bash -c '[[ "$1" == "agent.quota_statusline|warn|"*"is not a settings object|Check: jq ."* ]]' _ "$out"
+out="$(run_sl_check false true)"
+check_case "statusLine: no Claude Code: skips" bash -c '[[ "$1" == "agent.quota_statusline|skip|"* ]]' _ "$out"
+out="$(run_sl_check true false)"
+check_case "statusLine: no nhm: skips" bash -c '[[ "$1" == "agent.quota_statusline|skip|"* ]]' _ "$out"
+printf '{}\n' >"$SLSET"
+before="$(cat "$SLSET")"
+run_sl_check true true >/dev/null
+check_case "statusLine: the check writes nothing" test "$(cat "$SLSET")" = "$before"
+
 echo
 echo "doctor nhm: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

@@ -10829,8 +10829,12 @@ acfs_install_codex_dcg_hook() {
 # there, no line is added and the lines an earlier run added are removed,
 # so no turn hits a hook that points at nothing. When the check itself
 # cannot run as the target user, nothing changes.
+# Claude Code's statusLine goes with them (acfs-5917): it runs `nhm quota
+# record-claude`, the only way nhm learns Claude's windows. It is set when
+# none is set or ACFS's older agent_quota.sh line is; a statusLine of the
+# user's stays, and acfs doctor shows how to chain nhm's.
 acfs_install_nhm_hook_lines() {
-    local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh" hook_rc=0
+    local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh" hook_rc=0 statusline_rc=0
     [[ -f "$nhm_hooks" ]] || return 0
     # 0: nhm-hook is there; 3: it is not; anything else: the check did not run.
     # shellcheck disable=SC2016 # expanded by the target user's bash
@@ -10841,6 +10845,8 @@ acfs_install_nhm_hook_lines() {
         fi
         run_as_target bash "$nhm_hooks" unregister claude "$TARGET_HOME/.claude/settings.json" || \
             log_warn "could not remove the nhm hook lines from Claude Code's settings"
+        run_as_target bash "$nhm_hooks" statusline claude remove "$TARGET_HOME/.claude/settings.json" || \
+            log_warn "could not remove nhm's statusLine from Claude Code's settings"
         run_as_target bash "$nhm_hooks" unregister codex "$TARGET_HOME/.codex/hooks.json" || \
             log_warn "could not remove the nhm hook lines from Codex's hooks.json"
         return 0
@@ -10854,6 +10860,12 @@ acfs_install_nhm_hook_lines() {
         try_step "Registering the nhm hook lines for Claude Code" \
             run_as_target bash "$nhm_hooks" register claude "$TARGET_HOME/.claude/settings.json" || \
             log_warn "nhm hook registration for Claude Code failed (optional)"
+        run_as_target bash "$nhm_hooks" statusline claude set "$TARGET_HOME/.claude/settings.json" || statusline_rc=$?
+        case "$statusline_rc" in
+            0) log_detail "Claude Code's statusLine records Claude's windows for nhm" ;;
+            3) log_detail "Claude Code's statusLine is your own; acfs doctor shows how to chain nhm's" ;;
+            *) log_warn "could not set Claude Code's statusLine for nhm's quota (optional); acfs doctor shows it" ;;
+        esac
     fi
     if binary_installed "codex"; then
         if try_step "Registering the nhm hook lines for Codex" \
