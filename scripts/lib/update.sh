@@ -417,7 +417,12 @@ REBOOT_REQUIRED=false
 
 # Logging
 UPDATE_LOG_DIR="${UPDATE_LOG_DIR:-${HOME:-/tmp}/.acfs/logs/updates}"
+# What every write appends to; the log's path, for messages (init_logging).
 UPDATE_LOG_FILE=""
+UPDATE_LOG_PATH=""
+# The user whose home a root run writes into, and that home (update_for_user).
+UPDATE_FOR_USER=""
+UPDATE_FOR_USER_HOME=""
 UPDATE_TMPDIR_SWITCH_NOTE=""
 
 # Version tracking
@@ -979,13 +984,19 @@ is_expected_acfs_origin_url() {
 # ============================================================
 
 init_logging() {
+    UPDATE_LOG_PATH=""
     if update_is_read_only_mode; then
         UPDATE_LOG_FILE=""
         return 0
     fi
 
-    mkdir -p "$UPDATE_LOG_DIR"
     UPDATE_LOG_FILE="$UPDATE_LOG_DIR/$(date '+%Y-%m-%d-%H%M%S').log"
+    if update_for_user "$UPDATE_LOG_FILE"; then
+        update_open_user_log || return 0
+    else
+        mkdir -p "$UPDATE_LOG_DIR"
+        UPDATE_LOG_PATH="$UPDATE_LOG_FILE"
+    fi
 
     # Write log header
     {
@@ -997,36 +1008,77 @@ init_logging() {
         echo "==============================================="
         echo ""
     } >> "$UPDATE_LOG_FILE"
-
-    update_give_log_to_target_user
 }
 
-# Run as root for another user (TARGET_USER), the log lands in that user's
-# ~/.acfs. Hand them what this run created there, or their next `acfs update`
-# can't open its own log. Only root-owned paths below the home change hands,
-# and never through a symlink.
-update_give_log_to_target_user() {
-    [[ "${EUID:-$(id -u)}" -eq 0 ]] || return 0
-    local target_user="" target_home="" path=""
-    target_user="$(update_target_user 2>/dev/null || true)"
-    [[ -n "$target_user" && "$target_user" != "root" ]] || return 0
-    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
-    [[ -n "$target_home" && "$UPDATE_LOG_FILE" == "$target_home/"* ]] || return 0
+# Root running `acfs update` for another user (TARGET_USER) writes its log and
+# storm snapshots into that user's home. There the user makes every directory
+# and file, and root writes only to what it has checked: nothing it creates or
+# appends to by path can be a link the user swapped in (acfs-930).
+#
+# update_for_user PATH: PATH is below the home of the user a root run is for.
+# Sets UPDATE_FOR_USER and UPDATE_FOR_USER_HOME; fails for root updating
+# itself and for a user's own run, which write by path as before.
+update_for_user() {
+    local path="$1" user="" home=""
+    UPDATE_FOR_USER=""
+    UPDATE_FOR_USER_HOME=""
+    [[ "${EUID:-$(id -u)}" -eq 0 ]] || return 1
+    user="$(update_target_user 2>/dev/null || true)"
+    [[ -n "$user" && "$user" != "root" ]] || return 1
+    home="$(update_target_home "$user" 2>/dev/null || true)"
+    [[ -n "$home" && "$path" == "$home/"* ]] || return 1
+    UPDATE_FOR_USER="$user"
+    UPDATE_FOR_USER_HOME="$home"
+}
 
-    # A link anywhere below the home could point the chown outside it.
-    path="$UPDATE_LOG_FILE"
-    while [[ "$path" == "$target_home/"* ]]; do
-        [[ ! -L "$path" ]] || return 0
+# update_no_link_below HOME PATH: no part of PATH below HOME is a symlink.
+update_no_link_below() {
+    local home="$1" path="$2"
+    while [[ "$path" == "$home/"* ]]; do
+        [[ ! -L "$path" ]] || return 1
         path="${path%/*}"
     done
+}
 
-    path="$UPDATE_LOG_FILE"
-    while [[ "$path" == "$target_home/"* ]]; do
-        if [[ "$(stat -c %u -- "$path" 2>/dev/null)" == "0" ]]; then
-            chown -h "$target_user:$target_user" -- "$path" 2>/dev/null || chown -h "$target_user" -- "$path" 2>/dev/null || true
+# update_user_mkdir DIR: the user update_for_user found makes DIR, with no
+# link below their home before or after.
+update_user_mkdir() {
+    local dir="$1"
+    update_no_link_below "$UPDATE_FOR_USER_HOME" "$dir" || return 1
+    update_run_in_target_context "" mkdir -p -- "$dir" >/dev/null 2>&1 || return 1
+    update_no_link_below "$UPDATE_FOR_USER_HOME" "$dir" && [[ -d "$dir" ]]
+}
+
+# update_open_user_log: the user makes the log directory and the log
+# (UPDATE_LOG_FILE's path). Root opens the log read-only, which creates
+# nothing even through a link, checks that it opened the path's own inode, a
+# regular file of the user's, and from then on appends through that
+# descriptor: UPDATE_LOG_FILE becomes /proc/$$/fd/N, so every
+# `>> $UPDATE_LOG_FILE`, in subshells and tee too, reopens the checked inode
+# and never the path. UPDATE_LOG_PATH keeps the path for messages. Anything
+# else: no log, one line on stderr, and the update goes on.
+update_open_user_log() {
+    local log="$UPDATE_LOG_FILE" fd="" uid="" why=""
+    UPDATE_LOG_FILE=""
+    if ! update_user_mkdir "$UPDATE_LOG_DIR"; then
+        why="$UPDATE_FOR_USER could not make its directory, or a link is below $UPDATE_FOR_USER_HOME"
+    elif ! update_run_in_target_context "" touch -- "$log" >/dev/null 2>&1; then
+        why="$UPDATE_FOR_USER could not create it"
+    elif [[ -L "$log" || ! -f "$log" ]] || ! { exec {fd}<"$log"; } 2>/dev/null; then
+        why="it is not a regular file"
+    else
+        uid="$(id -u -- "$UPDATE_FOR_USER" 2>/dev/null || true)"
+        if [[ -n "$uid" && -f "/proc/$$/fd/$fd" ]] &&
+            [[ "$(stat -L -c '%d:%i:%u' -- "/proc/$$/fd/$fd" 2>/dev/null)" == "$(stat -c '%d:%i' -- "$log" 2>/dev/null):$uid" ]]; then
+            UPDATE_LOG_FILE="/proc/$$/fd/$fd"
+            UPDATE_LOG_PATH="$log"
+            return 0
         fi
-        path="${path%/*}"
-    done
+        { exec {fd}<&-; } 2>/dev/null || true
+        why="it changed, or is not $UPDATE_FOR_USER's own file"
+    fi
+    printf 'acfs update: not logging to %s: %s\n' "$log" "$why" >&2
+    return 1
 }
 
 log_to_file() {
@@ -8928,7 +8980,7 @@ print_summary() {
         # Show log location
         if [[ -n "$UPDATE_LOG_FILE" ]]; then
             echo ""
-            printf "${DIM}Log: %s${NC}\n" "$UPDATE_LOG_FILE"
+            printf "${DIM}Log: %s${NC}\n" "${UPDATE_LOG_PATH:-$UPDATE_LOG_FILE}"
         fi
     elif [[ $FAIL_COUNT -gt 0 ]]; then
         # In quiet mode, still report failures -- and distinguish "some tools
@@ -8944,7 +8996,7 @@ print_summary() {
             printf "${YELLOW}Held tools (skipped): %s${NC}\n" "${UPDATE_HELD_TOOLS[*]}"
         fi
         if [[ -n "$UPDATE_LOG_FILE" ]]; then
-            printf "${DIM}See: %s${NC}\n" "$UPDATE_LOG_FILE"
+            printf "${DIM}See: %s${NC}\n" "${UPDATE_LOG_PATH:-$UPDATE_LOG_FILE}"
         fi
     elif [[ $HELD_COUNT -gt 0 ]]; then
         # Quiet clean run with holds: still name them (#357).
@@ -9246,8 +9298,12 @@ update_procwatch_scan() {
     return 0
 }
 
-# Append a forensic snapshot to "$dumpfile". Assumes update_procwatch_scan()
-# has just run against the same "$procroot".
+# Write a forensic snapshot to "$dumpfile", a new file. Assumes
+# update_procwatch_scan() has just run against the same "$procroot".
+# The directory can be a user's (a root run for TARGET_USER), so a name that
+# exists in any form, a planted link or file, is refused, and noclobber
+# creates the file with O_EXCL; no mktemp, which forks, during a fork storm
+# (acfs-930).
 update_procwatch_dump() {
     local procroot="$1"
     local dumpfile="$2"
@@ -9259,6 +9315,10 @@ update_procwatch_dump() {
     local -A ppid_counts=()
     local shown=0
     local i j
+
+    [[ ! -e "$dumpfile" && ! -L "$dumpfile" ]] || return 1
+    local -
+    set -C
 
     {
         printf '# ACFS process-storm snapshot\n'
@@ -9342,7 +9402,7 @@ update_procwatch_dump() {
                     "$ppid" "${ppid_counts["$ppid"]}" "${comm:-<gone>}" "${cmdline:-<none>}"
             done
         fi
-    } >> "$dumpfile" 2>/dev/null || return 1
+    } 2>/dev/null > "$dumpfile" || return 1
 
     return 0
 }
@@ -9371,8 +9431,10 @@ update_procwatch_loop() {
 
     # Fork-free sleep: block on a FIFO nobody writes to until `read` times out.
     # `sleep` costs a fork per tick, and the whole point is to keep sampling
-    # once forking stops. Opened read-write so the open itself cannot block.
-    if [[ -n "$tick_fifo" ]] && exec 8<>"$tick_fifo" 2>/dev/null; then
+    # once forking stops. Opened read-write so the open itself cannot block;
+    # only while it is still the FIFO, since <> would create a file through a
+    # link planted in its place.
+    if [[ -n "$tick_fifo" && -p "$tick_fifo" && ! -L "$tick_fifo" ]] && exec 8<>"$tick_fifo" 2>/dev/null; then
         have_fifo=1
     fi
 
@@ -9448,7 +9510,12 @@ update_procwatch_start() {
     (( interval > 0 && comm_threshold > 0 && total_threshold > 0 && max_dumps > 0 )) || return 0
 
     dumpdir="${ACFS_PROCWATCH_DIR:-${HOME:-/tmp}/.acfs/diagnostics/procwatch}"
-    mkdir -p "$dumpdir" 2>/dev/null || return 0
+    # In a user's home for a root run, the user makes it (update_for_user).
+    if update_for_user "$dumpdir"; then
+        update_user_mkdir "$dumpdir" || return 0
+    else
+        mkdir -p "$dumpdir" 2>/dev/null || return 0
+    fi
     [[ -w "$dumpdir" ]] || return 0
 
     # One FIFO per watcher, created up front while forking still works.
