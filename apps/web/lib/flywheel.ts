@@ -893,7 +893,7 @@ conflict type (dirty tree, diverged branches, auth failures).
       "ru prune                   # Remove orphan repos",
     ],
     installCommand:
-      'curl -fsSL "https://raw.githubusercontent.com/arosl/repo_updater/v1.5.0-nhm.1/install.sh" | bash',
+      'curl -fsSL "https://raw.githubusercontent.com/arosl/repo_updater/v1.5.0-nhm.2/install.sh" | bash',
     language: "Bash",
   },
   {

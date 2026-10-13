@@ -598,7 +598,7 @@ describe("Generated verified installer args", () => {
     const stackContent = readFileSync(stackPath, "utf-8");
 
     expect(stackContent).toContain(
-      `run_as_target_runner 'env' 'RU_NON_INTERACTIVE=1' 'RU_VERSION=1.5.0-nhm.1' 'RU_INSTALLER_NO_SELF_REFRESH=1' 'bash' "$verified_installer_file"`,
+      `run_as_target_runner 'env' 'RU_NON_INTERACTIVE=1' 'RU_VERSION=1.5.0-nhm.2' 'RU_INSTALLER_NO_SELF_REFRESH=1' 'bash' "$verified_installer_file"`,
     );
     expect(stackContent).not.toContain(
       'verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner \'env\' \'RU_NON_INTERACTIVE=1\'',

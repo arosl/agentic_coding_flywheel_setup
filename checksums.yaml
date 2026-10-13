@@ -171,7 +171,7 @@ installers:
     sha256: "c42cea3f95ecdb1f6b8bbd08d531571ee4dc6d97a87350006f5d680e38c07380"
 
   ru:
-    url: "https://raw.githubusercontent.com/arosl/repo_updater/v1.5.0-nhm.1/install.sh"
+    url: "https://raw.githubusercontent.com/arosl/repo_updater/v1.5.0-nhm.2/install.sh"
     sha256: "417bfe2237edf2a0cb1b9b83b06a70309cbb553ff1e64193da2e6045caec4924"
 
   rust:

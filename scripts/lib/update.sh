@@ -8293,7 +8293,7 @@ update_stack() {
     # KNOWN_INSTALLERS[ru] pins (acfs-9hkh.64): RU_VERSION names its release,
     # and no self-refresh replaces the pinned installer with main's.
     run_cmd "RU" update_run_verified_installer_with_env ru \
-        $'RU_NON_INTERACTIVE=1\nRU_VERSION=1.5.0-nhm.1\nRU_INSTALLER_NO_SELF_REFRESH=1'
+        $'RU_NON_INTERACTIVE=1\nRU_VERSION=1.5.0-nhm.2\nRU_INSTALLER_NO_SELF_REFRESH=1'
 
     # DCG (Destructive Command Guard) - always install/update, but do not
     # report a transient installer/network failure when an existing dcg remains
