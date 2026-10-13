@@ -7,7 +7,7 @@ import {
   CodeBlock as SharedCodeBlock,
   type CodeBlockProps as SharedCodeBlockProps,
 } from "@/components/ui/code-block";
-import { copyTextToClipboard } from "@/lib/utils";
+import { copyTextToClipboard, handleHorizontalScrollKeyDown } from "@/lib/utils";
 
 // =============================================================================
 // SECTION COMPONENT - Beautiful section dividers with gradient headers
@@ -110,7 +110,7 @@ export function FeatureCard({
         </div>
         <div>
           <h3 className="font-bold text-white mb-1">{title}</h3>
-          <p className="text-sm text-white/50">{description}</p>
+          <p className="text-sm text-muted-foreground">{description}</p>
         </div>
       </div>
     </motion.div>
@@ -233,18 +233,18 @@ export function CommandList({ commands }: CommandListProps) {
             {/* Named "Copy command: $ <command>": a bare aria-label hid which
                 command each button copies and dropped the visible text. */}
             <span className="sr-only">{copiedIndex === i ? "Copied: " : "Copy command: "}</span>
-            <span className="text-white/50">$</span>
+            <span className="text-muted-foreground">$</span>
             <span>{cmd.command}</span>
             {copiedIndex === i ? (
               <Check className="h-4 w-4 text-emerald-400" aria-hidden="true" />
             ) : (
               <Copy
-                className="h-4 w-4 text-white/50 opacity-0 group-hover:opacity-100 transition-opacity"
+                className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
                 aria-hidden="true"
               />
             )}
           </button>
-          <span className="text-white/50 text-sm">{cmd.description}</span>
+          <span className="text-muted-foreground text-sm">{cmd.description}</span>
         </motion.div>
       ))}
     </div>
@@ -288,7 +288,7 @@ export function StepList({ steps, headingLevel = 3 }: StepListProps) {
           </div>
           <div className="pt-1">
             <StepHeading className="font-semibold text-white">{step.title}</StepHeading>
-            {step.description && <p className="mt-1 text-white/50 text-sm">{step.description}</p>}
+            {step.description && <p className="mt-1 text-muted-foreground text-sm">{step.description}</p>}
           </div>
         </motion.div>
       ))}
@@ -318,13 +318,13 @@ export function DiagramBox({
     >
       {icon && <div className="text-white mb-2">{icon}</div>}
       <span className="font-bold text-white text-sm">{label}</span>
-      {sublabel && <span className="text-xs text-white/50 mt-1">{sublabel}</span>}
+      {sublabel && <span className="text-xs text-muted-foreground mt-1">{sublabel}</span>}
     </div>
   );
 }
 
 /**
- * Keeps a fixed-layout SVG diagram at desktop scale on phones. Below `sm` the
+ * Keeps a fixed-layout SVG diagram readable in any narrow container. The
  * diagram keeps `minWidth` (its viewBox width) inside a labelled,
  * keyboard-focusable horizontal scroll region, instead of shrinking every
  * label to a few pixels (bd-k3qa5).
@@ -342,11 +342,12 @@ export function DiagramScroller({
     <div
       className="overflow-x-auto pb-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
       tabIndex={0}
+      onKeyDown={handleHorizontalScrollKeyDown}
       role="region"
-      aria-label={`${label} (scrolls sideways on small screens)`}
+      aria-label={`${label} (scrolls sideways when needed)`}
     >
       <div
-        className="min-w-[var(--diagram-min-width)] sm:min-w-0"
+        className="min-w-[var(--diagram-min-width)]"
         style={{ "--diagram-min-width": `${minWidth}px` } as CSSProperties}
       >
         {children}
@@ -359,7 +360,7 @@ export function DiagramArrow({ direction = "right" }: { direction?: "right" | "d
   return (
     <div className={`flex items-center justify-center ${direction === "down" ? "py-2" : "px-2"}`}>
       <ChevronRight
-        className={`h-6 w-6 text-white/50 ${direction === "down" ? "rotate-90" : ""}`}
+        className={`h-6 w-6 text-muted-foreground ${direction === "down" ? "rotate-90" : ""}`}
       />
     </div>
   );
@@ -389,7 +390,7 @@ export function BulletList({ items }: BulletListProps) {
       {items.map((item, i) => (
         <motion.li
           key={i}
-          initial={{ opacity: 0, x: -10 }}
+          initial={{ opacity: 1, x: -10 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: i * 0.1 }}
           className="flex items-start gap-3"

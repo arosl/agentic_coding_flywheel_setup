@@ -2,7 +2,7 @@
 # ============================================================
 # ACFS Swarm Packet - per-agent startup packet generator
 #
-# Builds a bounded, read-only prompt packet for one Beads issue. The packet
+# Builds a bounded prompt packet for one Beads issue. The packet
 # packages current repo instructions, Beads metadata, bounded CASS/CM context,
 # and Agent Mail/RCH/UBS workflow commands, for delivery to a herdr agent.
 # ============================================================
@@ -47,8 +47,9 @@ Options:
   --no-live-context     Do not run cm or cass when fixture files are absent
   --help, -h            Show this help
 
-The generator is read-only. It does not update Beads, send Agent Mail, reserve
-files, start agents, run builds, or edit generated files.
+The generator does not update Beads, send Agent Mail, reserve files, start agents,
+run builds, or edit generated files. Live CM retrieval may update memory/history
+caches. Use --no-live-context or saved context files to avoid those backend writes.
 EOF
 }
 
@@ -230,6 +231,21 @@ swarm_packet_limit_text() {
 
 swarm_packet_sanitize_context_text() {
     local text="$1"
+    local -a context_rules=()
+    # Tool names in titles/tags are data. Keep them intact while instructional
+    # excerpts still receive the recommended br/bv/rch command forms.
+    if [[ "${2:-}" != "metadata" ]]; then
+        context_rules=(
+            -e 's/^([[:space:]]*)bv([[:space:]]*)$/\1bv --robot-next\2/g'
+            -e 's/^([[:space:]]*)bd[[:space:]]+/\1br /g'
+            -e 's/^([[:space:]]*)cargo[[:space:]]+(test|build|clippy)/\1rch exec -- cargo \2/g'
+        )
+    fi
+    # Public endpoint metadata is safe; webhook token paths are credentials.
+    # Handle raw and JSON-escaped URLs before packet JSON adds another escape layer.
+    local webhook_slash='(/|\\/)'
+    local webhook_routes="([Hh][Oo][Oo][Kk][Ss][.][Ss][Ll][Aa][Cc][Kk](-[Gg][Oo][Vv])?[.][Cc][Oo][Mm]${webhook_slash}services${webhook_slash}[A-Za-z0-9_-]+${webhook_slash}[A-Za-z0-9_-]+${webhook_slash}|([Cc][Aa][Nn][Aa][Rr][Yy][.]|[Pp][Tt][Bb][.])?[Dd][Ii][Ss][Cc][Oo][Rr][Dd]([Aa][Pp][Pp])?[.][Cc][Oo][Mm]${webhook_slash}api${webhook_slash}(v[0-9]+${webhook_slash})?webhooks${webhook_slash}[0-9]+${webhook_slash})"
+    local webhook_pattern="[Hh][Tt][Tt][Pp][Ss]?:${webhook_slash}{2}${webhook_routes}[A-Za-z0-9_-]{8,}[^[:space:]\"'<>\`)]*"
 
     # Two concerns, one pass:
     #  1. Neutralize dangerous command examples so a packet can never teach
@@ -237,18 +253,47 @@ swarm_packet_sanitize_context_text() {
     #  2. Redact secret-shaped values. cass/cm excerpts replay agent session
     #     history, which can contain tokens or passwords that were echoed in
     #     past sessions; a work packet is handed to other agents and must
-    #     not carry live credentials. Token shapes mirror the sensitive-value
-    #     scan in swarm_inventory.sh.
-    printf '%s' "$text" | sed -E \
+    #     not carry live credentials. Cover inventory token shapes and the
+    #     additional provider keys and secret-bearing webhook paths below.
+    # A header-only substitution leaves the key body in replayed history.
+    # Track exact END markers; an incomplete block remains redacted through EOF.
+    # Inline blocks also cover JSON excerpts with escaped newline characters.
+    printf '%s' "$text" | awk '
+      {
+        line = $0
+        output = ""
+        emit_line = !redacting
+        while (length(line)) {
+          if (redacting) {
+            end_pos = index(line, end_marker)
+            if (!end_pos) break
+            line = substr(line, end_pos + length(end_marker))
+            redacting = 0
+          } else if (match(line, /-----BEGIN [^-]*PRIVATE KEY[^-]*-----/)) {
+            header_start = RSTART
+            header_length = RLENGTH
+            header = substr(line, header_start, header_length)
+            output = output substr(line, 1, header_start - 1) "[private key redacted]"
+            end_marker = header
+            sub(/BEGIN/, "END", end_marker)
+            line = substr(line, header_start + header_length)
+            redacting = 1
+          } else {
+            output = output line
+            break
+          }
+        }
+        if (emit_line || length(output)) print output
+      }
+    ' | sed -E "${context_rules[@]}" \
         -e 's/rm[[:space:]]+-rf/[unsafe cleanup command redacted]/g' \
         -e 's/git[[:space:]]+reset[[:space:]]+--hard/[destructive git command redacted]/g' \
         -e 's/git[[:space:]]+clean[[:space:]]+-fd/[destructive git cleanup command redacted]/g' \
-        -e 's/^([[:space:]]*)bv([[:space:]]*)$/\1bv --robot-next\2/g' \
-        -e 's/^([[:space:]]*)bd[[:space:]]+/\1br /g' \
-        -e 's/^([[:space:]]*)cargo[[:space:]]+(test|build|clippy)/\1rch exec -- cargo \2/g' \
         -e 's/(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/[github token redacted]/g' \
         -e 's/github_pat_[A-Za-z0-9_]{20,}/[github token redacted]/g' \
         -e 's/tskey-[A-Za-z0-9-]{10,}/[tailscale key redacted]/g' \
+        -e 's/AIza[A-Za-z0-9_-]{35,}/[google api key redacted]/g' \
+        -e "s#${webhook_pattern}#[webhook url redacted]#g" \
         -e 's/sk-[A-Za-z0-9_-]{20,}/[api key redacted]/g' \
         -e 's/hvs\.[A-Za-z0-9_-]{20,}/[vault token redacted]/g' \
         -e 's/xox[bpsar]-[A-Za-z0-9-]{10,}/[slack token redacted]/g' \
@@ -267,6 +312,7 @@ swarm_packet_collect_tool_context() {
     local output=""
     local status=0
     local timeout_bin=""
+    local -a context_command=()
 
     if [[ -n "$fixture_file" ]]; then
         swarm_packet_read_file_excerpt "$fixture_file" "$tool_name context fixture" "$max_bytes"
@@ -284,29 +330,27 @@ swarm_packet_collect_tool_context() {
     fi
 
     timeout_bin="$(swarm_packet_binary_path timeout 2>/dev/null || true)"
-    set +e
     if [[ "$tool_name" == "cm" ]]; then
-        if [[ -n "$timeout_bin" ]]; then
-            output="$("$timeout_bin" 12s cm context "$query" --workspace "$SWARM_PACKET_REPO_ROOT" --limit 5 --history 3 --json 2>&1)"
-        else
-            output="$(cm context "$query" --workspace "$SWARM_PACKET_REPO_ROOT" --limit 5 --history 3 --json 2>&1)"
-        fi
+        context_command=(cm context "$query" --workspace "$SWARM_PACKET_REPO_ROOT" --limit 5 --history 3 --json)
     else
-        if [[ -n "$timeout_bin" ]]; then
-            output="$("$timeout_bin" 12s cass search "$query" --workspace "$SWARM_PACKET_REPO_ROOT" --limit 5 --fields summary --json --max-tokens 1200 2>&1)"
-        else
-            output="$(cass search "$query" --workspace "$SWARM_PACKET_REPO_ROOT" --limit 5 --fields summary --json --max-tokens 1200 2>&1)"
-        fi
+        # Startup retrieval must not launch index maintenance or model work.
+        # The summary preset omits snippets, which agents need for useful hints.
+        context_command=(cass search "$query" --workspace "$SWARM_PACKET_REPO_ROOT" --limit 5
+            --fields "title,snippet,source_path,line_number,agent" --json --max-tokens 1200
+            --mode lexical --no-maintenance)
     fi
-    status=$?
-    set -e
-
-    if [[ $status -ne 0 ]]; then
-        SWARM_PACKET_WARNINGS+=("$tool_name context unavailable: command exited $status")
-        return 0
+    if [[ -n "$timeout_bin" ]]; then
+        context_command=("$timeout_bin" 12s "${context_command[@]}")
     fi
 
-    swarm_packet_limit_text "$output" "$max_bytes"
+    # Keep CLI diagnostics on stderr, not in agent prompts. The caller records
+    # failures: an array mutation here would be lost in command substitution.
+    if output="$("${context_command[@]}")"; then
+        swarm_packet_limit_text "$output" "$max_bytes"
+    else
+        status=$?
+        return "$status"
+    fi
 }
 
 swarm_packet_collect_bead_json() {
@@ -323,7 +367,7 @@ swarm_packet_collect_bead_json() {
             echo "Error: br is required when --bead-file is not supplied" >&2
             return 2
         fi
-        raw_json="$(cd "$SWARM_PACKET_REPO_ROOT" && br show "$SWARM_PACKET_BEAD_ID" --json)"
+        raw_json="$(cd "$SWARM_PACKET_REPO_ROOT" && br show "$SWARM_PACKET_BEAD_ID" --json --no-db)"
     fi
 
     if ! jq -e . >/dev/null 2>&1 <<<"$raw_json"; then
@@ -354,7 +398,8 @@ swarm_packet_json_array_from_args() {
         return 0
     fi
 
-    printf '%s\n' "$@" | "$jq_bin" -R . | "$jq_bin" -s .
+    # Preserve each argument, including embedded newlines, as one JSON string.
+    printf '%s\0' "$@" | "$jq_bin" -Rs 'split("\u0000")[:-1]'
 }
 
 swarm_packet_build_markdown() {
@@ -369,6 +414,7 @@ swarm_packet_build_markdown() {
     local cass_context="$9"
     local warnings_block="${10}"
     local task_brief="${11}"
+    local context_safety_note="${12}"
     local agents_block=""
     local readme_block=""
     local cm_block=""
@@ -401,6 +447,8 @@ $task_brief
 2. Current Beads output for $bead_id.
 3. Agent Mail reservations and inbox state.
 4. Bounded CM and CASS context below, used only as hints because it may drift.
+
+$context_safety_note
 
 ## Start Checks
 
@@ -489,6 +537,8 @@ swarm_packet_build_report() {
     local bead_priority=""
     local bead_labels_json=""
     local bead_labels_text=""
+    local label_json="" label=""
+    local -a safe_labels=()
     local query=""
     local task_brief=""
     local agents_excerpt=""
@@ -503,6 +553,9 @@ swarm_packet_build_report() {
     local status_value="pass"
     local cm_warning_count_before=0
     local cass_warning_count_before=0
+    local context_status=0
+    local live_cm_context=false
+    local context_safety_note="Generation uses read-only context retrieval."
 
     jq_bin="$(swarm_packet_binary_path jq 2>/dev/null || true)"
     if [[ -z "$jq_bin" ]]; then
@@ -513,10 +566,25 @@ swarm_packet_build_report() {
     bead_json="$(swarm_packet_collect_bead_json)"
     bead_id="$("$jq_bin" -r --arg fallback "$SWARM_PACKET_BEAD_ID" '.id // $fallback' <<<"$bead_json")"
     bead_title="$("$jq_bin" -r '.title // "Untitled Bead"' <<<"$bead_json")"
+    bead_title="$(swarm_packet_sanitize_context_text "$bead_title" metadata)"
     bead_status="$("$jq_bin" -r '.status // "unknown"' <<<"$bead_json")"
     bead_priority="$("$jq_bin" -r '(.priority // "unknown") | tostring' <<<"$bead_json")"
-    bead_labels_json="$("$jq_bin" -c '.labels // []' <<<"$bead_json")"
-    bead_labels_text="$("$jq_bin" -r '(.labels // []) | if length == 0 then "none" else join(", ") end' <<<"$bead_json")"
+    # Validate before process substitution: a jq failure in its producer would
+    # otherwise become an apparently successful empty label list.
+    if ! bead_labels_json="$("$jq_bin" -c '
+      (if .labels == null then [] else .labels end) |
+      if type != "array" then error("Bead labels must be an array of strings")
+      elif all(.[]; type == "string") then .
+      else error("Bead labels must be an array of strings") end
+    ' <<<"$bead_json")"; then
+        return 2
+    fi
+    while IFS= read -r label_json; do
+        label="$("$jq_bin" -r . <<<"$label_json")"
+        safe_labels+=("$(swarm_packet_sanitize_context_text "$label" metadata)")
+    done < <("$jq_bin" -c '.[]' <<<"$bead_labels_json")
+    bead_labels_json="$(swarm_packet_json_array_from_args "$jq_bin" "${safe_labels[@]}")"
+    bead_labels_text="$("$jq_bin" -r 'if length == 0 then "none" else join(", ") end' <<<"$bead_labels_json")"
 
     if [[ -z "$bead_id" || "$bead_id" == "null" ]]; then
         echo "Error: Beads JSON did not include an issue id" >&2
@@ -554,8 +622,16 @@ swarm_packet_build_report() {
         SWARM_PACKET_WARNINGS+=("cm context unavailable: no fixture file supplied and live context disabled")
     elif [[ -z "$SWARM_PACKET_CM_FILE" ]] && ! swarm_packet_binary_path cm >/dev/null 2>&1; then
         SWARM_PACKET_WARNINGS+=("cm context unavailable: command not found")
+    elif [[ -z "$SWARM_PACKET_CM_FILE" ]]; then
+        live_cm_context=true
+        context_safety_note="Generation leaves repository and Beads unchanged. Live CM retrieval may update memory/history caches."
     fi
-    cm_context="$(swarm_packet_collect_tool_context cm "$SWARM_PACKET_CM_FILE" "$query" 1800)"
+    if cm_context="$(swarm_packet_collect_tool_context cm "$SWARM_PACKET_CM_FILE" "$query" 1800)"; then
+        :
+    else
+        context_status=$?
+        SWARM_PACKET_WARNINGS+=("cm context unavailable: command exited $context_status")
+    fi
     cm_context="$(swarm_packet_sanitize_context_text "$cm_context")"
     if [[ -z "$cm_context" ]]; then
         if (( ${#SWARM_PACKET_WARNINGS[@]} == cm_warning_count_before )); then
@@ -572,7 +648,12 @@ swarm_packet_build_report() {
     elif [[ -z "$SWARM_PACKET_CASS_FILE" ]] && ! swarm_packet_binary_path cass >/dev/null 2>&1; then
         SWARM_PACKET_WARNINGS+=("cass context unavailable: command not found")
     fi
-    cass_context="$(swarm_packet_collect_tool_context cass "$SWARM_PACKET_CASS_FILE" "$query" 1800)"
+    if cass_context="$(swarm_packet_collect_tool_context cass "$SWARM_PACKET_CASS_FILE" "$query" 1800)"; then
+        :
+    else
+        context_status=$?
+        SWARM_PACKET_WARNINGS+=("cass context unavailable: command exited $context_status")
+    fi
     cass_context="$(swarm_packet_sanitize_context_text "$cass_context")"
 
     if [[ -z "$cass_context" ]]; then
@@ -601,7 +682,8 @@ swarm_packet_build_report() {
         "$cm_context" \
         "$cass_context" \
         "$warnings_block" \
-        "$task_brief")"
+        "$task_brief" \
+        "$context_safety_note")"
 
     if (( ${#packet_markdown} > SWARM_PACKET_MAX_CHARS )); then
         output_truncated=true
@@ -612,6 +694,8 @@ swarm_packet_build_report() {
         packet_markdown="$(printf '%s' "$packet_markdown" | LC_ALL=C head -c "$truncate_limit")"$'\n\n[truncated: rerun with a larger --max-chars for more context]'
     fi
 
+    # The task brief above carries description/design/acceptance criteria.
+    # Do not duplicate the raw Bead object into the shareable JSON packet.
     "$jq_bin" -n \
         --arg generated_at "$(date -Iseconds)" \
         --arg status "$status_value" \
@@ -620,7 +704,6 @@ swarm_packet_build_report() {
         --arg repo_root "$SWARM_PACKET_REPO_ROOT" \
         --arg agents_file "$SWARM_PACKET_AGENTS_FILE" \
         --arg readme_file "$SWARM_PACKET_README_FILE" \
-        --argjson bead "$bead_json" \
         --arg bead_id "$bead_id" \
         --arg bead_title "$bead_title" \
         --arg bead_status "$bead_status" \
@@ -634,6 +717,7 @@ swarm_packet_build_report() {
         --arg packet_markdown "$packet_markdown" \
         --argjson max_chars "$SWARM_PACKET_MAX_CHARS" \
         --arg output_truncated "$output_truncated" \
+        --arg live_cm_context "$live_cm_context" \
         '{
           schema_version: 1,
           generated_at: $generated_at,
@@ -645,8 +729,7 @@ swarm_packet_build_report() {
             title: $bead_title,
             status: $bead_status,
             priority: $bead_priority,
-            labels: $bead_labels,
-            source: $bead
+            labels: $bead_labels
           },
           source_priority: [
             "Current AGENTS.md, README.md, and live code in this repository",
@@ -684,7 +767,8 @@ swarm_packet_build_report() {
             "Treat CM and CASS context as stale unless current files confirm it"
           ],
           safety: {
-            read_only: true,
+            read_only: ($live_cm_context != "true"),
+            live_cm_context_requested: ($live_cm_context == "true"),
             launches_agents: false,
             mutates_beads: false,
             sends_agent_mail: false,
@@ -733,7 +817,7 @@ swarm_packet_main() {
     "$jq_bin" -r '.packet_markdown' <<<"$report"
 }
 
-# Delivery is an explicitly separate execution path. Ordinary generation stays read-only.
+# Delivery is a separate execution path; ordinary generation does not send prompts.
 swarm_packet_deliver() {
     command -v python3 >/dev/null 2>&1 || { echo 'Error: python3 is required for packet delivery' >&2; return 2; }
     python3 -I - "${BASH_SOURCE[0]}" "$@" <<'PY_ACFS_PACKET_DELIVERY'
@@ -1628,7 +1712,7 @@ def preparation_main(arguments):
     for item in items:
         value = saved_beads
         if br:
-            code, data = run([br, "show", item["bead_id"], "--json"], repo)
+            code, data = run([br, "show", item["bead_id"], "--json", "--no-db"], repo)
             require(code == 0, "Unable to read an assigned Bead; no bundle was written.")
             value = parse(data)
         selected.append(preparation_bead(value, item["bead_id"]))

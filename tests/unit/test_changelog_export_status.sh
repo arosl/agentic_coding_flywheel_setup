@@ -4,6 +4,7 @@
 # Targeted regression tests for changelog, export-config, and
 # status output handling.
 # Usage: bash tests/unit/test_changelog_export_status.sh
+# Dashboard only: bash tests/unit/test_changelog_export_status.sh --dashboard-only
 # ============================================================
 set -euo pipefail
 
@@ -824,19 +825,19 @@ test_services_setup_setup_flows_tolerate_unset_status_keys() {
     ln -sf /bin/true "$target_home/.bun/bin/wrangler"
 
     output=$(bash -c '
-        set -u
+        set -eu
         source "$1"
         TARGET_USER="$(whoami)"
         TARGET_HOME="$2"
         BUN_BIN=/bin/true
         HAS_GUM=false
-        gum_confirm() { return 1; }
+        # Consent to the simulated Wrangler login so every setup branch runs.
+        gum_confirm() { return 0; }
         gum_box() { :; }
         gum_detail() { :; }
         gum_error() { :; }
         gum_warn() { :; }
         gum_success() { :; }
-        read() { return 0; }
         find_user_bin() { printf "/bin/true\n"; }
         run_as_user() { return 0; }
         check_claude_status() { SERVICE_STATUS[claude]=configured; }
@@ -845,12 +846,16 @@ test_services_setup_setup_flows_tolerate_unset_status_keys() {
         check_vercel_status() { SERVICE_STATUS[vercel]=configured; }
         check_supabase_status() { SERVICE_STATUS[supabase]=configured; }
         check_wrangler_status() { SERVICE_STATUS[wrangler]=configured; }
-        setup_claude </dev/null
-        setup_codex </dev/null
-        setup_gemini </dev/null
-        setup_vercel </dev/null
-        setup_supabase </dev/null
-        setup_wrangler </dev/null
+        unset VERCEL_TOKEN SUPABASE_ACCESS_TOKEN CLOUDFLARE_API_TOKEN
+        setup_claude <<< ""
+        setup_codex <<< ""
+        setup_gemini <<< ""
+        setup_vercel <<< ""
+        setup_supabase <<< ""
+        setup_wrangler <<< ""
+        for service in claude codex gemini vercel supabase wrangler; do
+            [[ "${SERVICE_STATUS[$service]:-unknown}" == configured ]] || exit 1
+        done
         printf "setup-ok\n"
     ' _ "$SERVICES_SETUP_SH" "$target_home" 2>&1 || true)
 
@@ -4491,6 +4496,14 @@ test_dashboard_rejects_invalid_ports_before_serving() {
     cleanup_mock_env
 }
 
+test_dashboard_http_surface() {
+    if python3 -B "$REPO_ROOT/tests/unit/test_dashboard_http.py" -v; then
+        harness_pass "dashboard serves published HTML without exposing private files"
+    else
+        harness_fail "dashboard serves published HTML without exposing private files"
+    fi
+}
+
 test_dashboard_help_does_not_require_target_context() {
     setup_installed_layout_env
 
@@ -6398,7 +6411,7 @@ test_continue_failed_state_prints_resume_hint() {
     setup_installed_layout_env
     setup_poisoned_acfs_home
 
-    local resume_cmd="curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/2463b6a6e4338d74502c7bb34cb02ab8ca8e2ad4/install.sh | bash -s -- --resume --ref 2463b6a6e4338d74502c7bb34cb02ab8ca8e2ad4 --yes"
+    local resume_cmd="bash ./install.sh --resume --ref 2463b6a6e4338d74502c7bb34cb02ab8ca8e2ad4 --yes"
     cat > "$TEST_INSTALLED_ACFS/state.json" <<JSON
 {
   "mode": "safe",
@@ -8554,6 +8567,8 @@ EOF
 
 test_selected_system_binary_resolvers_reject_pathlike_names() {
     local failures=""
+    local probe_dir="$HARNESS_ARTIFACT_DIR/resolver-probes"
+    mkdir -p "$probe_dir"
 
     while IFS='|' read -r label script_path function_name; do
         [[ -n "$label" ]] || continue
@@ -8571,17 +8586,20 @@ test_selected_system_binary_resolvers_reject_pathlike_names() {
             continue
         fi
 
-        if ! resolver_output="$(
-            FUNCTION_BODY="$function_body" FUNCTION_NAME="$function_name" bash -c '
-                set -euo pipefail
-                eval "$FUNCTION_BODY"
+        local probe_script="$probe_dir/$label.sh"
+        {
+            printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' "$function_body"
+            cat <<'PROBE'
                 for unsafe_name in "." ".." "../bash" "/bin/bash" "bash/../sh" "bash name"; do
                     if "$FUNCTION_NAME" "$unsafe_name" >/dev/null 2>&1; then
                         printf "%s accepted unsafe name: %s\n" "$FUNCTION_NAME" "$unsafe_name" >&2
                         exit 1
                     fi
                 done
-            ' 2>&1
+PROBE
+        } > "$probe_script"
+        if ! resolver_output="$(
+            FUNCTION_NAME="$function_name" bash "$probe_script" 2>&1
         )"; then
             printf -v failures '%s%s accepted pathlike system binary names: %s\n' "$failures" "$label" "$resolver_output"
         fi
@@ -11796,8 +11814,1484 @@ test_cheatsheet_prefers_live_home_adjacent_acfs_path_over_stale_state_target_hom
     cleanup_mock_env
 }
 
+run_dashboard_tests() {
+    test_dashboard_generation_is_atomic_on_failure || true
+    test_dashboard_rejects_invalid_ports_before_serving || true
+    test_dashboard_http_surface || true
+    test_dashboard_help_does_not_require_target_context || true
+    test_dashboard_prefers_repo_local_info_script || true
+    test_dashboard_uses_installed_layout_under_root_home || true
+    test_dashboard_serve_uses_target_user_in_ssh_hint || true
+    test_dashboard_copy_install_uses_target_home_only_system_state || true
+    test_dashboard_repo_local_ignores_poisoned_explicit_acfs_home || true
+    test_dashboard_repo_local_prefers_system_state_target_user_over_stale_installed_state || true
+    test_dashboard_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home || true
+    test_dashboard_uses_explicit_target_home_when_state_is_missing || true
+    test_dashboard_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved || true
+    test_dashboard_can_be_sourced_without_mutating_caller_env || true
+    test_dashboard_copy_install_ignores_relative_home_trap || true
+}
+
+# Editor contract tests retain their fixtures and invoke the actual status CLI.
+# Stand-in tool outputs exercise collector filtering; they are not live herdr proof.
+status_protocol_setup() {
+    local scenario="$1" tool=""
+    PROTOCOL_HOME="$HARNESS_ARTIFACT_DIR/editor/$scenario/home"
+    mkdir -p "$PROTOCOL_HOME/.acfs" "$PROTOCOL_HOME/.local/bin"
+    printf '1.2.3\n' > "$PROTOCOL_HOME/.acfs/VERSION"
+    for tool in zsh git bun cargo go rg claude codex agy gh uv fzf zoxide atuin bat lsd herdr bv br cass cm slb ubs dcg am rch; do
+        cat > "$PROTOCOL_HOME/.local/bin/$tool" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' called >> "$ACFS_PROTOCOL_POISON_MARKER"
+exit 99
+EOF
+        chmod +x "$PROTOCOL_HOME/.local/bin/$tool"
+    done
+}
+
+status_protocol_run() {
+    local expected="$1" name="$2" actual=0
+    shift 2
+    PROTOCOL_OUTPUT="$HARNESS_ARTIFACT_DIR/editor/$name.json"
+    env TARGET_USER=acfs_proto_fixture TARGET_HOME="$PROTOCOL_HOME" \
+        ACFS_HOME="$PROTOCOL_HOME/.acfs" ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/missing-system-state.json" \
+        ACFS_PROTOCOL_POISON_MARKER="$PROTOCOL_HOME/tool-called" \
+        bash "$STATUS_SH" "$@" > "$PROTOCOL_OUTPUT" 2> "$PROTOCOL_OUTPUT.stderr" || actual=$?
+    [[ "$actual" == "$expected" ]] || return 1
+    jq -e '.schema_version == 1 and .kind == "acfs.editor_status" and .read_only == true' "$PROTOCOL_OUTPUT" >/dev/null
+}
+
+test_status_editor_complete_snapshot_and_no_mutation() {
+    status_protocol_setup complete
+    cat > "$PROTOCOL_HOME/.acfs/state.json" <<'JSON'
+{"completed_phases":["user_setup","finalize"],"current_phase":null,"failed_phase":null,"mode":"vibe","provider":"hetzner","last_updated":"2026-10-11T10:00:00Z"}
+JSON
+    cp "$PROTOCOL_HOME/.acfs/state.json" "$PROTOCOL_HOME/state.before"
+    if status_protocol_run 0 complete --ide &&
+        jq -e '{schema_version, status, install_status: .install.status, phases: .install.completed_phases, provider: .provider.name, sessions: .sessions.status, automatic: .execute_automatically} ==
+          {schema_version:1,status:"ok",install_status:"complete",phases:["finalize","user_setup"],provider:"hetzner",sessions:"not_requested",automatic:false} and
+          .freshness.cache == "none" and .freshness.state_updated_at == "2026-10-11T10:00:00Z" and
+          .generated_at != null and .install.tools_present == 24 and .sessions.workspace_count == null' "$PROTOCOL_OUTPUT" >/dev/null &&
+        cmp -s "$PROTOCOL_HOME/.acfs/state.json" "$PROTOCOL_HOME/state.before" &&
+        [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
+        harness_pass "editor complete snapshot is passive and preserves state"
+    else harness_fail "editor complete snapshot is passive and preserves state"; fi
+}
+
+test_status_editor_partial_and_failed_snapshots() {
+    local kind="" expected=1
+    for kind in partial failed; do
+        status_protocol_setup "$kind"
+        if [[ "$kind" == partial ]]; then
+            printf '%s\n' '{"completed_phases":["user_setup"],"current_phase":"agents"}' > "$PROTOCOL_HOME/.acfs/state.json"
+        else
+            expected=2
+            printf '%s\n' '{"completed_phases":["user_setup"],"failed_phase":"agents","failed_error":"fixture-private-failure-token","api_token":"fixture-private-api-token","provider":"fixture-private-provider-id"}' > "$PROTOCOL_HOME/.acfs/state.json"
+        fi
+        if status_protocol_run "$expected" "$kind" --ide &&
+            jq -e --arg kind "$kind" '.install.status == $kind and
+              .next_actions[0].command_id == "diagnose" and .support.creates_files == true and
+              .execute_automatically == false and .provider.name == null' "$PROTOCOL_OUTPUT" >/dev/null &&
+            ! grep -Fq fixture-private "$PROTOCOL_OUTPUT"; then
+            harness_pass "editor $kind snapshot provides redacted advisory recovery"
+        else harness_fail "editor $kind snapshot provides redacted advisory recovery"; fi
+    done
+}
+
+test_status_editor_missing_and_invalid_state() {
+    local kind=""
+    for kind in missing invalid; do
+        status_protocol_setup "$kind"
+        [[ "$kind" != invalid ]] || printf 'not-json fixture-private-state\n' > "$PROTOCOL_HOME/.acfs/state.json"
+        if status_protocol_run 2 "$kind" --ide &&
+            jq -e --arg kind "$kind" '.install.status == $kind and .collectors.install == $kind and .status == "error"' "$PROTOCOL_OUTPUT" >/dev/null &&
+            ! grep -Fq fixture-private "$PROTOCOL_OUTPUT"; then
+            harness_pass "editor $kind state emits a structured failure"
+        else harness_fail "editor $kind state emits a structured failure"; fi
+    done
+}
+
+test_status_editor_active_phase_beats_prior_completion() {
+    status_protocol_setup active-phase
+    printf '%s\n' '{"completed_phases":["finalize"],"current_phase":"agents"}' > "$PROTOCOL_HOME/.acfs/state.json"
+    if status_protocol_run 1 active-phase --ide &&
+        jq -e '.install.status == "partial" and .install.current_phase == "agents"' "$PROTOCOL_OUTPUT" >/dev/null; then
+        harness_pass "active install phase takes precedence over prior completion"
+    else harness_fail "active install phase takes precedence over prior completion"; fi
+}
+
+test_status_editor_live_counts_skip_unrelated_tools() {
+    status_protocol_setup live
+    printf '%s\n' '{"completed_phases":["finalize"]}' > "$PROTOCOL_HOME/.acfs/state.json"
+    cat > "$PROTOCOL_HOME/.local/bin/herdr" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  "workspace list") printf '%s\n' '{"result":{"workspaces":[{"label":"fixture-private-one"},{"label":"fixture-private-two"}]}}' ;;
+  "agent list") printf '%s\n' '{"result":{"agents":[{"pane_id":"fixture-private-1"},{},{},{},{}]}}' ;;
+  *) exit 99 ;;
+esac
+EOF
+    if status_protocol_run 0 live --ide --live &&
+        jq -e '.sessions.status == "ok" and .sessions.herdr_available == true and
+          .sessions.workspace_count == 2 and .sessions.agent_count == 5' "$PROTOCOL_OUTPUT" >/dev/null &&
+        ! grep -Fq fixture-private "$PROTOCOL_OUTPUT" && [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
+        harness_pass "editor live snapshot reuses herdr and skips unrelated tools"
+    else harness_fail "editor live snapshot reuses herdr and skips unrelated tools"; fi
+}
+
+test_status_editor_advice_is_constant_and_not_executed() {
+    status_protocol_setup poisoned
+    cat > "$PROTOCOL_HOME/.acfs/state.json" <<'JSON'
+{"failed_phase":"fixture-private-phase","current_phase":"fixture-private-current","completed_phases":["user_setup","fixture-private-completed"],"provider":{"token":"fixture-private-provider-token"},"mode":"fixture-private-mode","last_updated":"fixture-private-date","commands":["touch \"$ACFS_PROTOCOL_POISON_MARKER\""],"target_home":"/fixture-private-home"}
+JSON
+    if status_protocol_run 2 poisoned --ide &&
+        jq -e '.install.failed_phase == null and .install.current_phase == null and .install.completed_phases == ["user_setup"] and
+          .install.mode == null and .freshness.state_updated_at == null and .redaction.count >= 2 and
+          [.commands[].argv] == [["acfs","status","--ide"],["acfs","status","--ide","--live"],["acfs","doctor","--json"],["acfs","support","--help"]]' "$PROTOCOL_OUTPUT" >/dev/null &&
+        ! grep -Fq fixture-private "$PROTOCOL_OUTPUT" && [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
+        harness_pass "editor advice and exposed metadata reject arbitrary state strings"
+    else harness_fail "editor advice and exposed metadata reject arbitrary state strings"; fi
+}
+
+test_status_editor_options_do_not_affect_legacy_output() {
+    status_protocol_setup legacy
+    printf '%s\n' '{"completed_phases":["finalize"]}' > "$PROTOCOL_HOME/.acfs/state.json"
+    local output="" actual=0
+    output="$(TARGET_USER=acfs_proto_fixture TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/missing-system-state.json" bash "$STATUS_SH" --json)" || actual=$?
+    if [[ "$actual" == 0 ]] && jq -e '.status == "ok" and .schema_version == null' <<<"$output" >/dev/null; then
+        harness_pass "existing status JSON keeps its established shape"
+    else harness_fail "existing status JSON keeps its established shape"; fi
+    actual=0
+    TARGET_USER=acfs_proto_fixture TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" bash "$STATUS_SH" --ide --check-updates > "$PROTOCOL_HOME/rejected.stdout" 2> "$PROTOCOL_HOME/rejected.stderr" || actual=$?
+    if [[ "$actual" == 1 && ! -s "$PROTOCOL_HOME/rejected.stdout" ]]; then
+        harness_pass "editor mode rejects network update probing"
+    else harness_fail "editor mode rejects network update probing"; fi
+    actual=0
+    bash "$STATUS_SH" --live > "$PROTOCOL_HOME/live-rejected.stdout" 2> "$PROTOCOL_HOME/live-rejected.stderr" || actual=$?
+    if [[ "$actual" == 1 && ! -s "$PROTOCOL_HOME/live-rejected.stdout" ]]; then
+        harness_pass "live status probes require explicit editor mode"
+    else harness_fail "live status probes require explicit editor mode"; fi
+}
+
+test_status_editor_missing_dependencies_are_explicit() {
+    local dependency="" expected=2
+    for dependency in jq timeout; do
+        status_protocol_setup "missing-$dependency"
+        printf '%s\n' '{"completed_phases":["finalize"]}' > "$PROTOCOL_HOME/.acfs/state.json"
+        if [[ "$dependency" == timeout ]]; then expected=1; fi
+        local actual=0 output="$HARNESS_ARTIFACT_DIR/editor/missing-$dependency.json"
+        (
+            export TARGET_USER=acfs_proto_fixture TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs"
+            export ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/missing-system-state.json"
+            # shellcheck source=../../scripts/lib/status.sh
+            source "$STATUS_SH"
+            _status_system_binary_path() {
+                [[ "$1" != "$dependency" ]] || return 1
+                command -v "$1"
+            }
+            if _status_system_binary_path "$dependency" >/dev/null; then exit 1; fi
+            status_main --ide --live
+        ) > "$output" 2> "$output.stderr" || actual=$?
+        if [[ "$actual" == "$expected" ]] &&
+            jq -e --arg dependency "$dependency" 'if $dependency == "jq" then .error == "jq_unavailable" and .status == "error"
+              else .sessions.status == "unavailable" and .sessions.workspace_count == null and .status == "warn" end' "$output" >/dev/null; then
+            harness_pass "editor missing $dependency dependency is explicit"
+        else harness_fail "editor missing $dependency dependency is explicit"; fi
+    done
+}
+
+test_status_editor_timeout_counts_stay_unknown() {
+    status_protocol_setup timeout
+    printf '%s\n' '{"completed_phases":["finalize"]}' > "$PROTOCOL_HOME/.acfs/state.json"
+    cat > "$PROTOCOL_HOME/.local/bin/herdr" <<'EOF'
+#!/usr/bin/env bash
+exec sleep 10
+EOF
+    local started="$SECONDS" elapsed=0
+    if status_protocol_run 1 timeout --ide --live; then
+        elapsed=$((SECONDS - started))
+        if (( elapsed <= 7 )) && jq -e '.sessions.status == "warn" and .sessions.workspace_count == null and
+            .sessions.agent_count == null and .next_actions[0].reason == "session_query_unavailable"' "$PROTOCOL_OUTPUT" >/dev/null; then
+            harness_pass "timed-out session query stays bounded and reports unknown counts"
+            return
+        fi
+    fi
+    harness_fail "timed-out session query stays bounded and reports unknown counts"
+}
+
+test_status_editor_sourced_calls_reset_live_option() {
+    status_protocol_setup reset
+    printf '%s\n' '{"completed_phases":["finalize"]}' > "$PROTOCOL_HOME/.acfs/state.json"
+    cat > "$PROTOCOL_HOME/.local/bin/herdr" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  "workspace list")
+    printf '%s\n' probe >> "$ACFS_PROTOCOL_POISON_MARKER"
+    printf '%s\n' '{"result":{"workspaces":[{}]}}' ;;
+  "agent list") printf '%s\n' '{"result":{"agents":[{}]}}' ;;
+  *) exit 99 ;;
+esac
+EOF
+    if (
+        export TARGET_USER=acfs_proto_fixture TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs"
+        export ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/missing-system-state.json"
+        export ACFS_PROTOCOL_POISON_MARKER="$PROTOCOL_HOME/probes"
+        # shellcheck source=../../scripts/lib/status.sh
+        source "$STATUS_SH"
+        status_main --ide --live > "$PROTOCOL_HOME/live.json"
+        status_main --ide > "$PROTOCOL_HOME/passive.json"
+    ) && jq -e '.sessions.status == "not_requested"' "$PROTOCOL_HOME/passive.json" >/dev/null &&
+        [[ "$(wc -l < "$PROTOCOL_HOME/probes" | tr -d ' ')" == 1 ]]; then
+        harness_pass "sourced editor calls reset live probing between invocations"
+    else harness_fail "sourced editor calls reset live probing between invocations"; fi
+}
+
+test_status_editor_readme_examples_match_cli_snapshots() {
+    if python3 - "$REPO_ROOT/README.md" "$HARNESS_ARTIFACT_DIR/editor" <<'PY'
+from pathlib import Path
+import json, re, sys
+readme = Path(sys.argv[1]).read_text()
+examples = [json.loads(line) for line in re.findall(r'^\{"scenario":"(?:complete|partial|failed|live)"[^\n]*\}$', readme, re.M)]
+assert len(examples) == 4, "Expected four documented editor snapshots"
+for example in examples:
+    scenario = example["scenario"]
+    payload = json.loads((Path(sys.argv[2]) / (scenario + ".json")).read_text())
+    observed = {"scenario": scenario, "status": payload["status"], "install_status": payload["install"]["status"], "sessions_status": payload["sessions"]["status"], "workspace_count": payload["sessions"]["workspace_count"]}
+    assert observed == example, scenario + " README/CLI drift"
+PY
+    then harness_pass "documented editor snapshots match actual CLI outputs"
+    else harness_fail "documented editor snapshots match actual CLI outputs"; fi
+}
+
+run_status_protocol_tests() {
+    test_status_editor_complete_snapshot_and_no_mutation
+    test_status_editor_partial_and_failed_snapshots
+    test_status_editor_missing_and_invalid_state
+    test_status_editor_active_phase_beats_prior_completion
+    test_status_editor_live_counts_skip_unrelated_tools
+    test_status_editor_advice_is_constant_and_not_executed
+    test_status_editor_options_do_not_affect_legacy_output
+    test_status_editor_missing_dependencies_are_explicit
+    test_status_editor_timeout_counts_stay_unknown
+    test_status_editor_sourced_calls_reset_live_option
+    test_status_editor_readme_examples_match_cli_snapshots
+}
+
+credential_report_setup() {
+    status_protocol_setup "$1"
+    local tool=""
+    for tool in gemini vercel supabase wrangler vault; do
+        cat > "$PROTOCOL_HOME/.local/bin/$tool" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' called >> "$ACFS_PROTOCOL_POISON_MARKER"
+exit 99
+EOF
+        chmod +x "$PROTOCOL_HOME/.local/bin/$tool"
+    done
+}
+
+credential_report_run() {
+    local expected="$1" actual=0
+    shift
+    CREDENTIAL_REPORT_OUTPUT="$PROTOCOL_HOME/report.json"
+    env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u GOOGLE_API_KEY \
+        -u VERCEL_TOKEN -u SUPABASE_ACCESS_TOKEN -u CLOUDFLARE_API_TOKEN \
+        TARGET_USER="$(id -un)" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+        ACFS_PROTOCOL_POISON_MARKER="$PROTOCOL_HOME/tool-called" \
+        "$@" bash "$SERVICES_SETUP_SH" --credential-status > "$CREDENTIAL_REPORT_OUTPUT" 2> "$CREDENTIAL_REPORT_OUTPUT.stderr" || actual=$?
+    [[ "$actual" == "$expected" ]] || return 1
+    jq -e '.kind == "acfs.credential_status" and .read_only == true and
+      .safety.provider_validation_performed == false and (.services | length) == 6 and
+      all(.services[]; .authentication == "unverified")' "$CREDENTIAL_REPORT_OUTPUT" >/dev/null
+}
+
+test_credential_report_optional_missing_is_passive() {
+    credential_report_setup credential-missing
+    if credential_report_run 0 &&
+        jq -e '.status == "pass" and all(.services[]; .state == "missing" and .requirement == "optional")' "$CREDENTIAL_REPORT_OUTPUT" >/dev/null &&
+        [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
+        harness_pass "offline credential report keeps optional missing services distinct from auth"
+    else harness_fail "offline credential report keeps optional missing services distinct from auth"; fi
+}
+
+test_credential_report_environment_and_placeholder_states() {
+    credential_report_setup credential-env
+    mkdir -p "$PROTOCOL_HOME/.config/vercel"
+    printf '%s\n' '{"token":"fixture-cached-vercel-secret"}' > "$PROTOCOL_HOME/.config/vercel/auth.json"
+    cp "$PROTOCOL_HOME/.config/vercel/auth.json" "$PROTOCOL_HOME/vercel.before"
+    if credential_report_run 0 ANTHROPIC_API_KEY=fixture-env-claude-secret VERCEL_TOKEN=your_vercel_token &&
+        jq -e '(.services[] | select(.service == "claude") | .state == "shell_configured" and .source == "environment") and
+          (.services[] | select(.service == "vercel") | .state == "placeholder" and .source == "environment")' "$CREDENTIAL_REPORT_OUTPUT" >/dev/null &&
+        ! grep -Fq fixture- "$CREDENTIAL_REPORT_OUTPUT" &&
+        cmp -s "$PROTOCOL_HOME/.config/vercel/auth.json" "$PROTOCOL_HOME/vercel.before"; then
+        harness_pass "environment provenance and placeholder shadowing remain redacted"
+    else harness_fail "environment provenance and placeholder shadowing remain redacted"; fi
+}
+
+test_credential_report_cached_files_and_bad_formats() {
+    credential_report_setup credential-files
+    mkdir -p "$PROTOCOL_HOME/.codex" "$PROTOCOL_HOME/.supabase" "$PROTOCOL_HOME/.config/.wrangler/config" "$PROTOCOL_HOME/.claude"
+    printf '%s\n' '{"tokens":{"access_token":"fixture-codex-cached-secret"}}' > "$PROTOCOL_HOME/.codex/auth.json"
+    printf 'fixture-supabase-cached-secret\n' > "$PROTOCOL_HOME/.supabase/access-token"
+    printf 'oauth_token = "fixture-wrangler-cached-secret"\n' > "$PROTOCOL_HOME/.config/.wrangler/config/default.toml"
+    printf 'invalid-json fixture-private-claude-secret\n' > "$PROTOCOL_HOME/.claude/.credentials.json"
+    if credential_report_run 0 &&
+        jq -e '(.services[] | select(.service == "codex") | .state == "file_configured") and
+          (.services[] | select(.service == "supabase") | .state == "file_configured") and
+          (.services[] | select(.service == "claude") | .state == "unknown") and
+          (.services[] | select(.service == "wrangler") | .state == "expired")' "$CREDENTIAL_REPORT_OUTPUT" >/dev/null &&
+        ! grep -Fq fixture- "$CREDENTIAL_REPORT_OUTPUT" && [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
+        harness_pass "cached credential metadata distinguishes candidates from unreadable formats"
+    else harness_fail "cached credential metadata distinguishes candidates from unreadable formats"; fi
+}
+
+test_credential_report_requirement_flags_and_nonmutation() {
+    credential_report_setup credential-required
+    local output="$PROTOCOL_HOME/required.json" actual=0
+    env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u GOOGLE_API_KEY -u VERCEL_TOKEN -u SUPABASE_ACCESS_TOKEN -u CLOUDFLARE_API_TOKEN \
+        TARGET_USER="$(id -un)" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+        bash "$SERVICES_SETUP_SH" --credential-status --require vercel --require vercel > "$output" 2> "$output.stderr" || actual=$?
+    if [[ "$actual" == 1 ]] && jq -e '.status == "warn" and .summary.required_unmet == 1 and
+        (.services[] | select(.service == "vercel") | .requirement == "required" and .state == "missing")' "$output" >/dev/null; then
+        harness_pass "explicit requirements warn once without configuring a service"
+    else harness_fail "explicit requirements warn once without configuring a service"; fi
+    local flags=""
+    for flags in '--credential-status --yes' '--yes --credential-status' '--credential-status --install-claude-guard' '--require vercel' '--credential-status --require invalid' '--credential-status --unknown'; do
+        actual=0
+        local -a args=()
+        read -r -a args <<< "$flags"
+        bash "$SERVICES_SETUP_SH" "${args[@]}" > "$PROTOCOL_HOME/rejected.stdout" 2> "$PROTOCOL_HOME/rejected.stderr" || actual=$?
+        if [[ "$actual" != 2 || -s "$PROTOCOL_HOME/rejected.stdout" ]]; then
+            harness_fail "credential metadata flags reject setup and invalid requirements"
+            return
+        fi
+    done
+    harness_pass "credential metadata flags reject setup and invalid requirements"
+}
+
+test_credential_report_required_presence_is_not_authentication() {
+    credential_report_setup credential-satisfied
+    local output="$PROTOCOL_HOME/required.json" actual=0
+    env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u GOOGLE_API_KEY -u SUPABASE_ACCESS_TOKEN -u CLOUDFLARE_API_TOKEN \
+        VERCEL_TOKEN=fixture-required-vercel-secret TARGET_USER="$(id -un)" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+        ACFS_PROTOCOL_POISON_MARKER="$PROTOCOL_HOME/tool-called" \
+        bash "$SERVICES_SETUP_SH" --credential-status --require vercel > "$output" 2> "$output.stderr" || actual=$?
+    if [[ "$actual" == 0 ]] && jq -e '.summary.required_unmet == 0 and
+        (.services[] | select(.service == "vercel") | .requirement == "required" and .state == "shell_configured" and .authentication == "unverified")' "$output" >/dev/null &&
+        ! grep -Fq fixture-required-vercel-secret "$output" && [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
+        harness_pass "required stored candidate passes without claiming verified authentication"
+    else harness_fail "required stored candidate passes without claiming verified authentication"; fi
+}
+
+test_credential_report_expression_errors_remain_unknown() {
+    credential_report_setup credential-shape
+    mkdir -p "$PROTOCOL_HOME/.codex"
+    printf '%s\n' '{"tokens":"fixture-invalid-token-object"}' > "$PROTOCOL_HOME/.codex/auth.json"
+    cp "$PROTOCOL_HOME/.codex/auth.json" "$PROTOCOL_HOME/codex.before"
+    if credential_report_run 0 && jq -e '(.services[] | select(.service == "codex") | .state == "unknown" and .source == "file")' "$CREDENTIAL_REPORT_OUTPUT" >/dev/null &&
+        ! grep -Fq fixture-invalid-token-object "$CREDENTIAL_REPORT_OUTPUT" &&
+        cmp -s "$PROTOCOL_HOME/.codex/auth.json" "$PROTOCOL_HOME/codex.before"; then
+        harness_pass "JSON extraction errors stay unknown and preserve credential files"
+    else harness_fail "JSON extraction errors stay unknown and preserve credential files"; fi
+}
+
+test_credential_report_tracing_does_not_expose_values() {
+    credential_report_setup credential-trace
+    local output="$PROTOCOL_HOME/trace.json" actual=0
+    env -u OPENAI_API_KEY -u GEMINI_API_KEY -u GOOGLE_API_KEY -u VERCEL_TOKEN -u SUPABASE_ACCESS_TOKEN -u CLOUDFLARE_API_TOKEN \
+        ANTHROPIC_API_KEY=fixture-traced-private-secret TARGET_USER="$(id -un)" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+        ACFS_PROTOCOL_POISON_MARKER="$PROTOCOL_HOME/tool-called" \
+        bash -x "$SERVICES_SETUP_SH" --credential-status > "$output" 2> "$output.stderr" || actual=$?
+    if [[ "$actual" == 0 ]] && jq -e '.kind == "acfs.credential_status"' "$output" >/dev/null &&
+        ! grep -Fq fixture-traced-private-secret "$output" "$output.stderr" && [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
+        harness_pass "credential collection prevents value leaks under shell tracing"
+    else harness_fail "credential collection prevents value leaks under shell tracing"; fi
+}
+
+test_credential_report_oversized_files_are_bounded() {
+    local fill=""
+    for fill in x newline; do
+        credential_report_setup "credential-large-$fill"
+        mkdir -p "$PROTOCOL_HOME/.supabase"
+        python3 - "$PROTOCOL_HOME/.supabase/access-token" "$fill" <<'PY'
+from pathlib import Path
+import sys
+with Path(sys.argv[1]).open("xb") as output:
+    output.write((b"\n" if sys.argv[2] == "newline" else b"x") * 1048577)
+PY
+        if credential_report_run 0 && jq -e '(.services[] | select(.service == "supabase") | .state == "unknown")' "$CREDENTIAL_REPORT_OUTPUT" >/dev/null &&
+            [[ "$(wc -c < "$PROTOCOL_HOME/.supabase/access-token" | tr -d ' ')" == 1048577 ]]; then
+            harness_pass "oversized $fill credential snapshots stay bounded and unmodified"
+        else harness_fail "oversized $fill credential snapshots stay bounded and unmodified"; fi
+    done
+}
+
+credential_support_run() {
+    local expected="$1" acfs_home="${2:-$REPO_ROOT}" actual=0
+    shift 2
+    CREDENTIAL_SUPPORT_BUNDLE="$PROTOCOL_HOME/bundle"
+    mkdir -p "$CREDENTIAL_SUPPORT_BUNDLE"
+    env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u GOOGLE_API_KEY \
+        -u VERCEL_TOKEN -u SUPABASE_ACCESS_TOKEN -u CLOUDFLARE_API_TOKEN \
+        TARGET_USER="$(id -un)" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$acfs_home" \
+        ACFS_PROTOCOL_POISON_MARKER="$PROTOCOL_HOME/tool-called" "$@" \
+        bash -c '
+            source "$1"
+            SUPPORT_TARGET_USER="$2"; SUPPORT_TARGET_HOME="$3"; _SUPPORT_ACFS_HOME="$4"
+            case "${FIXTURE_CONTROL:-}" in
+                context) SUPPORT_TARGET_HOME="$3/unresolved-home" ;;
+                dependency) support_system_binary_path() { return 1; } ;;
+                trace) set -x ;;
+            esac
+            [[ "${FIXTURE_NO_REDACT:-false}" != true ]] || REDACT=false
+            BUNDLE_FILES=()
+            result=0
+            capture_credential_status_json "$5" || result=$?
+            record_bundle_file credential_status.json
+            write_manifest "$5"
+            write_support_report_index "$5"
+            exit "$result"
+        ' _ "$SUPPORT_SH" "$(id -un)" "$PROTOCOL_HOME" "$acfs_home" "$CREDENTIAL_SUPPORT_BUNDLE" \
+        > "$PROTOCOL_HOME/capture.stdout" 2> "$PROTOCOL_HOME/capture.stderr" || actual=$?
+    [[ "$actual" == "$expected" ]]
+}
+
+test_credential_support_preserves_states_without_values() {
+    credential_report_setup credential-support-real
+    mkdir -p "$PROTOCOL_HOME/.codex"
+    printf '%s\n' '{"tokens":{"access_token":"fixture-support-codex-secret"}}' > "$PROTOCOL_HOME/.codex/auth.json"
+    cp "$PROTOCOL_HOME/.codex/auth.json" "$PROTOCOL_HOME/auth.before"
+    if credential_report_run 0 VERCEL_TOKEN=your_vercel_token ANTHROPIC_API_KEY=fixture-support-env-secret &&
+        credential_support_run 0 "$REPO_ROOT" VERCEL_TOKEN=your_vercel_token ANTHROPIC_API_KEY=fixture-support-env-secret \
+            FIXTURE_CONTROL=trace FIXTURE_NO_REDACT=true &&
+        jq -e --slurpfile direct "$CREDENTIAL_REPORT_OUTPUT" '.services == $direct[0].services and
+            .read_only == true and .capture.status == "pass" and .safety.provider_validation_performed == false' \
+            "$CREDENTIAL_SUPPORT_BUNDLE/credential_status.json" >/dev/null &&
+        jq -e '.files | index("credential_status.json") != null' "$CREDENTIAL_SUPPORT_BUNDLE/manifest.json" >/dev/null &&
+        jq -e '.diagnostics.credential_status | .included == true and .source_status == "pass" and
+            .paths_redacted == true and .raw_paths_collected == false' "$CREDENTIAL_SUPPORT_BUNDLE/manifest.json" >/dev/null &&
+        grep -Fq '[credential_status.json](credential_status.json)' "$CREDENTIAL_SUPPORT_BUNDLE/support-report.md" &&
+        ! grep -RFq fixture-support- "$CREDENTIAL_SUPPORT_BUNDLE" &&
+        ! grep -Fq fixture-support-env-secret "$PROTOCOL_HOME/capture.stderr" &&
+        ! grep -RFq "$PROTOCOL_HOME" "$CREDENTIAL_SUPPORT_BUNDLE" &&
+        [[ ! -e "$PROTOCOL_HOME/tool-called" ]] && cmp -s "$PROTOCOL_HOME/auth.before" "$PROTOCOL_HOME/.codex/auth.json"; then
+        harness_pass "support exports reuse actual credential metadata, with values/paths absent and authentication unverified"
+    else harness_fail "support exports reuse actual credential metadata, with values/paths absent and authentication unverified"; fi
+}
+
+test_credential_support_context_and_dependency_controls() {
+    local mode=""
+    for mode in context dependency; do
+        credential_report_setup "credential-support-$mode"
+        if credential_support_run 1 "$REPO_ROOT" FIXTURE_CONTROL="$mode" &&
+            jq -e '.status == "warn" and .capture.status == "warn" and .services == null' \
+                "$CREDENTIAL_SUPPORT_BUNDLE/credential_status.json" >/dev/null &&
+            ! grep -RFq "$PROTOCOL_HOME" "$CREDENTIAL_SUPPORT_BUNDLE" &&
+            [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
+            harness_pass "credential support $mode failure avoids fallback credential inspection"
+        else harness_fail "credential support $mode failure avoids fallback credential inspection"; fi
+    done
+}
+
+test_credential_support_schema_and_failure_controls() {
+    local mode="" expected=1
+    for mode in extra invalid duplicate failed timeout; do
+        credential_report_setup "credential-support-$mode"
+        credential_report_run 0 || { harness_fail "prepare $mode credential source"; continue; }
+        mkdir -p "$PROTOCOL_HOME/installed/scripts"
+        cat > "$PROTOCOL_HOME/installed/scripts/services-setup.sh" <<'EOF'
+#!/usr/bin/env bash
+services_setup_credential_status_json() {
+case "$FIXTURE_MODE" in
+    extra) jq --arg secret fixture-support-private-secret '.extra=$secret | .services[0].token=$secret' "$FIXTURE_REPORT" ;;
+    invalid) jq '.services[0].state="fixture-support-private-secret"' "$FIXTURE_REPORT" ;;
+    duplicate) cat "$FIXTURE_REPORT" "$FIXTURE_REPORT" ;;
+    failed) printf 'fixture-support-private-secret\n' >&2; cat "$FIXTURE_REPORT"; exit 2 ;;
+    timeout) sleep 3; cat "$FIXTURE_REPORT" ;;
+esac
+}
+EOF
+        expected=1
+        [[ "$mode" != extra ]] || expected=0
+        if credential_support_run "$expected" "$PROTOCOL_HOME/installed" FIXTURE_MODE="$mode" \
+            FIXTURE_REPORT="$CREDENTIAL_REPORT_OUTPUT" SUPPORT_BUNDLE_CREDENTIAL_STATUS_TIMEOUT=1 &&
+            jq -e --arg mode "$mode" 'if $mode == "extra" then .capture.status == "pass" and .extra == null and
+                all(.services[]; .token == null) else .status == "warn" and .capture.status == "warn" and
+                .services == null end' "$CREDENTIAL_SUPPORT_BUNDLE/credential_status.json" >/dev/null &&
+            ! grep -RFq fixture-support-private-secret "$CREDENTIAL_SUPPORT_BUNDLE" &&
+            ! grep -Fq fixture-support-private-secret "$PROTOCOL_HOME/capture.stderr" &&
+            [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
+            harness_pass "credential support $mode capture retains only trustworthy metadata"
+        else harness_fail "credential support $mode capture retains only trustworthy metadata"; fi
+    done
+}
+
+test_credential_support_is_collected_by_real_bundle_cli() {
+    credential_report_setup credential-support-cli
+    mkdir -p "$PROTOCOL_HOME/.supabase"
+    jq -n --arg user "$(id -un)" --arg home "$PROTOCOL_HOME" \
+        '{target_user:$user,target_home:$home,mode:"safe",completed_phases:[]}' > "$PROTOCOL_HOME/.acfs/state.json"
+    printf 'fixture-support-cli-secret\n' > "$PROTOCOL_HOME/.supabase/access-token"
+    local archive="" bundle=""
+    if archive="$(env -u TARGET_USER -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u GOOGLE_API_KEY \
+        -u VERCEL_TOKEN -u SUPABASE_ACCESS_TOKEN -u CLOUDFLARE_API_TOKEN \
+        HOME="$PROTOCOL_HOME" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$REPO_ROOT" \
+        ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/no-system-state.json" \
+        SUPPORT_BUNDLE_DOCTOR_TIMEOUT=1 SUPPORT_BUNDLE_SWARM_STATUS_TIMEOUT=1 \
+        SUPPORT_BUNDLE_SWARM_TIMELINE_TIMEOUT=1 SUPPORT_BUNDLE_PROVENANCE_TIMEOUT=1 \
+        ACFS_PROTOCOL_POISON_MARKER="$PROTOCOL_HOME/tool-called" \
+        bash "$SUPPORT_SH" --output "$PROTOCOL_HOME/full-bundle" 2> "$PROTOCOL_HOME/full-bundle.stderr")"; then
+        bundle="${archive%.tar.gz}"
+        if [[ -f "$archive" ]] && jq -e '(.services[] | select(.service == "supabase") |
+            .state == "file_configured" and .authentication == "unverified")' "$bundle/credential_status.json" >/dev/null &&
+            jq -e '.diagnostics.credential_status.included == true and
+                (.files | index("credential_status.json") != null)' "$bundle/manifest.json" >/dev/null &&
+            grep -Fq '[credential_status.json](credential_status.json)' "$bundle/support-report.md" &&
+            ! grep -RFq fixture-support-cli-secret "$bundle"; then
+            harness_pass "real support-bundle CLI collects and indexes passive credential metadata"
+            return
+        fi
+    fi
+    harness_fail "real support-bundle CLI collects and indexes passive credential metadata"
+}
+
+credential_doctor_setup() {
+    credential_report_setup "$1"
+    mkdir -p "$PROTOCOL_HOME/.acfs/bin" "$PROTOCOL_HOME/.acfs/scripts/lib"
+    cp "$SERVICES_SETUP_SH" "$PROTOCOL_HOME/.acfs/scripts/services-setup.sh"
+    cp "$REPO_ROOT/scripts/lib/logging.sh" "$REPO_ROOT/scripts/lib/gum_ui.sh" "$PROTOCOL_HOME/.acfs/scripts/lib/"
+    cp "$DOCTOR_SH" "$PROTOCOL_HOME/.acfs/bin/acfs"
+    # Existing doctor tests source its real definitions without the final main.
+    sed '$d' "$DOCTOR_SH" > "$PROTOCOL_HOME/.acfs/scripts/lib/sourceable-doctor.sh"
+    jq -n --arg home "$PROTOCOL_HOME" \
+        '{target_user:"acfs_credential_fixture",target_home:$home,bin_dir:($home+"/.local/bin"),mode:"safe"}' \
+        > "$PROTOCOL_HOME/.acfs/state.json"
+}
+
+credential_doctor_run() {
+    DOCTOR_CREDENTIAL_OUTPUT="$PROTOCOL_HOME/doctor-credentials.json"
+    env -u TARGET_USER -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u GOOGLE_API_KEY \
+        -u VERCEL_TOKEN -u SUPABASE_ACCESS_TOKEN -u CLOUDFLARE_API_TOKEN \
+        HOME="$PROTOCOL_HOME" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+        ACFS_STATE_FILE="$PROTOCOL_HOME/.acfs/state.json" ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/no-system-state.json" \
+        ACFS_PROTOCOL_POISON_MARKER="$PROTOCOL_HOME/tool-called" "$@" \
+        bash -c '
+            source "$1"
+            TARGET_HOME="$2"; TARGET_USER=acfs_credential_fixture
+            JSON_MODE=true; PASS_COUNT=0; WARN_COUNT=0; FAIL_COUNT=0; SKIP_COUNT=0; JSON_CHECKS=()
+            case "${FIXTURE_CONTROL:-}" in
+                context) TARGET_HOME="$2/missing-home" ;;
+                dependency) _acfs_doctor_system_binary_path() { return 1; } ;;
+                trace) set -x ;;
+            esac
+            check_credential_sources
+            print_json
+        ' _ "$PROTOCOL_HOME/.acfs/scripts/lib/sourceable-doctor.sh" "$PROTOCOL_HOME" \
+        > "$DOCTOR_CREDENTIAL_OUTPUT" 2> "$DOCTOR_CREDENTIAL_OUTPUT.stderr"
+}
+
+test_credential_doctor_matches_canonical_source_states() {
+    credential_doctor_setup credential-doctor-states
+    mkdir -p "$PROTOCOL_HOME/.codex" "$PROTOCOL_HOME/.supabase" "$PROTOCOL_HOME/.config/.wrangler/config"
+    printf '{invalid fixture-doctor-private-codex\n' > "$PROTOCOL_HOME/.codex/auth.json"
+    printf 'fixture-doctor-private-supabase\n' > "$PROTOCOL_HOME/.supabase/access-token"
+    printf 'oauth_token="fixture-doctor-private-wrangler"\n' > "$PROTOCOL_HOME/.config/.wrangler/config/default.toml"
+    cp "$PROTOCOL_HOME/.supabase/access-token" "$PROTOCOL_HOME/token.before"
+    if credential_report_run 0 ANTHROPIC_API_KEY=fixture-doctor-private-env VERCEL_TOKEN=your_vercel_token &&
+        credential_doctor_run ANTHROPIC_API_KEY=fixture-doctor-private-env VERCEL_TOKEN=your_vercel_token FIXTURE_CONTROL=trace &&
+        jq -e --slurpfile canonical "$CREDENTIAL_REPORT_OUTPUT" '
+            .summary == {pass:2,skip:1,warn:3,fail:0} and (.checks | length) == 6 and
+            all(.checks[]; . as $check | ($canonical[0].services[] | select($check.id == ("credential.source."+.service))) as $source |
+                $check.details == ("state="+$source.state+"; source="+$source.source+"; requirement=optional; authentication=unverified; remediation="+$source.remediation)) and
+            (.checks[] | select(.id == "credential.source.gemini") | .status == "skip") and
+            (.checks[] | select(.id == "credential.source.vercel") | .status == "warn")
+        ' "$DOCTOR_CREDENTIAL_OUTPUT" >/dev/null &&
+        ! grep -Fq fixture-doctor-private- "$DOCTOR_CREDENTIAL_OUTPUT" &&
+        ! grep -Fq fixture-doctor-private- "$DOCTOR_CREDENTIAL_OUTPUT.stderr" &&
+        [[ ! -e "$PROTOCOL_HOME/tool-called" ]] &&
+        cmp -s "$PROTOCOL_HOME/token.before" "$PROTOCOL_HOME/.supabase/access-token"; then
+        harness_pass "doctor reuses canonical storage states/remediation, optional skips and unverified authentication without values or probes"
+    else harness_fail "doctor reuses canonical storage states/remediation, optional skips and unverified authentication without values or probes"; fi
+}
+
+test_credential_doctor_capture_controls() {
+    local mode=""
+    for mode in context dependency extra invalid duplicate failed timeout; do
+        credential_doctor_setup "credential-doctor-$mode"
+        credential_report_run 0 || { harness_fail "prepare $mode doctor report"; continue; }
+        if [[ "$mode" != context && "$mode" != dependency ]]; then
+            cat > "$PROTOCOL_HOME/.acfs/scripts/services-setup.sh" <<'EOF'
+#!/usr/bin/env bash
+services_setup_credential_status_json() {
+    case "$FIXTURE_MODE" in
+        extra) jq --arg secret fixture-doctor-private-value '.extra=$secret | .services[0].token=$secret' "$FIXTURE_REPORT" ;;
+        invalid) jq '.services[0].remediation="fixture-doctor-private-value"' "$FIXTURE_REPORT" ;;
+        duplicate) cat "$FIXTURE_REPORT" "$FIXTURE_REPORT" ;;
+        failed) printf 'fixture-doctor-private-value\n' >&2; cat "$FIXTURE_REPORT"; return 2 ;;
+        timeout) sleep 3; cat "$FIXTURE_REPORT" ;;
+    esac
+}
+EOF
+        fi
+        if credential_doctor_run FIXTURE_CONTROL="$mode" FIXTURE_MODE="$mode" \
+            FIXTURE_REPORT="$CREDENTIAL_REPORT_OUTPUT" ACFS_DOCTOR_CREDENTIAL_TIMEOUT=1 &&
+            jq -e --arg mode "$mode" 'if $mode == "extra" then .summary.skip == 6 and (.checks|length)==6
+                else .summary.warn == 1 and (.checks|length)==1 and .checks[0].id == "credential.sources" and
+                    (.checks[0].details | contains("authentication=unverified")) end' "$DOCTOR_CREDENTIAL_OUTPUT" >/dev/null &&
+            ! grep -Fq fixture-doctor-private-value "$DOCTOR_CREDENTIAL_OUTPUT" &&
+            ! grep -Fq fixture-doctor-private-value "$DOCTOR_CREDENTIAL_OUTPUT.stderr" &&
+            [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
+            harness_pass "doctor credential $mode control preserves warning/privacy semantics"
+        else harness_fail "doctor credential $mode control preserves warning/privacy semantics"; fi
+    done
+}
+
+test_credential_doctor_is_in_normal_cli_reports() {
+    local mode="" actual=0 output=""
+    for mode in json human; do
+        credential_doctor_setup "credential-doctor-cli-$mode"
+        output="$PROTOCOL_HOME/doctor-$mode.output"
+        actual=0
+        local -a args=(doctor)
+        [[ "$mode" != json ]] || args+=(--json)
+        env -u TARGET_USER -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u GOOGLE_API_KEY \
+            -u SUPABASE_ACCESS_TOKEN -u CLOUDFLARE_API_TOKEN \
+            HOME="$PROTOCOL_HOME" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+            ACFS_STATE_FILE="$PROTOCOL_HOME/.acfs/state.json" ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/no-system-state.json" \
+            ACFS_DOCTOR_CI=true VERCEL_TOKEN=your_vercel_token ACFS_PROTOCOL_POISON_MARKER="$PROTOCOL_HOME/tool-called" \
+            bash "$PROTOCOL_HOME/.acfs/bin/acfs" "${args[@]}" > "$output" 2> "$output.stderr" || actual=$?
+        # This incomplete synthetic install may fail other doctor checks. These
+        # assertions qualify credential collection, not installation health.
+        if [[ "$actual" == 0 || "$actual" == 1 ]] && ! grep -Fq fixture-doctor-private- "$output"; then
+            if [[ "$mode" == json ]] && jq -e '[.checks[] | select(.id | startswith("credential.source."))] |
+                length == 6 and any(.[]; .id == "credential.source.vercel" and .status == "warn" and
+                    (.details | contains("state=placeholder; source=environment; requirement=optional; authentication=unverified")))' "$output" >/dev/null; then
+                harness_pass "normal doctor JSON CLI includes credential-source checks"
+                continue
+            elif [[ "$mode" == human ]] && grep -Fq 'vercel credential source: placeholder' "$output" &&
+                grep -Fq 'authentication unverified' "$output"; then
+                harness_pass "normal doctor human CLI includes credential-source states and remediation"
+                continue
+            fi
+        fi
+        harness_fail "normal doctor $mode CLI includes credential-source checks"
+    done
+}
+
+run_credential_doctor_tests() {
+    test_credential_doctor_matches_canonical_source_states
+    test_credential_doctor_capture_controls
+    test_credential_doctor_is_in_normal_cli_reports
+    test_doctor_manifest_preserves_caller_options_and_path
+}
+
+test_doctor_manifest_preserves_caller_options_and_path() {
+    local profile="" output=""
+    for profile in on off; do
+        credential_doctor_setup "credential-doctor-options-$profile"
+        mkdir -p "$PROTOCOL_HOME/.acfs/scripts/generated"
+        cat > "$PROTOCOL_HOME/.acfs/scripts/generated/doctor_checks.sh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$FIXTURE_PROFILE" == on ]]; then
+    set +e +u +C
+    set +o pipefail
+else
+    set -e -u -C -o pipefail
+fi
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+declare -a MANIFEST_CHECKS=(fixture.keep)
+EOF
+        output="$(env -u TARGET_USER HOME="$PROTOCOL_HOME" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+            ACFS_STATE_FILE="$PROTOCOL_HOME/.acfs/state.json" ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/no-system-state.json" \
+            PATH="$PROTOCOL_HOME/.local/bin:/usr/bin:/bin" FIXTURE_PROFILE="$profile" bash -c '
+                if [[ "$FIXTURE_PROFILE" == on ]]; then set -e -u -C -o pipefail; else set +e +u +C; set +o pipefail; fi
+                sourceable="$1"
+                set -- "keep first" "literal ; \$(false)"
+                source "$sourceable"
+                e=off; u=off; c=off; p=off
+                [[ $- != *e* ]] || e=on
+                [[ $- != *u* ]] || u=on
+                [[ $- != *C* ]] || c=on
+                if shopt -qo pipefail; then p=on; fi
+                printf "%s|%s|%s|%s|%s|%s|%s|%s\n" "$e" "$u" "$c" "$p" "$1" "$2" "$MANIFEST_CHECKS_LOADED" "${MANIFEST_CHECKS[0]}"
+                [[ "$PATH" == *"/.local/bin:"* ]]
+            ' _ "$PROTOCOL_HOME/.acfs/scripts/lib/sourceable-doctor.sh" 2> "$PROTOCOL_HOME/options.stderr")"
+        if [[ "$output" == "$profile|$profile|$profile|$profile|keep first|literal ; \$(false)|true|fixture.keep" ]]; then
+            harness_pass "doctor preserves $profile caller options, positional args, PATH and global manifest arrays"
+        else harness_fail "doctor preserves $profile caller options, positional args, PATH and global manifest arrays" "$output"; fi
+    done
+}
+
+run_credential_report_tests() {
+    test_credential_report_optional_missing_is_passive
+    test_credential_report_environment_and_placeholder_states
+    test_credential_report_cached_files_and_bad_formats
+    test_credential_report_requirement_flags_and_nonmutation
+    test_credential_report_required_presence_is_not_authentication
+    test_credential_report_expression_errors_remain_unknown
+    test_credential_report_tracing_does_not_expose_values
+    test_credential_report_oversized_files_are_bounded
+}
+
+test_credential_report_rejects_multiple_json_documents() {
+    local index=0 input="" output="" actual=0
+    for input in '{} {"tokens":{"access_token":"fixture-stream-secret"}}' '{"tokens":{"access_token":"fixture-stream-secret"}} {}'; do
+        index=$((index + 1))
+        credential_report_setup "credential-stream-$index"
+        mkdir -p "$PROTOCOL_HOME/.codex"
+        printf '%s\n' "$input" > "$PROTOCOL_HOME/.codex/auth.json"
+        cp "$PROTOCOL_HOME/.codex/auth.json" "$PROTOCOL_HOME/auth.before"
+        output="$PROTOCOL_HOME/stream.json"; actual=0
+        env -u OPENAI_API_KEY TARGET_USER="$(id -un)" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+            bash "$SERVICES_SETUP_SH" --credential-status --require codex > "$output" 2> "$output.stderr" || actual=$?
+        if [[ "$actual" == 1 ]] && jq -e '.status == "warn" and .summary.required_unmet == 1 and
+            (.services[] | select(.service == "codex") | .state == "unknown" and .authentication == "unverified")' "$output" >/dev/null &&
+            ! grep -Fq fixture-stream-secret "$output" && cmp -s "$PROTOCOL_HOME/auth.before" "$PROTOCOL_HOME/.codex/auth.json"; then
+            harness_pass "credential input stream $index is unknown, redacted and unchanged"
+        else harness_fail "credential input stream $index is unknown, redacted and unchanged"; fi
+    done
+}
+
+test_webhook_rejections_do_not_print_credentials() {
+    credential_report_setup webhook-rejection-privacy
+    local output="$PROTOCOL_HOME/rejection.stdout" actual=0
+    bash -c '
+        source "$2"
+        source "$1"
+        webhook_validate_url "http://fixture-user:fixture-webhook-secret@example.invalid/private-token"
+    ' _ "$WEBHOOK_SH" "$REPO_ROOT/scripts/lib/logging.sh" > "$output" 2> "$output.stderr" || actual=$?
+    if [[ "$actual" == 1 ]] && grep -Fq 'HTTPS required' "$output.stderr" &&
+        ! grep -Fq fixture-webhook-secret "$output.stderr" && ! grep -Fq private-token "$output.stderr"; then
+        harness_pass "rejected webhook diagnostics omit credential-bearing URL values"
+    else harness_fail "rejected webhook diagnostics omit credential-bearing URL values"; fi
+}
+
+run_fresh_input_tests() {
+    test_credential_report_rejects_multiple_json_documents
+    test_webhook_rejections_do_not_print_credentials
+    test_webhook_ip_boundaries_reject_malformed_literals
+}
+
+test_webhook_ip_boundaries_reject_malformed_literals() {
+    credential_report_setup webhook-ip-boundaries
+    local output=""
+    cat > "$PROTOCOL_HOME/curl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$ACFS_FIXTURE_IP"
+EOF
+    chmod +x "$PROTOCOL_HOME/curl"
+    output="$(bash -c '
+        source "$1"
+        fixture_curl="$2"
+        webhook_system_binary_path() {
+            if [[ "$1" == curl ]]; then printf "%s\n" "$fixture_curl"; else command -v "$1"; fi
+        }
+        for ip in "1:2:3:4:5:6:7:8:" "::1:2:3:4:5:6:7:" "18446744073709551616.0.0.1" "256.0.0.1"; do
+            ACFS_FIXTURE_IP="$ip"; export ACFS_FIXTURE_IP
+            printf "%s\n" "$(webhook_public_ip)"
+        done
+        ACFS_FIXTURE_IP=203.0.113.7; export ACFS_FIXTURE_IP
+        webhook_public_ip
+        ACFS_FIXTURE_IP=2001:db8::5; export ACFS_FIXTURE_IP
+        webhook_public_ip
+    ' _ "$WEBHOOK_SH" "$PROTOCOL_HOME/curl")"
+    if [[ "$output" == $'unknown\nunknown\nunknown\nunknown\n203.0.113.7\n2001:db8::5' ]]; then
+        harness_pass "webhook IP validation rejects trailing IPv6 colons and overflowing IPv4 octets while retaining valid addresses"
+    else harness_fail "webhook IP validation rejects trailing IPv6 colons and overflowing IPv4 octets while retaining valid addresses" "$output"; fi
+}
+
+run_credential_support_tests() {
+    test_credential_support_preserves_states_without_values
+    test_credential_support_context_and_dependency_controls
+    test_credential_support_schema_and_failure_controls
+    test_credential_support_is_collected_by_real_bundle_cli
+}
+
+credential_onboard_setup() {
+    credential_report_setup "$1"
+    mkdir -p "$PROTOCOL_HOME/.acfs/onboard" "$PROTOCOL_HOME/.acfs/scripts/lib"
+    cp "$ONBOARD_SH" "$PROTOCOL_HOME/.acfs/onboard/onboard.sh"
+    cp "$SERVICES_SETUP_SH" "$PROTOCOL_HOME/.acfs/scripts/services-setup.sh"
+    cp "$REPO_ROOT/scripts/lib/logging.sh" "$REPO_ROOT/scripts/lib/gum_ui.sh" "$PROTOCOL_HOME/.acfs/scripts/lib/"
+}
+
+credential_onboard_run() {
+    local expected="$1" name="$2" actual=0
+    shift 2
+    CREDENTIAL_ONBOARD_OUTPUT="$PROTOCOL_HOME/$name.json"
+    env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u GOOGLE_API_KEY \
+        -u VERCEL_TOKEN -u SUPABASE_ACCESS_TOKEN -u CLOUDFLARE_API_TOKEN \
+        HOME="$PROTOCOL_HOME" TARGET_USER=acfs_onboard_fixture TARGET_HOME="$PROTOCOL_HOME" \
+        ACFS_HOME="$PROTOCOL_HOME/.acfs" ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/no-system-state.json" \
+        ACFS_PROTOCOL_POISON_MARKER="$PROTOCOL_HOME/tool-called" PATH="$PROTOCOL_HOME/.local/bin:/usr/bin:/bin" \
+        "$@" bash "$PROTOCOL_HOME/.acfs/onboard/onboard.sh" credential-status \
+        > "$CREDENTIAL_ONBOARD_OUTPUT" 2> "$CREDENTIAL_ONBOARD_OUTPUT.stderr" || actual=$?
+    [[ "$actual" == "$expected" ]]
+}
+
+test_credential_onboard_cli_uses_real_collector_without_mutation() {
+    credential_onboard_setup credential-onboard-cli
+    mkdir -p "$PROTOCOL_HOME/.codex" "$PROTOCOL_HOME/.config/vercel" "$PROTOCOL_HOME/.claude"
+    printf '%s\n' '{"tokens":{"access_token":"fixture-onboard-cached-secret"}}' > "$PROTOCOL_HOME/.codex/auth.json"
+    printf '%s\n' '{"token":"fixture-shadowed-vercel-secret"}' > "$PROTOCOL_HOME/.config/vercel/auth.json"
+    printf 'invalid fixture-onboard-malformed-secret\n' > "$PROTOCOL_HOME/.claude/.credentials.json"
+    cp "$PROTOCOL_HOME/.codex/auth.json" "$PROTOCOL_HOME/auth.before"
+    cp "$PROTOCOL_HOME/.config/vercel/auth.json" "$PROTOCOL_HOME/vercel.before"
+    if credential_onboard_run 0 candidate VERCEL_TOKEN=your_vercel_token SUPABASE_ACCESS_TOKEN=fixture-onboard-env-secret &&
+        jq -e '.kind == "acfs.credential_status" and .read_only == true and (.services | length) == 6 and
+          all(.services[]; .requirement == "optional" and .authentication == "unverified") and
+          (.services[] | select(.service == "codex") | .state == "file_configured" and .source == "file" and .remediation == "validate_before_use") and
+          (.services[] | select(.service == "supabase") | .state == "shell_configured" and .source == "environment") and
+          (.services[] | select(.service == "vercel") | .state == "placeholder" and .remediation == "replace_or_unset_placeholder") and
+          (.services[] | select(.service == "claude") | .state == "unknown" and .remediation == "inspect_local_config") and
+          (.services[] | select(.service == "gemini") | .state == "missing" and .remediation == "configure_when_needed")' "$CREDENTIAL_ONBOARD_OUTPUT" >/dev/null &&
+        ! grep -Fq fixture- "$CREDENTIAL_ONBOARD_OUTPUT" && [[ ! -s "$CREDENTIAL_ONBOARD_OUTPUT.stderr" ]] &&
+        cmp -s "$PROTOCOL_HOME/auth.before" "$PROTOCOL_HOME/.codex/auth.json" &&
+        cmp -s "$PROTOCOL_HOME/vercel.before" "$PROTOCOL_HOME/.config/vercel/auth.json" &&
+        [[ ! -e "$PROTOCOL_HOME/tool-called" && ! -e "$PROTOCOL_HOME/.acfs/onboard_progress.json" && ! -e "$PROTOCOL_HOME/.acfs/local_progress.json" ]]; then
+        harness_pass "real onboarding CLI reuses canonical states, redacts values and preserves files/progress without provider probes"
+    else harness_fail "real onboarding CLI reuses canonical states, redacts values and preserves files/progress without provider probes"; fi
+}
+
+test_credential_onboard_screen_renders_states_and_probes_once() {
+    credential_onboard_setup credential-onboard-screen
+    mkdir -p "$PROTOCOL_HOME/.codex"
+    printf '%s\n' '{"tokens":{"access_token":"fixture-screen-cached-secret"}}' > "$PROTOCOL_HOME/.codex/auth.json"
+    local output="$PROTOCOL_HOME/screen.stdout" actual=0
+    env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u GOOGLE_API_KEY -u SUPABASE_ACCESS_TOKEN -u CLOUDFLARE_API_TOKEN \
+        VERCEL_TOKEN=your_vercel_token HOME="$PROTOCOL_HOME" TARGET_USER=acfs_onboard_fixture TARGET_HOME="$PROTOCOL_HOME" \
+        ACFS_HOME="$PROTOCOL_HOME/.acfs" ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/no-system-state.json" \
+        ACFS_PROTOCOL_POISON_MARKER="$PROTOCOL_HOME/tool-called" PATH="$PROTOCOL_HOME/.local/bin:/usr/bin:/bin" TERM=dumb \
+        bash -c 'source "$1"; show_auth_flow' _ "$PROTOCOL_HOME/.acfs/onboard/onboard.sh" \
+        </dev/null > "$output" 2> "$output.stderr" || actual=$?
+    # Only the existing GitHub, Vercel and Wrangler checks invoke a provider CLI.
+    # Their poisoned commands fail; the new passive collector must add no probe.
+    if [[ "$actual" == 0 ]] && grep -Fq 'authentication=unverified' "$output" &&
+        grep -Fq 'codex: state=file_configured; source=file; remediation=validate_before_use' "$output" &&
+        grep -Fq 'vercel: state=placeholder; source=environment; remediation=replace_or_unset_placeholder' "$output" &&
+        grep -Fq 'Validate with a read-only provider command before use.' "$output" &&
+        grep -Fq 'services configured or checked' "$output" && ! grep -Fq 'services authenticated' "$output" &&
+        ! grep -Fq fixture-screen-cached-secret "$output" && [[ "$(wc -l < "$PROTOCOL_HOME/tool-called" | tr -d ' ')" == 3 ]]; then
+        harness_pass "normal auth screen displays canonical guidance, avoids authenticated claims and probes each live service once"
+    else harness_fail "normal auth screen displays canonical guidance, avoids authenticated claims and probes each live service once" "exit=$actual"; fi
+}
+
+test_credential_onboard_preserves_resolved_home_over_setup_account() {
+    credential_onboard_setup credential-onboard-home
+    mkdir -p "$PROTOCOL_HOME/.codex"
+    printf '%s\n' '{"tokens":{"access_token":"fixture-resolved-home-secret"}}' > "$PROTOCOL_HOME/.codex/auth.json"
+    if credential_onboard_run 0 target TARGET_USER="$(id -un)" &&
+        jq -e '(.services[] | select(.service == "codex") | .state == "file_configured")' "$CREDENTIAL_ONBOARD_OUTPUT" >/dev/null &&
+        ! grep -Fq "$PROTOCOL_HOME" "$CREDENTIAL_ONBOARD_OUTPUT"; then
+        harness_pass "onboarding collector preserves resolved fixture home instead of re-resolving the real account home"
+    else harness_fail "onboarding collector preserves resolved fixture home instead of re-resolving the real account home"; fi
+}
+
+test_credential_onboard_actual_collector_is_private_under_tracing() {
+    credential_onboard_setup credential-onboard-real-trace
+    mkdir -p "$PROTOCOL_HOME/.codex"
+    printf '%s\n' '{"tokens":{"access_token":"fixture-real-trace-file-secret"}}' > "$PROTOCOL_HOME/.codex/auth.json"
+    local output="$PROTOCOL_HOME/real-trace.stdout" actual=0
+    env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u GOOGLE_API_KEY -u VERCEL_TOKEN -u CLOUDFLARE_API_TOKEN \
+        SUPABASE_ACCESS_TOKEN=fixture-real-trace-env-secret HOME="$PROTOCOL_HOME" TARGET_HOME="$PROTOCOL_HOME" \
+        ACFS_HOME="$PROTOCOL_HOME/.acfs" ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/no-system-state.json" \
+        ACFS_PROTOCOL_POISON_MARKER="$PROTOCOL_HOME/tool-called" PATH="$PROTOCOL_HOME/.local/bin:/usr/bin:/bin" \
+        bash -x "$PROTOCOL_HOME/.acfs/onboard/onboard.sh" credential-status > "$output" 2> "$output.stderr" || actual=$?
+    if [[ "$actual" == 0 ]] && jq -e '(.services[] | select(.service == "codex") | .state == "file_configured") and
+        (.services[] | select(.service == "supabase") | .state == "shell_configured")' "$output" >/dev/null &&
+        ! grep -Fq fixture-real-trace-file-secret "$output" "$output.stderr" &&
+        ! grep -Fq fixture-real-trace-env-secret "$output" "$output.stderr" && [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
+        harness_pass "actual collector reads file/environment candidates without trace leaks or provider probes"
+    else harness_fail "actual collector reads file/environment candidates without trace leaks or provider probes"; fi
+}
+
+test_credential_onboard_failure_projection_and_tracing() {
+    local mode="" actual=0 output=""
+    for mode in extra malformed stream failure source-failure timeout; do
+        credential_onboard_setup "credential-onboard-$mode"
+        credential_report_run 0 || { harness_fail "prepare $mode onboarding report"; continue; }
+        case "$mode" in
+            extra) jq '.extra="fixture-hidden-secret" | .services[0].extra="fixture-hidden-secret"' "$CREDENTIAL_REPORT_OUTPUT" > "$PROTOCOL_HOME/payload.json" ;;
+            malformed) printf 'invalid fixture-hidden-secret\n' > "$PROTOCOL_HOME/payload.json" ;;
+            stream) cat "$CREDENTIAL_REPORT_OUTPUT" "$CREDENTIAL_REPORT_OUTPUT" > "$PROTOCOL_HOME/payload.json" ;;
+            *) cp "$CREDENTIAL_REPORT_OUTPUT" "$PROTOCOL_HOME/payload.json" ;;
+        esac
+        cat > "$PROTOCOL_HOME/.acfs/scripts/services-setup.sh" <<'EOF'
+services_setup_credential_status_json() {
+    if [[ "$ACFS_CREDENTIAL_FIXTURE_MODE" == timeout ]]; then sleep 30; fi
+    cat "$ACFS_CREDENTIAL_FIXTURE_PAYLOAD"
+    [[ "$ACFS_CREDENTIAL_FIXTURE_MODE" != failure ]]
+}
+[[ "$ACFS_CREDENTIAL_FIXTURE_MODE" != source-failure ]] || return 1
+EOF
+        output="$PROTOCOL_HOME/projected.stdout"; actual=0
+        env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY HOME="$PROTOCOL_HOME" TARGET_USER=acfs_onboard_fixture TARGET_HOME="$PROTOCOL_HOME" \
+            ACFS_HOME="$PROTOCOL_HOME/.acfs" ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/no-system-state.json" \
+            PATH="$PROTOCOL_HOME/.local/bin:/usr/bin:/bin" ACFS_CREDENTIAL_FIXTURE_MODE="$mode" \
+            ACFS_CREDENTIAL_FIXTURE_PAYLOAD="$PROTOCOL_HOME/payload.json" \
+            bash -x "$PROTOCOL_HOME/.acfs/onboard/onboard.sh" credential-status > "$output" 2> "$output.stderr" || actual=$?
+        if [[ "$mode" == extra && "$actual" == 0 ]] && jq -e '.status == "pass" and (has("extra") | not) and all(.services[]; has("extra") | not)' "$output" >/dev/null &&
+            ! grep -Fq fixture-hidden-secret "$output" "$output.stderr"; then
+            harness_pass "onboarding projection retains known states while dropping secret-bearing extra fields under tracing"
+        elif [[ "$mode" != extra && "$actual" == 2 ]] &&
+            jq -e '.status == "error" and .error == "credential_capture_unavailable" and .read_only == true and (has("services") | not)' "$output" >/dev/null &&
+            ! grep -Fq fixture-hidden-secret "$output" "$output.stderr"; then
+            harness_pass "onboarding $mode capture fails honestly without printing raw data under tracing"
+        else harness_fail "onboarding $mode projection and tracing" "exit=$actual"; fi
+    done
+}
+
+test_credential_onboard_missing_dependency_and_option_controls() {
+    local dependency="" output="" actual=0
+    for dependency in jq bash timeout; do
+        credential_onboard_setup "credential-onboard-no-$dependency"
+        output="$PROTOCOL_HOME/dependency.stdout"; actual=0
+        env HOME="$PROTOCOL_HOME" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+            ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/no-system-state.json" ACFS_CREDENTIAL_MISSING_DEPENDENCY="$dependency" \
+            bash -c '
+                source "$1"
+                onboard_system_binary_path() {
+                    [[ "$1" != "$ACFS_CREDENTIAL_MISSING_DEPENDENCY" ]] || return 1
+                    command -v "$1"
+                }
+                onboard_credential_status_json
+            ' _ "$PROTOCOL_HOME/.acfs/onboard/onboard.sh" > "$output" 2> "$output.stderr" || actual=$?
+        if [[ "$actual" == 2 ]] && jq -e '.status == "error" and .error == "credential_capture_unavailable"' "$output" >/dev/null; then
+            harness_pass "missing trusted $dependency reports unavailable onboarding metadata"
+        else harness_fail "missing trusted $dependency reports unavailable onboarding metadata"; fi
+    done
+    credential_onboard_setup credential-onboard-flags
+    actual=0
+    HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/no-system-state.json" \
+        bash "$PROTOCOL_HOME/.acfs/onboard/onboard.sh" credential-status --require codex \
+        > "$PROTOCOL_HOME/flags.stdout" 2> "$PROTOCOL_HOME/flags.stderr" || actual=$?
+    if [[ "$actual" == 2 && ! -s "$PROTOCOL_HOME/flags.stdout" && ! -e "$PROTOCOL_HOME/.acfs/onboard_progress.json" ]]; then
+        harness_pass "onboarding metadata rejects flags before progress or authentication changes"
+    else harness_fail "onboarding metadata rejects flags before progress or authentication changes"; fi
+}
+
+run_credential_onboard_tests() {
+    test_credential_onboard_cli_uses_real_collector_without_mutation
+    test_credential_onboard_screen_renders_states_and_probes_once
+    test_credential_onboard_preserves_resolved_home_over_setup_account
+    test_credential_onboard_actual_collector_is_private_under_tracing
+    test_credential_onboard_failure_projection_and_tracing
+    test_credential_onboard_missing_dependency_and_option_controls
+    test_onboard_lock_retries_are_safe_under_errexit
+}
+
+test_onboard_lock_retries_are_safe_under_errexit() {
+    credential_onboard_setup credential-onboard-lock-retry
+    local output="$PROTOCOL_HOME/lock.stdout" actual=0
+    HOME="$PROTOCOL_HOME" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+        ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/no-system-state.json" \
+        bash -c '
+            source "$1"
+            set -e
+            _ONBOARD_DISABLE_FLOCK=true
+            ACFS_FIXTURE_LOCK_ATTEMPTS=0
+            mkdir() {
+                if [[ "$1" == "${PROGRESS_LOCK_FILE}.d" ]]; then
+                    ACFS_FIXTURE_LOCK_ATTEMPTS=$((ACFS_FIXTURE_LOCK_ATTEMPTS + 1))
+                    if (( ACFS_FIXTURE_LOCK_ATTEMPTS < 3 )); then return 1; fi
+                fi
+                command mkdir "$@"
+            }
+            onboard_acquire_progress_lock allocated_lock
+            [[ "$allocated_lock" == "dir:$BASHPID" && "$_ONBOARD_ACTIVE_PROGRESS_LOCK" == "$allocated_lock" ]]
+            [[ "$(cat "${PROGRESS_LOCK_FILE}.d/pid")" == "$BASHPID" ]]
+            printf "attempts=%s; ownership_published=true\n" "$ACFS_FIXTURE_LOCK_ATTEMPTS"
+        ' _ "$PROTOCOL_HOME/.acfs/onboard/onboard.sh" > "$output" 2> "$output.stderr" || actual=$?
+    if [[ "$actual" == 0 && "$(cat "$output")" == 'attempts=3; ownership_published=true' ]]; then
+        harness_pass "real fallback progress lock survives contention under errexit and publishes ownership"
+    else harness_fail "real fallback progress lock survives contention under errexit and publishes ownership" "exit=$actual"; fi
+}
+
+test_credential_oauth_expiry_file_matrix() {
+    local service="" scenario="" document="" expected="" file="" remediation=""
+    for service in claude gemini; do
+        for scenario in expired future absent null string negative fraction oversized boolean refresh_only refresh_placeholder access_placeholder blank wrong_access wrong_refresh; do
+            credential_report_setup "credential-expiry-$service-$scenario"
+            case "$scenario" in
+                expired) document='{"access_token":"fixture-expiry-access-secret","refresh_token":"fixture-expiry-refresh-secret","expiry_date":0}'; expected=expired ;;
+                future) document='{"access_token":"fixture-expiry-access-secret","expiry_date":4102444800000}'; expected=file_configured ;;
+                absent) document='{"access_token":"fixture-expiry-access-secret"}'; expected=file_configured ;;
+                null) document='{"access_token":"fixture-expiry-access-secret","expiry_date":null}'; expected=file_configured ;;
+                string) document='{"access_token":"fixture-expiry-access-secret","expiry_date":"0"}'; expected=unknown ;;
+                negative) document='{"access_token":"fixture-expiry-access-secret","expiry_date":-1}'; expected=unknown ;;
+                fraction) document='{"access_token":"fixture-expiry-access-secret","expiry_date":0.5}'; expected=unknown ;;
+                oversized) document='{"access_token":"fixture-expiry-access-secret","expiry_date":1e30}'; expected=unknown ;;
+                boolean) document='{"access_token":"fixture-expiry-access-secret","expiry_date":true}'; expected=unknown ;;
+                refresh_only) document='{"refresh_token":"fixture-expiry-refresh-secret","expiry_date":0}'; expected=refresh_required ;;
+                refresh_placeholder) document='{"refresh_token":"changeme","expiry_date":0}'; expected=placeholder ;;
+                access_placeholder) document='{"access_token":"your-token-here","refresh_token":"fixture-expiry-refresh-secret","expiry_date":0}'; expected=placeholder ;;
+                blank) document='{"access_token":" ","refresh_token":" ","expiry_date":0}'; expected=missing ;;
+                wrong_access) document='{"access_token":{"token":"fixture-expiry-access-secret"},"expiry_date":0}'; expected=unknown ;;
+                wrong_refresh) document='{"access_token":"fixture-expiry-access-secret","refresh_token":42,"expiry_date":0}'; expected=unknown ;;
+            esac
+            if [[ "$service" == claude ]]; then
+                file="$PROTOCOL_HOME/.claude/.credentials.json"
+                mkdir -p "$PROTOCOL_HOME/.claude"
+                printf '%s' "$document" | jq '{claudeAiOauth:({accessToken:.access_token,refreshToken:.refresh_token} +
+                    (if has("expiry_date") then {expiresAt:.expiry_date} else {} end))}' > "$file"
+            else
+                file="$PROTOCOL_HOME/.gemini/oauth_creds.json"
+                mkdir -p "$PROTOCOL_HOME/.gemini"
+                printf '%s\n' "$document" > "$file"
+            fi
+            cp "$file" "$PROTOCOL_HOME/credentials.before"
+            case "$expected" in
+                expired|refresh_required) remediation=refresh_or_reauthenticate ;;
+                unknown) remediation=inspect_local_config ;;
+                placeholder) remediation=replace_or_unset_placeholder ;;
+                missing) remediation=configure_when_needed ;;
+                *) remediation=validate_before_use ;;
+            esac
+            if credential_report_run 0 && jq -e --arg service "$service" --arg state "$expected" --arg remediation "$remediation" '
+                .safety.provider_validation_performed == false and
+                (.services[] | select(.service == $service) | .state == $state and .remediation == $remediation and .authentication == "unverified")' \
+                "$CREDENTIAL_REPORT_OUTPUT" >/dev/null && ! grep -Fq fixture-expiry- "$CREDENTIAL_REPORT_OUTPUT" "$CREDENTIAL_REPORT_OUTPUT.stderr" &&
+                cmp -s "$file" "$PROTOCOL_HOME/credentials.before" && [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
+                harness_pass "$service $scenario reports $expected without credential changes, leaks or provider calls"
+            else harness_fail "$service $scenario reports $expected without credential changes, leaks or provider calls"; fi
+        done
+    done
+}
+
+test_credential_oauth_expiry_required_and_environment_precedence() {
+    local state="" actual=0 output="" env_value="" expected=""
+    for state in expired refresh_required; do
+        credential_report_setup "credential-expiry-required-$state"
+        mkdir -p "$PROTOCOL_HOME/.gemini"
+        if [[ "$state" == expired ]]; then
+            printf '%s\n' '{"access_token":"fixture-required-expired-secret","refresh_token":"fixture-required-refresh-secret","expiry_date":0}' > "$PROTOCOL_HOME/.gemini/oauth_creds.json"
+        else
+            printf '%s\n' '{"refresh_token":"fixture-required-refresh-secret"}' > "$PROTOCOL_HOME/.gemini/oauth_creds.json"
+        fi
+        output="$PROTOCOL_HOME/required.json"; actual=0
+        env -u GEMINI_API_KEY -u GOOGLE_API_KEY TARGET_USER="$(id -un)" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+            bash "$SERVICES_SETUP_SH" --credential-status --require gemini > "$output" 2> "$output.stderr" || actual=$?
+        if [[ "$actual" == 1 ]] && jq -e --arg state "$state" '.status == "warn" and .summary.required_unmet == 1 and
+            (.services[] | select(.service == "gemini") | .state == $state and .requirement == "required" and .authentication == "unverified")' "$output" >/dev/null &&
+            ! grep -Fq fixture-required- "$output"; then
+            harness_pass "required $state OAuth candidate cannot claim storage readiness or authentication"
+        else harness_fail "required $state OAuth candidate cannot claim storage readiness or authentication"; fi
+    done
+    credential_report_setup credential-expiry-environment
+    mkdir -p "$PROTOCOL_HOME/.gemini"
+    printf '%s\n' '{"access_token":"fixture-shadowed-expired-secret","expiry_date":0}' > "$PROTOCOL_HOME/.gemini/oauth_creds.json"
+    for env_value in fixture-live-api-candidate your_gemini_api_key; do
+        expected=shell_configured
+        [[ "$env_value" != your_gemini_api_key ]] || expected=placeholder
+        if credential_report_run 0 GEMINI_API_KEY="$env_value" && jq -e --arg state "$expected" '(.services[] | select(.service == "gemini") |
+            .state == $state and .source == "environment" and .authentication == "unverified")' "$CREDENTIAL_REPORT_OUTPUT" >/dev/null &&
+            ! grep -Fq fixture- "$CREDENTIAL_REPORT_OUTPUT"; then
+            harness_pass "exported Gemini $expected takes precedence over expired cached OAuth"
+        else harness_fail "exported Gemini $expected takes precedence over expired cached OAuth"; fi
+    done
+}
+
+test_credential_oauth_lifecycle_agrees_across_consumers() {
+    local state="" output="" actual=0
+    for state in expired refresh_required; do
+        credential_doctor_setup "credential-expiry-consumers-$state"
+        mkdir -p "$PROTOCOL_HOME/.claude" "$PROTOCOL_HOME/.gemini"
+        if [[ "$state" == expired ]]; then
+            printf '%s\n' '{"claudeAiOauth":{"accessToken":"fixture-consumer-access-secret","refreshToken":"fixture-consumer-refresh-secret","expiresAt":0}}' > "$PROTOCOL_HOME/.claude/.credentials.json"
+            printf '%s\n' '{"access_token":"fixture-consumer-access-secret","refresh_token":"fixture-consumer-refresh-secret","expiry_date":0}' > "$PROTOCOL_HOME/.gemini/oauth_creds.json"
+        else
+            printf '%s\n' '{"claudeAiOauth":{"refreshToken":"fixture-consumer-refresh-secret"}}' > "$PROTOCOL_HOME/.claude/.credentials.json"
+            printf '%s\n' '{"refresh_token":"fixture-consumer-refresh-secret"}' > "$PROTOCOL_HOME/.gemini/oauth_creds.json"
+        fi
+        cp "$PROTOCOL_HOME/.claude/.credentials.json" "$PROTOCOL_HOME/claude.before"
+        cp "$PROTOCOL_HOME/.gemini/oauth_creds.json" "$PROTOCOL_HOME/gemini.before"
+        if ! credential_report_run 0 || ! credential_doctor_run FIXTURE_CONTROL=trace ||
+            ! credential_support_run 0 "$REPO_ROOT" FIXTURE_CONTROL=trace FIXTURE_NO_REDACT=true; then
+            harness_fail "$state real collector/doctor/support consumer execution"
+            continue
+        fi
+        credential_onboard_setup "credential-expiry-consumers-$state"
+        output="$PROTOCOL_HOME/onboard-human.stdout"; actual=0
+        env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u GOOGLE_API_KEY -u VERCEL_TOKEN -u SUPABASE_ACCESS_TOKEN -u CLOUDFLARE_API_TOKEN \
+            HOME="$PROTOCOL_HOME" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+            ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/no-system-state.json" \
+            bash -c 'source "$1"; show_credential_status' _ "$PROTOCOL_HOME/.acfs/onboard/onboard.sh" \
+            > "$output" 2> "$output.stderr" || actual=$?
+        if [[ "$actual" == 0 ]] && credential_onboard_run 0 onboard-lifecycle &&
+            jq -e --slurpfile canonical "$CREDENTIAL_REPORT_OUTPUT" '.services == $canonical[0].services and .capture.status == "pass"' \
+                "$CREDENTIAL_SUPPORT_BUNDLE/credential_status.json" >/dev/null &&
+            jq -e --slurpfile canonical "$CREDENTIAL_REPORT_OUTPUT" '.services == $canonical[0].services' "$CREDENTIAL_ONBOARD_OUTPUT" >/dev/null &&
+            jq -e --arg state "$state" '.summary == {pass:0,skip:4,warn:2,fail:0} and
+                all(.checks[] | select(.id == "credential.source.claude" or .id == "credential.source.gemini");
+                    .status == "warn" and (.details | contains("state="+$state)) and (.details | contains("remediation=refresh_or_reauthenticate")))' \
+                "$DOCTOR_CREDENTIAL_OUTPUT" >/dev/null &&
+            grep -Fq "claude: state=$state; source=file; remediation=refresh_or_reauthenticate" "$output" &&
+            grep -Fq 'stored refresh tokens are unverified' "$output" &&
+            ! grep -Fq fixture-consumer- "$output" "$output.stderr" "$CREDENTIAL_ONBOARD_OUTPUT" "$DOCTOR_CREDENTIAL_OUTPUT" "$DOCTOR_CREDENTIAL_OUTPUT.stderr" "$PROTOCOL_HOME/capture.stderr" &&
+            ! grep -RFq fixture-consumer- "$CREDENTIAL_SUPPORT_BUNDLE" &&
+            cmp -s "$PROTOCOL_HOME/claude.before" "$PROTOCOL_HOME/.claude/.credentials.json" &&
+            cmp -s "$PROTOCOL_HOME/gemini.before" "$PROTOCOL_HOME/.gemini/oauth_creds.json" &&
+            [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
+            harness_pass "$state canonical metadata and guidance agree across actual services/doctor/support/onboard without secrets or refreshes"
+        else harness_fail "$state canonical metadata and guidance agree across actual services/doctor/support/onboard without secrets or refreshes"; fi
+    done
+}
+
+run_credential_expiry_tests() {
+    test_credential_oauth_expiry_file_matrix
+    test_credential_oauth_expiry_required_and_environment_precedence
+    test_credential_oauth_lifecycle_agrees_across_consumers
+    test_credential_oauth_snapshot_size_and_expiry_share_one_read
+    test_credential_oauth_auth_screen_requires_attention
+    test_credential_candidates_reject_nul_without_lossy_normalization
+    test_credential_remaining_provider_expiry_consumers
+    test_credential_normal_status_accepts_exported_candidates
+}
+
+test_credential_normal_status_accepts_exported_candidates() {
+    credential_report_setup credential-normal-env-ready
+    local output="$PROTOCOL_HOME/normal-ready.stdout" actual=0
+    env HOME="$PROTOCOL_HOME" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+        ANTHROPIC_API_KEY=fixture-normal-claude GEMINI_API_KEY=fixture-normal-gemini \
+        bash -c '
+            source "$1" >/dev/null || exit 2
+            TARGET_HOME="$2"
+            check_claude_status() { SERVICE_STATUS[claude]=installed; }
+            check_codex_status() { SERVICE_STATUS[codex]=not_installed; }
+            check_gemini_status() { SERVICE_STATUS[gemini]=installed; }
+            check_vercel_status() { SERVICE_STATUS[vercel]=installed; }
+            check_supabase_status() { SERVICE_STATUS[supabase]=installed; }
+            check_wrangler_status() { SERVICE_STATUS[wrangler]=installed; }
+            check_postgres_status() { SERVICE_STATUS[postgres]=running; }
+            check_dcg_status() { SERVICE_STATUS[dcg]=installed; }
+            check_all_status
+            [[ "${SERVICE_STATUS[claude]}" == configured && "${SERVICE_STATUS[gemini]}" == configured ]]
+            [[ "${SERVICE_STATUS[codex]}" == not_installed && "${SERVICE_STATUS[vercel]}" == installed && "${SERVICE_STATUS[postgres]}" == running ]]
+        ' _ "$SERVICES_SETUP_SH" "$PROTOCOL_HOME" > "$output" 2> "$output.stderr" || actual=$?
+    if [[ "$actual" == 0 ]] && ! grep -Fq fixture-normal- "$output" "$output.stderr"; then
+        harness_pass "normal service status accepts canonical exported candidates and preserves absent CLI/database states"
+    else harness_fail "normal service status accepts canonical exported candidates and preserves absent CLI/database states" "exit=$actual"; fi
+}
+
+test_credential_remaining_provider_expiry_consumers() {
+    local service="" state="" file="" output="" actual=0
+    for service in codex vercel wrangler; do
+        for state in expired refresh_required; do
+            credential_doctor_setup "credential-provider-$service-$state"
+            case "$service" in
+                codex)
+                    mkdir -p "$PROTOCOL_HOME/.codex"; file="$PROTOCOL_HOME/.codex/auth.json"
+                    if [[ "$state" == expired ]]; then
+                        printf '%s\n' '{"tokens":{"access_token":"e30.eyJleHAiOjB9.fixture","refresh_token":"fixture-provider-refresh"}}' > "$file"
+                    else printf '%s\n' '{"tokens":{"refresh_token":"fixture-provider-refresh"}}' > "$file"; fi
+                    ;;
+                vercel)
+                    mkdir -p "$PROTOCOL_HOME/.vercel"; file="$PROTOCOL_HOME/.vercel/auth.json"
+                    if [[ "$state" == expired ]]; then
+                        printf '%s\n' '{"token":"fixture-provider-access","expiresAt":0,"refreshToken":"fixture-provider-refresh"}' > "$file"
+                    else printf '%s\n' '{"refreshToken":"fixture-provider-refresh"}' > "$file"; fi
+                    ;;
+                wrangler)
+                    mkdir -p "$PROTOCOL_HOME/.wrangler/config"; file="$PROTOCOL_HOME/.wrangler/config/default.toml"
+                    if [[ "$state" == expired ]]; then
+                        printf '%s\n' 'oauth_token="fixture-provider-access"' 'expiration_time="2000-01-01T00:00:00Z"' 'refresh_token="fixture-provider-refresh"' > "$file"
+                    else printf '%s\n' 'refresh_token="fixture-provider-refresh"' > "$file"; fi
+                    ;;
+            esac
+            cp "$file" "$PROTOCOL_HOME/credential.before"
+            if ! credential_report_run 0 || ! credential_doctor_run FIXTURE_CONTROL=trace ||
+                ! credential_support_run 0 "$REPO_ROOT" FIXTURE_CONTROL=trace FIXTURE_NO_REDACT=true; then
+                harness_fail "$service $state actual consumer execution"; continue
+            fi
+            credential_onboard_setup "credential-provider-$service-$state"
+            output="$PROTOCOL_HOME/normal-status.stdout"; actual=0
+            env HOME="$PROTOCOL_HOME" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+                bash -c '
+                    source "$1" >/dev/null || exit 2
+                    TARGET_HOME="$2"
+                    check_claude_status() { SERVICE_STATUS[claude]=configured; }
+                    check_codex_status() { SERVICE_STATUS[codex]=configured; }
+                    check_gemini_status() { SERVICE_STATUS[gemini]=configured; }
+                    check_vercel_status() { SERVICE_STATUS[vercel]=configured; }
+                    check_supabase_status() { SERVICE_STATUS[supabase]=configured; }
+                    check_wrangler_status() { SERVICE_STATUS[wrangler]=configured; }
+                    check_postgres_status() { SERVICE_STATUS[postgres]=configured; }
+                    check_dcg_status() { SERVICE_STATUS[dcg]=configured; }
+                    check_all_status
+                    [[ "${SERVICE_STATUS[$3]}" == installed ]]
+                    [[ "${SERVICE_STATUS[postgres]}" == configured && "${SERVICE_STATUS[dcg]}" == configured ]]
+                ' _ "$SERVICES_SETUP_SH" "$PROTOCOL_HOME" "$service" > "$output" 2> "$output.stderr" || actual=$?
+            if [[ "$actual" == 0 ]] && credential_onboard_run 0 provider-lifecycle &&
+                jq -e --arg service "$service" --arg state "$state" '.services[] | select(.service == $service) |
+                    .state == $state and .remediation == "refresh_or_reauthenticate" and .authentication == "unverified"' "$CREDENTIAL_REPORT_OUTPUT" >/dev/null &&
+                jq -e --slurpfile canonical "$CREDENTIAL_REPORT_OUTPUT" '.services == $canonical[0].services' "$CREDENTIAL_ONBOARD_OUTPUT" >/dev/null &&
+                jq -e --slurpfile canonical "$CREDENTIAL_REPORT_OUTPUT" '.services == $canonical[0].services' "$CREDENTIAL_SUPPORT_BUNDLE/credential_status.json" >/dev/null &&
+                jq -e --arg id "credential.source.$service" --arg state "$state" '.checks[] | select(.id == $id) |
+                    .status == "warn" and (.details | contains("state="+$state))' "$DOCTOR_CREDENTIAL_OUTPUT" >/dev/null &&
+                cmp -s "$file" "$PROTOCOL_HOME/credential.before" &&
+                ! grep -Fq fixture-provider "$output" "$output.stderr" "$CREDENTIAL_REPORT_OUTPUT" "$CREDENTIAL_ONBOARD_OUTPUT" "$DOCTOR_CREDENTIAL_OUTPUT" &&
+                ! grep -RFq fixture-provider "$CREDENTIAL_SUPPORT_BUNDLE"; then
+                harness_pass "$service $state agrees across real passive/report/doctor/support/onboard and overrides stale normal configured state"
+            else harness_fail "$service $state agrees across real passive/report/doctor/support/onboard and overrides stale normal configured state" "exit=$actual"; fi
+        done
+    done
+}
+
+test_credential_candidates_reject_nul_without_lossy_normalization() {
+    local service="" file="" output="" actual=0
+    for service in codex gemini claude vercel supabase; do
+        credential_report_setup "credential-nul-$service"
+        case "$service" in
+            codex)
+                mkdir -p "$PROTOCOL_HOME/.codex"; file="$PROTOCOL_HOME/.codex/auth.json"
+                printf '{"tokens":{"access_token":"fixture-nul-secret"}}\0\n' > "$file"
+                ;;
+            gemini)
+                mkdir -p "$PROTOCOL_HOME/.gemini"; file="$PROTOCOL_HOME/.gemini/oauth_creds.json"
+                printf '%s\n' '{"access_token":"fixture-nul\u0000secret","expiry_date":4102444800000}' > "$file"
+                ;;
+            claude)
+                mkdir -p "$PROTOCOL_HOME/.claude"; file="$PROTOCOL_HOME/.claude/.credentials.json"
+                printf '%s\n' '{"claudeAiOauth":{"refreshToken":"fixture-nul\u0000secret"}}' > "$file"
+                ;;
+            vercel)
+                mkdir -p "$PROTOCOL_HOME/.config/vercel"; file="$PROTOCOL_HOME/.config/vercel/auth.json"
+                printf '%s\n' '{"token":"fixture-nul\u0000secret"}' > "$file"
+                ;;
+            supabase)
+                mkdir -p "$PROTOCOL_HOME/.supabase"; file="$PROTOCOL_HOME/.supabase/access-token"
+                printf 'fixture-nul\0secret\n' > "$file"
+                ;;
+        esac
+        cp "$file" "$PROTOCOL_HOME/nul.before"
+        output="$PROTOCOL_HOME/nul.json"; actual=0
+        env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u GOOGLE_API_KEY -u VERCEL_TOKEN -u SUPABASE_ACCESS_TOKEN -u CLOUDFLARE_API_TOKEN \
+            TARGET_USER="$(id -un)" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+            ACFS_PROTOCOL_POISON_MARKER="$PROTOCOL_HOME/tool-called" \
+            bash "$SERVICES_SETUP_SH" --credential-status --require "$service" > "$output" 2> "$output.stderr" || actual=$?
+        if [[ "$actual" == 1 && ! -s "$output.stderr" ]] && jq -e --arg service "$service" '.status == "warn" and .summary.required_unmet == 1 and
+            (.services[] | select(.service == $service) | .state == "unknown" and .source == "file" and .authentication == "unverified")' "$output" >/dev/null &&
+            ! grep -Fq fixture-nul "$output" && cmp -s "$file" "$PROTOCOL_HOME/nul.before" && [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
+            harness_pass "$service raw or escaped NUL credentials remain unknown, unchanged, private and unable to satisfy requirements"
+        else harness_fail "$service raw or escaped NUL credentials remain unknown, unchanged, private and unable to satisfy requirements" "exit=$actual"; fi
+    done
+}
+
+test_credential_oauth_auth_screen_requires_attention() {
+    local state="" output="" actual=0
+    for state in expired refresh_required; do
+        credential_onboard_setup "credential-expiry-auth-screen-$state"
+        mkdir -p "$PROTOCOL_HOME/.claude"
+        # Make the screen independent of the worker's logged-in Tailscale and
+        # Gum installation. All eight CLI dependencies are present but fail
+        # their live checks; use the existing basic terminal adapter.
+        cp "$PROTOCOL_HOME/.local/bin/gh" "$PROTOCOL_HOME/.local/bin/tailscale"
+        if [[ "$state" == expired ]]; then
+            printf '%s\n' '{"claudeAiOauth":{"accessToken":"fixture-expired-screen-secret","refreshToken":"fixture-refresh-screen-secret","expiresAt":0}}' > "$PROTOCOL_HOME/.claude/.credentials.json"
+        else
+            printf '%s\n' '{"claudeAiOauth":{"refreshToken":"fixture-refresh-screen-secret"}}' > "$PROTOCOL_HOME/.claude/.credentials.json"
+        fi
+        output="$PROTOCOL_HOME/auth-screen.stdout"; actual=0
+        env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u GOOGLE_API_KEY -u VERCEL_TOKEN -u SUPABASE_ACCESS_TOKEN -u CLOUDFLARE_API_TOKEN \
+            HOME="$PROTOCOL_HOME" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+            ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/no-system-state.json" PATH="$PROTOCOL_HOME/.local/bin:/usr/bin:/bin" \
+            ACFS_PROTOCOL_POISON_MARKER="$PROTOCOL_HOME/tool-called" TERM=dumb \
+            bash -c 'source "$1"; has_gum() { return 1; }; show_auth_flow' _ "$PROTOCOL_HOME/.acfs/onboard/onboard.sh" \
+            </dev/null > "$output" 2> "$output.stderr" || actual=$?
+        if [[ "$actual" == 0 ]] && grep -Fq "claude: state=$state; source=file; remediation=refresh_or_reauthenticate" "$output" &&
+            grep -Fq 'Progress: 0/8 services configured or checked' "$output" && grep -Fq '[2] Claude Code' "$output" &&
+            [[ "$(wc -l < "$PROTOCOL_HOME/tool-called" | tr -d ' ')" == 4 ]] &&
+            ! grep -Fq fixture-expired-screen-secret "$output" "$output.stderr" &&
+            ! grep -Fq fixture-refresh-screen-secret "$output" "$output.stderr"; then
+            harness_pass "normal auth screen puts $state installed Claude in attention menu without counting it ready"
+        else harness_fail "normal auth screen puts $state installed Claude in attention menu without counting it ready" "exit=$actual"; fi
+    done
+}
+
+test_credential_oauth_snapshot_size_and_expiry_share_one_read() {
+    credential_report_setup credential-expiry-one-snapshot
+    local output="$PROTOCOL_HOME/snapshot.stdout" actual=0
+    printf '%s\n' '{"access_token":"fixture-first-snapshot-secret","expiry_date":0}' > "$PROTOCOL_HOME/first.json"
+    printf '%s\n' '{"access_token":"fixture-second-snapshot-secret","expiry_date":4102444800000}' > "$PROTOCOL_HOME/second.json"
+    # The second producer response is beyond the limit. The old preflight-size
+    # read accepted it because it measured the first, smaller response instead.
+    head -c 1048577 /dev/zero | tr '\0' ' ' >> "$PROTOCOL_HOME/second.json"
+    printf '0\n' > "$PROTOCOL_HOME/read-count"
+    cat > "$PROTOCOL_HOME/producer-head" <<'EOF'
+#!/usr/bin/env bash
+count="$(cat "$ACFS_CREDENTIAL_PRODUCER_HOME/read-count")"
+count=$((count + 1))
+printf '%s\n' "$count" > "$ACFS_CREDENTIAL_PRODUCER_HOME/read-count"
+file="$ACFS_CREDENTIAL_PRODUCER_HOME/first.json"
+[[ "$count" == 1 ]] || file="$ACFS_CREDENTIAL_PRODUCER_HOME/second.json"
+/usr/bin/head -c 1048577 -- "$file"
+EOF
+    chmod +x "$PROTOCOL_HOME/producer-head"
+    ACFS_CREDENTIAL_PRODUCER_HOME="$PROTOCOL_HOME" bash -c '
+        source "$1"
+        services_setup_system_binary_path() {
+            if [[ "$1" == head ]]; then printf "%s/producer-head\n" "$ACFS_CREDENTIAL_PRODUCER_HOME"
+            else printf "/usr/bin/%s\n" "$1"; fi
+        }
+        services_setup_credential_file_state "$2/first.json" "" /usr/bin/jq gemini
+    ' _ "$SERVICES_SETUP_SH" "$PROTOCOL_HOME" > "$output" 2> "$output.stderr" || actual=$?
+    if [[ "$actual" == 0 && "$(cat "$output")" == expired && "$(cat "$PROTOCOL_HOME/read-count")" == 1 ]] &&
+        ! grep -Fq fixture- "$output" "$output.stderr"; then
+        harness_pass "credential byte bound and expiry decision use one captured producer snapshot"
+    else harness_fail "credential byte bound and expiry decision use one captured producer snapshot" "exit=$actual"; fi
+}
+
+test_credential_vault_annotations_and_required_presence() {
+    local service="" output="" actual=0 vault_env=""
+    for service in claude codex gemini vercel supabase wrangler; do
+        credential_report_setup "credential-vault-$service"
+        output="$PROTOCOL_HOME/vault-required.json"; actual=0
+        vault_env="ACFS_${service^^}_VAULT_REF"
+        env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GEMINI_API_KEY -u GOOGLE_API_KEY -u VERCEL_TOKEN -u SUPABASE_ACCESS_TOKEN -u CLOUDFLARE_API_TOKEN \
+            "$vault_env=vault://secret/fixture-private-vault-path#fixture-private-field" \
+            TARGET_USER="$(id -un)" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+            ACFS_PROTOCOL_POISON_MARKER="$PROTOCOL_HOME/tool-called" \
+            bash -x "$SERVICES_SETUP_SH" --credential-status --require "$service" > "$output" 2> "$output.stderr" || actual=$?
+        if [[ "$actual" == 1 ]] && jq -e --arg service "$service" '.summary.required_unmet == 1 and
+            (.services[] | select(.service == $service) | .state == "vault_backed" and .source == "vault" and
+                .authentication == "unverified" and .remediation == "resolve_vault_reference")' "$output" >/dev/null &&
+            ! grep -Fq fixture-private- "$output" "$output.stderr" && [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
+            harness_pass "$service Vault metadata is redacted and cannot satisfy required credentials"
+        else harness_fail "$service Vault metadata is redacted and cannot satisfy required credentials" "exit=$actual"; fi
+    done
+}
+
+test_credential_vault_metadata_agrees_across_consumers() {
+    credential_doctor_setup credential-vault-consumers
+    local output="$PROTOCOL_HOME/onboard-vault.stdout" actual=0
+    export ACFS_CLAUDE_VAULT_REF='vault://secret/fixture-private-vault-path#fixture-private-field'
+    if ! credential_report_run 0 || ! credential_doctor_run FIXTURE_CONTROL=trace ||
+        ! credential_support_run 0 "$REPO_ROOT" FIXTURE_CONTROL=trace FIXTURE_NO_REDACT=true; then
+        unset ACFS_CLAUDE_VAULT_REF
+        harness_fail "Vault actual collector/doctor/support execution"; return
+    fi
+    credential_onboard_setup credential-vault-consumers
+    env HOME="$PROTOCOL_HOME" TARGET_HOME="$PROTOCOL_HOME" ACFS_HOME="$PROTOCOL_HOME/.acfs" \
+        ACFS_SYSTEM_STATE_FILE="$PROTOCOL_HOME/no-system-state.json" \
+        bash -c 'source "$1"; show_credential_status' _ "$PROTOCOL_HOME/.acfs/onboard/onboard.sh" > "$output" 2> "$output.stderr" || actual=$?
+    if [[ "$actual" == 0 ]] && credential_onboard_run 0 onboard-vault &&
+        jq -e --slurpfile canonical "$CREDENTIAL_REPORT_OUTPUT" '.services == $canonical[0].services and .capture.status == "pass"' \
+            "$CREDENTIAL_SUPPORT_BUNDLE/credential_status.json" >/dev/null &&
+        jq -e --slurpfile canonical "$CREDENTIAL_REPORT_OUTPUT" '.services == $canonical[0].services' "$CREDENTIAL_ONBOARD_OUTPUT" >/dev/null &&
+        jq -e '.checks[] | select(.id == "credential.source.claude") | .status == "warn" and (.details | contains("state=vault_backed"))' "$DOCTOR_CREDENTIAL_OUTPUT" >/dev/null &&
+        grep -Fq 'claude: state=vault_backed; source=vault; remediation=resolve_vault_reference' "$output" &&
+        ! grep -Fq fixture-private- "$output" "$output.stderr" "$CREDENTIAL_ONBOARD_OUTPUT" "$DOCTOR_CREDENTIAL_OUTPUT" "$DOCTOR_CREDENTIAL_OUTPUT.stderr" &&
+        ! grep -RFq fixture-private- "$CREDENTIAL_SUPPORT_BUNDLE" && [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
+        harness_pass "Vault canonical metadata agrees across actual services/doctor/support/onboarding without lookup or path leaks"
+    else harness_fail "Vault canonical metadata agrees across actual services/doctor/support/onboarding without lookup or path leaks"; fi
+    unset ACFS_CLAUDE_VAULT_REF
+}
+
+test_credential_codex_home_report_override() {
+    credential_report_setup credential-codex-home
+    mkdir -p "$PROTOCOL_HOME/custom-codex" "$PROTOCOL_HOME/.codex"
+    printf '%s\n' '{"tokens":{"access_token":"fixture-private-codex-key"}}' > "$PROTOCOL_HOME/custom-codex/auth.json"
+    printf '%s\n' '{"tokens":{"access_token":"your_token"}}' > "$PROTOCOL_HOME/.codex/auth.json"
+    if credential_report_run 0 CODEX_HOME="$PROTOCOL_HOME/custom-codex" &&
+        jq -e '.services[] | select(.service == "codex") | .state == "file_configured" and .source == "file"' "$CREDENTIAL_REPORT_OUTPUT" >/dev/null &&
+        ! grep -Fq fixture-private- "$CREDENTIAL_REPORT_OUTPUT"; then
+        harness_pass "canonical Codex collector honors CODEX_HOME over default cached placeholder"
+    else harness_fail "canonical Codex collector honors CODEX_HOME over default cached placeholder"; fi
+}
+
+run_credential_vault_tests() {
+    test_credential_vault_annotations_and_required_presence
+    test_credential_vault_metadata_agrees_across_consumers
+    test_credential_codex_home_report_override
+}
+
 main() {
+    if [[ ( "${1:-}" == "--status-protocol-only" || "${1:-}" == "--ubs-regressions-only" || "${1:-}" == "--credential-report-only" || "${1:-}" == "--credential-support-only" || "${1:-}" == "--credential-doctor-only" || "${1:-}" == "--fresh-input-only" || "${1:-}" == "--credential-onboard-only" || "${1:-}" == "--credential-expiry-only" || "${1:-}" == "--credential-vault-only" ) && -n "${ACFS_STATUS_PROTOCOL_TEST_ARTIFACTS_DIR:-}" ]]; then
+        HARNESS_ARTIFACT_DIR="$ACFS_STATUS_PROTOCOL_TEST_ARTIFACTS_DIR"
+    fi
     harness_init "ACFS Changelog/Export/Status Tests"
+
+    if [[ "${1:-}" == "--credential-vault-only" ]]; then
+        harness_section "Vault credential metadata integration"
+        run_credential_vault_tests
+        harness_summary
+        return
+    fi
+
+    if [[ "${1:-}" == "--credential-expiry-only" ]]; then
+        harness_section "OAuth lifecycle integration"
+        run_credential_expiry_tests
+        harness_summary
+        return
+    fi
+
+    if [[ "${1:-}" == "--credential-onboard-only" ]]; then
+        harness_section "Onboarding credential integration"
+        run_credential_onboard_tests
+        test_onboard_auth_checks_use_installed_target_home_under_root_home
+        test_onboard_auth_checks_find_target_binaries_outside_current_path
+        test_onboard_auth_checks_reject_placeholder_credentials
+        test_onboard_auth_checks_reject_unresolved_shell_config_credentials
+        test_onboard_auth_checks_ignore_poisoned_current_path_and_env_bin_dir
+        test_onboard_auth_checks_ignore_other_user_home_bin_dir_from_state
+        test_onboard_auth_checks_use_explicit_target_user_when_no_authoritative_runtime_home_exists
+        test_onboard_auth_checks_do_not_fall_back_to_current_home_when_explicit_target_user_is_unresolved
+        test_onboard_antigravity_auth_respects_antigravity_home_override
+        harness_summary
+        return
+    fi
+
+    if [[ "${1:-}" == "--fresh-input-only" ]]; then
+        harness_section "Fresh input-boundary regressions"
+        run_fresh_input_tests
+        harness_summary
+        return
+    fi
+
+    if [[ "${1:-}" == "--credential-doctor-only" ]]; then
+        harness_section "Doctor credential integration"
+        run_credential_doctor_tests
+        harness_summary
+        return
+    fi
+
+    if [[ "${1:-}" == "--credential-support-only" ]]; then
+        harness_section "Credential support integration"
+        run_credential_support_tests
+        harness_summary
+        return
+    fi
+
+    if [[ "${1:-}" == "--credential-report-only" ]]; then
+        harness_section "Offline credential provenance"
+        run_credential_report_tests
+        harness_summary
+        return
+    fi
+
+    if [[ "${1:-}" == "--ubs-regressions-only" ]]; then
+        harness_section "UBS finding regression coverage"
+        test_services_setup_setup_flows_tolerate_unset_status_keys || true
+        test_continue_failed_state_prints_resume_hint || true
+        test_selected_system_binary_resolvers_reject_pathlike_names || true
+        run_status_protocol_tests
+        harness_summary
+        return
+    fi
+
+    if [[ "${1:-}" == "--status-protocol-only" ]]; then
+        harness_section "Editor status protocol"
+        run_status_protocol_tests
+        harness_summary
+        return
+    fi
+
+    if [[ "${1:-}" == "--dashboard-only" ]]; then
+        harness_section "Dashboard"
+        run_dashboard_tests
+        harness_summary
+        return
+    fi
 
     if ! command -v jq >/dev/null 2>&1; then
         harness_warn "jq not available — skipping JSON validation tests"
@@ -11809,7 +13303,17 @@ main() {
     test_changelog_rejects_invalid_duration || true
     test_changelog_accepts_documented_since_forms || true
 
+    harness_section "Editor status protocol"
+    run_status_protocol_tests
+
     harness_section "Services Setup"
+    run_credential_report_tests
+    run_credential_support_tests
+    run_credential_doctor_tests
+    run_fresh_input_tests
+    run_credential_onboard_tests
+    run_credential_expiry_tests
+    run_credential_vault_tests
     test_services_setup_prefers_target_home_libs_under_root_home || true
     test_services_setup_runs_target_user_commands_with_target_home || true
     test_services_setup_rejects_invalid_target_user_before_sudo || true
@@ -11965,20 +13469,7 @@ main() {
     test_continue_scans_nonstandard_homes_via_getent || true
 
     harness_section "Dashboard"
-    test_dashboard_generation_is_atomic_on_failure || true
-    test_dashboard_rejects_invalid_ports_before_serving || true
-    test_dashboard_help_does_not_require_target_context || true
-    test_dashboard_prefers_repo_local_info_script || true
-    test_dashboard_uses_installed_layout_under_root_home || true
-    test_dashboard_serve_uses_target_user_in_ssh_hint || true
-    test_dashboard_copy_install_uses_target_home_only_system_state || true
-    test_dashboard_repo_local_ignores_poisoned_explicit_acfs_home || true
-    test_dashboard_repo_local_prefers_system_state_target_user_over_stale_installed_state || true
-    test_dashboard_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home || true
-    test_dashboard_uses_explicit_target_home_when_state_is_missing || true
-    test_dashboard_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved || true
-    test_dashboard_can_be_sourced_without_mutating_caller_env || true
-    test_dashboard_copy_install_ignores_relative_home_trap || true
+    run_dashboard_tests
 
     harness_section "Cheatsheet"
     test_state_library_ignores_relative_home_target_resolution || true

@@ -3,7 +3,7 @@
 # ============================================================
 # ACFS Support Bundle - Collect diagnostic data for troubleshooting
 # Usage: acfs support-bundle [--verbose] [--output DIR]
-# Output: ~/.acfs/support/<timestamp>/ + .tar.gz archive
+# Output: ~/.acfs/support/<run>/diagnostics/ + diagnostics.tar.gz
 # ============================================================
 _SUPPORT_WAS_SOURCED=false
 _SUPPORT_ORIGINAL_HOME=""
@@ -262,6 +262,7 @@ SWARM_STATUS_TIMEOUT="${SUPPORT_BUNDLE_SWARM_STATUS_TIMEOUT:-10}"
 SWARM_TIMELINE_TIMEOUT="${SUPPORT_BUNDLE_SWARM_TIMELINE_TIMEOUT:-5}"
 PROVENANCE_TIMEOUT="${SUPPORT_BUNDLE_PROVENANCE_TIMEOUT:-10}"
 RESOURCE_PROFILE_TIMEOUT="${SUPPORT_BUNDLE_RESOURCE_PROFILE_TIMEOUT:-5}"
+CREDENTIAL_STATUS_TIMEOUT="${SUPPORT_BUNDLE_CREDENTIAL_STATUS_TIMEOUT:-5}"
 SWARM_INVENTORY_TIMEOUT="${SUPPORT_BUNDLE_SWARM_INVENTORY_TIMEOUT:-5}"
 SUPPORT_SYSTEM_STATE_WAS_EXPLICIT=false
 [[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && [[ "${ACFS_SYSTEM_STATE_FILE%/}" != "/var/lib/acfs/state.json" ]] && SUPPORT_SYSTEM_STATE_WAS_EXPLICIT=true
@@ -289,9 +290,9 @@ support_print_help() {
     echo "  --help, -h       Show this help"
     echo ""
     echo "Output:"
-    echo "  ~/.acfs/support/<timestamp>/          Unpacked bundle directory"
-    echo "  ~/.acfs/support/<timestamp>.tar.gz    Compressed archive"
-    echo "  ~/.acfs/support/<timestamp>/manifest.json  Bundle manifest"
+    echo "  ~/.acfs/support/<run>/diagnostics/          Unpacked bundle directory"
+    echo "  ~/.acfs/support/<run>/diagnostics.tar.gz    Compressed archive"
+    echo "  ~/.acfs/support/<run>/diagnostics/manifest.json  Bundle manifest"
 }
 
 support_parse_args() {
@@ -1095,21 +1096,6 @@ support_manifest_diagnostic_json() {
                 source: {valid_json: false, malformed: false}
             }'
     }
-}
-
-# Generate a bundle name that stays unique even when multiple runs land
-# in the same second or a prior bundle path already exists.
-# Usage: next_bundle_name
-next_bundle_name() {
-    local timestamp base_name
-    timestamp=$(date +%Y%m%d_%H%M%S)
-    base_name="${timestamp}_$$"
-
-    while [[ -e "${OUTPUT_BASE}/${base_name}" || -e "${OUTPUT_BASE}/${base_name}.tar.gz" ]]; do
-        base_name="${timestamp}_$$_${RANDOM}"
-    done
-
-    printf '%s\n' "$base_name"
 }
 
 # Safely copy a file into the bundle, logging the result.
@@ -2201,6 +2187,70 @@ capture_resource_profile_json() {
     [[ "$capture_status" == "pass" ]]
 }
 
+# Capture the existing passive credential report; retain only its fixed vocabulary.
+# Raw command output is never persisted, including malformed/error responses.
+# Usage: capture_credential_status_json <bundle_dir>
+capture_credential_status_json() (
+    set +x
+    local credential_file="$1/credential_status.json"
+    local jq_bin="" services_script="" bash_bin="" output="" sanitized=""
+    local reason="credential report unavailable"
+
+    jq_bin="$(support_system_binary_path jq 2>/dev/null || true)"
+    bash_bin="$(support_system_binary_path bash 2>/dev/null || true)"
+    if [[ -n "$_SUPPORT_ACFS_HOME" && -f "$_SUPPORT_ACFS_HOME/scripts/services-setup.sh" ]]; then
+        services_script="$_SUPPORT_ACFS_HOME/scripts/services-setup.sh"
+    elif [[ -f "$_SUPPORT_SCRIPT_DIR/../services-setup.sh" ]]; then
+        services_script="$_SUPPORT_SCRIPT_DIR/../services-setup.sh"
+    fi
+
+    if [[ -z "$jq_bin" || -z "$bash_bin" || -z "$services_script" ]]; then
+        reason="credential report dependency unavailable"
+    elif [[ -z "${SUPPORT_TARGET_HOME:-}" || ! -d "$SUPPORT_TARGET_HOME" ]] ||
+        ! support_is_valid_username "${SUPPORT_TARGET_USER:-}"; then
+        reason="credential report target context unresolved"
+    elif ! output="$(TARGET_HOME="$SUPPORT_TARGET_HOME" TARGET_USER="$SUPPORT_TARGET_USER" \
+        ACFS_HOME="$_SUPPORT_ACFS_HOME" support_run_with_timeout "$CREDENTIAL_STATUS_TIMEOUT" \
+        "$bash_bin" -c '
+            set +x
+            source "$1" >/dev/null || exit 2
+            # Support has already resolved this home. Do not resolve it again.
+            TARGET_HOME="$2"
+            services_setup_credential_status_json
+        ' _ "$services_script" "$SUPPORT_TARGET_HOME")"; then
+        reason="credential report failed or timed out"
+    elif sanitized="$(printf '%s' "$output" | "$jq_bin" -ces '
+        def member($allowed): . as $v | $allowed | index($v) != null;
+        if length != 1 then error("invalid report count") else .[0] end
+        | select(.schema_version == 1 and .kind == "acfs.credential_status" and
+            .read_only == true and .status == "pass" and .summary.required_unmet == 0 and
+            .safety.provider_validation_performed == false and
+            (.services | type) == "array" and (.services | length) == 6)
+        | select(([.services[].service] | sort) == ["claude","codex","gemini","supabase","vercel","wrangler"])
+        | select(all(.services[];
+            (.state | member(["missing","placeholder","shell_configured","file_configured","expired","refresh_required","vault_backed","unknown"])) and
+            (.source | member(["none","environment","file","vault"])) and
+            .requirement == "optional" and .authentication == "unverified" and
+            (.remediation | member(["replace_or_unset_placeholder","inspect_local_config","configure_when_needed","validate_before_use","refresh_or_reauthenticate","resolve_vault_reference"]))))
+        | {schema_version:1,kind:"acfs.credential_status",status:"pass",read_only:true,
+            capture:{status:"pass",reason:"passive credential source metadata collected"},
+            services:[.services[] | {service,state,source,requirement,authentication,remediation}],
+            summary:{required_unmet:0},
+            safety:{raw_secret_values_printed:false,files_mutated:false,provider_validation_performed:false},
+            redaction:{paths_redacted:true,raw_paths_collected:false,raw_hosts_collected:false,secrets_collected:false}}
+        ' 2>/dev/null)"; then
+        printf '%s\n' "$sanitized" > "$credential_file" || return 1
+        return 0
+    else
+        reason="credential report schema invalid"
+    fi
+
+    # All reasons above are constant metadata, never provider output or paths.
+    printf '{"schema_version":1,"kind":"acfs.credential_status","status":"warn","read_only":true,"capture":{"status":"warn","reason":"%s"},"redaction":{"paths_redacted":true,"raw_paths_collected":false,"raw_hosts_collected":false,"secrets_collected":false}}\n' \
+        "$reason" > "$credential_file"
+    return 1
+)
+
 # Capture a sanitized ACFS team-profile snapshot if one exists on the machine.
 # All secret values and raw credentials are strictly scrubbed.
 # Usage: capture_team_profile_json <bundle_dir>
@@ -2245,6 +2295,9 @@ capture_team_profile_json() {
         }' > "$profile_file"
     else
         profile_size="$(wc -c < "$profile_candidate" 2>/dev/null || true)"
+        # BSD wc pads counts with spaces; keep the same numeric/size guard on
+        # macOS rather than rejecting every readable profile there.
+        profile_size="${profile_size//[[:space:]]/}"
         if [[ ! "$profile_size" =~ ^[0-9]+$ || "$profile_size" -gt "$max_profile_bytes" ]]; then
             "$jq_bin" -n '{
                 schema_version: 1,
@@ -2777,6 +2830,7 @@ write_manifest() {
     local swarm_timeline_manifest=""
     local provenance_manifest=""
     local resource_profile_manifest=""
+    local credential_status_manifest=""
     local local_progress_manifest=""
     local checkpoint_summary_manifest=""
     local swarm_inventory_manifest=""
@@ -2788,6 +2842,7 @@ write_manifest() {
     swarm_timeline_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "swarm_timeline.json" "swarm_timeline" '["agent_mail_bodies","terminal_history","tmux_panes","command_output","local_paths"]' "$jq_bin")"
     provenance_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "provenance.json" "provenance" '["tool_versions","install_sources","local_paths"]' "$jq_bin")"
     resource_profile_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "resource_profile.json" "resource_profile" '["local_paths","wrapper_commands","secret_values"]' "$jq_bin")"
+    credential_status_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "credential_status.json" "credential_status" '["secret_values","local_paths","raw_credentials"]' "$jq_bin")"
     team_profile_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "team_profile.json" "team_profile" '["secret_values","raw_credentials"]' "$jq_bin")"
     local_progress_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "local_progress.json" "local_progress" '["local_milestones","wizard_steps","installer_phase_ids","onboard_lesson_numbers"]' "$jq_bin")"
     checkpoint_summary_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "checkpoint_summary.json" "checkpoint_summary" '["state_schema_version","installer_phase_ids","checkpoint_status"]' "$jq_bin")"
@@ -2811,6 +2866,7 @@ write_manifest() {
         --argjson swarm_timeline_manifest "$swarm_timeline_manifest" \
         --argjson provenance_manifest "$provenance_manifest" \
         --argjson resource_profile_manifest "$resource_profile_manifest" \
+        --argjson credential_status_manifest "$credential_status_manifest" \
         --argjson team_profile_manifest "$team_profile_manifest" \
         --argjson local_progress_manifest "$local_progress_manifest" \
         --argjson checkpoint_summary_manifest "$checkpoint_summary_manifest" \
@@ -2841,6 +2897,7 @@ write_manifest() {
                 swarm_timeline: $swarm_timeline_manifest,
                 provenance: $provenance_manifest,
                 resource_profile: $resource_profile_manifest,
+                credential_status: $credential_status_manifest,
                 team_profile: $team_profile_manifest,
                 local_progress: $local_progress_manifest,
                 checkpoint_summary: $checkpoint_summary_manifest,
@@ -2967,6 +3024,8 @@ write_support_report_index() {
     support_report_write_link_line "$bundle_dir" "provenance.json" "Tool provenance" "$status" "$report_file"
     status="$(support_report_json_status "$bundle_dir" "resource_profile.json" "$jq_bin")"
     support_report_write_link_line "$bundle_dir" "resource_profile.json" "Resource profile" "$status" "$report_file"
+    status="$(support_report_json_status "$bundle_dir" "credential_status.json" "$jq_bin")"
+    support_report_write_link_line "$bundle_dir" "credential_status.json" "Credential sources (authentication unverified)" "$status" "$report_file"
     status="$(support_report_json_status "$bundle_dir" "team_profile.json" "$jq_bin")"
     support_report_write_link_line "$bundle_dir" "team_profile.json" "Team profile" "$status" "$report_file"
     status="$(support_report_json_status "$bundle_dir" "local_progress.json" "$jq_bin")"
@@ -3035,7 +3094,7 @@ redact_private_key_blocks() {
     local file="$1"
     local tmp_file=""
 
-    tmp_file=$(mktemp "${file}.redacted.XXXXXX") || return 1
+    tmp_file=$(support_redaction_tempfile "$file") || return 1
     if awk '
         /^[[:space:]]*-----BEGIN [^-]*PRIVATE KEY[^-]*-----[[:space:]]*$/ {
             if (!in_private_key) {
@@ -3070,12 +3129,23 @@ redact_private_key_blocks() {
     return 0
 }
 
+# During collection, scratch bytes live outside the archived diagnostic tree.
+# The standalone redaction API still stages beside its input for atomic rename.
+support_redaction_tempfile() {
+    local file="$1"
+    if [[ -n "${SUPPORT_REDACTION_TEMP_DIR:-}" ]]; then
+        mktemp "${SUPPORT_REDACTION_TEMP_DIR}/redacted.XXXXXX"
+    else
+        mktemp "${file}.redacted.XXXXXX"
+    fi
+}
+
 support_sed_in_place() {
     local file="${!#}"
     local tmp=""
 
     [[ -f "$file" && ! -L "$file" ]] || return 1
-    tmp="$(mktemp "${file}.redacted.XXXXXX" 2>/dev/null)" || return 1
+    tmp="$(support_redaction_tempfile "$file" 2>/dev/null)" || return 1
     if sed -E "${@:1:$#-1}" "$file" > "$tmp" 2>/dev/null \
         && [[ -f "$file" && ! -L "$file" ]] \
         && mv -- "$tmp" "$file" 2>/dev/null; then
@@ -3103,7 +3173,7 @@ support_replace_literal_in_file() {
 
     [[ -n "$find_str" ]] || return 0
     [[ -f "$file" && ! -L "$file" ]] || return 1
-    tmp="$(mktemp "${file}.redacted.XXXXXX" 2>/dev/null)" || return 1
+    tmp="$(support_redaction_tempfile "$file" 2>/dev/null)" || return 1
     if ACFS_REDACT_FIND="$find_str" ACFS_REDACT_REPL="$replace_str" \
         LC_ALL=C awk '
             BEGIN {
@@ -3277,6 +3347,11 @@ redact_file() {
 
     # Apply redaction patterns using sed -E (extended regex)
     # Order: specific patterns first, then generic catch-alls
+    # Hostnames are case-insensitive; forward slashes may be JSON-escaped.
+    # Preserve ordinary URLs and webhook metadata endpoints without a token.
+    local webhook_slash='(/|\\/)'
+    local webhook_routes="([Hh][Oo][Oo][Kk][Ss][.][Ss][Ll][Aa][Cc][Kk](-[Gg][Oo][Vv])?[.][Cc][Oo][Mm]${webhook_slash}services${webhook_slash}[A-Za-z0-9_-]+${webhook_slash}[A-Za-z0-9_-]+${webhook_slash}|([Cc][Aa][Nn][Aa][Rr][Yy][.]|[Pp][Tt][Bb][.])?[Dd][Ii][Ss][Cc][Oo][Rr][Dd]([Aa][Pp][Pp])?[.][Cc][Oo][Mm]${webhook_slash}api${webhook_slash}(v[0-9]+${webhook_slash})?webhooks${webhook_slash}[0-9]+${webhook_slash})"
+    local webhook_pattern="[Hh][Tt][Tt][Pp][Ss]?:${webhook_slash}{2}${webhook_routes}[A-Za-z0-9_-]{8,}[^[:space:]\"'<>\`)]*"
     support_sed_in_place \
         -e 's/sk-[a-zA-Z0-9_-]{20,}/<REDACTED:api_key>/g' \
         -e 's/AKIA[A-Z0-9]{16}/<REDACTED:aws_key>/g' \
@@ -3284,6 +3359,9 @@ redact_file() {
         -e 's/github_pat_[a-zA-Z0-9_]{22,}/<REDACTED:github_pat>/g' \
         -e 's/hvs\.[a-zA-Z0-9]{20,}/<REDACTED:vault_token>/g' \
         -e 's/xox[bpsar]-[a-zA-Z0-9-]{10,}/<REDACTED:slack_token>/g' \
+        -e 's/tskey-[A-Za-z0-9-]{10,}/<REDACTED:tailscale_key>/g' \
+        -e 's/AIza[A-Za-z0-9_-]{35,}/<REDACTED:google_api_key>/g' \
+        -e "s#${webhook_pattern}#<REDACTED:webhook_url>#g" \
         -e 's/Bearer [a-zA-Z0-9._\/-]{10,}/Bearer <REDACTED:bearer>/g' \
         -e 's/eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/<REDACTED:jwt>/g' \
         -e 's#([A-Za-z][A-Za-z0-9+.-]*://)([^/@[:space:]]*):([^/@[:space:]]+)@#\1<REDACTED:credentials>@#g' \
@@ -3298,9 +3376,21 @@ redact_file() {
         }
 
     # JSON-style secrets: "key_name": "value"
+    # Standalone camel-case key aliases also occur in SDK configuration.
+    # Keep the exact key boundary so public *KeyCount fields stay intact.
+    local camel_key_pattern='([Ss][Ee][Cc][Rr][Ee][Tt][Kk][Ee][Yy]|[Aa][Cc][Cc][Ee][Ss][Ss][Kk][Ee][Yy]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][Kk][Ee][Yy])'
     support_sed_in_place \
-        -e 's/"(api_key|API_KEY|ApiKey|api_secret|API_SECRET|secret_key|SECRET_KEY|access_token|ACCESS_TOKEN|refresh_token|REFRESH_TOKEN|auth_token|AUTH_TOKEN|client_secret|CLIENT_SECRET|private_key|PRIVATE_KEY)"[[:space:]]*:[[:space:]]*"([^"]{8,})"/"\1": "<REDACTED:\1>"/g' \
-        -e 's/"(password|PASSWORD|passwd|PASSWD)"[[:space:]]*:[[:space:]]*"([^"]{4,})"/"\1": "<REDACTED:password>"/g' \
+        -e "s/\"$camel_key_pattern\"[[:space:]]*:[[:space:]]*\"([^\"<>]{8,})\"/\"\1\": \"<REDACTED:\1>\"/g" \
+        -e "s/$camel_key_pattern([[:space:]]*[=:][[:space:]]*)\"([^\"<>]{8,})\"/\1\2\"<REDACTED:\1>\"/g" \
+        -e "s/$camel_key_pattern([[:space:]]*[=:][[:space:]]*)'([^'<>]{8,})'/\1\2'<REDACTED:\1>'/g" \
+        -e "s/$camel_key_pattern([[:space:]]*[=:][[:space:]]*[\"']?)([^ \"'<>[:space:]]{8,})/\1\2<REDACTED:\1>/g" \
+        "$file" || {
+            printf '<REDACTED:redaction_failed>\n' > "$file" 2>/dev/null || true
+            return 1
+        }
+    support_sed_in_place \
+        -e 's/"(api_key|API_KEY|[Aa][Pp][Ii][Kk][Ee][Yy]|api_secret|API_SECRET|secret_key|SECRET_KEY|access_token|ACCESS_TOKEN|refresh_token|REFRESH_TOKEN|auth_token|AUTH_TOKEN|client_secret|CLIENT_SECRET|private_key|PRIVATE_KEY)"[[:space:]]*:[[:space:]]*"([^"]{8,})"/"\1": "<REDACTED:\1>"/g' \
+        -e 's/"(password|PASSWORD|passwd|PASSWD|[Mm][Yy][Ss][Qq][Ll]_[Pp][Ww][Dd])"[[:space:]]*:[[:space:]]*"([^"]{4,})"/"\1": "<REDACTED:password>"/g' \
         -e 's/"([A-Za-z][A-Za-z0-9]*[_-]+[A-Za-z0-9_-]*(password|PASSWORD|passwd|PASSWD))"[[:space:]]*:[[:space:]]*"([^"<>]{4,})"/"\1": "<REDACTED:password>"/g' \
         -e 's/"([A-Za-z][A-Za-z0-9]*[_-]+[A-Za-z0-9_-]*(api[_-]?key|API[_-]?KEY|ApiKey|api[_-]?secret|API[_-]?SECRET|secret[_-]?key|SECRET[_-]?KEY|access[_-]?key|ACCESS[_-]?KEY|access[_-]?token|ACCESS[_-]?TOKEN|refresh[_-]?token|REFRESH[_-]?TOKEN|auth[_-]?token|AUTH[_-]?TOKEN|client[_-]?secret|CLIENT[_-]?SECRET|private[_-]?key|PRIVATE[_-]?KEY|secret|SECRET|token|TOKEN))"[[:space:]]*:[[:space:]]*"([^"<>]{8,})"/"\1": "<REDACTED:generic_secret>"/g' \
         -e 's/"([A-Za-z][A-Za-z0-9]*(Password|Passwd))"[[:space:]]*:[[:space:]]*"([^"<>]{4,})"/"\1": "<REDACTED:password>"/g' \
@@ -3317,8 +3407,8 @@ redact_file() {
     # Shell-style quoted secrets can contain spaces. Redact the full quoted
     # value before the unquoted catch-alls below see only the first word.
     support_sed_in_place \
-        -e 's/(api_key|API_KEY|ApiKey|api_secret|API_SECRET|secret_key|SECRET_KEY|access_token|ACCESS_TOKEN|refresh_token|REFRESH_TOKEN|auth_token|AUTH_TOKEN|client_secret|CLIENT_SECRET|private_key|PRIVATE_KEY)([[:space:]]*[=:][[:space:]]*)"([^"<>]{8,})"/\1\2"<REDACTED:\1>"/g' \
-        -e 's/(password|PASSWORD|passwd|PASSWD)([[:space:]]*[=:][[:space:]]*)"([^"<>]{4,})"/\1\2"<REDACTED:password>"/g' \
+        -e 's/(api_key|API_KEY|[Aa][Pp][Ii][Kk][Ee][Yy]|api_secret|API_SECRET|secret_key|SECRET_KEY|access_token|ACCESS_TOKEN|refresh_token|REFRESH_TOKEN|auth_token|AUTH_TOKEN|client_secret|CLIENT_SECRET|private_key|PRIVATE_KEY)([[:space:]]*[=:][[:space:]]*)"([^"<>]{8,})"/\1\2"<REDACTED:\1>"/g' \
+        -e 's/(password|PASSWORD|passwd|PASSWD|[Mm][Yy][Ss][Qq][Ll]_[Pp][Ww][Dd])([[:space:]]*[=:][[:space:]]*)"([^"<>]{4,})"/\1\2"<REDACTED:password>"/g' \
         -e 's/([A-Za-z][A-Za-z0-9]*[_-]+[A-Za-z0-9_-]*(password|PASSWORD|passwd|PASSWD))([[:space:]]*[=:][[:space:]]*)"([^"<>]{4,})"/\1\3"<REDACTED:password>"/g' \
         -e 's/([A-Za-z][A-Za-z0-9]*[_-]+[A-Za-z0-9_-]*(api[_-]?key|API[_-]?KEY|ApiKey|api[_-]?secret|API[_-]?SECRET|secret[_-]?key|SECRET[_-]?KEY|access[_-]?key|ACCESS[_-]?KEY|access[_-]?token|ACCESS[_-]?TOKEN|refresh[_-]?token|REFRESH[_-]?TOKEN|auth[_-]?token|AUTH[_-]?TOKEN|client[_-]?secret|CLIENT[_-]?SECRET|private[_-]?key|PRIVATE[_-]?KEY|secret|SECRET|token|TOKEN))([[:space:]]*[=:][[:space:]]*)"([^"<>]{8,})"/\1\3"<REDACTED:generic_secret>"/g' \
         -e 's/([A-Za-z][A-Za-z0-9]*(Password|Passwd))([[:space:]]*[=:][[:space:]]*)"([^"<>]{4,})"/\1\3"<REDACTED:password>"/g' \
@@ -3331,8 +3421,8 @@ redact_file() {
         }
 
     support_sed_in_place \
-        -e "s/(api_key|API_KEY|ApiKey|api_secret|API_SECRET|secret_key|SECRET_KEY|access_token|ACCESS_TOKEN|refresh_token|REFRESH_TOKEN|auth_token|AUTH_TOKEN|client_secret|CLIENT_SECRET|private_key|PRIVATE_KEY)([[:space:]]*[=:][[:space:]]*)'([^'<>]{8,})'/\1\2'<REDACTED:\1>'/g" \
-        -e "s/(password|PASSWORD|passwd|PASSWD)([[:space:]]*[=:][[:space:]]*)'([^'<>]{4,})'/\1\2'<REDACTED:password>'/g" \
+        -e "s/(api_key|API_KEY|[Aa][Pp][Ii][Kk][Ee][Yy]|api_secret|API_SECRET|secret_key|SECRET_KEY|access_token|ACCESS_TOKEN|refresh_token|REFRESH_TOKEN|auth_token|AUTH_TOKEN|client_secret|CLIENT_SECRET|private_key|PRIVATE_KEY)([[:space:]]*[=:][[:space:]]*)'([^'<>]{8,})'/\1\2'<REDACTED:\1>'/g" \
+        -e "s/(password|PASSWORD|passwd|PASSWD|[Mm][Yy][Ss][Qq][Ll]_[Pp][Ww][Dd])([[:space:]]*[=:][[:space:]]*)'([^'<>]{4,})'/\1\2'<REDACTED:password>'/g" \
         -e "s/([A-Za-z][A-Za-z0-9]*[_-]+[A-Za-z0-9_-]*(password|PASSWORD|passwd|PASSWD))([[:space:]]*[=:][[:space:]]*)'([^'<>]{4,})'/\1\3'<REDACTED:password>'/g" \
         -e "s/([A-Za-z][A-Za-z0-9]*[_-]+[A-Za-z0-9_-]*(api[_-]?key|API[_-]?KEY|ApiKey|api[_-]?secret|API[_-]?SECRET|secret[_-]?key|SECRET[_-]?KEY|access[_-]?key|ACCESS[_-]?KEY|access[_-]?token|ACCESS[_-]?TOKEN|refresh[_-]?token|REFRESH[_-]?TOKEN|auth[_-]?token|AUTH[_-]?TOKEN|client[_-]?secret|CLIENT[_-]?SECRET|private[_-]?key|PRIVATE[_-]?KEY|secret|SECRET|token|TOKEN))([[:space:]]*[=:][[:space:]]*)'([^'<>]{8,})'/\1\3'<REDACTED:generic_secret>'/g" \
         -e "s/([A-Za-z][A-Za-z0-9]*(Password|Passwd))([[:space:]]*[=:][[:space:]]*)'([^'<>]{4,})'/\1\3'<REDACTED:password>'/g" \
@@ -3347,8 +3437,8 @@ redact_file() {
     # Generic key=value secrets (case-insensitive would need per-line processing;
     # instead match common casings)
     support_sed_in_place \
-        -e 's/(api_key|API_KEY|ApiKey|api_secret|API_SECRET|secret_key|SECRET_KEY|access_token|ACCESS_TOKEN|refresh_token|REFRESH_TOKEN|auth_token|AUTH_TOKEN|client_secret|CLIENT_SECRET|private_key|PRIVATE_KEY)([[:space:]]*[=:][[:space:]]*["'"'"']?)([^ "'"'"'<>[:space:]]{8,})/\1\2<REDACTED:\1>/g' \
-        -e 's/(password|PASSWORD|passwd|PASSWD)([[:space:]]*[=:][[:space:]]*["'"'"']?)([^ "'"'"'<>[:space:]]{4,})/\1\2<REDACTED:password>/g' \
+        -e 's/(api_key|API_KEY|[Aa][Pp][Ii][Kk][Ee][Yy]|api_secret|API_SECRET|secret_key|SECRET_KEY|access_token|ACCESS_TOKEN|refresh_token|REFRESH_TOKEN|auth_token|AUTH_TOKEN|client_secret|CLIENT_SECRET|private_key|PRIVATE_KEY)([[:space:]]*[=:][[:space:]]*["'"'"']?)([^ "'"'"'<>[:space:]]{8,})/\1\2<REDACTED:\1>/g' \
+        -e 's/(password|PASSWORD|passwd|PASSWD|[Mm][Yy][Ss][Qq][Ll]_[Pp][Ww][Dd])([[:space:]]*[=:][[:space:]]*["'"'"']?)([^ "'"'"'<>[:space:]]{4,})/\1\2<REDACTED:password>/g' \
         -e 's/([A-Za-z][A-Za-z0-9]*[_-]+[A-Za-z0-9_-]*(password|PASSWORD|passwd|PASSWD))([[:space:]]*[=:][[:space:]]*["'"'"']?)([^ "'"'"'<>[:space:]]{4,})/\1\3<REDACTED:password>/g' \
         -e 's/([A-Za-z][A-Za-z0-9]*[_-]+[A-Za-z0-9_-]*(api[_-]?key|API[_-]?KEY|ApiKey|api[_-]?secret|API[_-]?SECRET|secret[_-]?key|SECRET[_-]?KEY|access[_-]?key|ACCESS[_-]?KEY|access[_-]?token|ACCESS[_-]?TOKEN|refresh[_-]?token|REFRESH[_-]?TOKEN|auth[_-]?token|AUTH[_-]?TOKEN|client[_-]?secret|CLIENT[_-]?SECRET|private[_-]?key|PRIVATE[_-]?KEY|secret|SECRET|token|TOKEN))([[:space:]]*[=:][[:space:]]*["'"'"']?)([^ "'"'"'<>[:space:]]{8,})/\1\3<REDACTED:generic_secret>/g' \
         -e 's/([A-Za-z][A-Za-z0-9]*(Password|Passwd))([[:space:]]*[=:][[:space:]]*["'"'"']?)([^ "'"'"'<>[:space:]]{4,})/\1\3<REDACTED:password>/g' \
@@ -3459,7 +3549,53 @@ support_verify_identity_redaction() {
 # ============================================================
 # Main bundle collection
 # ============================================================
-main() {
+support_write_archive() (
+    local archive_file="$1"
+    local bundle_name="$2"
+    local archive_fd
+    set -o noclobber
+    if ! exec {archive_fd}> "$archive_file"; then
+        return 1
+    fi
+    if ! tar -czf - -- "$bundle_name" >&"$archive_fd"; then
+        return 1
+    fi
+    # A pathname swapped after the exclusive open must not become the
+    # reported artifact. The subshell closes the retained descriptor on exit.
+    local archive_matches=false
+    if [[ -d /proc/self/fd ]]; then
+        [[ ! -L "$archive_file" && "$archive_file" -ef "/proc/self/fd/$archive_fd" ]] && archive_matches=true
+    else
+        # BSD /dev/fd exposes virtual inode metadata to stat(path). Use fstat
+        # on the inherited descriptor there; no bundle contents are read.
+        local python_bin=""
+        python_bin=$(support_system_binary_path python3 2>/dev/null || true)
+        if [[ -n "$python_bin" ]] && "$python_bin" - "$archive_file" "$archive_fd" <<'PY'
+import os
+import stat
+import sys
+
+try:
+    path_info = os.stat(sys.argv[1], follow_symlinks=False)
+    held_info = os.fstat(int(sys.argv[2]))
+except (OSError, ValueError):
+    sys.exit(1)
+sys.exit(0 if stat.S_ISREG(path_info.st_mode) and
+         (path_info.st_dev, path_info.st_ino) ==
+         (held_info.st_dev, held_info.st_ino) else 1)
+PY
+        then
+            archive_matches=true
+        fi
+    fi
+    if [[ "$archive_matches" != true ]]; then
+        log_error "Archive pathname changed during compression"
+        return 1
+    fi
+)
+
+# Isolate the working directory and private umask from sourced callers.
+main() (
     local parse_status=0
 
     support_parse_args "$@" || parse_status=$?
@@ -3469,13 +3605,28 @@ main() {
         *) return "$parse_status" ;;
     esac
 
-    support_initialize_context
+    support_initialize_context || return 1
 
-    local bundle_name
-    bundle_name=$(next_bundle_name)
-
-    local bundle_dir="${OUTPUT_BASE}/${bundle_name}"
+    # Allocate rather than probe a predictable name. Keep both collection and
+    # archive writes relative to the private working directory: replacing an
+    # ancestor path after cd must never redirect a write to another location.
+    umask 077
+    if ! mkdir -p -- "$OUTPUT_BASE" || ! cd -P -- "$OUTPUT_BASE"; then
+        log_error "Cannot open support-bundle output directory"
+        return 1
+    fi
+    local workspace=""
+    if ! workspace=$(mktemp -d "./$(date +%Y%m%d_%H%M%S)_XXXXXX") \
+        || ! cd -P -- "$workspace"; then
+        log_error "Cannot allocate private support-bundle workspace"
+        return 1
+    fi
+    OUTPUT_BASE=$(pwd -P) || return 1
+    local bundle_name="diagnostics"
+    local bundle_dir="./$bundle_name"
+    local archive_file="./${bundle_name}.tar.gz"
     local archive_path="${OUTPUT_BASE}/${bundle_name}.tar.gz"
+    local SUPPORT_REDACTION_TEMP_DIR="./.staging"
 
     # Track collected files for manifest
     BUNDLE_FILES=()
@@ -3486,10 +3637,9 @@ main() {
     # Create bundle directory
     # The bundle holds copies of ~/.zshrc, install logs, and doctor output
     # before redaction runs; keep every file and directory owner-only.
-    umask 077
-    mkdir -p "$bundle_dir" || {
-        log_error "Cannot create bundle directory: $bundle_dir"
-        exit 1
+    mkdir -- "$bundle_dir" "$SUPPORT_REDACTION_TEMP_DIR" || {
+        log_error "Cannot create private diagnostic directory"
+        return 1
     }
 
     # --- Collect ACFS state files ---
@@ -3541,6 +3691,8 @@ main() {
     capture_swarm_status_json "$bundle_dir" || true
     capture_provenance_json "$bundle_dir" || true
     capture_resource_profile_json "$bundle_dir" || true
+    capture_credential_status_json "$bundle_dir" || true
+    record_bundle_file "credential_status.json"
     capture_team_profile_json "$bundle_dir" || true
     capture_swarm_inventory_json "$bundle_dir" || true
     capture_swarm_timeline_json "$bundle_dir" || true
@@ -3562,7 +3714,7 @@ main() {
     # Systemd journal (last 100 acfs-related lines)
     if command -v journalctl &>/dev/null; then
         local journal_tmp=""
-        journal_tmp=$(mktemp "${bundle_dir}/journal-acfs.log.tmp.XXXXXX") || journal_tmp=""
+        journal_tmp=$(mktemp "${SUPPORT_REDACTION_TEMP_DIR}/journal-acfs.XXXXXX") || journal_tmp=""
         if [[ -n "$journal_tmp" ]] && journalctl --no-pager -n 100 -u 'acfs*' > "$journal_tmp" 2>/dev/null; then
             if mv "$journal_tmp" "$bundle_dir/journal-acfs.log"; then
                 record_bundle_file "journal-acfs.log"
@@ -3603,15 +3755,25 @@ main() {
 
     # --- Create tar archive ---
     log_detail "Creating archive..."
-    if tar -czf "$archive_path" -C "$OUTPUT_BASE" "$bundle_name" 2>/dev/null; then
-        chmod 600 "$archive_path" 2>/dev/null || true
+    # noclobber opens the archive exclusively, then tar writes through that
+    # held descriptor. Do not chmod or reopen the pathname after the write.
+    # Existing files, hard links and symlinks must remain untouched.
+    if support_write_archive "$archive_file" "$bundle_name"; then
+        if [[ ! "$OUTPUT_BASE" -ef . ]]; then
+            log_error "Support-bundle workspace moved; refusing to report a stale archive path"
+            return 1
+        fi
         log_success "Bundle created: $archive_path"
         echo "$archive_path"
     else
-        log_warn "Could not create tar archive, bundle available at: $bundle_dir"
-        echo "$bundle_dir"
+        if [[ ! "$OUTPUT_BASE" -ef . ]]; then
+            log_error "Support-bundle workspace moved; refusing to report a stale diagnostic path"
+            return 1
+        fi
+        log_warn "Could not create tar archive, bundle available at: ${OUTPUT_BASE}/${bundle_name}"
+        echo "${OUTPUT_BASE}/${bundle_name}"
     fi
-}
+)
 
 support_restore_shell_options_if_sourced() {
     [[ "$_SUPPORT_WAS_SOURCED" == "true" ]] || return 0

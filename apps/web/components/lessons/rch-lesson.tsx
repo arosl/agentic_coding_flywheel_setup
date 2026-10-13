@@ -776,7 +776,7 @@ function healthIcon(h: WorkerHealth) {
 function jobStatusColor(s: BuildJob["status"]): string {
   switch (s) {
     case "queued":
-      return "text-white/50";
+      return "text-muted-foreground";
     case "building":
       return "text-amber-400";
     case "done":
@@ -812,7 +812,7 @@ function NetworkTopology({ scenario }: { scenario: FleetScenario }) {
     <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3">
       <div className="flex items-center gap-2 mb-2">
         <Monitor className="h-3 w-3 text-blue-400" />
-        <span className="text-[10px] font-semibold text-white/60 uppercase tracking-wider">
+        <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">
           Network Topology
         </span>
       </div>
@@ -834,12 +834,12 @@ function NetworkTopology({ scenario }: { scenario: FleetScenario }) {
           y="87"
           textAnchor="middle"
           fill="rgba(255,255,255,0.8)"
-          fontSize="11"
+          fontSize="12"
           fontWeight="600"
         >
           Local
         </text>
-        <text x="45" y="102" textAnchor="middle" fill="rgba(255,255,255,0.5)" fontSize="9">
+        <text x="45" y="102" textAnchor="middle" fill="var(--muted-foreground)" fontSize="12">
           Machine
         </text>
 
@@ -859,12 +859,12 @@ function NetworkTopology({ scenario }: { scenario: FleetScenario }) {
           y="87"
           textAnchor="middle"
           fill="rgba(255,255,255,0.8)"
-          fontSize="11"
+          fontSize="12"
           fontWeight="600"
         >
           RCH
         </text>
-        <text x="175" y="102" textAnchor="middle" fill="rgba(255,255,255,0.5)" fontSize="9">
+        <text x="175" y="102" textAnchor="middle" fill="var(--muted-foreground)" fontSize="12">
           Dispatcher
         </text>
 
@@ -959,20 +959,20 @@ function NetworkTopology({ scenario }: { scenario: FleetScenario }) {
               />
               <text
                 x={wx}
-                y={wy + 15}
+                y={wy + 13}
                 textAnchor="middle"
                 fill={isOffline ? "rgba(239,68,68,0.6)" : "rgba(255,255,255,0.7)"}
-                fontSize="9"
+                fontSize="12"
                 fontWeight="600"
               >
                 W-{i + 1}
               </text>
               <text
                 x={wx}
-                y={wy + 26}
+                y={wy + 27}
                 textAnchor="middle"
-                fill="rgba(255,255,255,0.5)"
-                fontSize="7.5"
+                fill="var(--muted-foreground)"
+                fontSize="12"
               >
                 {w.cpuCores}c
               </text>
@@ -1027,7 +1027,7 @@ function WorkerCard({ worker, index }: { worker: WorkerNode; index: number }) {
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[10px] font-bold text-white/70 font-mono truncate">
+        <span className="text-xs font-bold text-white/70 font-mono truncate">
           {worker.name.replace("vps-", "")}
         </span>
         <div className="flex items-center gap-1">
@@ -1039,7 +1039,7 @@ function WorkerCard({ worker, index }: { worker: WorkerNode; index: number }) {
       </div>
 
       {/* Host + latency */}
-      <div className="text-[10px] text-white/30 font-mono mb-2 flex justify-between">
+      <div className="text-xs text-muted-foreground font-mono mb-2 flex justify-between">
         <span>{worker.host}</span>
         <span className={isOffline ? "text-red-400" : ""}>
           {isOffline ? "timeout" : `${worker.latencyMs}ms`}
@@ -1048,9 +1048,9 @@ function WorkerCard({ worker, index }: { worker: WorkerNode; index: number }) {
 
       {/* CPU bar */}
       <div className="mb-1">
-        <div className="flex justify-between text-[10px] mb-0.5">
-          <span className="text-white/40">CPU</span>
-          <span className={`font-mono ${worker.cpuPct > 80 ? "text-amber-400" : "text-white/40"}`}>
+        <div className="flex justify-between text-xs mb-0.5">
+          <span className="text-muted-foreground">CPU</span>
+          <span className={`font-mono ${worker.cpuPct > 80 ? "text-amber-400" : "text-muted-foreground"}`}>
             {worker.cpuPct}%
           </span>
         </div>
@@ -1065,9 +1065,9 @@ function WorkerCard({ worker, index }: { worker: WorkerNode; index: number }) {
 
       {/* RAM bar */}
       <div className="mb-1.5">
-        <div className="flex justify-between text-[10px] mb-0.5">
-          <span className="text-white/40">RAM</span>
-          <span className="text-white/40 font-mono">{worker.ramPct}%</span>
+        <div className="flex justify-between text-xs mb-0.5">
+          <span className="text-muted-foreground">RAM</span>
+          <span className="text-muted-foreground font-mono">{worker.ramPct}%</span>
         </div>
         <div className="h-1 rounded-full bg-white/[0.06] overflow-hidden">
           <motion.div
@@ -1081,8 +1081,8 @@ function WorkerCard({ worker, index }: { worker: WorkerNode; index: number }) {
       {/* Build progress */}
       {worker.buildProgress > 0 && (
         <div>
-          <div className="flex justify-between text-[10px] mb-0.5">
-            <span className="text-white/40">Build</span>
+          <div className="flex justify-between text-xs mb-0.5">
+            <span className="text-muted-foreground">Build</span>
             <span className={`font-mono ${healthColor(worker.health)}`}>
               {worker.buildProgress}%
             </span>
@@ -1102,7 +1102,7 @@ function WorkerCard({ worker, index }: { worker: WorkerNode; index: number }) {
         worker.job !== "healthy" &&
         worker.job !== "done" &&
         worker.job !== "offline" && (
-          <div className={`mt-1.5 text-[10px] font-mono truncate ${healthColor(worker.health)}`}>
+          <div className={`mt-1.5 text-xs font-mono truncate ${healthColor(worker.health)}`}>
             {worker.job === "rsync"
               ? "syncing..."
               : worker.job === "FAILED"
@@ -1123,12 +1123,12 @@ function BuildQueue({ jobs }: { jobs: BuildJob[] }) {
     return (
       <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3">
         <div className="flex items-center gap-2 mb-2">
-          <HardDrive className="h-3 w-3 text-white/40" />
-          <span className="text-[10px] font-semibold text-white/60 uppercase tracking-wider">
+          <HardDrive className="h-3 w-3 text-muted-foreground" />
+          <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">
             Build Queue
           </span>
         </div>
-        <p className="text-[10px] text-white/30 italic">No jobs in queue</p>
+        <p className="text-xs text-muted-foreground italic">No jobs in queue</p>
       </div>
     );
   }
@@ -1137,10 +1137,10 @@ function BuildQueue({ jobs }: { jobs: BuildJob[] }) {
     <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3">
       <div className="flex items-center gap-2 mb-2">
         <HardDrive className="h-3 w-3 text-amber-400" />
-        <span className="text-[10px] font-semibold text-white/60 uppercase tracking-wider">
+        <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">
           Build Queue
         </span>
-        <span className="ml-auto text-[10px] text-white/30 font-mono">{jobs.length} jobs</span>
+        <span className="ml-auto text-xs text-muted-foreground font-mono">{jobs.length} jobs</span>
       </div>
       <div className="space-y-1">
         {jobs.map((job, i) => (
@@ -1149,12 +1149,12 @@ function BuildQueue({ jobs }: { jobs: BuildJob[] }) {
             initial={{ opacity: 0, x: -8 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ ...SPRING, delay: i * 0.05 }}
-            className={`flex items-center gap-2 px-2 py-1 rounded-md text-[10px] font-mono ${jobStatusBg(job.status)}`}
+            className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs font-mono ${jobStatusBg(job.status)}`}
           >
-            <span className="text-white/40 w-10 flex-shrink-0">{job.id}</span>
+            <span className="text-muted-foreground w-10 flex-shrink-0">{job.id}</span>
             <span className={`flex-1 truncate ${jobStatusColor(job.status)}`}>{job.crate}</span>
             {job.assignedTo !== null && (
-              <span className="text-white/30 flex-shrink-0">W-{job.assignedTo + 1}</span>
+              <span className="text-muted-foreground flex-shrink-0">W-{job.assignedTo + 1}</span>
             )}
             <span className={`flex-shrink-0 ${jobStatusColor(job.status)}`}>
               {job.status === "queued" && "queued"}
@@ -1183,15 +1183,15 @@ function BuildTimeComparison({ localSec, remoteSec }: { localSec: number; remote
     <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3">
       <div className="flex items-center gap-2 mb-3">
         <Clock className="h-3 w-3 text-emerald-400" />
-        <span className="text-[10px] font-semibold text-white/60 uppercase tracking-wider">
+        <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">
           Build Time Comparison
         </span>
-        <span className="ml-auto text-[10px] font-bold text-emerald-400">{speedup}x faster</span>
+        <span className="ml-auto text-xs font-bold text-emerald-400">{speedup}x faster</span>
       </div>
       <div className="space-y-2">
         {/* Local */}
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-mono text-white/40 w-12 flex-shrink-0">Local</span>
+          <span className="text-xs font-mono text-muted-foreground w-12 flex-shrink-0">Local</span>
           <div className="flex-1 h-5 rounded-md bg-white/[0.04] border border-white/[0.06] overflow-hidden relative">
             <motion.div
               className="h-full bg-gradient-to-r from-red-500/40 to-orange-500/40 rounded-md"
@@ -1199,14 +1199,14 @@ function BuildTimeComparison({ localSec, remoteSec }: { localSec: number; remote
               animate={{ width: "100%" }}
               transition={{ duration: 1.5, ease: "easeOut" }}
             />
-            <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white/70">
+            <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-white/70">
               {Math.floor(localSec / 60)}m {localSec % 60}s
             </span>
           </div>
         </div>
         {/* Remote */}
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-mono text-emerald-400/80 w-12 flex-shrink-0">RCH</span>
+          <span className="text-xs font-mono text-emerald-400/80 w-12 flex-shrink-0">RCH</span>
           <div className="flex-1 h-5 rounded-md bg-white/[0.04] border border-white/[0.06] overflow-hidden relative">
             <motion.div
               className="h-full bg-gradient-to-r from-emerald-500/50 to-teal-500/50 rounded-md"
@@ -1214,13 +1214,13 @@ function BuildTimeComparison({ localSec, remoteSec }: { localSec: number; remote
               animate={{ width: `${remoteWidthPct}%` }}
               transition={{ duration: 0.8, ease: "easeOut", delay: 0.3 }}
             />
-            <span className="absolute left-0 inset-y-0 flex items-center pl-2 text-[10px] font-bold text-emerald-300/90">
+            <span className="absolute left-0 inset-y-0 flex items-center pl-2 text-xs font-bold text-emerald-300/90">
               {remoteSec}s
             </span>
           </div>
         </div>
       </div>
-      <div className="mt-2 flex items-center gap-1.5 text-xs text-white/35">
+      <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
         <Zap className="h-2.5 w-2.5 text-emerald-400" />
         <span>8 workers, 320 total CPU cores vs 8-core local machine</span>
       </div>
@@ -1239,7 +1239,7 @@ function ArtifactTransfer({ mb }: { mb: number }) {
     <div className="rounded-xl border border-teal-400/20 bg-teal-500/[0.04] p-3">
       <div className="flex items-center gap-2 mb-2">
         <Package className="h-3 w-3 text-teal-400" />
-        <span className="text-[10px] font-semibold text-white/60 uppercase tracking-wider">
+        <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">
           Artifact Sync
         </span>
       </div>
@@ -1254,9 +1254,9 @@ function ArtifactTransfer({ mb }: { mb: number }) {
             />
           </div>
         </div>
-        <span className="text-[10px] font-mono text-teal-300">{mb} MB</span>
+        <span className="text-xs font-mono text-teal-300">{mb} MB</span>
       </div>
-      <div className="mt-1.5 flex items-center gap-4 text-[10px] text-white/30 font-mono">
+      <div className="mt-1.5 flex items-center gap-4 text-xs text-muted-foreground font-mono">
         <span>
           zstd: {mb} MB -&gt; {Math.round(mb * 0.28)} MB
         </span>
@@ -1286,7 +1286,7 @@ function MiniTerminal({ lines }: { lines: string[] }) {
         <div className="w-2 h-2 rounded-full bg-red-400/60" />
         <div className="w-2 h-2 rounded-full bg-amber-400/60" />
         <div className="w-2 h-2 rounded-full bg-emerald-400/60" />
-        <span className="ml-2 text-[10px] text-white/40 font-mono">rch terminal</span>
+        <span className="ml-2 text-xs text-muted-foreground font-mono">rch terminal</span>
       </div>
       <div ref={scrollRef} className="p-3 max-h-40 overflow-y-auto">
         <AnimatePresence mode="sync">
@@ -1296,7 +1296,7 @@ function MiniTerminal({ lines }: { lines: string[] }) {
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2, delay: i * 0.03 }}
-              className={`text-[10px] font-mono leading-relaxed ${
+              className={`text-xs font-mono leading-relaxed ${
                 line.startsWith("$")
                   ? "text-emerald-400"
                   : line.includes("WARNING") || line.includes("FAIL")
@@ -1309,7 +1309,7 @@ function MiniTerminal({ lines }: { lines: string[] }) {
                           ? "text-amber-300/60"
                           : line === ""
                             ? ""
-                            : "text-white/50"
+                            : "text-muted-foreground"
               }`}
             >
               {line || "\u00A0"}
@@ -1388,7 +1388,7 @@ function InteractiveFleetDashboard() {
             <p className="text-sm font-semibold text-white/90">Compilation Fleet Dashboard</p>
             <Sparkles className="h-4 w-4 text-blue-400" />
           </div>
-          <p className="text-xs text-white/50">
+          <p className="text-xs text-muted-foreground">
             Step through scenarios to see how RCH manages remote compilation across a worker fleet
           </p>
         </div>
@@ -1402,7 +1402,7 @@ function InteractiveFleetDashboard() {
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
             transition={SPRING}
-            className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-1.5 text-white/40 hover:text-white/70 transition-colors"
+            className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-1.5 text-muted-foreground hover:text-white/70 transition-colors"
           >
             <ChevronLeft className="h-4 w-4" />
           </motion.button>
@@ -1422,10 +1422,10 @@ function InteractiveFleetDashboard() {
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                   transition={SPRING}
-                  className={`rounded-xl border px-2 py-1.5 text-[10px] font-medium transition-colors flex items-center gap-1 ${
+                  className={`rounded-xl border px-2 py-1.5 text-xs font-medium transition-colors flex items-center gap-1 ${
                     isActive
                       ? `${sColors.border} ${sColors.bg} ${sColors.text}`
-                      : "border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60"
+                      : "border-white/[0.06] bg-white/[0.02] text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   <Icon className="h-3 w-3" />
@@ -1442,7 +1442,7 @@ function InteractiveFleetDashboard() {
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
             transition={SPRING}
-            className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-1.5 text-white/40 hover:text-white/70 transition-colors"
+            className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-1.5 text-muted-foreground hover:text-white/70 transition-colors"
           >
             <ChevronRight className="h-4 w-4" />
           </motion.button>
@@ -1481,25 +1481,25 @@ function InteractiveFleetDashboard() {
         </AnimatePresence>
 
         {/* Fleet summary bar */}
-        <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-6 text-[10px] font-mono">
+        <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-6 text-xs font-mono">
           <div className="flex items-center gap-1.5">
             <Server className="h-3 w-3 text-emerald-400" />
-            <span className="text-white/50">Fleet:</span>
+            <span className="text-muted-foreground">Fleet:</span>
             <span className="text-emerald-400 font-bold">{onlineCount}/8</span>
           </div>
           <div className="flex items-center gap-1.5">
             <Cpu className="h-3 w-3 text-blue-400" />
-            <span className="text-white/50">Cores:</span>
+            <span className="text-muted-foreground">Cores:</span>
             <span className="text-blue-400 font-bold">{totalCores}</span>
           </div>
           <div className="flex items-center gap-1.5">
             <Activity className="h-3 w-3 text-amber-400" />
-            <span className="text-white/50">Active:</span>
+            <span className="text-muted-foreground">Active:</span>
             <span className="text-amber-400 font-bold">{activeBuildCount}</span>
           </div>
           <div className="flex items-center gap-1.5">
             <Zap className="h-3 w-3 text-violet-400" />
-            <span className="text-white/50">Avg CPU:</span>
+            <span className="text-muted-foreground">Avg CPU:</span>
             <span className="text-violet-400 font-bold">{avgCpu}%</span>
           </div>
         </div>

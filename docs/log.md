@@ -19,3 +19,7 @@ The docs now have a catalog (`docs/index.md`) and this log. The catalog lists ev
 ## [2026-10-10] ntm becomes herdr in the methodology, planning, audit and reference pages
 
 The operator's ruling that all ntm becomes herdr reverses the earlier rule that upstream's pages under `docs/` stay unchanged, for these pages (acfs-6bv). Guidance and reference now name the fork's tools: herdr and `acfs agents spawn`, `send` and `list` in `methodology/THE_FLYWHEEL_APPROACH_TO_PLANNING_AND_BEADS_CREATION.md` and `THE_FLYWHEEL_CORE_LOOP.md`, `tools.herdr` in `reference/MANIFEST_SCHEMA_VNEXT.md` and `audits/manifest-gap-analysis.md`, and herdr in the two user-experience audits' recommendations. Records and quotations stay as written and carry a note saying what the fork uses instead: the X posts, the AGY cutover report and the three plans under `planning/`. A remaining ntm name there is upstream's history, or the command palette's path, `~/.acfs/onboard/docs/ntm/`. The swarm and fleet operations pages move with acfs-kch.
+
+## [2026-10-13] Upstream's nightly update health page arrives with the upstream sync
+
+The upstream sync to `a39b2a1b` adds upstream's `docs/operations/nightly-update-health.md`, unchanged. It says how `acfs status` reports the nightly updater's last execution result, what its warnings mean, and how to retry by hand (acfs-f2mc.1).

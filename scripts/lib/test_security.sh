@@ -23,7 +23,7 @@ TESTS_FAILED=0
 test_pass() {
     local name="$1"
     echo -e "\033[32m[PASS]\033[0m $name"
-    ((++TESTS_PASSED))
+    TESTS_PASSED=$((TESTS_PASSED + 1))
 }
 
 test_fail() {
@@ -31,7 +31,7 @@ test_fail() {
     local reason="${2:-}"
     echo -e "\033[31m[FAIL]\033[0m $name"
     [[ -n "$reason" ]] && echo "       Reason: $reason"
-    ((++TESTS_FAILED))
+    TESTS_FAILED=$((TESTS_FAILED + 1))
 }
 
 # Every fixture directory this run creates, removed on exit unless
@@ -268,7 +268,7 @@ test_load_checksums_multiple_tools() {
 
     local count=0
     for key in "${!LOADED_CHECKSUMS[@]}"; do
-        ((++count))
+        count=$((count + 1))
     done
 
     if [[ $count -eq 2 ]]; then
@@ -587,6 +587,52 @@ test_checksum_candidate_validation_rejects_url_drift_and_incomplete_evidence() {
     fi
 }
 
+test_checksum_candidate_validation_defers_only_observed_mismatches() {
+    local name="checksum candidate proof keeps deferred mismatches at their current pins"
+    local -a saved_required=("${ACFS_SECURITY_REQUIRED_INSTALLERS[@]}")
+    local current="$TEST_TMP_DIR/defer-current.yaml"
+    local partial="$TEST_TMP_DIR/defer-partial.yaml"
+    local full="$TEST_TMP_DIR/defer-full.yaml"
+    local unchanged="$TEST_TMP_DIR/defer-unchanged.yaml"
+    local report="$TEST_TMP_DIR/defer-report.json"
+    local single_report="$TEST_TMP_DIR/defer-single-report.json"
+    local current_digest=""
+    local validated=""
+    local passed=false
+
+    ACFS_SECURITY_REQUIRED_INSTALLERS=(alpha beta)
+    write_strict_policy_fixture "$current" "$STRICT_HASH_A" "$STRICT_HASH_B"
+    write_strict_policy_fixture "$partial" "$STRICT_HASH_D" "$STRICT_HASH_B"
+    write_strict_policy_fixture "$full" "$STRICT_HASH_D" "$STRICT_HASH_C"
+    write_strict_policy_fixture "$unchanged" "$STRICT_HASH_A" "$STRICT_HASH_B"
+    current_digest="$(calculate_file_sha256 "$current")"
+    cat > "$report" << EOF
+{"schema":"acfs.installer-checksum-verification.v1","schemaVersion":1,"timestamp":"2026-10-12T16:00:00Z","checksumsYamlSha256":"$current_digest","total":2,"matches":[],"mismatches":[{"name":"alpha","url":"https://example.com/alpha.sh","expected":"$STRICT_HASH_A","actual":"$STRICT_HASH_D"},{"name":"beta","url":"https://example.com/beta.sh","expected":"$STRICT_HASH_B","actual":"$STRICT_HASH_C"}],"errors":[],"skipped":[]}
+EOF
+    write_strict_mismatch_report_fixture "$single_report" "$current_digest" "$STRICT_HASH_C"
+
+    # Apply alpha, defer beta: accepted with the exact candidate bytes.
+    if validated="$(acfs_validate_checksum_candidate "$current" "$partial" "$report" beta 2>/dev/null)" \
+        && [[ "$validated" == "$(acfs_security_cat_file "$partial")" ]] \
+        && acfs_validate_checksum_candidate "$current" "$full" "$report" >/dev/null 2>&1 \
+        && ! acfs_validate_checksum_candidate "$current" "$full" "$report" beta >/dev/null 2>&1 \
+        && ! acfs_validate_checksum_candidate "$current" "$partial" "$report" >/dev/null 2>&1 \
+        && ! acfs_validate_checksum_candidate "$current" "$unchanged" "$single_report" alpha >/dev/null 2>&1 \
+        && ! acfs_validate_checksum_candidate "$current" "$unchanged" "$single_report" gamma >/dev/null 2>&1 \
+        && ! acfs_validate_checksum_candidate "$current" "$partial" "$report" beta beta >/dev/null 2>&1 \
+        && ! acfs_validate_checksum_candidate "$current" "$partial" "$report" 'be ta' >/dev/null 2>&1 \
+        && acfs_validate_checksum_candidate "$current" "$unchanged" "$single_report" beta >/dev/null 2>&1; then
+        passed=true
+    fi
+    ACFS_SECURITY_REQUIRED_INSTALLERS=("${saved_required[@]}")
+
+    if [[ "$passed" == "true" ]]; then
+        test_pass "$name"
+    else
+        test_fail "$name" "Deferral changed a deferred pin, deferred a matched/unknown tool, or rejected a valid partial candidate"
+    fi
+}
+
 test_checksum_report_rejects_duplicate_keys_and_policy_digest_drift() {
     local name="checksum report rejects duplicate JSON keys and stale policy digests"
     local -a saved_required=("${ACFS_SECURITY_REQUIRED_INSTALLERS[@]}")
@@ -749,108 +795,6 @@ test_non_retryable_exit_code_success() {
 }
 
 # ============================================================
-# Test Cases: Content-Encoding a host sends anyway (acfs-b0u)
-# ============================================================
-
-test_configure_curl_compressed_when_curl_has_zlib() {
-    local name="acfs_security_configure_curl: --compressed exactly when curl has zlib"
-    local curl_version="" want="false" got="false" arg=""
-
-    acfs_security_configure_curl
-    curl_version="$("$ACFS_CURL_BIN" -V 2>/dev/null || true)"
-    [[ "$curl_version" == *" libz"* ]] && want="true"
-    for arg in "${ACFS_CURL_BASE_ARGS[@]}"; do
-        [[ "$arg" == "--compressed" ]] && got="true"
-    done
-
-    if [[ "$got" == "$want" ]]; then
-        test_pass "$name"
-    else
-        test_fail "$name" "zlib=$want but --compressed present=$got: ${ACFS_CURL_BASE_ARGS[*]}"
-    fi
-}
-
-# A server that, like the Google Frontend cache behind antigravity.google,
-# answers with a gzip body and "Content-Encoding: gzip" whatever the request
-# asked for. The download must hash to the uncompressed script.
-test_download_to_file_decodes_unrequested_gzip() {
-    local name="acfs_download_to_file: unrequested gzip encoding hashes as the plain script"
-    local python_bin="" server_py="$TEST_TMP_DIR/gzip_server.py" port_file="$TEST_TMP_DIR/gzip_server.port"
-    local body_file="$TEST_TMP_DIR/gzip_server_body.sh" out_file="$TEST_TMP_DIR/gzip_download.sh"
-    local server_pid="" port="" i=0 status=0 arg=""
-    local -a loopback_args=()
-
-    python_bin="$(command -v python3 || true)"
-    if [[ -z "$python_bin" ]]; then
-        echo "  [SKIP] $name (python3 not found)"
-        return 0
-    fi
-    acfs_security_configure_curl
-    if [[ "$("$ACFS_CURL_BIN" -V 2>/dev/null || true)" != *" libz"* ]]; then
-        echo "  [SKIP] $name (curl lacks zlib)"
-        return 0
-    fi
-    # The fixture is plain http on loopback, so drop only the https-only
-    # protocol restriction; every other configured argument is kept.
-    for ((i = 0; i < ${#ACFS_CURL_BASE_ARGS[@]}; i++)); do
-        arg="${ACFS_CURL_BASE_ARGS[$i]}"
-        if [[ "$arg" == "--proto" || "$arg" == "--proto-redir" ]]; then
-            i=$((i + 1))
-            continue
-        fi
-        loopback_args+=("$arg")
-    done
-
-    printf '#!/bin/sh\necho "installer body"\n' > "$body_file"
-    cat > "$server_py" << 'EOF'
-import gzip, http.server, sys
-body = gzip.compress(open(sys.argv[1], "rb").read())
-class Handler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/x-sh")
-        self.send_header("Content-Encoding", "gzip")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-    def log_message(self, *args):
-        pass
-server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
-with open(sys.argv[2], "w") as f:
-    f.write(str(server.server_address[1]))
-server.serve_forever()
-EOF
-    "$python_bin" -I "$server_py" "$body_file" "$port_file" &
-    server_pid=$!
-    for ((i = 0; i < 50; i++)); do
-        [[ -s "$port_file" ]] && break
-        sleep 0.1
-    done
-    port="$(cat "$port_file" 2>/dev/null || true)"
-
-    if [[ -z "$port" ]]; then
-        test_fail "$name" "local gzip server did not start"
-    else
-        (
-            ACFS_CURL_BASE_ARGS=("${loopback_args[@]}")
-            ACFS_CURL_RETRY_DELAYS=(0)
-            acfs_download_to_file "http://127.0.0.1:${port}/install.sh" "$out_file" "gzip-fixture"
-        ) || status=$?
-
-        if (( status != 0 )); then
-            test_fail "$name" "download failed with status $status"
-        elif [[ "$(calculate_sha256 < "$out_file")" == "$(calculate_sha256 < "$body_file")" ]]; then
-            test_pass "$name"
-        else
-            test_fail "$name" "downloaded bytes differ from the plain script (still gzip-encoded?)"
-        fi
-    fi
-
-    kill "$server_pid" 2>/dev/null || true
-    wait "$server_pid" 2>/dev/null || true
-}
-
-# ============================================================
 # Test Cases: KNOWN_INSTALLERS Array
 # ============================================================
 
@@ -859,7 +803,7 @@ test_known_installers_has_entries() {
 
     local count=0
     for key in "${!KNOWN_INSTALLERS[@]}"; do
-        ((++count))
+        count=$((count + 1))
     done
 
     if [[ $count -gt 5 ]]; then
@@ -916,17 +860,42 @@ subprocess.run([
 ], check=True, timeout=30)
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
     def do_GET(self):
-        if self.path != "/install.sh":
+        identity = self.headers.get("Accept-Encoding") == "identity"
+        if self.path == "/install.sh":
+            coding = None if identity else "gzip"
+        elif self.path == "/stubborn.sh":
+            # A CDN answering from a cached gzip object whatever was asked.
+            coding = "gzip"
+        elif self.path in ("/brotli.sh", "/corrupt.sh"):
+            coding = "br" if self.path == "/brotli.sh" else "gzip"
+            body = b"not a script, not gzip"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Content-Encoding", coding)
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        elif self.path == "/hop.sh":
+            # Only the final response describes the saved body.
+            self.send_response(302)
+            self.send_header("Location", "/install.sh")
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        else:
             self.send_error(404)
             return
-        identity = self.headers.get("Accept-Encoding") == "identity"
-        body = script if identity else gzip.compress(script, mtime=0)
+        body = gzip.compress(script, mtime=0) if coding else script
         self.send_response(200)
         self.send_header("Content-Type", "text/x-sh")
         self.send_header("Content-Length", str(len(body)))
-        if not identity:
-            self.send_header("Content-Encoding", "gzip")
+        if coding:
+            self.send_header("Content-Encoding", coding)
         self.end_headers()
         self.wfile.write(body)
 
@@ -961,6 +930,23 @@ try:
     actual = output.read_bytes()
     if actual != script or hashlib.sha256(actual).digest() != hashlib.sha256(script).digest():
         raise AssertionError("downloaded compression envelope instead of executable bytes")
+    base = f"https://localhost:{server.server_port}"
+    # Exercise both the retained-evidence path and the normal retry path.
+    for mode, mode_env in (("retained", env), ("standard", dict(env, ACFS_SECURITY_RETAIN_TEMP_FILES="false"))):
+        for path, expect_ok in (("/stubborn.sh", True), ("/hop.sh", True),
+                                ("/brotli.sh", False), ("/corrupt.sh", False)):
+            out = root / f"{mode}{path.replace('/', '-')}"
+            done = subprocess.run([
+                bash, "-c", 'source "$1"; acfs_download_to_file "$2" "$3" coding',
+                "transport-test", library, base + path, str(out),
+            ], env=mode_env, timeout=60, capture_output=True)
+            if expect_ok:
+                if done.returncode != 0:
+                    raise AssertionError(f"{mode}{path}: download failed: {done.stderr!r}")
+                if out.read_bytes() != script:
+                    raise AssertionError(f"{mode}{path}: saved bytes are not the identity script")
+            elif done.returncode == 0:
+                raise AssertionError(f"{mode}{path}: accepted an undecodable content coding")
     print(f"Verified {len(actual)} executable bytes over TLS; evidence retained at {root}")
 finally:
     server.shutdown()
@@ -1032,11 +1018,8 @@ test_versioned_checksum_report_binds_urls_hashes_and_exit_status
 test_checksum_candidate_validation_is_exact_and_network_free
 test_checksum_candidate_validation_rejects_cross_wired_hashes
 test_checksum_candidate_validation_rejects_url_drift_and_incomplete_evidence
+test_checksum_candidate_validation_defers_only_observed_mismatches
 test_checksum_report_rejects_duplicate_keys_and_policy_digest_drift
-
-# Content-Encoding a host sends anyway (use the fixture directory above)
-test_configure_curl_compressed_when_curl_has_zlib
-test_download_to_file_decodes_unrequested_gzip
 
 # That test runs with ACFS_SECURITY_RETAIN_TEMP_FILES=true and keeps its
 # fixtures and metadata files, so give it a fixture directory as TMPDIR.

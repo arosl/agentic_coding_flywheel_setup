@@ -29,7 +29,7 @@ import {
   Trophy,
   Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AnimatePresence, motion, useInView } from "@/components/motion";
 import {
   CodeBlock,
@@ -672,7 +672,7 @@ const IMPACT_COLORS: Record<TriageRecommendation["impact"], string> = {
   critical: "text-red-400 bg-red-500/10 border-red-500/30",
   high: "text-amber-400 bg-amber-500/10 border-amber-500/30",
   medium: "text-blue-400 bg-blue-500/10 border-blue-500/30",
-  low: "text-white/50 bg-white/[0.04] border-white/[0.08]",
+  low: "text-muted-foreground bg-white/[0.04] border-white/[0.08]",
 };
 
 const MODE_CONFIG: Record<AnalysisMode, { label: string; icon: typeof Eye; description: string }> =
@@ -748,7 +748,16 @@ const TERMINAL_COMMANDS: Record<AnalysisMode, string[]> = {
 // InteractiveGraphTriage — The Main Visualization
 // ---------------------------------------------------------------------------
 
+// Server-rendered controls must wait for their client event handlers. The client
+// snapshot changes only when React hydrates this component, with no timer delay.
+const subscribeToClientReadiness = () => () => undefined;
+const getClientReadiness = () => true;
+const getServerReadiness = () => false;
+
 function InteractiveGraphTriage() {
+  const clientReady = useSyncExternalStore(
+    subscribeToClientReadiness, getClientReadiness, getServerReadiness,
+  );
   const [triageRun, setTriageRun] = useState(false);
   const [animatingPhase, setAnimatingPhase] = useState<"idle" | "computing" | "done">("idle");
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
@@ -943,58 +952,103 @@ function InteractiveGraphTriage() {
               Graph Triage Engine
             </span>
           </div>
-          <p className="text-sm text-white/50">
+          <p className="text-sm text-muted-foreground">
             {triageRun
               ? "Explore 6 analysis modes to understand your dependency graph"
               : 'Click "Run Triage" to compute graph metrics and see recommendations'}
           </p>
         </div>
 
-        {/* Analysis Mode Tabs */}
-        <AnimatePresence>
+        {/* Keep the starting action beside the choices it reveals, above the graph. */}
+        <div className="flex flex-wrap justify-center gap-3">
+          <motion.button
+            type="button"
+            onClick={handleRunTriage}
+            whileHover={{ scale: 1.04 }}
+            whileTap={{ scale: 0.96 }}
+            transition={{ type: "spring", stiffness: 200, damping: 25 }}
+            disabled={!clientReady || animatingPhase === "computing"}
+            className={`flex items-center gap-2 rounded-2xl border px-5 py-2.5 text-sm font-medium transition-colors ${
+              animatingPhase === "computing"
+                ? "border-white/[0.06] bg-white/[0.02] text-muted-foreground cursor-wait"
+                : "border-violet-500/30 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20"
+            }`}
+          >
+            {animatingPhase === "computing" ? (
+              <>
+                <motion.div
+                  animate={inView ? { rotate: 360 } : { rotate: 0 }}
+                  transition={
+                    inView
+                      ? { duration: 1, repeat: Infinity, ease: "linear" }
+                      : { duration: 0.2 }
+                  }
+                >
+                  <Network className="h-4 w-4" />
+                </motion.div>
+                Computing...
+              </>
+            ) : (
+              <>
+                <Play className="h-4 w-4" />
+                Run Triage
+              </>
+            )}
+          </motion.button>
           {triageRun && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
+            <motion.button
+              type="button"
+              onClick={handleReset}
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
               transition={{ type: "spring", stiffness: 200, damping: 25 }}
+              whileHover={{ scale: 1.04 }}
+              whileTap={{ scale: 0.96 }}
+              className="flex items-center gap-2 rounded-2xl border border-white/[0.08] bg-white/[0.02] px-5 py-2.5 text-sm font-medium text-muted-foreground hover:text-white/70 transition-colors"
             >
-              <div className="flex flex-wrap items-center justify-center gap-1.5 sm:gap-2">
-                {(
-                  Object.entries(MODE_CONFIG) as [
-                    AnalysisMode,
-                    (typeof MODE_CONFIG)[AnalysisMode],
-                  ][]
-                ).map(([mode, config]) => {
-                  const ModeIcon = config.icon;
-                  const isActive = analysisMode === mode;
-                  return (
-                    <motion.button
-                      key={mode}
-                      type="button"
-                      onClick={() => handleAnalysisModeChange(mode)}
-                      whileHover={{ scale: 1.04 }}
-                      whileTap={{ scale: 0.96 }}
-                      transition={{ type: "spring", stiffness: 200, damping: 25 }}
-                      className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium transition ${
-                        isActive
-                          ? "border border-violet-500/40 bg-violet-500/15 text-violet-300 shadow-lg shadow-violet-500/10"
-                          : "border border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60 hover:bg-white/[0.04]"
-                      }`}
-                    >
-                      <ModeIcon className="h-3 w-3" />
-                      <span className="hidden sm:inline">{config.label}</span>
-                    </motion.button>
-                  );
-                })}
-              </div>
-              {/* Mode description */}
-              <p className="text-center text-xs text-white/30 mt-2">
-                {MODE_CONFIG[analysisMode].description}
-              </p>
-            </motion.div>
+              <RotateCcw className="h-4 w-4" />
+              Reset
+            </motion.button>
           )}
-        </AnimatePresence>
+        </div>
+
+        {/* Keep mode controls readable and stationary as soon as they appear. */}
+        {triageRun && (
+          <div>
+            <div className="flex flex-wrap items-center justify-center gap-1.5 sm:gap-2">
+              {(
+                Object.entries(MODE_CONFIG) as [
+                  AnalysisMode,
+                  (typeof MODE_CONFIG)[AnalysisMode],
+                ][]
+              ).map(([mode, config]) => {
+                const ModeIcon = config.icon;
+                const isActive = analysisMode === mode;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => handleAnalysisModeChange(mode)}
+                    aria-label={config.label}
+                    aria-pressed={isActive}
+                    className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium transition-colors ${
+                      isActive
+                        ? "border border-violet-500/40 bg-violet-500/15 text-violet-300 shadow-lg shadow-violet-500/10"
+                        : "border border-white/[0.06] bg-white/[0.02] text-muted-foreground hover:text-foreground hover:bg-white/[0.04]"
+                    }`}
+                  >
+                    <ModeIcon className="h-3 w-3" />
+                    <span>{config.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {/* Mode description */}
+            <p className="text-center text-xs text-muted-foreground mt-2">
+              {MODE_CONFIG[analysisMode].description}
+            </p>
+          </div>
+        )}
 
         {/* Legend */}
         <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4">
@@ -1003,23 +1057,23 @@ function InteractiveGraphTriage() {
           ).map(([status, meta]) => (
             <div key={status} className="flex items-center gap-1.5">
               <div className={`h-2.5 w-2.5 rounded-full ${meta.bg}`} />
-              <span className="text-[10px] text-white/50">{meta.label}</span>
+              <span className="text-xs text-muted-foreground">{meta.label}</span>
             </div>
           ))}
           <div className="flex items-center gap-1.5">
             <Star className="h-2.5 w-2.5 text-yellow-400" />
-            <span className="text-[10px] text-white/50">Quick Win</span>
+            <span className="text-xs text-muted-foreground">Quick Win</span>
           </div>
           {triageRun && analysisMode === "critical-path" && (
             <div className="flex items-center gap-1.5">
               <div className="h-2.5 w-5 rounded bg-gradient-to-r from-cyan-400 to-cyan-500" />
-              <span className="text-[10px] text-cyan-400/70">Critical Path</span>
+              <span className="text-xs text-cyan-400/70">Critical Path</span>
             </div>
           )}
           {triageRun && analysisMode === "cycles" && (
             <div className="flex items-center gap-1.5">
               <div className="h-2.5 w-5 rounded bg-gradient-to-r from-red-400 to-rose-500" />
-              <span className="text-[10px] text-red-400/70">Cycle</span>
+              <span className="text-xs text-red-400/70">Cycle</span>
             </div>
           )}
         </div>
@@ -1063,7 +1117,7 @@ function InteractiveGraphTriage() {
                           initial={{ opacity: 0, scale: 0.8 }}
                           animate={{ opacity: 1, scale: 1 }}
                           transition={{ delay: 0.5 + i * 0.25 }}
-                          className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-white/40 font-mono"
+                          className="text-xs px-1.5 py-0.5 rounded bg-white/[0.06] text-muted-foreground font-mono"
                         >
                           {metric}
                         </motion.span>
@@ -1299,10 +1353,35 @@ function InteractiveGraphTriage() {
                   return (
                     <g
                       key={node.id}
-                      style={{ cursor: "pointer" }}
-                      opacity={nodeOpacity}
-                      onClick={() => setSelectedNode(node.id === selectedNode ? null : node.id)}
+                      className="group/graph-node outline-none"
+                      role="button"
+                      tabIndex={clientReady ? 0 : -1}
+                      aria-disabled={!clientReady}
+                      aria-label={`${node.id}: ${node.label} (${color.label})`}
+                      aria-pressed={isSelected}
+                      style={{ cursor: clientReady ? "pointer" : "wait" }}
+                      onClick={() => {
+                        if (clientReady) setSelectedNode(node.id === selectedNode ? null : node.id);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (clientReady) setSelectedNode(node.id === selectedNode ? null : node.id);
+                      }}
                     >
+                      <circle
+                        data-node-focus-ring={node.id}
+                        cx={node.x}
+                        cy={node.y}
+                        r={radius + 4}
+                        fill="none"
+                        stroke="var(--foreground)"
+                        strokeWidth={2}
+                        className="pointer-events-none opacity-0 group-focus-visible/graph-node:opacity-100"
+                      />
+                      {/* Dim non-matching shapes while keeping their labels readable. */}
+                      <g opacity={nodeOpacity}>
                       {/* Top recommendation pulsing glow */}
                       {isTop && analysisMode === "overview" && (
                         <circle
@@ -1424,6 +1503,7 @@ function InteractiveGraphTriage() {
 
                       {/* Center status dot */}
                       <circle cx={node.x} cy={node.y} r={4} fill={color.fill} opacity={0.8} />
+                      </g>
 
                       {/* Node label above */}
                       <text
@@ -1431,7 +1511,7 @@ function InteractiveGraphTriage() {
                         y={node.y - radius - 8}
                         textAnchor="middle"
                         fill="rgba(255,255,255,0.7)"
-                        fontSize="10"
+                        fontSize="12"
                         fontFamily="monospace"
                       >
                         {node.id}
@@ -1446,7 +1526,7 @@ function InteractiveGraphTriage() {
                           fill={
                             isInCycle ? "#f43f5e" : isCriticalPathActive ? "#22d3ee" : color.stroke
                           }
-                          fontSize="10"
+                          fontSize="12"
                           fontWeight="bold"
                           fontFamily="monospace"
                         >
@@ -1467,7 +1547,7 @@ function InteractiveGraphTriage() {
                             stroke="#facc15"
                             strokeWidth={1}
                           />
-                          <text x={0} y={3.5} textAnchor="middle" fill="#facc15" fontSize="9">
+                          <text x={0} y={4} textAnchor="middle" fill="#facc15" fontSize="12">
                             {"\u2605"}
                           </text>
                         </g>
@@ -1484,7 +1564,7 @@ function InteractiveGraphTriage() {
                             stroke="#f59e0b"
                             strokeWidth={1}
                           />
-                          <text x={0} y={3.5} textAnchor="middle" fill="#f59e0b" fontSize="9">
+                          <text x={0} y={4} textAnchor="middle" fill="#f59e0b" fontSize="12">
                             !
                           </text>
                         </g>
@@ -1506,7 +1586,7 @@ function InteractiveGraphTriage() {
                             y={4}
                             textAnchor="middle"
                             fill="#f43f5e"
-                            fontSize="9"
+                            fontSize="12"
                             fontFamily="monospace"
                           >
                             C
@@ -1518,60 +1598,6 @@ function InteractiveGraphTriage() {
                 })}
               </svg>
               </DiagramScroller>
-            </div>
-
-            {/* Controls */}
-            <div className="flex flex-wrap justify-center gap-3">
-              <motion.button
-                type="button"
-                onClick={handleRunTriage}
-                whileHover={{ scale: 1.04 }}
-                whileTap={{ scale: 0.96 }}
-                transition={{ type: "spring", stiffness: 200, damping: 25 }}
-                disabled={animatingPhase === "computing"}
-                className={`flex items-center gap-2 rounded-2xl border px-5 py-2.5 text-sm font-medium transition-colors ${
-                  animatingPhase === "computing"
-                    ? "border-white/[0.06] bg-white/[0.02] text-white/30 cursor-wait"
-                    : "border-violet-500/30 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20"
-                }`}
-              >
-                {animatingPhase === "computing" ? (
-                  <>
-                    <motion.div
-                      animate={inView ? { rotate: 360 } : { rotate: 0 }}
-                      transition={
-                        inView
-                          ? { duration: 1, repeat: Infinity, ease: "linear" }
-                          : { duration: 0.2 }
-                      }
-                    >
-                      <Network className="h-4 w-4" />
-                    </motion.div>
-                    Computing...
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4" />
-                    Run Triage
-                  </>
-                )}
-              </motion.button>
-
-              {triageRun && (
-                <motion.button
-                  type="button"
-                  onClick={handleReset}
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ type: "spring", stiffness: 200, damping: 25 }}
-                  whileHover={{ scale: 1.04 }}
-                  whileTap={{ scale: 0.96 }}
-                  className="flex items-center gap-2 rounded-2xl border border-white/[0.08] bg-white/[0.02] px-5 py-2.5 text-sm font-medium text-white/50 hover:text-white/70 transition-colors"
-                >
-                  <RotateCcw className="h-4 w-4" />
-                  Reset
-                </motion.button>
-              )}
             </div>
 
             {/* Mini Terminal */}
@@ -1587,8 +1613,8 @@ function InteractiveGraphTriage() {
                   <div className="rounded-2xl border border-white/[0.08] bg-black/40 overflow-hidden">
                     {/* Terminal header */}
                     <div className="flex items-center gap-2 px-4 py-2 border-b border-white/[0.06] bg-white/[0.02]">
-                      <Terminal className="h-3 w-3 text-white/30" />
-                      <span className="text-[10px] text-white/30 font-mono">bv --robot output</span>
+                      <Terminal className="h-3 w-3 text-muted-foreground" />
+                      <span className="text-xs text-muted-foreground font-mono">bv --robot output</span>
                       <div className="flex gap-1 ml-auto">
                         <Circle className="h-2 w-2 text-red-500/50" />
                         <Circle className="h-2 w-2 text-yellow-500/50" />
@@ -1598,7 +1624,7 @@ function InteractiveGraphTriage() {
                     {/* Terminal body */}
                     <div
                       ref={terminalRef}
-                      className="p-3 font-mono text-[11px] space-y-0.5 max-h-28 overflow-y-auto"
+                      className="p-3 font-mono text-xs space-y-0.5 max-h-28 overflow-y-auto"
                     >
                       {terminalLines.map((line, i) => (
                         <motion.div
@@ -1611,7 +1637,7 @@ function InteractiveGraphTriage() {
                               ? "text-emerald-400"
                               : line.includes("warning") || line.includes("cycle")
                                 ? "text-red-400/70"
-                                : "text-white/40"
+                                : "text-muted-foreground"
                           }
                         >
                           {line}
@@ -1649,13 +1675,13 @@ function InteractiveGraphTriage() {
                   <div>
                     <p className="text-sm font-semibold text-white/90">{topNode.label}</p>
                     <div className="flex items-center gap-3 mt-1">
-                      <span className="text-[10px] font-mono text-violet-400/70">
+                      <span className="text-xs font-mono text-violet-400/70">
                         PR: {topNode.metrics.pageRank.toFixed(2)}
                       </span>
-                      <span className="text-[10px] font-mono text-violet-400/70">
+                      <span className="text-xs font-mono text-violet-400/70">
                         BW: {topNode.metrics.betweenness.toFixed(2)}
                       </span>
-                      <span className="text-[10px] font-mono text-violet-400/70">
+                      <span className="text-xs font-mono text-violet-400/70">
                         EV: {topNode.metrics.eigenvector.toFixed(2)}
                       </span>
                     </div>
@@ -1668,6 +1694,8 @@ function InteractiveGraphTriage() {
                   {selectedData && selectedData.id !== topNode.id && (
                     <motion.div
                       key={selectedData.id}
+                      role="region"
+                      aria-label={`Details for ${selectedData.id}`}
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -8 }}
@@ -1686,7 +1714,7 @@ function InteractiveGraphTriage() {
                         <button
                           type="button"
                           onClick={() => setShowMetricsDetail(!showMetricsDetail)}
-                          className="text-[10px] text-white/30 hover:text-white/50 transition-colors"
+                          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                         >
                           {showMetricsDetail ? "hide" : "metrics"}
                         </button>
@@ -1694,15 +1722,15 @@ function InteractiveGraphTriage() {
                       <div>
                         <p className="text-sm font-medium text-white/80">{selectedData.label}</p>
                         <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[10px] font-mono text-white/40">
+                          <span className="text-xs font-mono text-muted-foreground">
                             {STATUS_COLORS[selectedData.status].label}
                           </span>
-                          <span className="text-[10px] text-white/20">|</span>
-                          <span className="text-[10px] font-mono text-white/40">
+                          <span className="text-xs text-muted-foreground">|</span>
+                          <span className="text-xs font-mono text-muted-foreground">
                             {selectedData.age}d old
                           </span>
-                          <span className="text-[10px] text-white/20">|</span>
-                          <span className="text-[10px] font-mono text-white/40">
+                          <span className="text-xs text-muted-foreground">|</span>
+                          <span className="text-xs font-mono text-muted-foreground">
                             {selectedData.track}
                           </span>
                         </div>
@@ -1772,7 +1800,7 @@ function InteractiveGraphTriage() {
                       {selectedData.blockedBy.length > 0 && (
                         <div className="flex items-center gap-1.5 pt-1">
                           <Ban className="h-3 w-3 text-red-400" />
-                          <span className="text-[10px] text-red-400/80">
+                          <span className="text-xs text-red-400/80">
                             Blocked by: {selectedData.blockedBy.join(", ")}
                           </span>
                         </div>
@@ -1780,7 +1808,7 @@ function InteractiveGraphTriage() {
                       {selectedData.isQuickWin && (
                         <div className="flex items-center gap-1.5 pt-1">
                           <Star className="h-3 w-3 text-yellow-400" />
-                          <span className="text-[10px] text-yellow-400/80">
+                          <span className="text-xs text-yellow-400/80">
                             Quick win candidate
                           </span>
                         </div>
@@ -1876,8 +1904,8 @@ function MetricBadge({
   return (
     <div className="rounded-lg bg-white/[0.03] border border-white/[0.06] p-1.5">
       <div className="flex items-center justify-between mb-1">
-        <span className="text-[10px] text-white/40">{label}</span>
-        <span className="text-[10px] font-mono text-white/60">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <span className="text-xs font-mono text-white/60">
           {isInteger ? value : value.toFixed(2)}
         </span>
       </div>
@@ -1909,7 +1937,7 @@ function TriageRankingPanel({
       className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4 space-y-2"
     >
       <div className="flex items-center gap-2 mb-3">
-        <BarChart3 className="h-3.5 w-3.5 text-white/40" />
+        <BarChart3 className="h-3.5 w-3.5 text-muted-foreground" />
         <p className="text-xs font-semibold text-white/60 uppercase tracking-wider">
           Triage Ranking
         </p>
@@ -1930,10 +1958,10 @@ function TriageRankingPanel({
                 : "hover:bg-white/[0.03] border border-transparent"
             }`}
           >
-            <span className="text-xs font-mono text-white/30 w-4">{i + 1}.</span>
+            <span className="text-xs font-mono text-muted-foreground w-4">{i + 1}.</span>
             <div className={`h-2 w-2 rounded-full ${color.bg} shrink-0`} />
             <span className="text-xs text-white/70 truncate flex-1">{node.label}</span>
-            <span className="text-[10px] font-mono text-white/40">
+            <span className="text-xs font-mono text-muted-foreground">
               {node.metrics.pageRank.toFixed(2)}
             </span>
             {node.isQuickWin && <Star className="h-3 w-3 text-yellow-400 shrink-0" />}
@@ -1985,7 +2013,7 @@ function PageRankPanel({
           >
             <div className="flex items-center justify-between mb-1">
               <span className="text-xs text-white/70">{node.label}</span>
-              <span className="text-[10px] font-mono text-violet-400">
+              <span className="text-xs font-mono text-violet-400">
                 {node.metrics.pageRank.toFixed(3)}
               </span>
             </div>
@@ -2019,7 +2047,7 @@ function CriticalPathPanel({ step }: { step: number }) {
           Critical Path
         </p>
       </div>
-      <p className="text-xs text-white/40">
+      <p className="text-xs text-muted-foreground">
         Longest dependency chain: {CRITICAL_PATH_IDS.length} nodes, ~28 estimated days
       </p>
       <div className="space-y-1">
@@ -2031,32 +2059,32 @@ function CriticalPathPanel({ step }: { step: number }) {
           return (
             <div key={id} className="flex items-center gap-2">
               <div
-                className={`h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-mono transition-colors ${
+                className={`h-5 w-5 rounded-full flex items-center justify-center text-xs font-mono transition-colors ${
                   isReached
                     ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/40"
-                    : "bg-white/[0.04] text-white/30 border border-white/[0.08]"
+                    : "bg-white/[0.04] text-muted-foreground border border-white/[0.08]"
                 }`}
               >
                 {i + 1}
               </div>
               {i < CRITICAL_PATH_IDS.length - 1 && (
                 <ChevronRight
-                  className={`h-3 w-3 ${isReached ? "text-cyan-400" : "text-white/20"}`}
+                  className={`h-3 w-3 ${isReached ? "text-cyan-400" : "text-muted-foreground"}`}
                 />
               )}
               <span
-                className={`text-xs transition-colors ${isReached ? "text-white/80" : "text-white/30"}`}
+                className={`text-xs transition-colors ${isReached ? "text-white/80" : "text-muted-foreground"}`}
               >
                 {node.label}
               </span>
-              <span className={`text-[10px] ml-auto ${color.text}`}>{color.label}</span>
+              <span className={`text-xs ml-auto ${color.text}`}>{color.label}</span>
             </div>
           );
         })}
       </div>
       <div className="flex items-center gap-1.5 pt-2 border-t border-white/[0.06]">
         <Activity className="h-3 w-3 text-cyan-400/60" />
-        <span className="text-[10px] text-cyan-400/60">
+        <span className="text-xs text-cyan-400/60">
           Bottleneck: DB migration (blocks 3 downstream)
         </span>
       </div>
@@ -2080,7 +2108,7 @@ function CycleDetectionPanel() {
           Cycle Detected
         </p>
       </div>
-      <p className="text-xs text-white/40">
+      <p className="text-xs text-muted-foreground">
         Circular dependency found between {cycleNodes.length} nodes. This creates a deadlock where
         no node can be completed first.
       </p>
@@ -2097,13 +2125,13 @@ function CycleDetectionPanel() {
         <span className="text-xs font-mono text-red-400/50">API</span>
       </div>
       <div className="p-2 rounded-lg bg-red-500/[0.06] border border-red-500/20">
-        <p className="text-[10px] text-red-300/70 font-mono">
+        <p className="text-xs text-red-300/70 font-mono">
           Recommendation: Break edge PERF {"->"} API to resolve cycle
         </p>
       </div>
       <div className="flex items-center gap-1.5 pt-1">
         <Shield className="h-3 w-3 text-amber-400/60" />
-        <span className="text-[10px] text-amber-400/60">
+        <span className="text-xs text-amber-400/60">
           Note: This is a simulated cycle for demonstration
         </span>
       </div>
@@ -2132,7 +2160,7 @@ function QuickWinsPanel({
         <Zap className="h-3.5 w-3.5 text-yellow-400" />
         <p className="text-xs font-semibold text-yellow-400 uppercase tracking-wider">Quick Wins</p>
       </div>
-      <p className="text-xs text-white/40">
+      <p className="text-xs text-muted-foreground">
         Tasks with zero blockers that can be started immediately for free velocity.
       </p>
       {nodes.map((node, i) => (
@@ -2152,14 +2180,14 @@ function QuickWinsPanel({
           <Star className="h-3 w-3 text-yellow-400 shrink-0" />
           <span className="text-xs text-white/70 flex-1">{node.label}</span>
           <div className="flex flex-col items-end">
-            <span className="text-[10px] font-mono text-white/40">0 blockers</span>
-            <span className="text-[10px] font-mono text-white/30">{node.age}d old</span>
+            <span className="text-xs font-mono text-muted-foreground">0 blockers</span>
+            <span className="text-xs font-mono text-muted-foreground">{node.age}d old</span>
           </div>
         </motion.button>
       ))}
       <div className="flex items-center gap-1.5 pt-2 border-t border-white/[0.06]">
         <Hash className="h-3 w-3 text-yellow-400/40" />
-        <span className="text-[10px] text-white/30">
+        <span className="text-xs text-muted-foreground">
           Assign to idle agents for parallel execution
         </span>
       </div>
@@ -2190,7 +2218,7 @@ function BottleneckPanel({
           Bottleneck Analysis
         </p>
       </div>
-      <p className="text-xs text-white/40">
+      <p className="text-xs text-muted-foreground">
         High betweenness centrality nodes that sit on many shortest paths between other issues.
       </p>
       {nodes.map((node, i) => {
@@ -2214,7 +2242,7 @@ function BottleneckPanel({
                 <Gauge className="h-3 w-3 text-amber-400/60" />
                 <span className="text-xs text-white/70">{node.label}</span>
               </div>
-              <span className="text-[10px] font-mono text-amber-400">
+              <span className="text-xs font-mono text-amber-400">
                 {node.metrics.betweenness.toFixed(2)}
               </span>
             </div>
@@ -2227,10 +2255,10 @@ function BottleneckPanel({
               />
             </div>
             <div className="flex items-center justify-between mt-1">
-              <span className="text-[10px] text-white/30">
+              <span className="text-xs text-muted-foreground">
                 Blocks {node.metrics.outDegree} issues
               </span>
-              <span className="text-[10px] text-white/30">k-core: {node.metrics.kCore}</span>
+              <span className="text-xs text-muted-foreground">k-core: {node.metrics.kCore}</span>
             </div>
           </motion.button>
         );
@@ -2262,13 +2290,13 @@ function RecommendationsPanel() {
           className="flex items-start gap-2 py-1.5"
         >
           <span
-            className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold uppercase shrink-0 mt-0.5 ${IMPACT_COLORS[rec.impact]}`}
+            className={`text-xs px-1.5 py-0.5 rounded border font-semibold uppercase shrink-0 mt-0.5 ${IMPACT_COLORS[rec.impact]}`}
           >
             {rec.impact}
           </span>
           <div className="min-w-0">
             <p className="text-xs text-white/70 leading-tight">{rec.action}</p>
-            <p className="text-xs text-white/30 mt-0.5">{rec.reason}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{rec.reason}</p>
           </div>
         </motion.div>
       ))}

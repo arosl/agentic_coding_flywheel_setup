@@ -36,11 +36,11 @@
     "plugin:pack": "bun run src/plugin-pack-cli.ts"
   },
   "dependencies": {
-    "yaml": "^2.8.2",
-    "zod": "^4.3.6"
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@types/node": "^22.19.11",
+    "@types/node": "^26.6.5",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {

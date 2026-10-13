@@ -131,6 +131,33 @@ acfs_security_mktemp() {
     fi
 }
 
+# Private temp file in a system temp directory rather than caller-controlled
+# TMPDIR, so a privileged caller can hand it to the target user. /tmp is often
+# a tmpfs with per-user quotas (systemd 256+ usrquota): once a user's share is
+# spent every write there fails with EDQUOT while df still shows free space,
+# and every verified installer failed. Use the first directory that takes a
+# test write of PROBE_BYTES (default 1 MiB); the file is returned empty.
+ACFS_SECURITY_SYSTEM_TMP_DIRS=(/tmp /var/tmp)
+acfs_security_system_mktemp() {
+    local name="${1:-}" probe_bytes="${2:-1048576}" dir="" file="" head_bin=""
+
+    [[ "$name" == *XXXXXX && "$name" != */* ]] || return 1
+    [[ "$probe_bytes" =~ ^[0-9]{1,9}$ ]] || return 1
+    head_bin="$(acfs_security_required_binary_path head 2>/dev/null)" || head_bin=""
+    for dir in "${ACFS_SECURITY_SYSTEM_TMP_DIRS[@]}"; do
+        [[ -d "$dir" && -w "$dir" ]] || continue
+        file="$(acfs_security_mktemp "$dir/$name" 2>/dev/null)" || continue
+        if [[ -z "$head_bin" ]] || "$head_bin" -c "$probe_bytes" /dev/zero > "$file" 2>/dev/null; then
+            if : > "$file"; then
+                printf '%s\n' "$file"
+                return 0
+            fi
+        fi
+        _acfs_remove_temp_files "$file"
+    done
+    return 1
+}
+
 acfs_security_cat_file() {
     local cat_bin=""
     local file="${1:-}"
@@ -188,7 +215,6 @@ ACFS_CURL_BASE_ARGS=()
 
 acfs_security_configure_curl() {
     local curl_help=""
-    local curl_version=""
 
     ACFS_CURL_BIN="$(acfs_security_curl_binary_path 2>/dev/null || true)"
     # Pin executable bytes, not an HTTP compression envelope. Asking for the
@@ -197,15 +223,6 @@ acfs_security_configure_curl() {
 
     if [[ -n "$ACFS_CURL_BIN" ]] && curl_help="$("$ACFS_CURL_BIN" --help all 2>/dev/null)" && [[ "$curl_help" == *"--proto"* ]]; then
         ACFS_CURL_BASE_ARGS=(-q -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -H 'Accept-Encoding: identity' --proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 300 -fsSL)
-    fi
-
-    # Some hosts gzip anyway: Google Frontend serves antigravity.google's
-    # installer with "Content-Encoding: gzip" on about half the requests that
-    # ask for identity. --compressed decodes such a body, so the pinned bytes
-    # hash the same whichever cache entry answered; it needs a curl built
-    # with zlib ("libz" in its Features line).
-    if [[ -n "$ACFS_CURL_BIN" ]] && curl_version="$("$ACFS_CURL_BIN" -V 2>/dev/null)" && [[ "$curl_version" == *" libz"* ]]; then
-        ACFS_CURL_BASE_ARGS+=(--compressed)
     fi
 }
 
@@ -270,6 +287,71 @@ acfs_retry_after_seconds() {
     printf '%s' "$value"
 }
 
+# Bound on a body decoded because the server ignored the identity request.
+ACFS_DOWNLOAD_MAX_DECODED_BYTES="${ACFS_DOWNLOAD_MAX_DECODED_BYTES:-16777216}"
+
+# Print the content coding of the final response in a curl -D dump. With -L the
+# dump holds every hop; only the last status block describes the saved body.
+acfs_response_content_encoding() {
+    local headers_file="${1:-}"
+    [[ -s "$headers_file" ]] || return 0
+    awk '
+        { line = $0; sub(/\r$/, "", line) }
+        line ~ /^HTTP\// { encoding = "" }
+        tolower(line) ~ /^content-encoding:/ {
+            sub(/^[^:]*:[ \t]*/, "", line)
+            sub(/[ \t]+$/, "", line)
+            encoding = tolower(line)
+        }
+        END { print encoding }
+    ' "$headers_file"
+}
+
+# acfs_curl asks for identity, but a CDN can still answer from a cached gzip
+# object: antigravity.google did on ~1 in 6 fetches (2026-10-12), so its pin
+# looked like it flapped between two installers. Pins cover the decoded
+# representation, so undo a declared gzip coding in place and refuse any other.
+acfs_decode_content_encoding() {
+    local headers_file="$1"
+    local body_file="$2"
+    local name="${3:-download}"
+    local encoding="" gzip_bin="" head_bin="" mv_bin="" decoded="" size=""
+    local decoded_ok=false
+
+    encoding="$(acfs_response_content_encoding "$headers_file")" || return 1
+    case "$encoding" in
+        ""|identity) return 0 ;;
+        gzip|x-gzip) ;;
+        *)
+            log_error "$name: server sent Content-Encoding '$encoding' instead of identity bytes"
+            return 1
+            ;;
+    esac
+
+    gzip_bin="$(acfs_security_required_binary_path gzip)" || return 1
+    head_bin="$(acfs_security_required_binary_path head)" || return 1
+    mv_bin="$(acfs_security_required_binary_path mv)" || return 1
+    decoded="$(acfs_security_mktemp "${body_file}.decoded.XXXXXX")" || return 1
+
+    # The subshell owns pipefail so a corrupt body fails here, not the caller.
+    if ( set -o pipefail
+         "$gzip_bin" -dc < "$body_file" \
+             | "$head_bin" -c "$((ACFS_DOWNLOAD_MAX_DECODED_BYTES + 1))" > "$decoded" ); then
+        decoded_ok=true
+    fi
+    size="$(acfs_security_file_size "$decoded" 2>/dev/null || echo 0)"
+    if (( size > ACFS_DOWNLOAD_MAX_DECODED_BYTES )); then
+        log_error "$name: gzip-coded response decodes past ${ACFS_DOWNLOAD_MAX_DECODED_BYTES} bytes"
+    elif [[ "$decoded_ok" != true ]]; then
+        log_error "$name: server declared gzip coding but the body did not decode"
+    elif "$mv_bin" -f -- "$decoded" "$body_file"; then
+        log_info "$name: decoded an unrequested gzip response to its identity bytes"
+        return 0
+    fi
+    _acfs_remove_temp_files "$decoded"
+    return 1
+}
+
 acfs_is_github_download_url() {
     local url="${1:-}"
     local authority=""
@@ -326,7 +408,8 @@ acfs_download_to_file() {
             --proto '=https' --proto-redir '=https' \
             --connect-timeout 15 --max-time 45 --max-filesize 1048576 \
             "$url" -o "$output_path" -D "$retained_headers"; then
-            return 0
+            acfs_decode_content_encoding "$retained_headers" "$output_path" "$name"
+            return $?
         else
             return $?
         fi
@@ -374,6 +457,10 @@ acfs_download_to_file() {
         status=$?
 
         if (( status == 0 )); then
+            if [[ -n "$hdr_file" ]] && ! acfs_decode_content_encoding "$hdr_file" "$output_path" "$name"; then
+                _acfs_remove_temp_files "$hdr_file"
+                return 1
+            fi
             (( attempt > 0 )) && log_info "Succeeded on retry ${attempt} for fetching ${name}"
             [[ -n "$hdr_file" ]] && _acfs_remove_temp_files "$hdr_file"
             return 0
@@ -1560,7 +1647,7 @@ _acfs_offline_pack_verify_artifact_snapshot() {
     # The pack can live on removable or otherwise shared storage. Snapshot the
     # artifact into a private file before verification so a concurrent rename
     # cannot swap different bytes into the later stdout read (TOCTOU).
-    artifact_snapshot="$(acfs_security_mktemp "/tmp/acfs-installer-cache-artifact.XXXXXX" 2>/dev/null)" || {
+    artifact_snapshot="$(acfs_security_system_mktemp "acfs-installer-cache-artifact.XXXXXX" "$((size_bytes + 1))")" || {
         acfs_offline_pack_error "pack_hash_mismatch" "$name" "failed to create a private snapshot for $rel_path"
         return 1
     }
@@ -1885,8 +1972,8 @@ acfs_stage_verified_installer() {
         return 1
     fi
 
-    staging_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || {
-        log_error "Failed to create verified installer staging file for $name"
+    staging_file="$(acfs_security_system_mktemp "acfs-verified-installer.XXXXXX")" || {
+        log_error "Failed to create verified installer staging file for $name (no system temp dir took a test write: full or over a per-user quota?)"
         ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
         return 1
     }
@@ -3524,13 +3611,32 @@ acfs_verify_all_installers_json_from_file() {
     return "$verify_status"
 }
 
+# Deferral is never inferred from candidate bytes: each withheld tool must be
+# a unique mismatch in the already validated, complete report.
+acfs_collect_checksum_deferrals() {
+    local -n observed_mismatches="$1"
+    local -n deferred_mismatches="$2"
+    local tool=""
+    shift 2
+    deferred_mismatches=()
+    for tool in "$@"; do
+        if [[ ! "$tool" =~ ^[A-Za-z0-9_.-]+$ || -z "${observed_mismatches[$tool]+present}" \
+            || -n "${deferred_mismatches[$tool]+present}" ]]; then
+            log_error "Invalid, duplicate or unobserved deferred mismatch: $tool"
+            return 1
+        fi
+        deferred_mismatches["$tool"]=1
+    done
+}
+
 # Validate, without network access, that a reviewed candidate changes exactly
-# the mismatch set observed in a bound verification report.  On success stdout
+# the selected mismatch set observed in a bound verification report. Omitting
+# optional trailing deferred names retains the strict full-set contract. On success stdout
 # is the exact private snapshot of CANDIDATE, suitable for an atomic install.
 acfs_validate_checksum_candidate() {
-    local current_file="$1"
-    local candidate_file="$2"
-    local report_file="$3"
+    local current_file="${1:-}"
+    local candidate_file="${2:-}"
+    local report_file="${3:-}"
     local current_snapshot="" current_fd="" current_digest=""
     local candidate_snapshot="" candidate_fd="" candidate_digest=""
     local report_snapshot="" report_fd="" report_digest=""
@@ -3542,6 +3648,15 @@ acfs_validate_checksum_candidate() {
     local -A report_mismatch_actual=()
     local -A report_errors=()
     local -A report_skipped=()
+    local -A deferred=()
+    local -a deferred_names=()
+
+    if (( $# < 3 )); then
+        log_error "Checksum candidate validation requires three paths"
+        return 1
+    fi
+    shift 3
+    deferred_names=("$@")
 
     if [[ -e "$current_file" && -e "$candidate_file" && "$current_file" -ef "$candidate_file" ]] \
         || [[ -e "$current_file" && -e "$report_file" && "$current_file" -ef "$report_file" ]] \
@@ -3591,6 +3706,13 @@ acfs_validate_checksum_candidate() {
         return 1
     fi
 
+    if ! acfs_collect_checksum_deferrals report_mismatch_actual deferred "${deferred_names[@]}"; then
+        acfs_security_release_bound_snapshot "$report_snapshot" "$report_fd"
+        acfs_security_release_bound_snapshot "$candidate_snapshot" "$candidate_fd"
+        acfs_security_release_bound_snapshot "$current_snapshot" "$current_fd"
+        return 1
+    fi
+
     for tool in "${!current_checksums[@]}"; do
         if [[ "${candidate_urls[$tool]:-}" != "${current_urls[$tool]}" ]]; then
             log_error "Checksum candidate changes installer URL or set: $tool"
@@ -3609,6 +3731,19 @@ acfs_validate_checksum_candidate() {
                 return 1
             fi
         elif [[ -n "${report_mismatch_actual[$tool]+present}" ]]; then
+            # Unselected mismatches remain pinned; they are not reclassified as
+            # matches and the original report remains the authorization evidence.
+            if [[ -n "${deferred[$tool]+present}" ]]; then
+                if [[ "${report_mismatch_expected[$tool]}" == "${current_checksums[$tool]}" ]] \
+                    && [[ "${candidate_checksums[$tool]}" == "${current_checksums[$tool]}" ]]; then
+                    continue
+                fi
+                log_error "Checksum candidate changes a deferred mismatch: $tool"
+                acfs_security_release_bound_snapshot "$report_snapshot" "$report_fd"
+                acfs_security_release_bound_snapshot "$candidate_snapshot" "$candidate_fd"
+                acfs_security_release_bound_snapshot "$current_snapshot" "$current_fd"
+                return 1
+            fi
             if [[ "${report_mismatch_expected[$tool]}" != "${current_checksums[$tool]}" ]] \
                 || [[ "${candidate_checksums[$tool]:-}" != "${report_mismatch_actual[$tool]}" ]] \
                 || [[ "${candidate_checksums[$tool]}" == "${current_checksums[$tool]}" ]]; then
@@ -3651,6 +3786,76 @@ acfs_validate_checksum_candidate() {
     return 0
 }
 
+# Construct a candidate from the first bound report, without another download.
+# Use retained descriptors and the same validator as publication; neither an
+# incomplete report nor a later change to a source file can authorize output.
+acfs_build_checksum_candidate() (
+    local current_file="${1:-}" report_file="${2:-}"
+    local current_snapshot="" current_fd="" current_digest=""
+    local report_snapshot="" report_fd="" report_digest="" candidate="" validated=""
+    local tool="" checksum="" wrote_entry=false
+    local -A build_urls=() build_checksums=() build_matches=() build_mismatch_expected=() build_mismatch_actual=()
+    local -A build_errors=() build_skipped=() deferred=()
+    local -a names=() deferred_names=()
+    if (( $# < 2 )); then
+        log_error "Checksum candidate construction requires policy and report"
+        return 1
+    fi
+    shift 2
+    deferred_names=("$@")
+    trap 'acfs_security_release_bound_snapshot "$report_snapshot" "$report_fd";
+          acfs_security_release_bound_snapshot "$current_snapshot" "$current_fd";
+          if [[ -n "$candidate" ]]; then _acfs_remove_temp_files "$candidate"; fi;
+          if [[ -n "$validated" ]]; then _acfs_remove_temp_files "$validated"; fi' EXIT
+    if [[ -e "$current_file" && -e "$report_file" && "$current_file" -ef "$report_file" ]]; then
+        log_error "Current policy and report must be distinct files"
+        return 1
+    fi
+    acfs_security_open_bound_snapshot "$current_file" "$ACFS_CHECKSUMS_YAML_MAX_BYTES" \
+        "${TMPDIR:-/tmp}/acfs-build-current.XXXXXX" "current checksums policy" \
+        current_snapshot current_fd current_digest || return 1
+    acfs_security_open_bound_snapshot "$report_file" "$ACFS_CHECKSUM_REPORT_MAX_BYTES" \
+        "${TMPDIR:-/tmp}/acfs-build-report.XXXXXX" "checksum verification report" \
+        report_snapshot report_fd report_digest || return 1
+    acfs_load_checksums_strict "$current_snapshot" build_urls build_checksums || return 1
+    acfs_validate_installer_checksum_report "$report_snapshot" build_urls build_checksums "$current_digest" \
+        build_matches build_mismatch_expected build_mismatch_actual build_errors build_skipped || return 1
+    if (( ${#build_errors[@]} > 0 || ${#build_skipped[@]} > 0 )); then
+        log_error "Checksum candidate cannot be built from errors or skipped installers"
+        return 1
+    fi
+    acfs_collect_checksum_deferrals build_mismatch_actual deferred "${deferred_names[@]}" || return 1
+    candidate="$(acfs_security_mktemp "${TMPDIR:-/tmp}/acfs-build-candidate.XXXXXX")" || return 1
+    for tool in "${!build_checksums[@]}"; do names+=("$tool"); done
+    mapfile -t names < <(printf '%s\n' "${names[@]}" | acfs_security_sort_lines)
+    {
+        printf '# checksums.yaml - Auto-generated %s\n' "$(acfs_security_date -Iseconds)"
+        printf '# Run: ./scripts/lib/security.sh --update-checksums\n\ninstallers:\n'
+        for tool in "${names[@]}"; do
+            checksum="${build_checksums[$tool]}"
+            if [[ -n "${build_mismatch_actual[$tool]+present}" && -z "${deferred[$tool]+present}" ]]; then
+                checksum="${build_mismatch_actual[$tool]}"
+            fi
+            if [[ "$wrote_entry" == "true" ]]; then printf '\n'; fi
+            printf '  %s:\n    url: "%s"\n    sha256: "%s"\n' "$tool" "${build_urls[$tool]}" "$checksum"
+            wrote_entry=true
+        done
+    } > "$candidate" || return 1
+    acfs_security_bound_snapshot_is_current "$current_file" "$current_fd" "$current_digest" \
+        "$ACFS_CHECKSUMS_YAML_MAX_BYTES" "current checksums policy" || return 1
+    acfs_security_bound_snapshot_is_current "$report_file" "$report_fd" "$report_digest" \
+        "$ACFS_CHECKSUM_REPORT_MAX_BYTES" "checksum verification report" || return 1
+    validated="$(acfs_security_mktemp "${TMPDIR:-/tmp}/acfs-build-validated.XXXXXX")" || return 1
+    acfs_validate_checksum_candidate "$current_file" "$candidate" "$report_file" \
+        "${deferred_names[@]}" > "$validated" || return 1
+    # Check the original handles again after validation, before emitting bytes.
+    acfs_security_bound_snapshot_is_current "$current_file" "$current_fd" "$current_digest" \
+        "$ACFS_CHECKSUMS_YAML_MAX_BYTES" "current checksums policy" || return 1
+    acfs_security_bound_snapshot_is_current "$report_file" "$report_fd" "$report_digest" \
+        "$ACFS_CHECKSUM_REPORT_MAX_BYTES" "checksum verification report" || return 1
+    acfs_security_cat_file "$validated"
+)
+
 # ============================================================
 # CLI Interface
 # ============================================================
@@ -3666,8 +3871,11 @@ Commands:
   --print                                      Print all upstream URLs
   --update-checksums                           Generate checksums.yaml content
   --verify                                     Verify all installers against saved checksums
-  --validate-checksum-candidate CURRENT CANDIDATE REPORT
+  --validate-checksum-candidate CURRENT CANDIDATE REPORT [DEFERRED_TOOL...]
                                                Prove candidate equals the observed mismatch set
+                                               (deferred mismatches must keep their current pin)
+  --build-checksum-candidate CURRENT REPORT [DEFERRED_TOOL...]
+                                               Build candidate from bound observations, offline
   --checksum URL                               Calculate SHA256 of a URL
   --help                                       Show this help
 
@@ -3711,7 +3919,7 @@ main() {
 
     if [[ "$ACFS_SECURITY_RETAIN_TEMP_FILES" == "true" ]]; then
         case "${1:-}" in
-            --update-checksums|--verify|--validate-checksum-candidate|--checksum) ;;
+            --update-checksums|--verify|--validate-checksum-candidate|--build-checksum-candidate|--checksum) ;;
             *)
                 echo "--retain-temp-files requires a checksum metadata command" >&2
                 return 1
@@ -3754,11 +3962,20 @@ main() {
             fi
             ;;
         --validate-checksum-candidate)
-            if [[ "$#" -ne 4 ]]; then
-                echo "Usage: security.sh --validate-checksum-candidate CURRENT CANDIDATE REPORT" >&2
+            if [[ "$#" -lt 4 ]]; then
+                echo "Usage: security.sh --validate-checksum-candidate CURRENT CANDIDATE REPORT [DEFERRED_TOOL...]" >&2
                 return 1
             fi
-            acfs_validate_checksum_candidate "$2" "$3" "$4"
+            shift
+            acfs_validate_checksum_candidate "$@"
+            ;;
+        --build-checksum-candidate)
+            if [[ "$#" -lt 3 ]]; then
+                echo "Usage: security.sh --build-checksum-candidate CURRENT REPORT [DEFERRED_TOOL...]" >&2
+                return 1
+            fi
+            shift
+            acfs_build_checksum_candidate "$@"
             ;;
         --checksum)
             if [[ "$#" -ne 2 || -z "${2:-}" ]]; then

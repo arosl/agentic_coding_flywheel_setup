@@ -418,6 +418,7 @@ REBOOT_REQUIRED=false
 # Logging
 UPDATE_LOG_DIR="${UPDATE_LOG_DIR:-${HOME:-/tmp}/.acfs/logs/updates}"
 UPDATE_LOG_FILE=""
+UPDATE_TMPDIR_SWITCH_NOTE=""
 
 # Version tracking
 declare -gA VERSION_BEFORE=()
@@ -1812,6 +1813,8 @@ update_create_target_readable_temp_file() {
         echo "Trusted temp-file helpers unavailable" >&2
         return 1
     fi
+    local head_bin=""
+    head_bin="$(update_system_binary_path head 2>/dev/null || true)"
 
     # Verified bytes are executed later under a different user identity. Keep
     # the pathname anchored below fixed system-owned temp roots: validating
@@ -1879,6 +1882,14 @@ update_create_target_readable_temp_file() {
             "$rm_bin" -f -- "$tmp_file" 2>/dev/null || true
             continue
         fi
+        # Once a per-user tmpfs quota on /tmp is spent (systemd 256+ usrquota)
+        # mktemp still succeeds and only the data write fails, which broke
+        # every verified installer on fmd. Test a write before choosing a dir.
+        if [[ -n "$head_bin" ]] && ! "$head_bin" -c 1048576 /dev/zero > "$tmp_file" 2>/dev/null; then
+            "$rm_bin" -f -- "$tmp_file" 2>/dev/null || true
+            continue
+        fi
+        : > "$tmp_file"
         if update_run_in_target_context "" test -r "$tmp_file" >/dev/null 2>&1; then
             printf '%s\n' "$tmp_file"
             return 0
@@ -1945,11 +1956,15 @@ run_cmd() {
         fi
 
         if [[ "$QUIET" != "true" ]] && [[ -n "${UPDATE_LOG_FILE:-}" ]]; then
-            if _run_bounded "$@" 2>&1 | tee -a "$UPDATE_LOG_FILE"; then
-                exit_code=0
-            else
-                exit_code=${PIPESTATUS[0]}
-            fi
+            # Feed tee through a descriptor, not a pipeline: a pipeline runs the
+            # command in a subshell and drops the hold/backoff details it sets,
+            # so a held tool was reported as [fail] (issue #434).
+            local tee_fd="" tee_pid=""
+            exec {tee_fd}> >(tee -a "$UPDATE_LOG_FILE")
+            tee_pid=$!
+            _run_bounded "$@" >&"$tee_fd" 2>&1 || exit_code=$?
+            exec {tee_fd}>&-
+            wait "$tee_pid" 2>/dev/null || true
         elif [[ -n "${UPDATE_LOG_FILE:-}" ]]; then
             if _run_bounded "$@" >> "$UPDATE_LOG_FILE" 2>&1; then
                 exit_code=0
@@ -5073,7 +5088,9 @@ update_tool_smoke_check() {
 
 # State file recording post-install verification failures per tool, so the
 # nightly backs off instead of retry-looping a broken release. Plain text,
-# one `tool count last_failure_epoch` line per tool.
+# one `tool count last_failure_epoch [installer_sha256]` line per tool; the
+# sha is the pinned installer that failed (absent in lines written before
+# pins were tracked).
 update_rollback_state_file() {
     local state_home="${XDG_STATE_HOME:-}"
     if [[ -z "$state_home" ]]; then
@@ -5090,7 +5107,7 @@ update_rollback_state_lookup() {
     local state_file=""
     state_file="$(update_rollback_state_file 2>/dev/null || true)"
     [[ -n "$state_file" && -f "$state_file" ]] || return 1
-    awk -v tool="$tool" '$1 == tool { print $2, $3; found = 1 } END { exit found ? 0 : 1 }' "$state_file"
+    awk -v tool="$tool" '$1 == tool { print $2, $3, $4; found = 1 } END { exit found ? 0 : 1 }' "$state_file"
 }
 
 _update_rollback_state_rewrite() {
@@ -5124,13 +5141,15 @@ _update_rollback_state_rewrite() {
 
 update_rollback_state_record_failure() {
     local tool="${1:-}"
+    local installer_sha="${2:-}"
     [[ -n "$tool" ]] || return 1
+    [[ "$installer_sha" =~ ^[[:xdigit:]]{64}$ ]] || installer_sha=""
     local count=0
     local entry=""
     entry="$(update_rollback_state_lookup "$tool" 2>/dev/null || true)"
     [[ -n "$entry" ]] && count="${entry%% *}"
     [[ "$count" =~ ^[0-9]+$ ]] || count=0
-    _update_rollback_state_rewrite "$tool" "$tool $((count + 1)) $(date +%s)"
+    _update_rollback_state_rewrite "$tool" "$tool $((count + 1)) $(date +%s)${installer_sha:+ $installer_sha}"
 }
 
 update_rollback_state_clear() {
@@ -5142,19 +5161,29 @@ update_rollback_state_clear() {
 
 # Backoff: after N verification failures, skip re-attempting the tool for
 # min(N, 7) days. --force overrides (a human is watching); holds do not.
+# Pass the currently pinned installer sha as $2: a pin that differs from the
+# one that failed is a new release and is tried right away, so an upstream fix
+# reaches the host the next run instead of up to a week later (csctf on the
+# non-AVX2 yto stayed broken in backoff after its fixed installer was pinned,
+# 2026-10-13). A failure recorded without a pin counts as a different pin.
 update_tool_rollback_backoff_details() {
     local tool="${1:-}"
+    local current_sha="${2:-}"
     UPDATE_LAST_BACKOFF_DETAILS=""
     [[ -n "$tool" ]] || return 1
     [[ "${FORCE_MODE:-false}" == "true" ]] && return 1
 
-    local entry="" count=0 last_epoch=0
+    local entry="" count=0 last_epoch=0 failed_sha=""
     entry="$(update_rollback_state_lookup "$tool" 2>/dev/null || true)"
     [[ -n "$entry" ]] || return 1
-    count="${entry%% *}"
-    last_epoch="${entry##* }"
+    read -r count last_epoch failed_sha <<<"$entry"
     [[ "$count" =~ ^[0-9]+$ && "$last_epoch" =~ ^[0-9]+$ ]] || return 1
     ((count > 0)) || return 1
+
+    if [[ "$current_sha" =~ ^[[:xdigit:]]{64}$ && "$failed_sha" != "$current_sha" ]]; then
+        log_to_file "Rollback backoff lifted for $tool: its pinned installer changed since the last failed verification (${failed_sha:0:12}${failed_sha:+ -> }${current_sha:0:12})"
+        return 1
+    fi
 
     local backoff_days="$count"
     ((backoff_days > 7)) && backoff_days=7
@@ -5202,6 +5231,7 @@ update_snapshot_tool_binary() {
 # (or unverifiable), 1 when verification failed (rolled back or not).
 update_verify_tool_or_rollback() {
     local tool="${1:-}"
+    local installer_sha="${2:-}"
     local prev_path="${UPDATE_ROLLBACK_PREV_PATH:-}"
 
     local binary_name=""
@@ -5252,7 +5282,7 @@ update_verify_tool_or_rollback() {
         log_to_file "No previous $tool binary retained for rollback"
     fi
 
-    update_rollback_state_record_failure "$tool" || true
+    update_rollback_state_record_failure "$tool" "$installer_sha" || true
     return 1
 }
 
@@ -5287,8 +5317,14 @@ update_run_verified_installer_with_env() {
     fi
 
     # Rollback backoff (issue #357): a tool whose fresh install failed its
-    # post-install smoke check recently is not retried every run.
-    if update_tool_rollback_backoff_details "$tool"; then
+    # post-install smoke check recently is not retried every run, unless
+    # its pinned installer has changed since (needs checksums loaded).
+    local backoff_current_sha=""
+    if update_rollback_state_lookup "$tool" >/dev/null 2>&1 \
+        && update_require_security >/dev/null 2>&1; then
+        backoff_current_sha="$(get_checksum "$tool")"
+    fi
+    if update_tool_rollback_backoff_details "$tool" "$backoff_current_sha"; then
         echo "SKIPPED (rollback backoff): $tool -- $UPDATE_LAST_BACKOFF_DETAILS" >&2
         log_to_file "Rollback backoff honored for $tool: $UPDATE_LAST_BACKOFF_DETAILS"
         return "$UPDATE_EXIT_ROLLBACK_BACKOFF"
@@ -5363,7 +5399,7 @@ update_run_verified_installer_with_env() {
     [[ "$exit_code" == "$UPDATE_EXIT_CHECKSUM" ]] && exit_code=1
 
     if [[ $exit_code -eq 0 ]]; then
-        update_verify_tool_or_rollback "$tool" || return 1
+        update_verify_tool_or_rollback "$tool" "$expected_sha256" || return 1
     fi
 
     return "$exit_code"
@@ -9408,6 +9444,63 @@ update_procwatch_stop() {
 }
 
 
+# ============================================================
+# Temp directory
+# ============================================================
+
+# systemd 256+ mounts /tmp and /dev/shm with usrquota. Once one user's quota
+# is spent, every write by that user there fails (EDQUOT) while df still shows
+# free space and mktemp still succeeds. The nightly unit runs with no TMPDIR,
+# so one over-quota /tmp failed 46 tools in a single run (fmd, 2026-10-13).
+# The probe writes ACFS_TMPDIR_PROBE_BYTES (default 16 MiB, about one large
+# download) so a nearly spent quota is caught too, not only a spent one.
+update_tmpdir_accepts_writes() {
+    local dir="${1:-}" probe="" head_bin="" ok=1
+
+    [[ "$dir" == /* && -d "$dir" && -w "$dir" ]] || return 1
+    head_bin="$(update_system_binary_path head 2>/dev/null)" || return 1
+    probe="$(mktemp "$dir/acfs-tmpprobe.XXXXXX" 2>/dev/null)" || return 1
+    if "$head_bin" -c "${ACFS_TMPDIR_PROBE_BYTES:-16777216}" /dev/zero 2>/dev/null >"$probe"; then
+        ok=0
+    fi
+    rm -f -- "$probe" 2>/dev/null || true
+    return "$ok"
+}
+
+# Keep TMPDIR when it takes a test write; otherwise move this run (and the
+# installers it starts, which inherit TMPDIR) to the first fallback that does.
+update_ensure_writable_tmpdir() {
+    local current="${TMPDIR:-/tmp}" candidate=""
+    local home_tmp="${HOME:-}/.cache/acfs/tmp"
+    local -a candidates=()
+
+    UPDATE_TMPDIR_SWITCH_NOTE=""
+    update_is_read_only_mode && return 0
+    update_tmpdir_accepts_writes "$current" && return 0
+
+    [[ -n "${ACFS_UPDATE_TMPDIR:-}" ]] && candidates+=("${ACFS_UPDATE_TMPDIR%/}")
+    candidates+=("/data/tmp" "/var/tmp")
+    # Only a HOME we own: root updating another user must not leave a
+    # root-owned directory in that user's home.
+    if [[ -n "${HOME:-}" && -O "$HOME" ]] && mkdir -p "$home_tmp" 2>/dev/null; then
+        candidates+=("$home_tmp")
+    fi
+
+    for candidate in "${candidates[@]}"; do
+        [[ "$candidate" != "${current%/}" ]] || continue
+        if update_tmpdir_accepts_writes "$candidate"; then
+            UPDATE_TMPDIR_SWITCH_NOTE="TMPDIR $current refuses writes (full or over quota); using $candidate for this run"
+            echo "acfs update: $UPDATE_TMPDIR_SWITCH_NOTE" >&2
+            TMPDIR="$candidate"
+            export TMPDIR
+            return 0
+        fi
+    done
+
+    echo "acfs update: warning: TMPDIR $current refuses writes and no fallback took a test write; downloads will likely fail" >&2
+    return 0
+}
+
 main() {
     # nhm's verified installer runs in a clean environment and installs to
     # ~/.local/bin, so every stack.nhm step must read that default too.
@@ -9566,6 +9659,9 @@ main() {
         fi
     fi
 
+    # Every download below goes through TMPDIR, self-update included.
+    update_ensure_writable_tmpdir
+
     # Self-update ACFS before touching any other components.
     # This runs BEFORE init_logging so we get the latest update logic ASAP.
     # Pass original args so re-exec (if update.sh changed) uses the same arguments.
@@ -9573,6 +9669,7 @@ main() {
 
     # Initialize logging
     init_logging
+    [[ -z "$UPDATE_TMPDIR_SWITCH_NOTE" ]] || log_to_file "$UPDATE_TMPDIR_SWITCH_NOTE"
 
     # Process-storm watchdog (#348): capture the evidence a fork-exhaustion
     # event destroys. Read-only; writes only when a threshold trips.

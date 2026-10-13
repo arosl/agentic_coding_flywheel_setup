@@ -28,6 +28,10 @@ CRED_PREFLIGHT_FINDINGS=()
 CRED_PREFLIGHT_SKIPPED=()
 CRED_PREFLIGHT_FILES_SCANNED=0
 CRED_PREFLIGHT_JQ_BIN=""
+# Webhook paths carry credentials even when the surrounding field is not secret-like.
+# Match raw URLs and JSON's optional escaped forward slashes, only on known hosts.
+CRED_PREFLIGHT_URL_SLASH='(/|\\/)'
+CRED_PREFLIGHT_WEBHOOK_PATTERN="https?:${CRED_PREFLIGHT_URL_SLASH}{2}(hooks[.]slack(-gov)?[.]com${CRED_PREFLIGHT_URL_SLASH}services${CRED_PREFLIGHT_URL_SLASH}[a-z0-9_-]+${CRED_PREFLIGHT_URL_SLASH}[a-z0-9_-]+${CRED_PREFLIGHT_URL_SLASH}|(canary[.]|ptb[.])?discord(app)?[.]com${CRED_PREFLIGHT_URL_SLASH}api${CRED_PREFLIGHT_URL_SLASH}(v[0-9]+${CRED_PREFLIGHT_URL_SLASH})?webhooks${CRED_PREFLIGHT_URL_SLASH}[0-9]+${CRED_PREFLIGHT_URL_SLASH})[a-z0-9_-]{8,}"
 
 credential_preflight_usage() {
     cat <<'EOF'
@@ -307,7 +311,8 @@ credential_preflight_remediation() {
     case "$category" in
         private_key) printf 'Move private keys out of shareable logs/configs and rotate the key if it was exposed.\n' ;;
         credential_url) printf 'Move credentials into a secret manager or local env file excluded from sharing.\n' ;;
-        aws_key|github_token|github_pat|vault_token|slack_token|bearer_token|jwt|api_key) printf 'Rotate the token and move it to the intended provider secret store or shell profile outside shared artifacts.\n' ;;
+        aws_key|github_token|github_pat|vault_token|slack_token|tailscale_key|google_api_key|bearer_token|jwt|api_key) printf 'Rotate the token and move it to the intended provider secret store or shell profile outside shared artifacts.\n' ;;
+        webhook_url) printf 'Revoke or regenerate the webhook URL and keep its secret path outside shared artifacts.\n' ;;
         password|generic_secret) printf 'Replace the literal value with a secret reference and rotate it if it has been shared.\n' ;;
         *) printf 'Remove the sensitive value from shareable files and rotate if exposed.\n' ;;
     esac
@@ -348,25 +353,55 @@ credential_preflight_value_is_placeholder() {
 
     lower="${value,,}"
     [[ -z "$lower" ]] && return 0
-    [[ "$lower" =~ ^[0-9]+$ ]] && return 0
-    # Shell/env references ($VAR, ${VAR...}, $(cmd)) are the secret-reference
-    # form the remediation asks for, not literals. "$ecret@99" stays a literal.
-    [[ "$lower" =~ ^\$\{[a-z_][a-z0-9_]* || "$lower" == '$('* || "$lower" =~ ^\$[a-z_][a-z0-9_]*$ ]] && return 0
-    [[ "$lower" == *"<redacted"* ||
-       "$lower" == *"redacted"* ||
-       "$lower" == *"example"* ||
-       "$lower" == *"placeholder"* ||
-       "$lower" == *"changeme"* ||
-       "$lower" == *"change-me"* ||
-       "$lower" == *"replace-me"* ||
-       "$lower" == *"your-token"* ||
-       "$lower" == *"your_token"* ||
-       "$lower" == *"your-api-key"* ||
-       "$lower" == *"your_api_key"* ||
-       "$lower" == *"dummy"* ||
-       "$lower" == *"notasecret"* ||
-       "$lower" == *"test-token"* ||
-       "$lower" == *"test_token"* ]]
+    # Only complete markers are placeholders. A real literal may contain one
+    # of these words, and numeric passwords are still credentials.
+    [[ "$lower" =~ ^\<redacted(:[a-z0-9_/-]+)?\>$ ]] && return 0
+    case "$lower" in
+        redacted|example|placeholder|dummy|notasecret|test-token|test_token|\
+        changeme|change-me|replace-me|your-token-here|your_token_here|\
+        your-token|your_token|your-api-key|your_api_key|your_github_token|\
+        your_openai_api_key|your_claude_token|your_vercel_token|\
+        your_supabase_access_token|your_cloudflare_api_token|your_gemini_api_key|\
+        your-gemini-api-key|your_google_api_key|your_project_id|your_project_location|\
+        "<token>"|"<api-key>"|"<secret>") return 0 ;;
+    esac
+    return 1
+}
+
+credential_preflight_value_is_reference() {
+    local candidate="${1,,}"
+    local depth=0
+    local parameter_default='^\$\{[a-z_][a-z0-9_]*:?[-+=?](.*)\}$'
+
+    # Inspect defaults as data, never evaluate them. A default is nonliteral
+    # only when it is empty, another reference, or a complete placeholder.
+    while (( depth < 16 )); do
+        [[ "$candidate" =~ ^\$[a-z_][a-z0-9_]*$ || "$candidate" =~ ^\$\{[a-z_][a-z0-9_]*\}$ ]] && return 0
+        # Keep the existing treatment of command-substitution fragments in
+        # bounded assignment scanning (e.g. passwd_entry="$(getent ...)").
+        [[ "$candidate" == '$('* ]] && return 0
+        if [[ "$candidate" =~ $parameter_default ]]; then
+            candidate="${BASH_REMATCH[1]}"
+            credential_preflight_value_is_placeholder "$candidate" && return 0
+            depth=$((depth + 1))
+        else
+            return 1
+        fi
+    done
+    return 1
+}
+
+credential_preflight_value_is_public_counter() {
+    local key="${1,,}" value="$2"
+    [[ "$value" =~ ^[0-9]+$ ]] || return 1
+    # Public counts are identified by their field role, not by excluding all
+    # numeric values from credential detection.
+    case "$key" in
+        max_tokens|max-tokens|maxtokens|token_count|token-count|tokencount|\
+        token_limit|token-limit|tokenlimit|api_key_count|api-key-count|apikeycount|\
+        password_length|password-length|passwordlength) return 0 ;;
+    esac
+    return 1
 }
 
 credential_preflight_key_is_secret_like() {
@@ -375,7 +410,7 @@ credential_preflight_key_is_secret_like() {
 
     lower="${key,,}"
     case "$lower" in
-        *api_key*|*api-key*|\
+        *api_key*|*api-key*|*apikey|*accesskey|*privatekey|mysql_pwd|\
         *api_secret*|*api-secret*|\
         *secret_key*|*secret-key*|\
         *access_key*|*access-key*|\
@@ -403,6 +438,9 @@ credential_preflight_value_has_specific_pattern() {
     [[ "$lower" =~ github_pat_[a-z0-9_]{22,} ]] && return 0
     [[ "$lower" =~ hvs\.[a-z0-9]{20,} ]] && return 0
     [[ "$lower" =~ xox[bpsar]-[a-z0-9-]{10,} ]] && return 0
+    [[ "$lower" =~ tskey-[a-z0-9-]{10,} ]] && return 0
+    [[ "$lower" =~ aiza[a-z0-9_-]{35,} ]] && return 0
+    [[ "$lower" =~ $CRED_PREFLIGHT_WEBHOOK_PATTERN ]] && return 0
     [[ "$lower" =~ eyj[a-z0-9_-]{10,}\.[a-z0-9_-]{10,}\.[a-z0-9_-]{10,} ]] && return 0
     [[ "$lower" =~ [a-z][a-z0-9+.-]*://[^/@[:space:]]+:[^/@[:space:]]+@ ]] && return 0
 
@@ -420,6 +458,10 @@ credential_preflight_scan_line() {
     local match=""
     local key=""
     local value=""
+    local json_pattern='"([a-z][a-z0-9_-]*)"[[:space:]]*:[[:space:]]*("([^"]{4,})"|([0-9]{4,})[[:space:]]*[,}])'
+    # Prefer a complete quoted value, including spaces. Retain the bounded
+    # fragment alternative for unquoted and unfinished assignments.
+    local assignment_pattern="(^|[^a-z0-9_-])([a-z][a-z0-9_-]*)[[:space:]]*[:=][[:space:]]*(\"([^\"]{4,})\"|'([^']{4,})'|[\"']?([^\"'<>[:space:]]{4,}))"
 
     lower="${line,,}"
 
@@ -444,6 +486,15 @@ credential_preflight_scan_line() {
     if [[ "$line" =~ xox[bpsar]-[A-Za-z0-9-]{10,} ]]; then
         credential_preflight_add_finding "$root" "$path" "$source" "$line_number" "slack_token" "Slack token pattern"
     fi
+    if [[ "$line" =~ tskey-[A-Za-z0-9-]{10,} ]]; then
+        credential_preflight_add_finding "$root" "$path" "$source" "$line_number" "tailscale_key" "Tailscale key pattern"
+    fi
+    if [[ "$line" =~ AIza[A-Za-z0-9_-]{35,} ]]; then
+        credential_preflight_add_finding "$root" "$path" "$source" "$line_number" "google_api_key" "Google API key pattern"
+    fi
+    if [[ "$lower" =~ $CRED_PREFLIGHT_WEBHOOK_PATTERN ]]; then
+        credential_preflight_add_finding "$root" "$path" "$source" "$line_number" "webhook_url" "URL with a secret webhook path"
+    fi
     if [[ "$line" =~ Bearer[[:space:]][A-Za-z0-9._/-]{20,} ]]; then
         credential_preflight_add_finding "$root" "$path" "$source" "$line_number" "bearer_token" "Bearer token pattern"
     fi
@@ -455,14 +506,16 @@ credential_preflight_scan_line() {
     fi
 
     rest="$lower"
-    while [[ "$rest" =~ \"([a-z][a-z0-9_-]*)\"[[:space:]]*:[[:space:]]*\"([^\"]{4,})\" ]]; do
+    while [[ "$rest" =~ $json_pattern ]]; do
         match="${BASH_REMATCH[0]}"
         key="${BASH_REMATCH[1]:-}"
-        value="${BASH_REMATCH[2]:-}"
+        value="${BASH_REMATCH[3]:-${BASH_REMATCH[4]:-}}"
         if credential_preflight_key_is_secret_like "$key" &&
             ! credential_preflight_value_is_placeholder "$value" &&
+            ! credential_preflight_value_is_reference "$value" &&
+            ! credential_preflight_value_is_public_counter "$key" "$value" &&
             ! credential_preflight_value_has_specific_pattern "$value"; then
-            if [[ "$key" == *"password"* || "$key" == *"passwd"* ]]; then
+            if [[ "$key" == *"password"* || "$key" == *"passwd"* || "$key" == mysql_pwd ]]; then
                 credential_preflight_add_finding "$root" "$path" "$source" "$line_number" "password" "secret-like JSON key"
             else
                 credential_preflight_add_finding "$root" "$path" "$source" "$line_number" "generic_secret" "secret-like JSON key"
@@ -472,15 +525,17 @@ credential_preflight_scan_line() {
     done
 
     rest="$lower"
-    while [[ "$rest" =~ (^|[^a-z0-9_-])([a-z][a-z0-9_-]*)[[:space:]]*[:=][[:space:]]*[\"\']?([^\"\'\<\>\ 	]{4,}) ]]; do
+    while [[ "$rest" =~ $assignment_pattern ]]; do
         match="${BASH_REMATCH[0]}"
         key="${BASH_REMATCH[2]:-}"
-        value="${BASH_REMATCH[3]:-}"
+        value="${BASH_REMATCH[4]:-${BASH_REMATCH[5]:-${BASH_REMATCH[6]:-}}}"
         if credential_preflight_key_is_secret_like "$key" &&
             ! credential_preflight_value_is_placeholder "$value" &&
+            ! credential_preflight_value_is_reference "$value" &&
+            ! credential_preflight_value_is_public_counter "$key" "$value" &&
             ! credential_preflight_value_has_specific_pattern "$value"; then
             case "$key" in
-                *password*|*passwd*) credential_preflight_add_finding "$root" "$path" "$source" "$line_number" "password" "secret-like assignment key" ;;
+                *password*|*passwd*|mysql_pwd) credential_preflight_add_finding "$root" "$path" "$source" "$line_number" "password" "secret-like assignment key" ;;
                 *) credential_preflight_add_finding "$root" "$path" "$source" "$line_number" "generic_secret" "secret-like assignment key" ;;
             esac
         fi

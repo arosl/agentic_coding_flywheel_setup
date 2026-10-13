@@ -52,9 +52,9 @@ fail() {
     fi
 }
 
-# Create a temp directory for test fixtures, clean up on exit
-TEST_DIR=$(mktemp -d /tmp/acfs_redaction_test_XXXXXX)
-trap 'rm -rf "$TEST_DIR"' EXIT
+# Retain all fixtures and outputs for inspection; never delete them on exit.
+TEST_DIR="${ACFS_SUPPORT_REDACTION_TEST_ARTIFACTS_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/acfs_redaction_test_XXXXXX")}"
+mkdir -p "$TEST_DIR"
 
 # ============================================================
 # Load redact_file and redact_bundle from support.sh
@@ -341,6 +341,31 @@ assert_contains "Vault token redacted" "$result" "<REDACTED:vault_token>"
 result=$(redact_and_read "slack.txt" "SLACK_BOT_TOKEN=xoxb-123456789012-abcdefghijkl")
 assert_contains "Slack bot token redacted" "$result" "<REDACTED:slack_token>"
 
+# Bare credentials in logs do not necessarily have a secret-looking field name.
+result=$(redact_and_read "service_shapes.json" '{"message":"tskey-auth-fixture1234567890 AIza0123456789abcdefghijklmnopqrstuvwxy https://hooks.slack.com/services/T12345678/B12345678/fixtureSlackWebhook123456","api":"tskey-api-fixture0987654321","gov":"https://hooks.slack-gov.com/services/T12345678/B12345678/fixtureGovWebhook123456","discord":"https://discord.com/api/webhooks/123456789012345678/fixtureDiscordWebhook123456?wait=true","escaped":"https:\/\/hooks.slack.com\/services\/T12345678\/B12345678\/fixtureEscapedWebhook123456","case":"HTTPS://HOOKS.SLACK.COM/services/T12345678/B12345678/fixtureUpperWebhook123456","versioned":"https://canary.discord.com/api/v10/webhooks/123456789012345678/fixtureVersionedWebhook123456"}')
+assert_contains "Bare Tailscale keys redacted" "$result" "<REDACTED:tailscale_key>"
+assert_contains "Bare Google API key redacted" "$result" "<REDACTED:google_api_key>"
+assert_contains "Credential-bearing webhook URLs redacted" "$result" "<REDACTED:webhook_url>"
+service_secret_number=0
+for service_secret in \
+    tskey-auth-fixture1234567890 tskey-api-fixture0987654321 \
+    AIza0123456789abcdefghijklmnopqrstuvwxy fixtureSlackWebhook123456 \
+    fixtureGovWebhook123456 fixtureDiscordWebhook123456 \
+    fixtureEscapedWebhook123456 fixtureUpperWebhook123456 fixtureVersionedWebhook123456; do
+    service_secret_number=$((service_secret_number + 1))
+    assert_not_contains "Service credential payload $service_secret_number removed" "$result" "$service_secret"
+done
+if jq -e 'type == "object" and (.escaped == "<REDACTED:webhook_url>")' <<<"$result" >/dev/null; then
+    pass "Service redaction preserves valid JSON and handles escaped slashes"
+else
+    fail "Service redaction preserves valid JSON and handles escaped slashes"
+fi
+public_service_text='Docs: https://hooks.slack.com/services/ https://discord.com/api/webhooks/123456789012345678 https://example.com/api/webhooks/123456789012345678/publicEndpoint123456 tskey-short AIza-short https://hooks.slack.com.evil.test/services/T12345678/B12345678/publicEndpoint123456'
+result=$(redact_and_read "public_service_shapes.txt" "$public_service_text")
+assert_equals "Public URLs, short format labels and unrelated hosts are preserved" "$result" "$public_service_text"
+result=$(redact_and_read "webhook_markup.txt" 'Before [hook](https://hooks.slack.com/services/T12345678/B12345678/fixtureLinkedWebhook123456?wait=true) then `https://discord.com/api/webhooks/123456789012345678/fixtureCodeWebhook123456` after')
+assert_equals "Webhook redaction preserves surrounding Markdown delimiters" "$result" 'Before [hook](<REDACTED:webhook_url>) then `<REDACTED:webhook_url>` after'
+
 # ============================================================
 # Tests: Bearer tokens and JWTs
 # ============================================================
@@ -420,6 +445,52 @@ result=$(redact_and_read "camel_json_secrets.txt" '{"geminiApiKey":"AIzaSyExampl
 assert_contains "CamelCase JSON API key redacted" "$result" '"geminiApiKey": "<REDACTED:generic_secret>"'
 assert_contains "CamelCase JSON password redacted" "$result" '"dbPassword": "<REDACTED:password>"'
 assert_contains "CamelCase JSON metric preserved" "$result" '"tokenCount":"123456789"'
+
+result=$(redact_and_read "credential_alias_json.txt" '{"apiKey":"fixture-alias-key-value-2026","MYSQL_PWD":"fixture mysql password phrase","PWD":"/public/workspace","apiKeyCount":"123456789"}')
+assert_contains "Top-level apiKey alias redacted in JSON" "$result" '"apiKey": "<REDACTED:apiKey>"'
+assert_contains "MYSQL_PWD alias redacted in JSON" "$result" '"MYSQL_PWD": "<REDACTED:password>"'
+assert_not_contains "JSON apiKey alias value absent" "$result" "fixture-alias-key-value-2026"
+assert_not_contains "JSON MYSQL_PWD alias value absent" "$result" "fixture mysql password phrase"
+assert_contains "Public PWD survives alias redaction" "$result" '"PWD":"/public/workspace"'
+assert_contains "API key counter survives alias redaction" "$result" '"apiKeyCount":"123456789"'
+if printf '%s' "$result" | jq -e '.apiKey == "<REDACTED:apiKey>" and .MYSQL_PWD == "<REDACTED:password>"' >/dev/null; then
+    pass "Alias redaction keeps JSON valid"
+else
+    fail "Alias redaction keeps JSON valid" "Expected redacted fields in valid JSON"
+fi
+
+result=$(redact_and_read "credential_alias_shell.txt" "apiKey=fixture-unquoted-key-value-2026
+MYSQL_PWD=fixture-unquoted-password-2026
+apiKey = \"fixture double quoted key value\"
+MYSQL_PWD = 'fixture single quoted password phrase'
+apiKey = 'fixture single quoted key value'
+MYSQL_PWD = \"fixture double quoted password phrase\"
+PWD=/public/workspace
+apiKeyCount=123456789")
+alias_case_index=0
+for secret in "fixture-unquoted-key-value-2026" "fixture-unquoted-password-2026" \
+    "fixture double quoted key value" "fixture single quoted password phrase" \
+    "fixture single quoted key value" "fixture double quoted password phrase"; do
+    alias_case_index=$((alias_case_index + 1))
+    assert_not_contains "Shell credential alias value absent (case $alias_case_index)" "$result" "$secret"
+done
+assert_contains "Quoted key alias masked in full" "$result" 'apiKey = "<REDACTED:apiKey>"'
+assert_contains "Quoted password alias masked in full" "$result" "MYSQL_PWD = '<REDACTED:password>'"
+assert_contains "Shell public PWD preserved" "$result" "PWD=/public/workspace"
+assert_contains "Shell API key counter preserved" "$result" "apiKeyCount=123456789"
+
+result=$(redact_and_read "camel_key_family.json" '{"secretKey":"fixture-secret-key-value-2026","accessKey":"fixture-access-key-value-2026","privateKey":"fixture-private-key-value-2026","privateKeyCount":"123456789"}')
+for key in secretKey accessKey privateKey; do
+    assert_contains "Camel key family JSON marker: $key" "$result" "\"$key\": \"<REDACTED:$key>\""
+    assert_not_contains "Camel key family JSON value absent: $key" "$result" "fixture-${key%Key}-key-value-2026"
+done
+assert_contains "Private key counter preserved" "$result" '"privateKeyCount":"123456789"'
+result=$(redact_and_read "camel_key_family.env" "secretKey='fixture secret key phrase'
+accessKey=fixture-access-key-value-2026
+privateKey=\"fixture private key phrase\"")
+assert_contains "Camel key family single quoted value masked" "$result" "secretKey='<REDACTED:secretKey>'"
+assert_contains "Camel key family unquoted value masked" "$result" "accessKey=<REDACTED:accessKey>"
+assert_contains "Camel key family double quoted value masked" "$result" 'privateKey="<REDACTED:privateKey>"'
 
 result=$(redact_and_read "quoted_env_secrets.txt" "PASSWORD='correct horse battery staple'
 VERCEL_TOKEN = \"quoted token value 12345\"

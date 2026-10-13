@@ -342,6 +342,130 @@ test_password_keys_keep_password_category_after_placeholder_checks() {
     pass "password_keys_keep_password_category_after_placeholder_checks"
 }
 
+test_numeric_secret_values_are_not_placeholders() {
+    local fixture="$ARTIFACT_DIR/numeric-secrets/input.env"
+    local json_fixture="$ARTIFACT_DIR/numeric-secrets/input.json"
+    local output="$ARTIFACT_DIR/numeric-secrets.json"
+    local fixture_path
+    local secret=58391724
+    write_fixture "$fixture" "DB_PASSWORD=$secret"
+    write_fixture "$json_fixture" "{\"password\":\"$secret\"}"
+    for fixture_path in "$fixture" "$json_fixture"; do
+        cp "$fixture_path" "$fixture_path.before"
+        if bash "$CREDENTIAL_PREFLIGHT_SH" --json --file "$fixture_path" > "$output"; then return 1; fi
+        assert_category_present "$output" password || return 1
+        assert_no_raw_secret "$output" "$secret" || return 1
+        cmp -s "$fixture_path" "$fixture_path.before" || return 1
+    done
+    pass "numeric_secret_values_are_not_placeholders"
+}
+
+test_numeric_json_credentials_are_checked_with_counter_controls() {
+    local fixture="$ARTIFACT_DIR/numeric-json/input.json"
+    local output="$ARTIFACT_DIR/numeric-json.json"
+    local human="$ARTIFACT_DIR/numeric-json.human"
+    local secret=58391724
+    write_fixture "$fixture" "{\"password\":$secret,\"api_token\":$secret,\"max_tokens\":16384,\"api_key_count\":70391}"
+    cp "$fixture" "$fixture.before"
+    if bash "$CREDENTIAL_PREFLIGHT_SH" --json --file "$fixture" > "$output"; then return 1; fi
+    assert_category_present "$output" password || return 1
+    assert_category_present "$output" generic_secret || return 1
+    jq -e '.status == "warn" and .summary.findings == 2' "$output" >/dev/null || return 1
+    assert_no_raw_secret "$output" "$secret" || return 1
+    if bash "$CREDENTIAL_PREFLIGHT_SH" --human --file "$fixture" > "$human"; then return 1; fi
+    assert_file_no_raw_secret "$human" "$secret" || return 1
+    cmp -s "$fixture" "$fixture.before" || return 1
+    pass "numeric_json_credentials_are_checked_with_counter_controls"
+}
+
+test_embedded_placeholder_words_do_not_hide_literals() {
+    local fixture="$ARTIFACT_DIR/embedded-markers/input.env"
+    local json_fixture="$ARTIFACT_DIR/embedded-markers/input.json"
+    local output="$ARTIFACT_DIR/embedded-markers.json"
+    local human="$ARTIFACT_DIR/embedded-markers.human"
+    local word secret fixture_path
+    for word in example dummy redacted placeholder changeme test-token; do
+        secret="fixture-${word}-private-value-2026"
+        write_fixture "$fixture" "API_TOKEN=$secret"
+        write_fixture "$json_fixture" "{\"api_key\":\"$secret\"}"
+        for fixture_path in "$fixture" "$json_fixture"; do
+            cp "$fixture_path" "$fixture_path.before"
+            if bash "$CREDENTIAL_PREFLIGHT_SH" --json --file "$fixture_path" > "$output"; then return 1; fi
+            assert_category_present "$output" generic_secret || return 1
+            assert_no_raw_secret "$output" "$secret" || return 1
+            if bash "$CREDENTIAL_PREFLIGHT_SH" --human --file "$fixture_path" > "$human"; then return 1; fi
+            assert_file_no_raw_secret "$human" "$secret" || return 1
+            cmp -s "$fixture_path" "$fixture_path.before" || return 1
+        done
+    done
+    pass "embedded_placeholder_words_do_not_hide_literals"
+}
+
+test_literal_parameter_defaults_are_exposures_without_execution() {
+    local fixture="$ARTIFACT_DIR/literal-defaults/input.sh"
+    local output="$ARTIFACT_DIR/literal-defaults.json"
+    local marker="$ARTIFACT_DIR/literal-defaults/must-not-execute"
+    local secret=fixture-private-default-2026
+    write_fixture "$fixture" "DB_PASSWORD=\${DB_PASSWORD:-$secret}
+API_TOKEN=\${API_TOKEN:=$secret}
+AUTH_SECRET=\${AUTH_SECRET:-\${BACKUP_SECRET:-$secret}}
+touch '$marker'"
+    cp "$fixture" "$fixture.before"
+    if bash "$CREDENTIAL_PREFLIGHT_SH" --json --file "$fixture" > "$output"; then return 1; fi
+    assert_category_present "$output" password || return 1
+    assert_category_present "$output" generic_secret || return 1
+    assert_no_raw_secret "$output" "$secret" || return 1
+    [[ ! -e "$marker" ]] || return 1
+    cmp -s "$fixture" "$fixture.before" || return 1
+    pass "literal_parameter_defaults_are_exposures_without_execution"
+}
+
+test_complete_markers_and_public_numeric_counters_pass() {
+    local fixture="$ARTIFACT_DIR/marker-controls/input.env"
+    local output="$ARTIFACT_DIR/marker-controls.json"
+    write_fixture "$fixture" 'API_TOKEN=example
+API_KEY=dummy
+DB_PASSWORD=changeme
+AUTH_TOKEN=test-token
+AUTH_SECRET=your_github_token
+OPENAI_API_KEY="<REDACTED:api_key>"
+DB_PASSWORD=${DB_PASSWORD}
+DB_PASSWORD=${DB_PASSWORD:-}
+API_TOKEN=$API_TOKEN
+AUTH_TOKEN=${AUTH_TOKEN:-$BACKUP_TOKEN}
+AUTH_SECRET=${AUTH_SECRET:-${BACKUP_SECRET}}
+DB_PASSWORD=${DB_PASSWORD:-changeme}
+MAX_TOKENS=16384
+token_count=42017
+api_key_count=70391
+password_length=18'
+    cp "$fixture" "$fixture.before"
+    bash "$CREDENTIAL_PREFLIGHT_SH" --json --file "$fixture" > "$output" || return 1
+    jq -e '.status == "pass" and .summary.findings == 0' "$output" >/dev/null || return 1
+    cmp -s "$fixture" "$fixture.before" || return 1
+    pass "complete_markers_and_public_numeric_counters_pass"
+}
+
+test_quoted_placeholder_word_prefixes_are_not_complete_markers() {
+    local fixture="$ARTIFACT_DIR/quoted-marker-prefixes/input.env"
+    local output="$ARTIFACT_DIR/quoted-marker-prefixes.json"
+    local human="$ARTIFACT_DIR/quoted-marker-prefixes.human"
+    local secret='example private-password-value-2026'
+    write_fixture "$fixture" "DB_PASSWORD=\"$secret\"
+API_TOKEN='dummy private-token-value-2026'"
+    cp "$fixture" "$fixture.before"
+    if bash "$CREDENTIAL_PREFLIGHT_SH" --json --file "$fixture" > "$output"; then return 1; fi
+    assert_category_present "$output" password || return 1
+    assert_category_present "$output" generic_secret || return 1
+    assert_no_raw_secret "$output" "$secret" || return 1
+    assert_no_raw_secret "$output" 'private-token-value-2026' || return 1
+    if bash "$CREDENTIAL_PREFLIGHT_SH" --human --file "$fixture" > "$human"; then return 1; fi
+    assert_file_no_raw_secret "$human" 'private-password-value-2026' || return 1
+    assert_file_no_raw_secret "$human" 'private-token-value-2026' || return 1
+    cmp -s "$fixture" "$fixture.before" || return 1
+    pass "quoted_placeholder_word_prefixes_are_not_complete_markers"
+}
+
 test_binary_and_unreadable_files_are_skipped() {
     local binary_file="$ARTIFACT_DIR/skipped/binary.bin"
     local unreadable_file="$ARTIFACT_DIR/skipped/unreadable.env"
@@ -405,6 +529,104 @@ test_default_scan_covers_shell_history_and_acfs_state() {
     pass "default_scan_covers_shell_history_and_acfs_state"
 }
 
+test_credential_aliases_detected_without_values_or_mutation() {
+    local fixture="$ARTIFACT_DIR/aliases/input.json"
+    local shell_fixture="$ARTIFACT_DIR/aliases/input.env"
+    local output="$ARTIFACT_DIR/aliases.json"
+    local shell_output="$ARTIFACT_DIR/aliases-shell.json"
+    local fixture_path output_path secret
+    write_fixture "$fixture" '{"apiKey":"fixture-alias-key-value-2026","MYSQL_PWD":"fixture mysql password phrase","PWD":"/public/workspace","apiKeyCount":"123456789"}'
+    write_fixture "$shell_fixture" 'apiKey="fixture-alias-key-value-2026"
+MYSQL_PWD="fixture mysql password phrase"
+PWD=/public/workspace
+apiKeyCount=123456789'
+    for fixture_path in "$fixture" "$shell_fixture"; do
+        cp "$fixture_path" "$fixture_path.before"
+        if [[ "$fixture_path" == "$fixture" ]]; then output_path="$output"; else output_path="$shell_output"; fi
+        if bash "$CREDENTIAL_PREFLIGHT_SH" --json --file "$fixture_path" > "$output_path"; then
+            return 1
+        else
+            [[ $? -eq 1 ]] || return 1
+        fi
+        assert_category_present "$output_path" "generic_secret" || return 1
+        assert_category_present "$output_path" "password" || return 1
+        jq -e '.status == "warn" and .summary.findings == 2 and .safety.raw_secret_values_printed == false' "$output_path" >/dev/null || return 1
+        for secret in "fixture-alias-key-value-2026" "fixture mysql password phrase"; do
+            assert_no_raw_secret "$output_path" "$secret" || return 1
+        done
+        cmp -s "$fixture_path" "$fixture_path.before" || return 1
+    done
+    pass "credential_aliases_detected_without_values_or_mutation"
+}
+
+test_camel_key_family_is_detected_without_value_leaks() {
+    local fixture="$ARTIFACT_DIR/camel-family/input.json"
+    local output="$ARTIFACT_DIR/camel-family.json"
+    write_fixture "$fixture" '{"secretKey":"fixture-secret-key-value-2026","accessKey":"fixture-access-key-value-2026","privateKey":"fixture-private-key-value-2026","privateKeyCount":"123456789"}'
+    if bash "$CREDENTIAL_PREFLIGHT_SH" --json --file "$fixture" > "$output"; then return 1; fi
+    jq -e '.status == "warn" and .summary.findings == 3' "$output" >/dev/null || return 1
+    assert_no_raw_secret "$output" "fixture-secret-key-value-2026" || return 1
+    assert_no_raw_secret "$output" "fixture-access-key-value-2026" || return 1
+    assert_no_raw_secret "$output" "fixture-private-key-value-2026" || return 1
+    pass "camel_key_family_is_detected_without_value_leaks"
+}
+
+test_public_pwd_and_api_key_counters_are_not_credentials() {
+    local fixture="$ARTIFACT_DIR/public-aliases/input.json"
+    local output="$ARTIFACT_DIR/public-aliases.json"
+    write_fixture "$fixture" '{"PWD":"/public/workspace","apiKeyCount":"123456789","publicKeyFingerprint":"abcdef0123456789"}'
+    bash "$CREDENTIAL_PREFLIGHT_SH" --json --file "$fixture" > "$output" || return 1
+    jq -e '.status == "pass" and .summary.findings == 0' "$output" >/dev/null || return 1
+    pass "public_pwd_and_api_key_counters_are_not_credentials"
+}
+
+test_bare_service_patterns_are_detected_without_values_or_mutation() {
+    local fixture="$ARTIFACT_DIR/service-shapes/input.log"
+    local output="$ARTIFACT_DIR/service-shapes.json"
+    local secret
+    write_fixture "$fixture" 'Observed tskey-auth-fixture1234567890
+Observed tskey-api-fixture0987654321
+GOOGLE_API_KEY=AIza0123456789abcdefghijklmnopqrstuvwxy
+Observed https://hooks.slack.com/services/T12345678/B12345678/fixtureSlackWebhook123456
+WEBHOOK_TOKEN=https://hooks.slack-gov.com/services/T12345678/B12345678/fixtureGovWebhook123456
+Observed https://discord.com/api/webhooks/123456789012345678/fixtureDiscordWebhook123456?wait=true
+{"message":"https:\/\/hooks.slack.com\/services\/T12345678\/B12345678\/fixtureEscapedWebhook123456"}
+Observed HTTPS://HOOKS.SLACK.COM/services/T12345678/B12345678/fixtureUpperWebhook123456
+Observed https://canary.discord.com/api/v10/webhooks/123456789012345678/fixtureVersionedWebhook123456'
+    cp "$fixture" "$fixture.before"
+    if bash "$CREDENTIAL_PREFLIGHT_SH" --json --file "$fixture" > "$output"; then
+        return 1
+    else
+        [[ $? -eq 1 ]] || return 1
+    fi
+    jq -e '.status == "warn" and .summary.findings == 9 and
+      ([.findings[] | select(.category == "tailscale_key")] | length) == 2 and
+      ([.findings[] | select(.category == "google_api_key")] | length) == 1 and
+      ([.findings[] | select(.category == "webhook_url")] | length) == 6 and
+      .safety.raw_secret_values_printed == false and .safety.user_files_mutated == false' "$output" >/dev/null || return 1
+    for secret in tskey-auth-fixture1234567890 tskey-api-fixture0987654321 \
+        AIza0123456789abcdefghijklmnopqrstuvwxy fixtureSlackWebhook123456 \
+        fixtureGovWebhook123456 fixtureDiscordWebhook123456 \
+        fixtureEscapedWebhook123456 fixtureUpperWebhook123456 fixtureVersionedWebhook123456; do
+        assert_no_raw_secret "$output" "$secret" || return 1
+    done
+    cmp -s "$fixture" "$fixture.before" || return 1
+    pass "bare_service_patterns_are_detected_without_values_or_mutation"
+}
+
+test_public_service_urls_and_short_labels_pass() {
+    local fixture="$ARTIFACT_DIR/public-service/input.log"
+    local output="$ARTIFACT_DIR/public-service.json"
+    write_fixture "$fixture" 'https://hooks.slack.com/services/
+https://discord.com/api/webhooks/123456789012345678
+https://example.com/api/webhooks/123456789012345678/publicEndpoint123456
+https://hooks.slack.com.evil.test/services/T12345678/B12345678/publicEndpoint123456
+tskey-short AIza-short'
+    bash "$CREDENTIAL_PREFLIGHT_SH" --json --file "$fixture" > "$output" || return 1
+    jq -e '.status == "pass" and .summary.findings == 0' "$output" >/dev/null || return 1
+    pass "public_service_urls_and_short_labels_pass"
+}
+
 run_test() {
     local name="$1"
 
@@ -427,9 +649,20 @@ main() {
     run_test test_detects_secret_pair_after_specific_pattern_on_same_line
     run_test test_password_keys_keep_password_category_after_placeholder_checks
     run_test test_shell_references_are_not_literal_secrets
+    run_test test_numeric_secret_values_are_not_placeholders
+    run_test test_numeric_json_credentials_are_checked_with_counter_controls
+    run_test test_embedded_placeholder_words_do_not_hide_literals
+    run_test test_literal_parameter_defaults_are_exposures_without_execution
+    run_test test_complete_markers_and_public_numeric_counters_pass
+    run_test test_quoted_placeholder_word_prefixes_are_not_complete_markers
     run_test test_binary_and_unreadable_files_are_skipped
     run_test test_excluded_paths_are_opted_out
     run_test test_default_scan_covers_shell_history_and_acfs_state
+    run_test test_credential_aliases_detected_without_values_or_mutation
+    run_test test_camel_key_family_is_detected_without_value_leaks
+    run_test test_public_pwd_and_api_key_counters_are_not_credentials
+    run_test test_bare_service_patterns_are_detected_without_values_or_mutation
+    run_test test_public_service_urls_and_short_labels_pass
 
     echo ""
     echo "Tests passed: $TESTS_PASSED"

@@ -31,6 +31,8 @@ fi
 _STATUS_JSON=false
 _STATUS_SHORT=false
 _STATUS_CHECK_UPDATES=false
+_STATUS_IDE=false
+_STATUS_LIVE=false
 _STATUS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _status_sanitize_abs_nonroot_path() {
     local path_value="${1:-}"
@@ -86,7 +88,9 @@ _status_system_binary_path() {
         "/usr/local/bin/$name" \
         "/usr/local/sbin/$name" \
         "/usr/sbin/$name" \
-        "/sbin/$name"
+        "/sbin/$name" \
+        "/opt/homebrew/bin/$name" \
+        "/opt/homebrew/sbin/$name"
     do
         [[ -x "$candidate" ]] || continue
         printf '%s\n' "$candidate"
@@ -266,10 +270,12 @@ _status_reset_options() {
     _STATUS_JSON=false
     _STATUS_SHORT=false
     _STATUS_CHECK_UPDATES=false
+    _STATUS_IDE=false
+    _STATUS_LIVE=false
 }
 
 _status_print_help() {
-    echo "Usage: acfs status [--json] [--short] [--check-updates]"
+    echo "Usage: acfs status [--json] [--short] [--check-updates] [--ide [--live]]"
     echo ""
     echo "Quick one-line health summary."
     echo ""
@@ -277,6 +283,8 @@ _status_print_help() {
     echo "  --json            Machine-readable JSON output"
     echo "  --short           Minimal output for shell prompt integration"
     echo "  --check-updates   Include network-based update checks (slower)"
+    echo "  --ide             Versioned, redacted JSON contract for editor integrations"
+    echo "  --live            With --ide, query only herdr with bounded timeouts"
     echo ""
     echo "Exit codes:"
     echo "  0  Healthy"
@@ -299,6 +307,8 @@ _status_parse_args() {
             --json)           _STATUS_JSON=true; shift ;;
             --short)          _STATUS_SHORT=true; shift ;;
             --check-updates)  _STATUS_CHECK_UPDATES=true; shift ;;
+            --ide)            _STATUS_IDE=true; shift ;;
+            --live)           _STATUS_LIVE=true; shift ;;
             --help|-h)
                 _status_print_help
                 return 2
@@ -311,6 +321,11 @@ _status_parse_args() {
         esac
     done
 
+    if [[ "$_STATUS_LIVE" == true && "$_STATUS_IDE" != true ]] ||
+        [[ "$_STATUS_IDE" == true && ( "$_STATUS_SHORT" == true || "$_STATUS_CHECK_UPDATES" == true ) ]]; then
+        echo "Error: --live requires --ide; --ide cannot use --short or --check-updates" >&2
+        return 1
+    fi
     return 0
 }
 
@@ -1202,6 +1217,116 @@ _status_print() {
     fi
 }
 
+# Editor payloads use an allowlist; raw state, tool output, identities and
+# provider identifiers never cross this interface. No commands are executed
+# from generated advice. The live path reuses only the herdr collector.
+_status_editor_json() {
+    local state_file="$1" tool_count="$2" health="$3" jq_bin="$4"
+    local state_json='{}' state_status=missing live_status=not_requested
+    local live_json='{}' output="" generated_at="" timeout_bin="" bash_bin=""
+    local date_bin="" collector_script="$_STATUS_SCRIPT_DIR/swarm_status.sh"
+
+    if [[ -z "$jq_bin" ]]; then
+        printf '%s\n' '{"schema_version":1,"kind":"acfs.editor_status","status":"error","collectors":{"install":"unavailable","sessions":"not_requested"},"error":"jq_unavailable","read_only":true}'
+        return 2
+    fi
+    date_bin="$(_status_system_binary_path date 2>/dev/null || true)"
+    [[ -z "$date_bin" ]] || generated_at="$("$date_bin" -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [[ -f "$state_file" ]]; then
+        state_status=invalid
+        if state_json="$("$jq_bin" -ce 'select(type == "object")' "$state_file" 2>/dev/null)"; then
+            state_status=ok
+        else
+            state_json='{}'
+        fi
+    fi
+    if [[ "$_STATUS_LIVE" == true ]]; then
+        live_status=unavailable
+        timeout_bin="$(_status_system_binary_path timeout 2>/dev/null || true)"
+        # The caller already needs modern Bash. Reuse that interpreter rather
+        # than launching an older system Bash (notably /usr/bin/bash on macOS).
+        bash_bin="$BASH"
+        if [[ -n "$timeout_bin" && -n "$bash_bin" && -r "$collector_script" ]]; then
+            live_status=error
+            if output="$(ACFS_SWARM_STATUS_TIMEOUT=1 "$timeout_bin" --kill-after=1 5 "$bash_bin" "$collector_script" --json --herdr-only 2>/dev/null)" &&
+                live_json="$(printf '%s' "$output" | "$jq_bin" -ce 'select(.schema_version == 1 and (.probes.herdr | type) == "object") | .probes.herdr' 2>/dev/null)"; then
+                live_status=ok
+            else
+                live_json='{}'
+            fi
+        fi
+    fi
+
+    "$jq_bin" -n --argjson state "$state_json" --argjson live "$live_json" \
+        --arg state_status "$state_status" --arg live_status "$live_status" \
+        --arg generated_at "$generated_at" --arg health "${health,,}" \
+        --argjson tool_count "$tool_count" '
+        def phase: . as $v | if ["base_deps","user_setup","filesystem","shell_setup","cli_tools","languages","agents","cloud_db","stack","finalize"] | index($v) then $v else null end;
+        def count: if type == "number" and . >= 0 and floor == . then . else null end;
+        def stamp: if type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|[+-][0-9]{2}:[0-9]{2})$") then . else null end;
+        ($state.completed_phases | if type == "array" then map(phase) | map(select(. != null)) | unique else [] end) as $completed |
+        ($state.provider // $state.vps_provider // null) as $provider_raw |
+        ($provider_raw as $p | if ["hetzner","ovh","contabo","digitalocean","aws","gcp","azure","local","other"] | index($p) then $p else null end) as $provider |
+        (if $state_status != "ok" then $state_status
+         elif ($state.failed_phase != null and $state.failed_phase != "") then "failed"
+         elif $state.current_phase != null then "partial"
+         elif ($completed | index("finalize")) != null then "complete"
+         elif ($completed | length) > 0 then "partial"
+         else "unknown" end) as $install_status |
+        (if $live_status == "ok" and $live.server_ok != true then "warn" else $live_status end) as $sessions_status |
+        (if $install_status == "failed" or $state_status != "ok" then "error"
+         elif $install_status != "complete" or $health != "ok" or ($sessions_status != "ok" and $sessions_status != "not_requested") then "warn" else "ok" end) as $status |
+        {
+          schema_version: 1, kind: "acfs.editor_status", status: $status,
+          generated_at: ($generated_at | stamp), read_only: true,
+          freshness: {cache: "none", state_updated_at: (($state.last_updated // $state.updated_at // null) | stamp), sessions: $sessions_status},
+          install: {status: $install_status, mode: ($state.mode as $m | if ["vibe","safe"] | index($m) then $m else null end), completed_phases: $completed, current_phase: ($state.current_phase | phase), failed_phase: ($state.failed_phase | phase), tools_present: $tool_count},
+          provider: {name: $provider, source: "local_state", identifiers_omitted: true},
+          sessions: {status: $sessions_status, herdr_available: (if ($live.available | type) == "boolean" then $live.available else null end), workspace_count: (if $live.server_ok == true then $live.workspace_count | count else null end), agent_count: (if $live.server_ok == true then $live.agent_count | count else null end)},
+          collectors: {install: $state_status, tools: "ok", sessions: $live_status, provider: (if $provider == null then "unknown" else "ok" end)},
+          redaction: {policy: "allowlist", omitted_fields: ["identities","paths","ip_addresses","provider_ids","credentials","raw_errors","session_names","tool_output"], count_semantics: "recognized_sensitive_fields_omitted", count: ([$state | paths(scalars) as $p | select(($p[-1] | type) == "string" and ($p[-1] | test("token|password|secret|credential|target_user|target_home|hostname|ip_address|failed_error|current_step|failed_step"; "i"))) | $p] | length)},
+          commands: [
+            {id: "status", argv: ["acfs","status","--ide"], read_only: true},
+            {id: "sessions", argv: ["acfs","status","--ide","--live"], read_only: true},
+            {id: "diagnose", argv: ["acfs","doctor","--json"], read_only: true},
+            {id: "support_help", argv: ["acfs","support","--help"], read_only: true}
+          ],
+          next_actions: (if $install_status == "failed" then [{command_id: "diagnose", reason: "install_failed"}]
+            elif $install_status != "complete" or $health != "ok" then [{command_id: "diagnose", reason: "install_or_tools_incomplete"}]
+            elif $status != "ok" then [{command_id: "sessions", reason: "session_query_unavailable"}] else [] end),
+          support: {help_command_id: "support_help", bundle_argv: ["acfs","support"], creates_files: true, redacted_by_default: true},
+          execute_automatically: false
+        }'
+}
+
+# Use the library beside this status entry point, not code selected by state.
+# Older nightly wrappers executed on source; require the explicit API marker
+# before sourcing so a mixed-version runtime cannot accidentally run an update.
+_status_read_nightly_health() {
+    local helper="" marker="" first_line="" output=""
+    _STATUS_NIGHTLY_LEVEL=skip
+    _STATUS_NIGHTLY_MESSAGE="nightly: no execution record"
+    _STATUS_NIGHTLY_JSON='{"health":"skip","code":"not_recorded","state":null}'
+    [[ -e "$_ACFS_HOME/nightly-update.state" || -L "$_ACFS_HOME/nightly-update.state" ]] || return 0
+
+    _STATUS_NIGHTLY_LEVEL=warn
+    _STATUS_NIGHTLY_MESSAGE="nightly: execution record present but health reader unavailable; refresh ACFS runtime"
+    _STATUS_NIGHTLY_JSON='{"health":"warn","code":"reader_unavailable","state":null}'
+    for helper in "$_STATUS_SCRIPT_DIR/nightly_update.sh" "$_STATUS_SCRIPT_DIR/../nightly-update.sh"; do
+        [[ -f "$helper" && -r "$helper" && ! -L "$helper" ]] || continue
+        { IFS= read -r first_line; IFS= read -r marker; } < "$helper" || continue
+        [[ "$first_line" == '#!'* && "$marker" == '# ACFS_NIGHTLY_HEALTH_API=1' ]] || continue
+        if output=$(
+            # shellcheck source=/dev/null
+            source "$helper" || exit 1
+            acfs_nightly_health_report "$_ACFS_HOME/nightly-update.state"
+        ) && [[ "$output" == pass$'\t'* || "$output" == warn$'\t'* || "$output" == skip$'\t'* ]]; then
+            IFS=$'\t' read -r _STATUS_NIGHTLY_LEVEL _STATUS_NIGHTLY_MESSAGE _STATUS_NIGHTLY_JSON <<< "$output"
+        fi
+        return 0
+    done
+}
+
 status_main() {
     local parse_status=0
     local _state_file=""
@@ -1230,6 +1355,9 @@ status_main() {
     local _missing_count=0
     local _jq_bin=""
     local _date_bin=""
+    local _STATUS_NIGHTLY_LEVEL=skip
+    local _STATUS_NIGHTLY_MESSAGE=""
+    local _STATUS_NIGHTLY_JSON=""
     local w=""
     local e=""
     local cmd=""
@@ -1261,7 +1389,7 @@ status_main() {
 
     for cmd in "${_CORE_TOOLS[@]}"; do
         if _status_binary_exists "$cmd"; then
-            ((_tool_count++)) || true
+            _tool_count=$((_tool_count + 1))
         else
             _warnings+=("missing: $cmd")
         fi
@@ -1269,7 +1397,7 @@ status_main() {
 
     for cmd in "${_OPTIONAL_TOOLS[@]}"; do
         if _status_binary_exists "$cmd"; then
-            ((_tool_count++)) || true
+            _tool_count=$((_tool_count + 1))
         fi
     done
 
@@ -1302,6 +1430,11 @@ status_main() {
         fi
     fi
 
+    _status_read_nightly_health
+    if [[ "$_STATUS_NIGHTLY_LEVEL" == warn ]]; then
+        _warnings+=("$_STATUS_NIGHTLY_MESSAGE")
+    fi
+
     if [[ "$_STATUS_CHECK_UPDATES" == "true" ]]; then
         if [[ -n "$_ACFS_HOME" ]] && [[ -f "$_ACFS_HOME/VERSION" ]]; then
             _local_version=$(cat "$_ACFS_HOME/VERSION" 2>/dev/null) || _local_version=""
@@ -1324,7 +1457,16 @@ status_main() {
         _status_word="WARN"
     fi
 
-    if [[ "$_STATUS_JSON" == "true" ]]; then
+    if [[ "$_STATUS_IDE" == true ]]; then
+        local editor_output="" editor_status=""
+        editor_output="$(_status_editor_json "$_state_file" "$_tool_count" "$_status_word" "$_jq_bin")" || {
+            printf '%s\n' "$editor_output"
+            return 2
+        }
+        printf '%s\n' "$editor_output"
+        editor_status="$(printf '%s' "$editor_output" | "$_jq_bin" -r '.status')"
+        case "$editor_status" in ok) return 0 ;; warn) return 1 ;; *) return 2 ;; esac
+    elif [[ "$_STATUS_JSON" == "true" ]]; then
         for w in "${_warnings[@]+${_warnings[@]}}"; do
             [[ -z "$w" ]] && continue
             [[ -n "$_warn_items" ]] && _warn_items+=","
@@ -1344,6 +1486,7 @@ status_main() {
         if [[ -n "$_update_available" ]]; then
             _update_json=",\"update_available\":\"$(_json_escape "$_update_available")\""
         fi
+        _update_json+=",\"nightly_update\":$_STATUS_NIGHTLY_JSON"
 
         printf '{"status":"%s","tools":%d,"last_update":%s,"warnings":[%s],"errors":[%s]%s}\n' \
             "${_status_word,,}" "$_tool_count" "$_last_update_json" \
@@ -1364,10 +1507,13 @@ status_main() {
 
         if [[ ${#_warnings[@]} -gt 0 ]]; then
             for w in "${_warnings[@]}"; do
-                [[ "$w" == missing:* ]] && ((_missing_count++)) || true
+                if [[ "$w" == missing:* ]]; then
+                    _missing_count=$((_missing_count + 1))
+                fi
             done
             [[ $_missing_count -gt 0 ]] && _msg="$_msg, $_missing_count missing tool(s)"
             [[ -n "$_update_available" ]] && _msg="$_msg, update available"
+            [[ "$_STATUS_NIGHTLY_LEVEL" == warn ]] && _msg="$_msg; $_STATUS_NIGHTLY_MESSAGE"
         fi
 
         case $_exit_code in

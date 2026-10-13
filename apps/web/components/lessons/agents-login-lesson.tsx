@@ -23,6 +23,7 @@ import {
   BulletList,
   CodeBlock,
   Divider,
+  DiagramScroller,
   GoalBanner,
   Highlight,
   InlineCode,
@@ -427,7 +428,7 @@ function LoginStep({
           role="region"
           aria-label={`${agent} login command (scrollable)`}
         >
-          <span className="text-white/50">$ </span>
+          <span className="text-muted-foreground">$ </span>
           {command}
         </pre>
       </div>
@@ -484,7 +485,7 @@ function CodexLoginSection() {
             role="region"
             aria-label="Device auth command (scrollable)"
           >
-            <span className="text-white/50">$ </span>codex login --device-auth
+            <span className="text-muted-foreground">$ </span>codex login --device-auth
           </pre>
         </div>
       </div>
@@ -506,13 +507,13 @@ function CodexLoginSection() {
             role="region"
             aria-label="SSH tunnel commands (scrollable)"
           >
-            <span className="text-white/50"># On laptop:</span>
+            <span className="text-muted-foreground"># On laptop:</span>
             {"\n"}
-            <span className="text-white/50">$ </span>ssh -L 1455:localhost:1455 ubuntu@YOUR_VPS_IP
+            <span className="text-muted-foreground">$ </span>ssh -L 1455:localhost:1455 ubuntu@YOUR_VPS_IP
             {"\n"}
-            <span className="text-white/50"># Then on VPS:</span>
+            <span className="text-muted-foreground"># Then on VPS:</span>
             {"\n"}
-            <span className="text-white/50">$ </span>codex login
+            <span className="text-muted-foreground">$ </span>codex login
           </pre>
         </div>
       </div>
@@ -529,7 +530,7 @@ function CodexLoginSection() {
             role="region"
             aria-label="Standard login command (scrollable)"
           >
-            <span className="text-white/50">$ </span>codex login
+            <span className="text-muted-foreground">$ </span>codex login
           </pre>
         </div>
       </div>
@@ -1070,7 +1071,7 @@ function InteractiveAgentComparison() {
           </div>
           <h3 className="text-lg font-bold text-white">Agent Authentication Race</h3>
         </div>
-        <p className="text-sm text-white/50">
+        <p className="text-sm text-muted-foreground">
           Watch how each agent handles real authentication scenarios
         </p>
       </div>
@@ -1091,7 +1092,7 @@ function InteractiveAgentComparison() {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                 i === scenarioIndex
                   ? "bg-primary/20 border border-primary/30 text-primary"
-                  : "border border-white/[0.08] bg-white/[0.02] text-white/40 hover:text-white/60"
+                  : "border border-white/[0.08] bg-white/[0.02] text-muted-foreground hover:text-foreground"
               }`}
             >
               {sc.icon}
@@ -1113,7 +1114,7 @@ function InteractiveAgentComparison() {
                 transition={springs.snappy}
               >
                 <h4 className="text-sm font-semibold text-white">{scenario.title}</h4>
-                <p className="text-xs text-white/40">{scenario.description}</p>
+                <p className="text-xs text-muted-foreground">{scenario.description}</p>
               </motion.div>
             </AnimatePresence>
           </div>
@@ -1127,7 +1128,7 @@ function InteractiveAgentComparison() {
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
               transition={springs.snappy}
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.02] text-white/50 hover:text-white/80 transition-colors"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.02] text-muted-foreground hover:text-white/80 transition-colors"
             >
               <SkipBack className="h-3.5 w-3.5" />
             </motion.button>
@@ -1153,7 +1154,7 @@ function InteractiveAgentComparison() {
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
               transition={springs.snappy}
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.02] text-white/50 hover:text-white/80 transition-colors"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.02] text-muted-foreground hover:text-white/80 transition-colors"
             >
               <SkipForward className="h-3.5 w-3.5" />
             </motion.button>
@@ -1161,9 +1162,8 @@ function InteractiveAgentComparison() {
         </div>
       </div>
 
-      {/* SVG connection visualization. Below md the terminal panels stack, so
-          the strip need not line up with three columns: a 300-wide geometry
-          keeps its labels ~9-10px on phones instead of ~3.5px (bd-k3qa5). */}
+      {/* Below md the terminals stack. Each geometry keeps its logical width
+          so 12px labels stay readable instead of shrinking with the strip. */}
       <div className="relative px-6 pb-2">
         <div className="md:hidden">
           <AuthFlowSvg
@@ -1244,15 +1244,16 @@ function AuthFlowSvg({
   const width = compact ? 300 : 600;
   const hubX = width / 2;
   const serverW = compact ? 84 : 76;
-  const titleSize = compact ? "text-[10px]" : "text-[8px]";
-  const subtitleSize = compact ? "text-[9.5px]" : "text-[7px]";
-  const labelSize = compact ? "text-[10px]" : "text-[7px]";
+  const titleSize = "text-xs";
+  const subtitleSize = "text-xs";
+  const labelSize = "text-xs";
   // Compact labels need room for descenders below the agent endpoint.
   const agentY = compact ? 58 : 68;
-  const labelY = compact ? 76 : 78;
+  const labelY = compact ? 76 : 86;
 
   return (
-    <svg viewBox={`0 0 ${width} 80`} className="w-full h-auto" preserveAspectRatio="xMidYMid meet">
+    <DiagramScroller label="Agent authentication flow diagram" minWidth={width}>
+    <svg viewBox={`0 0 ${width} 96`} className="w-full h-auto" preserveAspectRatio="xMidYMid meet">
       {/* Central auth server */}
       <rect
         x={hubX - serverW / 2}
@@ -1275,7 +1276,8 @@ function AuthFlowSvg({
         x={hubX}
         y={33}
         textAnchor="middle"
-        className={`fill-white/50 ${subtitleSize}`}
+        className={subtitleSize}
+        fill="var(--muted-foreground)"
       >
         SERVER
       </text>
@@ -1385,6 +1387,7 @@ function AuthFlowSvg({
         </circle>
       ))}
     </svg>
+    </DiagramScroller>
   );
 }
 
@@ -1436,7 +1439,7 @@ function AgentTerminalPanel({
                 className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30"
               >
                 <CheckCircle2 className="h-3 w-3 text-emerald-400" />
-                <span className="text-[10px] font-medium text-emerald-400">PASS</span>
+                <span className="text-xs font-medium text-emerald-400">PASS</span>
               </motion.div>
             ) : (
               <motion.div
@@ -1446,7 +1449,7 @@ function AgentTerminalPanel({
                 className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/20 border border-red-500/30"
               >
                 <XCircle className="h-3 w-3 text-red-400" />
-                <span className="text-[10px] font-medium text-red-400">FAIL</span>
+                <span className="text-xs font-medium text-red-400">FAIL</span>
               </motion.div>
             )
           ) : isPlaying ? (
@@ -1456,10 +1459,10 @@ function AgentTerminalPanel({
                 animate={inView ? { opacity: [0.3, 1, 0.3] } : { opacity: 0.3 }}
                 transition={inView ? { duration: 1, repeat: Infinity } : { duration: 0.2 }}
               />
-              <span className="text-[10px] text-white/30">running</span>
+              <span className="text-xs text-muted-foreground">running</span>
             </div>
           ) : (
-            <span className="text-[10px] text-white/20">idle</span>
+            <span className="text-xs text-muted-foreground">idle</span>
           )}
         </div>
       </div>
@@ -1467,10 +1470,10 @@ function AgentTerminalPanel({
       {/* Terminal body */}
       <div
         ref={terminalRef}
-        className="px-3 py-2 font-mono text-[11px] leading-relaxed min-h-[180px] max-h-[220px] overflow-y-auto scrollbar-thin scrollbar-thumb-white/10"
+        className="px-3 py-2 font-mono text-xs leading-relaxed min-h-[180px] max-h-[220px] overflow-y-auto scrollbar-thin scrollbar-thumb-white/10"
       >
         {visibleCount === 0 && !isPlaying && (
-          <div className="flex items-center justify-center h-full min-h-[160px] text-white/20">
+          <div className="flex items-center justify-center h-full min-h-[160px] text-muted-foreground">
             <span className="text-xs">Press play to start</span>
           </div>
         )}
@@ -1484,7 +1487,7 @@ function AgentTerminalPanel({
               className={`py-0.5 ${getLineColor(line.type)}`}
             >
               {line.type === "command" && (
-                <span className="text-white/30 select-none">
+                <span className="text-muted-foreground select-none">
                   {line.text.startsWith("$") ? "" : "$ "}
                 </span>
               )}
@@ -1515,14 +1518,14 @@ function AgentTerminalPanel({
 
       {/* Terminal footer - timing */}
       <div className="px-3 py-1.5 border-t border-white/[0.04] flex items-center justify-between">
-        <span className="text-[10px] text-white/20">
+        <span className="text-xs text-muted-foreground">
           {visibleCount}/{agentScenario.lines.length} steps
         </span>
         {isDone && (
           <motion.span
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="text-[10px] text-white/30"
+            className="text-xs text-muted-foreground"
           >
             {(agentScenario.finishDelay / 1000).toFixed(1)}s
           </motion.span>
@@ -1537,7 +1540,7 @@ function getLineColor(type: TerminalLine["type"]): string {
     case "command":
       return "text-white/90";
     case "output":
-      return "text-white/50";
+      return "text-muted-foreground";
     case "success":
       return "text-emerald-400";
     case "error":

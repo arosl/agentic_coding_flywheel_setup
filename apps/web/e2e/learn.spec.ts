@@ -1,7 +1,132 @@
 import { expect, test } from "@playwright/test";
+import { resolveModuleSelection } from "../lib/moduleSelection";
+import { ACFS_RECOMMENDED_UBUNTU } from "../lib/vpsProviders";
 
 test.describe
   .serial("Learning Hub", () => {
+    test("completion controls wait for saved progress hydration", async ({ browser, baseURL }) => {
+      const context = await browser.newContext({ javaScriptEnabled: false, baseURL });
+      try {
+        const page = await context.newPage();
+        await page.goto("/learn/welcome");
+        await expect(page.getByRole("button", { name: "Mark Complete", exact: true, includeHidden: true })).toBeDisabled();
+        await expect(page.getByRole("button", { name: "Complete", exact: true, includeHidden: true })).toBeDisabled();
+      } finally {
+        await context.close();
+      }
+    });
+    test("local next steps explain their reasons and update for recovery and team goals", async ({ page }) => {
+      await page.addInitScript(() => {
+        localStorage.setItem("acfs-learning-hub-completed-lessons", "[0,1]");
+        localStorage.setItem("agent-flywheel-module-profile", "minimal");
+      });
+      await page.goto("/learn");
+      const steps = page.getByTestId("learning-recommendations");
+      await expect(steps).toBeVisible();
+      await expect(steps).toHaveAttribute("data-persona", "minimal");
+      await expect(steps.getByRole("link").first()).toHaveAttribute("href", "/learn/ssh-basics");
+      await expect(steps).toContainText("selected stack");
+      const goal = page.getByRole("combobox", { name: "What are you working on?" });
+      await goal.selectOption("recover");
+      await expect(steps).toHaveAttribute("data-persona", "recovery");
+      await expect(steps.getByRole("link").first()).toHaveAttribute("href", "/wizard/status-check");
+      await goal.selectOption("swarm");
+      await expect(steps).toHaveAttribute("data-persona", "team");
+      await expect(steps.getByRole("link").first()).toHaveAttribute("href", "/core-flywheel");
+      await expect(steps).toContainText("Agent Mail");
+      expect(await page.evaluate(() => localStorage.getItem("acfs-learning-hub-completed-lessons"))).toBe("[0,1]");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      const links = await steps.getByRole("link").evaluateAll((elements) => elements.map((element) => {
+        const rect = element.getBoundingClientRect(); return { width: rect.width, height: rect.height };
+      }));
+      expect(links.every((rect) => rect.width >= 44 && rect.height >= 44)).toBe(true);
+    });
+
+    test("local doctor OS warnings drive recovery recommendations and clear on replacement", async ({ page }) => {
+      await page.addInitScript(() => {
+        localStorage.setItem("agent-flywheel-vps-ip", "203.0.113.7");
+        localStorage.setItem("agent-flywheel-ssh-username", "developer");
+        localStorage.setItem("agent-flywheel-install-mode", "safe");
+        localStorage.setItem("agent-flywheel-module-profile", "minimal");
+      });
+      const plan = resolveModuleSelection({ profile: "minimal" });
+      expect(plan.ok).toBe(true);
+      const report = {
+        acfs_version: "0.9.0", timestamp: new Date().toISOString(), mode: "safe", deep_mode: false,
+        user: "developer", os: { id: "ubuntu", version: ACFS_RECOMMENDED_UBUNTU },
+        summary: { pass: plan.included.length, fail: 0, warn: 0, skip: 0 },
+        checks: plan.included.map((module) => ({ id: module.id, status: "pass",
+          label: "PRIVATE_REPORT_LABEL", details: "PRIVATE_REPORT_DETAIL", fix: null })),
+      };
+      await page.goto("/learn");
+      const steps = page.getByTestId("learning-recommendations");
+      await expect(steps).toHaveAttribute("data-persona", "minimal");
+      await page.getByText("Diagnose a doctor JSON report locally", { exact: true }).click();
+      const input = page.getByLabel("Doctor JSON report (maximum 1 MiB)");
+      const upload = async () => input.setInputFiles({
+        name: "doctor.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(report)),
+      });
+      await upload();
+      await expect(page.getByText("Mapped checks report passes.", { exact: false })).toBeVisible();
+      await expect(steps).toHaveAttribute("data-persona", "minimal");
+      report.os.version = "24.04";
+      await upload();
+      await expect(page.getByText("differs from the recommended Ubuntu", { exact: false })).toBeVisible();
+      await expect(steps).toHaveAttribute("data-persona", "recovery");
+      await expect(steps.getByRole("link").first()).toHaveAttribute("href", "/wizard/status-check");
+      report.os.version = ACFS_RECOMMENDED_UBUNTU;
+      await upload();
+      await expect(page.getByText("Mapped checks report passes.", { exact: false })).toBeVisible();
+      await expect(steps).toHaveAttribute("data-persona", "minimal");
+      await expect(page.locator("body")).not.toContainText("PRIVATE_REPORT_");
+      await page.getByRole("button", { name: "Clear doctor report", exact: true }).click();
+      await expect(page.getByText("Report SHA-256:", { exact: false })).toHaveCount(0);
+      await expect(steps).toHaveAttribute("data-persona", "minimal");
+      expect(await page.evaluate(() => localStorage.getItem("acfs-learning-hub-completed-lessons"))).toBeNull();
+    });
+
+    test("clearing progress in another tab resets the current learning recommendations", async ({ page, context }) => {
+      await page.addInitScript(() => {
+        localStorage.setItem("acfs-learning-hub-completed-lessons", "[0,1]");
+      });
+      await page.goto("/learn");
+      const next = page.getByTestId("learning-recommendations").getByRole("link").first();
+      await expect(next).toHaveAttribute("href", "/learn/ssh-basics");
+      const other = await context.newPage();
+      try {
+        await other.goto("/learn");
+        await other.evaluate(() => localStorage.clear());
+        await expect(next).toHaveAttribute("href", "/learn/welcome");
+        await expect(page.getByTestId("learning-recommendations")).toHaveAttribute("data-persona", "getting-started");
+      } finally {
+        await other.close();
+      }
+    });
+
+    test("complete lesson progress offers references without an inaccessible next lesson", async ({ page }) => {
+      await page.addInitScript(() => {
+        localStorage.setItem("acfs-learning-hub-completed-lessons", JSON.stringify(Array.from({ length: 100 }, (_, index) => index)));
+      });
+      await page.goto("/learn");
+      const steps = page.getByTestId("learning-recommendations");
+      await expect(steps).toHaveAttribute("data-persona", "all-complete");
+      await expect(steps.locator('[data-recommendation-id^="lesson-"]')).toHaveCount(0);
+      await expect(steps.getByRole("link")).not.toHaveCount(0);
+    });
+
+    test("lesson sidebar follows the narrow and wide viewport layouts", async ({ page }) => {
+      await page.addInitScript(() => {
+        localStorage.setItem("acfs-learning-hub-completed-lessons", JSON.stringify(Array.from({ length: 50 }, (_, index) => index)));
+      });
+      await page.setViewportSize({ width: 1024, height: 900 });
+      await page.goto("/learn/debugging-agents");
+      const sidebar = page.getByTestId("lesson-sidebar");
+      await expect(sidebar).toHaveCount(1);
+      await expect(sidebar).toBeHidden();
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await expect(sidebar).toBeVisible();
+    });
+
     test("learn dashboard loads without JS errors", async ({ page }) => {
       const errors: string[] = [];
 
@@ -57,9 +182,7 @@ test.describe
         testInfo.project.name.startsWith("Mobile"),
         "The lesson sidebar is intentionally hidden on mobile",
       );
-      // The sidebar shows from the xl breakpoint (1280px). WebKit on Linux draws
-      // a classic scrollbar and leaves it out of the media-query width, so the
-      // default 1280px desktop viewport falls just below xl there.
+      // WebKit's classic scrollbar makes a 1280px window narrower than xl.
       await page.setViewportSize({ width: 1440, height: 900 });
 
       await page.addInitScript(() => {
@@ -90,7 +213,6 @@ test.describe
         testInfo.project.name.startsWith("Mobile"),
         "The lesson sidebar is intentionally hidden on mobile",
       );
-      // Above xl on every engine; see the sidebar test above.
       await page.setViewportSize({ width: 1440, height: 900 });
 
       await page.addInitScript(() => {
@@ -125,7 +247,6 @@ test.describe
         testInfo.project.name.startsWith("Mobile"),
         "The lesson sidebar is intentionally hidden on mobile",
       );
-      // Above xl on every engine; see the sidebar test above.
       await page.setViewportSize({ width: 1440, height: 900 });
 
       await page.addInitScript(() => {
@@ -210,7 +331,8 @@ test.describe
       await expect(page.locator('a[href="/learn/ntm-core"]')).toHaveCount(2);
       // The palette lesson is a reference lesson without a card: only its grid link.
       await expect(page.locator('a[href="/learn/ntm-palette"]')).toHaveCount(1);
-      await expect(page.locator('a[href="/learn/commands"]')).toHaveCount(1);
+      // The next-action fallback and the existing Quick Reference both link here.
+      await expect(page.locator('a[href="/learn/commands"]')).toHaveCount(2);
       await expect(page.locator('a[href="/glossary"]')).toHaveCount(1);
     });
 

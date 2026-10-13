@@ -563,6 +563,7 @@ Find the repository root with git rev-parse --show-toplevel.
 Read <repo>/.acfs-cloud/.codex/AGENTS.md for the installed flywheel tools and <repo>/.acfs-cloud/.acfs/cloud/setup.log for failures.
 In each task shell, run acfs_cloud_root="$(git rev-parse --show-toplevel)/.acfs-cloud"; export PATH="$acfs_cloud_root/.local/bin:$PATH" before using the tools.
 Follow the guide's CASS_DATA_DIR, CASS_MEMORY_HOME and JFP_HOME exports in each task shell so search data, memory and prompt caches use the writable workspace; preserve existing overrides and keep any XDG_DATA_HOME/XDG_CONFIG_HOME writable.
+Before using MS, follow the guide's local initialization and indexing steps in a writable project; reuse existing .ms/MS_ROOT/MS_CONFIG state.
 Check br --version, bv --version, ubs --version and jsm --version before starting work.
 Use br ready --json and bv --robot-triage; never open their interactive TUIs.
 ```
@@ -590,6 +591,7 @@ Include these instructions in each task:
 Read $HOME/.acfs/cloud/AGENTS.md and $HOME/.acfs/cloud/setup.log before starting work.
 In each task shell, run export PATH="$HOME/.local/bin:$PATH".
 If using a custom writable data root, follow the guide's CASS_DATA_DIR, CASS_MEMORY_HOME and JFP_HOME exports in each task shell; preserve existing overrides and keep any XDG_DATA_HOME/XDG_CONFIG_HOME writable.
+Before using MS, follow the guide's local initialization and indexing steps in a writable project; reuse existing .ms/MS_ROOT/MS_CONFIG state.
 Check br --version, bv --version, ubs --version and jsm --version; report missing tools from the setup log.
 Use the existing repository tracker with br ready --json and bv --robot-triage. Never open their interactive TUIs.
 Agent Mail is available as a CLI. This setup does not configure this agent's MCP servers.
@@ -598,6 +600,8 @@ Agent Mail is available as a CLI. This setup does not configure this agent's MCP
 Requirements: Linux x86_64 with compatible runtime libraries, Bash, Python 3, curl, tar and GNU timeout, plus a writable data root. Ubuntu 24.04 is the tested OS. If you set `ACFS_CLOUD_ROOT`, use that root instead of `$HOME` in these instructions. Inspect the setup log and each version command to confirm the installed tools work.
 
 For a custom data root, follow the generated guide's `CASS_DATA_DIR` and `CASS_MEMORY_HOME` exports so search data and memory also use the writable workspace, and its `JFP_HOME` export for prompt caching. These preserve existing overrides and an explicit `XDG_DATA_HOME`; configured state directories must be writable. JFP also honors `XDG_CONFIG_HOME`, which takes precedence and must be writable. Provider HOME and configuration are preserved.
+
+MS needs project state before it can search skills. In a writable project, run `ms init --robot` once, then `ms index <skill-directory> --robot` and `ms search "query" --robot`. Replace `<skill-directory>` with the directory containing your skills, such as `.agents/skills`. Reuse existing `.ms`, `MS_ROOT` or `MS_CONFIG` state; with configured overrides, skip this initialization recipe. Avoid `--global` on a read-only HOME and `--force` when preserving existing state. Setup only installs MS; it leaves project initialization and skill indexing to the task that needs them.
 
 - **[Amp Orbs](https://ampcode.com/docs/orbs/customizing):** merge the command into executable `.agents/setup`, or use the project's Pre-setup Script. Do not install dependencies in `.agents/resume`. Amp documents Debian 12; binary compatibility and hosted persistence remain unverified.
 - **[Devin](https://docs.devin.ai/onboard-devin/environment/blueprint-reference):** add a Linux blueprint `run` step to `initialize` or `maintenance` and task instructions to `knowledge`. Verify a fresh snapshot. PATH exports do not persist between blueprint steps unless written to `$ENVRC`; explicit task-shell exports avoid assuming persistence.
@@ -828,6 +832,12 @@ time to time, or `git pull --rebase` the checkout and then run
 (`updates.runtime_skew`) when the checkout and the deployed runtime disagree, so
 a stack kept current by the nightly cannot silently outrun a stale dispatcher.
 
+**Temp space:** if `TMPDIR` (default `/tmp`) refuses a test write, because it is
+full or over a per-user tmpfs quota, `acfs-update` moves the run to the first of
+`ACFS_UPDATE_TMPDIR`, `/data/tmp`, `/var/tmp` and `~/.cache/acfs/tmp` that
+accepts one. Verified installers are staged in a system directory instead of
+`TMPDIR`: `/tmp`, or `/var/tmp` when `/tmp` refuses the write.
+
 ### What Gets Updated
 
 | Category | Tools | Method |
@@ -916,7 +926,8 @@ Verdicts:
   of reinstalling the same broken release every night.
 
 `acfs doctor` reports rolled back tools; `acfs-update --force` retries
-immediately.
+immediately. A backoff also ends as soon as the tool's pinned installer
+changes, because a new pin is a new release that has not failed yet.
 
 `acfs-update` exit codes distinguish partial from total failure: `0` all
 succeeded, `1` total failure (nothing updated), `2` partial failure (some tools
@@ -1005,6 +1016,11 @@ The wizard guides you through:
 - Tech stack detection/selection
 - Feature selection (br/beads, Claude settings, AGENTS.md, UBS ignore)
 - AGENTS.md customization preview
+
+Wizard diagnostics use private session files (mode `0600`) and create new log
+directories with mode `0700`, without changing your shell's umask or existing
+directory permissions. Repeated sessions get distinct files. Edited `AGENTS.md`
+contents remain in the project; state logs record only their length.
 
 <details>
 <summary><strong>TUI Wizard Screenshots</strong></summary>
@@ -1152,13 +1168,14 @@ The key is in the herdr server's config. A client attached from another machine 
 
 ### `acfs info` — System Overview
 
-Displays installation status in under 1 second by reading cached state (no verification).
+Quickly displays installation and onboarding state without verification or live probes by default.
 
 ```bash
 acfs info                # Terminal output (default)
 acfs info --json         # JSON output for scripting
 acfs info --html         # Self-contained HTML page
 acfs info --minimal      # Just essentials (IP, key commands)
+acfs info --live         # Include live coordination probes; can take longer
 ```
 
 Example output:
@@ -1180,9 +1197,10 @@ Example output:
 ```
 
 **Design Philosophy:**
-- **Speed**: Must complete in <1 second
-- **Read-only**: Never verifies or tests (that's doctor's job). The one write it makes is benign: successful IP lookups are cached for an hour at `~/.acfs/cache/ip_address` so repeat runs stay fast
-- **Offline**: No network calls; IP discovery reads local interfaces and routing tables only
+- **Speed**: Reads local state without waiting for coordination probes; live telemetry is opt-in
+- **Read-only by default**: Reads installation/onboarding state and local interfaces without invoking coordination tools or writing caches. Swarm values remain unknown until live telemetry is requested
+- **Live telemetry**: `--live` probes the optional coordination tools, which may update their own local state. Dashboard generation requests this mode explicitly to populate its operations panel
+- **Offline by default**: No network calls; IP discovery reads local interfaces and routing tables only
 - **Fallback**: Graceful degradation if data missing
 
 ### `acfs cheatsheet` — Alias Discovery
@@ -1232,6 +1250,14 @@ acfs dashboard serve                 # Serve on localhost:8080
 acfs dashboard serve --port 3000     # Custom port
 acfs dashboard serve --public        # Bind to 0.0.0.0
 ```
+
+The default server accepts local connections. To view it from your laptop, use
+the SSH tunnel command printed at startup, then open `http://localhost:8080`.
+`--public` and a non-loopback `--host` expose the dashboard **without authentication**
+to anyone who can reach the port, including its hostnames and install state.
+Use an SSH tunnel on untrusted networks. The server publishes only `index.html`;
+temporary files, timestamps, other files, and directory listings are not served.
+Python 3 is required for HTTP serving; you can also open the generated HTML directly.
 
 The dashboard provides:
 - System health at a glance
@@ -1987,6 +2013,25 @@ The wizard guides beginners through a **13-step journey** from "I have a laptop"
 - **Progress Tracking:** localStorage persistence across browser sessions
 - **Confirmation Checkboxes:** "I ran this command" acknowledgments
 - **Troubleshooting:** Expandable help for common issues
+
+### Local learning recommendations
+
+The [Learning Hub](https://agent-flywheel.com/learn) suggests up to three useful
+next steps from the lessons completed in your browser and your selected stack.
+Each suggestion explains its reason. The next guided lesson respects sequential
+access; tool references are always available. The goal selector can prioritize
+installation recovery or coordination with multiple agents. These choices and
+the recommendations do not prove that tools are installed or authenticated.
+
+With a valid saved wizard target, the existing local doctor JSON reader appears
+on the hub. Use the recovery goal to reach setup guidance if no target is saved.
+Findings or coverage gaps prioritize a diagnostic action. Only an in-memory
+boolean reaches the recommender; report contents, private identifiers and raw
+fix commands are never persisted or sent to analytics. Clearing/replacing the
+report, changing installation context or leaving the page clears that signal.
+Recommendations do not run commands, mark lessons complete, change your stack
+selection or unlock gated lessons. Unknown selections prompt review; new users
+and completed courses retain useful reference links without requiring a backend.
 
 ### Wizard Handoff Runbook
 
@@ -2831,9 +2876,9 @@ scripts/templates/acfs-checksum-monitor.* # timer + service templates
 
 1. **Bind a clean base**: Requires a clean `main` checkout matching both remote compatibility refs. Installs manifest dependencies with `--frozen-lockfile --ignore-scripts` and checks generated artifacts with `scripts/check-manifest-drift.sh --json`. Existing drift stops the run and must be repaired separately.
 2. **Observe the complete installer set**: Downloads every required installer and binds its URL and SHA256 to the exact existing `checksums.yaml`. Any fetch error, skipped entry, malformed report, or repository change stops publication.
-3. **Validate the candidate**: Runs the canonical checksum generator, then requires the candidate to change exactly the mismatches in the first observation. A second fetch that changes a previously matching installer is rejected.
-4. **Require prior external review**: For any changed URL outside `https://raw.githubusercontent.com/Dicklesworthstone/`, records a GitHub issue before modifying repository files. A human must review the upstream bytes and authorize the exact digest printed in that issue. The authorization file must be owner-only, regular, non-symlink, and contain only `authorize:<digest>`. Without authorization, the entire candidate waits, including any first-party changes.
-5. **Generate and publish**: Places the validated candidate, regenerates its installer ledger and web metadata, checks the complete generated contract, and commits only the declared publication paths. Pushes both compatibility refs atomically and reads them back before recording a healthy run.
+3. **Select prior authorization**: For changed URLs outside `https://raw.githubusercontent.com/Dicklesworthstone/`, records review evidence in a GitHub issue. A human must review the upstream bytes and authorize the exact digest printed there. The digest contains only external tool names, URLs, expected pins and observed hashes; unrelated commits and trusted changes do not invalidate it. The authorization file must be owner-only, regular, non-symlink, and contain only `authorize:<digest>`.
+4. **Build and validate offline**: Uses the complete first observation to construct the candidate, without downloading installers a second time. Pending external review selects only trusted-owner mismatches and leaves every external pin unchanged. The validator checks the exact selected mismatch set, unchanged URLs and unchanged unselected pins. Its default, without explicit selection, still requires all observed mismatches. A changing external endpoint therefore cannot invalidate trusted publication through a second fetch. If issue delivery fails, the bound evidence stays in local state with a warning; approved external changes still require recorded review before mutation.
+5. **Generate and publish**: Places the validated candidate, regenerates its installer ledger and web metadata, checks the complete generated contract, and commits only the declared publication paths. Pushes both compatibility refs atomically and reads them back before recording the result. Pending external review reports `result=deferred state=DEFERRED`, including when there were no trusted changes to publish, and leaves its review issue open. An accepted run with no pending review records `HEALTHY`. Authorization is consumed only after accepted external publication.
 
 The drift check combines `bun run generate:diff` with semantic checks across `scripts/generated/doctor_checks.sh`, `apps/web/lib/generated`, `acfs/onboard/lessons`, README snippets, and installer checksum coverage.
 
@@ -3878,8 +3923,16 @@ acfs swarm packet --json --bead bd-1234 --agent-name BlueLake
 The packet is a startup prompt for an agent in a herdr pane. It prioritizes live AGENTS.md,
 README.md, Beads, and Agent Mail state over memory-derived hints, includes drift
 checks, and preserves exact `bv --robot-*`, `br`, Agent Mail MCP, `rch exec --`,
-and UBS workflow guidance. It is read-only: it does not claim work, reserve
-files, send messages, start agents, run builds, or edit generated files.
+and UBS workflow guidance. It does not claim work, reserve files, send messages,
+start agents, run builds, or edit generated files. CASS retrieval uses lexical
+search with `--no-maintenance` and includes session snippets. Live `cm context`
+can update memory/history caches, so packets that invoke it report
+`safety.read_only: false`. For read-only generation, use `--no-live-context`;
+saved `--cm-file` and `--cass-file` context remains available in that mode.
+
+Automatic packet and assignment reads use `br --no-db` to read exported JSONL
+without opening or importing into the tracker database. Run `br sync --flush-only`
+explicitly before generating packets when you have unexported Beads changes.
 
 Before launching a large real swarm, ACFS can run an offline simulation of the control plane:
 
@@ -4415,10 +4468,14 @@ acfs support-bundle [options]
 
 **Output files:**
 ```
-~/.acfs/support/<timestamp>/          # Unpacked bundle directory
-~/.acfs/support/<timestamp>.tar.gz    # Compressed archive (shareable)
-~/.acfs/support/<timestamp>/manifest.json  # Bundle manifest
+~/.acfs/support/<run>/diagnostics/          # Unpacked bundle directory
+~/.acfs/support/<run>/diagnostics.tar.gz    # Compressed archive (shareable)
+~/.acfs/support/<run>/diagnostics/manifest.json  # Bundle manifest
 ```
+
+Each run uses a unique private directory. Existing archive files or symlinks are
+never overwritten; if compression fails, the command prints the unpacked
+diagnostic directory instead. Review the bundle before sharing it.
 
 **What's collected:**
 
@@ -4430,6 +4487,7 @@ acfs support-bundle [options]
 | `logs/install-*.log` | Recent install logs (up to 10) |
 | `logs/install_summary_*.json` | Recent install summaries |
 | `doctor.json` | Health check results |
+| `credential_status.json` | Passive credential-source metadata; authentication remains unverified |
 | `versions.json` | Installed tool versions |
 | `environment.json` | OS, memory, disk, user info |
 | `os-release` | Linux distribution info |
@@ -4452,6 +4510,294 @@ By default, sensitive data is automatically redacted:
 | Passwords | `"password": "..."` | `"password": "<REDACTED:password>"` |
 | Private key blocks | `-----BEGIN ... PRIVATE KEY-----` | `<REDACTED:private_key>` |
 
+### Credential lifecycle guide
+
+Start by choosing which providers your project needs. ACFS installs tools without
+requiring credentials for every service. A missing optional credential is normal;
+make a provider required only when your workflow will use it. Keep API keys,
+OAuth access tokens and refresh tokens in a secret store or the provider's own
+credential storage. Never paste them into commits, support logs, chat or command
+arguments.
+
+Follow this sequence: **inspect → configure → validate → refresh or rotate**.
+The passive checks below cover inspect/configure readiness. Provider acceptance
+and permissions require a separate live check.
+
+#### Inspect readiness and declare requirements
+
+Inspect local credential metadata without running login, `whoami`, setup steps
+or provider requests:
+
+```bash
+acfs services-setup --credential-status
+acfs services-setup --credential-status --require vercel --require supabase
+onboard credential-status
+```
+
+The version-1 `acfs.credential_status` JSON covers Claude, Codex, Gemini, Vercel,
+Supabase and Wrangler. Each entry reports `state`, `source`, `requirement`,
+`authentication` and a remediation ID. All services are optional unless named
+with repeatable `--require`; unmet presence requirements return exit 1. Exit 0
+means the declared **storage** requirements are met, not successful authentication.
+Invalid options, unresolved target context or missing `jq` return exit 2.
+
+States distinguish `missing`, `placeholder`, `shell_configured`, `file_configured`,
+`expired`, `refresh_required`, `vault_backed` and `unknown`. An environment placeholder takes
+precedence over a cached file
+so a shadowing export stays visible. Malformed JSON or credential shapes,
+unreadable or oversized files (over 1 MiB), invalid TOML and invalid expiry
+metadata report `unknown`. Every entry
+explicitly marks authentication `unverified`; a future expiry does not prove a
+token is accepted or has the permissions your project needs.
+
+For cached Claude OAuth credentials, `claudeAiOauth.expiresAt` is interpreted as
+milliseconds since the Unix epoch. Gemini OAuth uses `expiry_date` in the same
+units. A stored access token with a past expiry reports `expired`, including when
+a refresh token is present. A refresh-only file reports `refresh_required`.
+Both use `refresh_or_reauthenticate`: let the provider CLI refresh or sign in
+again. The report never sends a refresh request, rotates a token or modifies the
+credential file. Refresh-token presence does not prove refreshability.
+Doctor marks both states as warnings. Onboarding keeps these installed services
+in its attention list and excludes them from the configured-service count.
+
+For JSON credential files, absent or null expiry preserves an unverified stored
+candidate. Present expiry
+must be a nonnegative integral number no later than year 9999; strings, negative
+values, fractions and oversized numbers report `unknown` for stored candidates.
+Placeholder access tokens remain placeholders. Exported API keys keep their
+environment precedence. `--require` cannot pass on expired or refresh-only
+credentials. The same lifecycle states reach normal service setup, doctor,
+support bundles and onboarding.
+
+| Provider / credential | Local expiry evidence | Meaning and recovery |
+|---|---|---|
+| Claude OAuth | `claudeAiOauth.expiresAt`, epoch milliseconds | Past: `expired`; refresh-only: `refresh_required`; use Claude's sign-in/refresh flow |
+| Codex OAuth | Unverified JWT payload `exp`, epoch seconds, from the stored access token | Past: `expired`; refresh-only: `refresh_required`; use Codex's auth flow; `last_refresh` is not an expiry |
+| Gemini OAuth | `expiry_date`, epoch milliseconds | Past: `expired`; refresh-only: `refresh_required`; use Gemini's sign-in/refresh flow |
+| Vercel OAuth | `expiresAt`, epoch **seconds**, with `token` and `refreshToken` | Past: `expired`; refresh-only: `refresh_required`; run Vercel's auth flow |
+| Wrangler OAuth | TOML `oauth_token`, `refresh_token`, RFC3339 string `expiration_time` | Past or absent OAuth expiry: `expired`, matching Wrangler; refresh-only: `refresh_required` |
+| Supabase PAT and exported API keys | No reliable local expiry field | Storage remains unverified; the provider decides validity, expiry and permissions |
+| Vault reference | Declared source, without fetching the value | `vault_backed`; resolve through your approved Vault workflow before validation |
+
+JWT inspection checks the payload's syntax and bounded integral expiry. It does
+**not** verify the signature, issuer, audience or permissions. A future or absent
+claim is not proof of authentication. API-key fields do not inherit expiry from
+JWT-looking text. Invalid claims remain `unknown`; private claims never appear
+in reports. Wrangler uses Python 3.11+ `tomllib` in an isolated, local stdin-only
+parser. If that parser is unavailable, the state remains `unknown`; ACFS does not
+install a parser or evaluate the TOML as shell code. Duplicate keys and malformed
+calendar/offset values are rejected. Wrangler v1's retired file `api_token` is
+`unknown`; migrate it to the current provider-supported environment workflow.
+
+Current Vercel file storage is checked in its application-data directory
+(`~/.local/share/com.vercel.cli` on Linux, honoring absolute `XDG_DATA_HOME`, or
+`~/Library/Application Support/com.vercel.cli` on macOS), then the existing ACFS
+and legacy credential locations. Codex honors `CODEX_HOME`. The first nonmissing
+file state wins: an expired or malformed current file is not hidden by an older
+stored token. Keyring-only credentials and custom provider `--global-config`
+locations may be invisible to passive checks; that does not mean you are logged
+out. Use a provider check in the exact project/account context.
+Wrangler prefers an existing `~/.wrangler` directory; otherwise it uses
+`$XDG_CONFIG_HOME/.wrangler`, defaulting to `~/.config/.wrangler` on Linux or
+`~/Library/Preferences/.wrangler` on macOS. `missing` describes the inspected
+environment and files, not every provider's native credential store.
+
+#### Configure the credential your project actually needs
+
+| Provider | Interactive setup | Headless / CI setup |
+|---|---|---|
+| Claude | `claude auth login`, or follow onboarding's Claude login prompt | Inject `ANTHROPIC_API_KEY` through your secret manager |
+| Codex | `codex login`; `codex login --device-auth` on a headless host | Use your approved API-key workflow; feed an existing `OPENAI_API_KEY` to `codex login --with-api-key` over stdin if persisting it is intended |
+| Gemini | Launch Gemini and choose its Google sign-in flow | Inject `GEMINI_API_KEY` or `GOOGLE_API_KEY` |
+| Vercel | `vercel login` | Inject `VERCEL_TOKEN` |
+| Supabase | `supabase login` | Inject `SUPABASE_ACCESS_TOKEN` |
+| Cloudflare | `wrangler login` | Inject `CLOUDFLARE_API_TOKEN` with only the needed account/resource permissions |
+
+For interactive setup, run `acfs services-setup`, or run `onboard` and choose its
+service-authentication menu. Re-run the passive report afterward. A provider-rejected export can
+shadow a fresh file; a placeholder export always shadows the cached credential.
+Unset the shadowing variable in the current shell if file authentication is
+intended. Update its secret-manager/CI/startup-file source too, so a new shell
+does not restore the obsolete value. Startup files are parsed as text by ACFS,
+never sourced to discover secrets.
+
+For CI, inject secrets into the job environment, request only the providers the
+job needs, and run the passive `--require` check before deployment. Then perform
+the relevant live permission check. An exit0 presence check cannot prove that a
+token can deploy, administer a database or access a particular account.
+
+#### Validate provider acceptance separately
+
+| Provider | Useful check | What it proves / limits |
+|---|---|---|
+| Claude | `claude auth status`, then a provider-approved account/profile check | CLI status can be local only; account acceptance needs an actual provider response |
+| Codex | `codex login status`, then an account/usage check for OAuth or the OpenAI models-list API for an API key | Login status alone is local; no model request is needed for an auth probe |
+| Gemini | Google account/userinfo for OAuth, or Gemini models-list API for a key | Confirms that endpoint's access, not quota or permissions for every model |
+| Vercel | `vercel whoami` or Vercel's current-user API | Confirms the selected account; project/team authorization may still differ |
+| Supabase | `supabase projects list` or Management API projects-list | Confirms the token's permitted project listing, not database or migration permission |
+| Cloudflare | `wrangler whoami`, or token verification / permitted account listing | Token-active status and account/resource permissions are distinct |
+
+Provider CLIs may refresh OAuth credentials or write their own caches during
+these checks. Use direct, bounded **GET** requests to a fixed official endpoint
+when credential files must stay unchanged. Keep credentials in request headers
+in memory; do not put them in URLs or process arguments. Do not follow redirects
+with an authorization header. Retain only provider/probe names, HTTP status and
+fixed outcome categories. Discard response bodies containing account IDs,
+emails, project names, tokens or quota details. Do not use a paid model request
+as a login test.
+
+A 401 is authentication rejection for that endpoint. A 403 can mean missing
+scope, account restrictions or a network/security layer; it does not establish
+that a token expired. DNS/TLS/timeout errors establish no auth conclusion. A
+successful account-list response does not prove deployment permission. Record
+the endpoint, context and observed result separately from passive source state.
+
+#### Refresh, reauthenticate, rotate and revoke
+
+- For `expired` or `refresh_required`, let the provider CLI perform its supported
+  refresh/sign-in flow. ACFS's passive checks never send refresh requests.
+  Refresh-token presence does not prove that refresh will succeed. If refresh
+  is rejected, sign in again; do not repeatedly retry a revoked/reused token.
+- For `placeholder`, replace or unset the source before using the service.
+  For `unknown`, inspect the local format/permissions and parser availability
+  privately; do not paste the credential file into support.
+- For API-key/PAT rotation, create a least-privilege replacement through the
+  provider, update the secret store and each job/environment that consumes it,
+  validate the required operation, then revoke the old credential. Test existing
+  sessions and new shells so a stale export cannot keep the old key active.
+- If a credential was exposed, use the provider's incident/revocation process.
+  Removing a value from a working tree does not revoke it or erase Git history.
+  Coordinate cleanup explicitly rather than deleting files or rewriting history
+  as an automatic ACFS remediation.
+
+#### Vault-backed credentials
+
+Declare unresolved Vault provenance with `ACFS_<SERVICE>_VAULT_REF`, where
+`SERVICE` is `CLAUDE`, `CODEX`, `GEMINI`, `VERCEL`, `SUPABASE` or `WRANGLER`:
+
+```bash
+export ACFS_CLAUDE_VAULT_REF='vault://secret/acfs/claude#api_key'
+acfs services-setup --credential-status --require claude
+```
+
+This is an **ACFS annotation**, not a URI understood by Vault or the provider.
+It names a KV mount, secret path and field. Components use ASCII letters,
+digits, `_`, `-` and `.`; empty, `.`/`..`, placeholder components and references
+over 2048 characters are rejected as `unknown`. The annotation is optional.
+`VAULT_ADDR`, a Vault installation or a Vault token alone does not establish
+provider provenance. The collector never contacts Vault, reads its token helper,
+prints the reference or fetches a secret. Valid references report `vault_backed`,
+`source=vault`, `authentication=unverified`, `resolve_vault_reference` and do
+not satisfy `--require`. Doctor warns and onboarding keeps the service in its
+attention list. Materialize the secret through your approved Vault workflow
+into the provider environment or credential file, then validate provider access.
+
+A nonblank active provider export takes precedence, including placeholders.
+Without one, an explicit Vault annotation takes precedence over cached files.
+An actual exported key therefore overrides the annotation; remove the annotation
+when switching to file-based credentials. Literal `vault://...` references in
+provider token fields are also unresolved and cannot count as usable tokens.
+The annotation does not prove the secret exists or that Vault access is permitted.
+
+TypeScript onboarding exposes `getCredentialStatus(requiredServices)` with the
+same JSON metadata, state/remediation vocabulary and requirements as Bash.
+Both honor `CODEX_HOME` for Codex's `auth.json`. `checkAllServices()` attaches
+canonical credential metadata to its provider entries. Stored candidates use
+`configured: true` with `authenticated: false`; successful live checks may use
+`authenticated: true`. Expired, refresh-only, placeholder, invalid and unresolved
+Vault candidates cannot count as configured. Startup-file assignments are
+still parsed as text by the interactive checks, never evaluated; the passive
+report only examines exported variables and credential files.
+
+The JSON report reuses the existing local credential paths and placeholder policy,
+omits secret values and file paths, and does not change credential files. It
+cannot be combined with setup flags such as `--yes` or `--install-claude-guard`.
+
+`acfs support-bundle` includes the same optional-service metadata in
+`credential_status.json`, its manifest, and the linked support report. It checks
+the resolved target user's credential files and the collecting process's exported
+environment, without invoking provider commands for this capture. Only the fixed
+state/source/remediation vocabulary is retained; extra fields, tokens and paths
+are omitted even with `--no-redact`. Failed, timed-out or invalid captures produce
+a warning record rather than an authentication claim.
+
+Normal `acfs doctor` output also includes these credential-source states, and
+`acfs doctor --json` exposes them as `credential.source.<service>` checks. Missing
+optional credentials are skipped; placeholders and unknown storage formats are
+warnings. Stored candidates are reported with authentication explicitly
+`unverified` and the same remediation IDs as the passive report. This storage
+check performs no login, refresh, `whoami` or provider validation; `--deep`
+continues to request doctor's separate functional checks.
+
+The Bash onboarding authentication screen shows the same six source states,
+remediation IDs and next steps. Its existing service indicators mean configured
+or checked; stored tokens remain explicitly `unverified`. `onboard credential-status`
+returns the optional-service JSON without running provider commands or recording
+tutorial progress. It uses onboarding's resolved target home. Failed, invalid or
+timed-out captures return a constant error record and exit 2; raw output is never
+shown. This command accepts no setup flags or `--require` options; use
+`acfs services-setup --credential-status --require SERVICE` for presence requirements.
+
+Credential JSON files must contain exactly one object. Concatenated documents
+and raw or JSON-escaped NUL bytes remain `unknown` and cannot satisfy a declared
+storage requirement. The byte bound and parsed state use one captured snapshot,
+including its trailing newlines. Rejected
+webhook URLs are logged without echoing the URL or any credentials it contains.
+
+The read-only `acfs rescue --json` advisor also requires single-object checkpoint
+and doctor reports. Invalid phase lists, schema versions, or diagnostic counters
+cannot produce healthy advice. Timing overrides use bounded nonnegative decimal
+seconds, including leading-zero values; expressions are rejected before any
+arithmetic. Relative search directories are passed to filesystem tools as
+absolute paths so option-like names remain filenames.
+
+### Status JSON for editor integrations
+
+`acfs status --ide` emits the version-1 `acfs.editor_status` contract for local
+editor extensions and scripts. It reads the existing install state and checks
+binary presence. It makes no network requests and runs no installed agent tools.
+Add `--live` to query herdr through the existing swarm collector, with a
+one-second timeout per tool and a five-second overall deadline. Other swarm
+tools, credential stores and provider APIs are not queried.
+
+```bash
+acfs status --ide          # Passive install snapshot
+acfs status --ide --live   # Also query local herdr workspace and agent counts
+```
+
+The payload includes `schema_version`, `kind`, `status`, `generated_at`,
+`freshness`, `install`, `provider`, `sessions`, `collectors`, `redaction`,
+`commands`, `next_actions` and `support`. Clients should reject unknown schema
+versions and ignore additional fields within version 1. Exit codes are 0 for
+OK, 1 for incomplete state/tools or unavailable requested session data, and 2
+for failed, missing or invalid install state. A missing `jq` dependency returns
+2 with a minimal versioned envelope and `error: "jq_unavailable"`.
+
+Every invocation collects a new snapshot; `freshness.cache` is `"none"`.
+`state_updated_at` is the validated persisted timestamp, not the query time.
+Missing or failed session queries have **null counts**, not zero. Provider
+names come only from recognized `provider`/`vps_provider` values in local state;
+missing or unrecognized metadata remains unknown. The phase-completion summary
+describes recorded install progress; tool counts describe executable presence,
+not authenticated or operational tools.
+
+Raw state, errors, session names, usernames, paths, addresses, provider IDs and
+credentials are omitted. `redaction.count` counts recognized sensitive field
+names omitted from state; it is not a count of validated or leaked credentials.
+Command snippets are argument arrays from a fixed catalog. They are advisory:
+`execute_automatically` is false, and the support-bundle hint explicitly says
+that creating a bundle writes files. `--ide` rejects `--check-updates` and
+`--short`; the existing human, short and `--json` status formats remain available.
+
+These selected-field examples are checked against the CLI regression fixtures:
+
+```json
+{"scenario":"complete","status":"ok","install_status":"complete","sessions_status":"not_requested","workspace_count":null}
+{"scenario":"partial","status":"warn","install_status":"partial","sessions_status":"not_requested","workspace_count":null}
+{"scenario":"failed","status":"error","install_status":"failed","sessions_status":"not_requested","workspace_count":null}
+{"scenario":"live","status":"ok","install_status":"complete","sessions_status":"ok","workspace_count":2}
+```
+
 Before launching a large agent swarm or sharing a support bundle, run a local credential preflight:
 
 ```bash
@@ -4459,6 +4805,13 @@ acfs credential-preflight --json
 ```
 
 The preflight scans bounded ACFS state/log files plus shell config/history surfaces and reports only categories, counts, file labels, and remediation guidance. It never prints raw secret values or snippets.
+
+Numeric passwords and literals containing words like `example` or `dummy` are
+checked under credential fields. Complete placeholder markers, environment
+references, and empty parameter defaults stay exempt; a plaintext parameter
+default is checked as a literal. Documented numeric token counters and limits
+are classified by their field names. The scan reads expressions as data and
+does not execute them or verify provider authentication or credential expiry.
 
 **Example workflow:**
 

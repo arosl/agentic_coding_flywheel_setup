@@ -1090,6 +1090,82 @@ exec(compile(source, '<setup-python>', 'exec'))
                 self.assertIn('Unsafe cloud log destination', output)
                 self.assertFalse((root / '.local/bin/br').exists())
 
+    def test_hardlinked_log_destinations_preserve_target_bytes_and_mode(self):
+        self.bundle('br')
+        self.bundle('am')
+        self.command('claude', '#!/bin/sh\necho diagnostic\n')
+        for name in ('setup.log', 'logs/br.log', 'logs/mcp.log'):
+            with self.subTest(name=name):
+                root = self.root / ('hardlinked-' + name.replace('/', '-'))
+                log = root / '.acfs/cloud' / name
+                log.parent.mkdir(parents=True)
+                target = root / 'user-data'
+                original = b'Keep these unrelated data.\n'
+                target.write_bytes(original)
+                target.chmod(0o640)
+                os.link(target, log)
+                output = self.run_setup('br am', ACFS_CLOUD_ROOT=str(root))
+                self.assertEqual(target.read_bytes(), original)
+                self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o640)
+                self.assertEqual(log.stat().st_ino, target.stat().st_ino)
+                self.assertEqual(log.stat().st_nlink, 2)
+                self.assertIn('Unsafe cloud log destination', output)
+                self.assertFalse((root / '.local/bin/br').exists())
+        self.assertFalse((self.root / 'requests').exists(), 'Unsafe logs must fail before downloads')
+
+    def test_legacy_mcp_config_in_linked_parent_is_preserved(self):
+        self.bundle('am')
+        self.command('claude', '#!/bin/sh\necho called >> "$TMPDIR/mcp-invoked"\n[ "$2" = get ]\n')
+        external = self.root / 'existing user config'
+        external.mkdir()
+        config = external / '.claude.json'
+        original = json.dumps({'mcpServers': {'mcp-agent-mail': {
+            'command': str(self.home / '.local/bin/mcp-agent-mail'), 'args': []}}}).encode()
+        config.write_bytes(original)
+        config.chmod(0o600)
+        directory = self.home / 'linked-claude'
+        directory.symlink_to(external, target_is_directory=True)
+        output = self.run_setup('am', CLAUDE_CONFIG_DIR=str(directory))
+        self.assertEqual(config.read_bytes(), original)
+        self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o600)
+        self.assertTrue(directory.is_symlink())
+        self.assertFalse((self.root / 'tmp/mcp-invoked').exists())
+        self.assertIn('Could not migrate legacy Agent Mail registration', output)
+
+    def test_legacy_mcp_migration_preserves_concurrent_mode_change(self):
+        self.bundle('am')
+        self.command('claude', '#!/bin/sh\necho called >> "$TMPDIR/mcp-invoked"\n[ "$2" = get ]\n')
+        config = self.home / '.claude.json'
+        original = json.dumps({'mcpServers': {'mcp-agent-mail': {
+            'command': str(self.home / '.local/bin/mcp-agent-mail'), 'args': []}}}).encode()
+        config.write_bytes(original)
+        config.chmod(0o600)
+        fault_bin = self.root / 'mode-change-bin'
+        fault_bin.mkdir()
+        wrapper = fault_bin / 'python3'
+        wrapper.write_text(f'''#!{shutil.which('python3')}
+import os, pathlib, sys
+if len(sys.argv) < 2 or sys.argv[1] != '-':
+    os.execv({shutil.which('python3')!r}, [{shutil.which('python3')!r}, *sys.argv[1:]])
+source = sys.stdin.read()
+sys.argv = sys.argv[1:]
+if 'Migrated legacy ACFS registration' in source:
+    original_chmod = pathlib.Path.chmod
+    def concurrent_mode(path, mode, *args, **kwargs):
+        if path.name.startswith('.claude.json.acfs-') and path.name.endswith('.tmp'):
+            os.chmod({str(config)!r}, 0o640)
+        return original_chmod(path, mode, *args, **kwargs)
+    pathlib.Path.chmod = concurrent_mode
+exec(compile(source, '<setup-python>', 'exec'))
+''')
+        wrapper.chmod(0o755)
+        self.env['PATH'] = str(fault_bin) + ':' + self.env['PATH']
+        output = self.run_setup('am')
+        self.assertEqual(config.read_bytes(), original)
+        self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o640)
+        self.assertFalse((self.root / 'tmp/mcp-invoked').exists())
+        self.assertIn('Could not migrate legacy Agent Mail registration', output)
+
     def test_mcp_diagnostics_are_private_even_when_log_already_exists(self):
         self.bundle('am')
         log = self.home / '.acfs/cloud/logs/mcp.log'
@@ -1144,6 +1220,11 @@ exec(compile(source, '<setup-python>', 'exec'))
             'another-server': {'command': 'keep', 'args': ['original']}}}
         config.write_text(json.dumps(original))
         config.chmod(0o600)
+        # Root setup must preserve a different session user's ownership too.
+        # The same case runs without privilege in the ordinary Linux suite.
+        if os.geteuid() == 0:
+            os.chown(config, 1000, 1000)
+        metadata = config.stat()
         before = config.read_bytes()
         self.run_setup('am')
         migrated = json.loads(config.read_text())
@@ -1152,6 +1233,7 @@ exec(compile(source, '<setup-python>', 'exec'))
         self.assertEqual(migrated['mcpServers']['mcp-agent-mail']['env'], {'KEEP': 'value'})
         self.assertEqual(migrated['mcpServers']['mcp-agent-mail']['args'], ['serve-stdio'])
         self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+        self.assertEqual((config.stat().st_uid, config.stat().st_gid), (metadata.st_uid, metadata.st_gid))
         backups = list((self.root / 'tmp').glob('acfs-cloud.*/claude.json.before-stdio-fix'))
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_bytes(), before)
@@ -1203,6 +1285,31 @@ exec(compile(source, '<setup-python>', 'exec'))
         self.assertIn('ACFS_REF=main', guide)
         self.assertEqual((runtime / 'AGENTS.md').read_text(), 'Runtime instructions.\n')
         self.assertEqual(list(self.home.iterdir()), [])
+
+    def test_ms_guide_explains_local_state_without_initializing_during_setup(self):
+        self.bundle('ms', content=b'#!/bin/sh\nprintf "%s\\n" "$*" >> "$TMPDIR/ms-invocations"\necho "ms 1.2.3"\n')
+        self.home.chmod(0o555)
+        project = self.root / 'existing project'
+        state = project / '.ms'
+        state.mkdir(parents=True)
+        original = b'# Keep the existing project configuration.\n'
+        (state / 'config.toml').write_bytes(original)
+        writable = project / '.acfs-cloud'
+        self.run_setup('ms', cwd=project, ACFS_CLOUD_AGENT='codex', ACFS_CLOUD_ROOT=str(writable),
+                       MS_ROOT=str(state), MS_CONFIG=str(state / 'config.toml'))
+        guide = (writable / '.codex/AGENTS.md').read_text()
+        for command in ('ms init --robot', 'ms index <skill-directory> --robot', 'ms search "query" --robot'):
+            self.assertIn(command, guide)
+        self.assertIn('with configured overrides, skip this initialization recipe', guide)
+        self.assertEqual((state / 'config.toml').read_bytes(), original)
+        self.assertEqual(sorted(path.name for path in state.iterdir()), ['config.toml'])
+        self.assertFalse((writable / '.ms').exists())
+        self.assertEqual(list(self.home.iterdir()), [])
+        self.run_setup('br', cwd=project, ACFS_CLOUD_AGENT='codex', ACFS_CLOUD_ROOT=str(writable))
+        self.assertIn('ms index <skill-directory> --robot', (writable / '.codex/AGENTS.md').read_text())
+        invocations = (self.root / 'tmp/ms-invocations').read_text().splitlines()
+        self.assertTrue(invocations, 'Setup must verify the installed MS binary')
+        self.assertEqual(set(invocations), {'--version'}, 'Setup must leave initialization and indexing to the task')
 
     def test_invalid_root_is_rejected_before_creating_install_directories(self):
         for root in ('relative-root', '/'):

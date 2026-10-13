@@ -10,6 +10,7 @@
 set -euo pipefail
 
 SWARM_STATUS_JSON=false
+SWARM_STATUS_HERDR_ONLY=false
 SWARM_STATUS_TIMEOUT="${ACFS_SWARM_STATUS_TIMEOUT:-3}"
 SWARM_STATUS_GENERATED_AT="$(date -Iseconds 2>/dev/null || date)"
 SWARM_STATUS_OVERALL="pass"
@@ -88,6 +89,7 @@ Usage: acfs swarm status [OPTIONS]
 
 Options:
   --json       Emit machine-readable JSON
+  --herdr-only Query only herdr; skip host, nhm, Beads, mail, BV and RCH probes
   --help, -h   Show this help
 
 Environment:
@@ -99,6 +101,11 @@ swarm_status_parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --json)
+                SWARM_STATUS_JSON=true
+                shift
+                ;;
+            --herdr-only)
+                SWARM_STATUS_HERDR_ONLY=true
                 SWARM_STATUS_JSON=true
                 shift
                 ;;
@@ -835,6 +842,14 @@ swarm_status_emit_human() {
 
 swarm_status_main() {
     swarm_status_parse_args "$@"
+    if [[ "$SWARM_STATUS_HERDR_ONLY" == true ]]; then
+        local jq_bin=""
+        jq_bin="$(swarm_status_binary_path jq 2>/dev/null || true)"
+        [[ -n "$jq_bin" ]] || { echo "Error: jq is required for herdr-only JSON" >&2; return 2; }
+        swarm_status_collect_herdr
+        swarm_status_emit_json | "$jq_bin" '{schema_version, generated_at, status: .probes.herdr.status, probes: {herdr: .probes.herdr}}'
+        return
+    fi
     swarm_status_collect_all
     if [[ "$SWARM_STATUS_JSON" == true ]]; then
         swarm_status_emit_json

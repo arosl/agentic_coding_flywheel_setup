@@ -7,6 +7,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SWARM_STATUS_SH="$REPO_ROOT/scripts/lib/swarm_status.sh"
+EDITOR_STATUS_SH="${ACFS_EDITOR_STATUS_TEST_SCRIPT:-$REPO_ROOT/scripts/lib/status.sh}"
 
 TESTS_PASSED=0
 TESTS_FAILED=0
@@ -83,6 +84,8 @@ run_and_capture() {
 make_stub_dir() {
     local stub_dir
     stub_dir="$(mktemp -d "$ARTIFACT_DIR/stubs.XXXXXX")"
+    # Restricted tool PATHs must still exercise the real timeout boundary.
+    ln -s "$(command -v timeout)" "$stub_dir/timeout"
     printf '%s\n' "$stub_dir"
 }
 
@@ -123,7 +126,7 @@ STUB
 
 test_no_tool_environment_warns() {
     local output
-    output="$(run_and_capture no_tool_environment env PATH="/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 bash "$SWARM_STATUS_SH" --json)"
+    output="$(run_and_capture no_tool_environment env PATH="/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
     write_artifact "no_tool_environment.json" "$output"
 
     jq -e '
@@ -169,7 +172,7 @@ case "$*" in
 esac'
 
     local output
-    output="$(run_and_capture stubbed_tools env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 bash "$SWARM_STATUS_SH" --json)"
+    output="$(run_and_capture stubbed_tools env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
     write_artifact "stubbed_tools.json" "$output"
 
     jq -e '
@@ -223,7 +226,7 @@ JSON
 esac'
 
     local output
-    output="$(run_and_capture rch_queue_pressure env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 bash "$SWARM_STATUS_SH" --json)"
+    output="$(run_and_capture rch_queue_pressure env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
     write_artifact "rch_queue_pressure.json" "$output"
 
     jq -e '
@@ -281,7 +284,7 @@ echo "{\"recommendation\":{\"id\":\"bd-ready\"}}"'
 echo "not json"'
 
     local output
-    output="$(run_and_capture partial_swarm env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 bash "$SWARM_STATUS_SH" --json)"
+    output="$(run_and_capture partial_swarm env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
     write_artifact "partial_swarm.json" "$output"
 
     jq -e '
@@ -346,7 +349,7 @@ case "$*" in
 esac'
 
     local output
-    output="$(run_and_capture resource_pressure env HOME="$ARTIFACT_DIR/pressure-home" PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 bash "$SWARM_STATUS_SH" --json)"
+    output="$(run_and_capture resource_pressure env HOME="$ARTIFACT_DIR/pressure-home" PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
     write_artifact "resource_pressure.json" "$output"
 
     jq -e '
@@ -373,7 +376,7 @@ sleep 2
 echo "{\"id\":\"cli:workspace:list\",\"result\":{\"type\":\"workspace_list\",\"workspaces\":[]}}"'
 
     local output
-    output="$(run_and_capture timeout_warning env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 bash "$SWARM_STATUS_SH" --json)"
+    output="$(run_and_capture timeout_warning env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
     write_artifact "timeout_warning.json" "$output"
 
     jq -e '
@@ -397,7 +400,7 @@ case "$*" in
 esac'
 
     local output
-    output="$(run_and_capture rch_queue_timeout env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 bash "$SWARM_STATUS_SH" --json)"
+    output="$(run_and_capture rch_queue_timeout env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
     write_artifact "rch_queue_timeout.json" "$output"
 
     jq -e '
@@ -413,7 +416,7 @@ esac'
 
 test_human_output() {
     local output
-    output="$(run_and_capture human_output env PATH="/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 bash "$SWARM_STATUS_SH")"
+    output="$(run_and_capture human_output env PATH="/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH")"
     write_artifact "human_output.txt" "$output"
 
     grep -Fq "ACFS Swarm Status" <<<"$output" || return 1
@@ -507,6 +510,45 @@ test_nhm_backend_failure_is_a_warning() {
     pass "nhm_backend_failure_is_a_warning"
 }
 
+test_editor_collector_uses_calling_bash() {
+    local stub_dir jq_bin timeout_bin output
+    stub_dir="$(make_stub_dir)"
+    jq_bin="$(command -v jq)"
+    timeout_bin="$(command -v timeout)" || return 1
+    printf '%s\n' '{"completed_phases":["finalize"]}' > "$stub_dir/state.json"
+    write_herdr_stub "$stub_dir" 1 3
+    write_executable "$stub_dir/older-bash" '#!/usr/bin/env bash
+printf "called\n" > "$EDITOR_OLD_BASH_MARKER"
+exit 99'
+
+    # Execute the actual editor function and collector. The resolver deliberately
+    # offers an unusable older Bash; a modern caller must keep its interpreter.
+    output="$(run_and_capture editor_interpreter env \
+        PATH="$stub_dir:$(dirname "$BASH"):$PATH" \
+        EDITOR_OLD_BASH_MARKER="$stub_dir/older-bash-called" \
+        "$BASH" -c '
+            source "$1"
+            editor_timeout="$4"
+            editor_old_bash="$5"
+            _status_system_binary_path() {
+                case "$1" in
+                    bash) printf "%s\n" "$editor_old_bash" ;;
+                    timeout) printf "%s\n" "$editor_timeout" ;;
+                    date) command -v date ;;
+                    *) return 1 ;;
+                esac
+            }
+            _STATUS_LIVE=true
+            _status_editor_json "$2" 25 OK "$3"
+        ' _ "$EDITOR_STATUS_SH" "$stub_dir/state.json" "$jq_bin" "$timeout_bin" "$stub_dir/older-bash")"
+
+    [[ "$(cat "$ARTIFACT_DIR/editor_interpreter.exit")" == 0 ]] || return 1
+    jq -e '.status == "ok" and .sessions.status == "ok" and
+        .sessions.workspace_count == 1 and .sessions.agent_count == 3' <<<"$output" >/dev/null || return 1
+    [[ ! -e "$stub_dir/older-bash-called" ]] || return 1
+    pass "editor_collector_uses_calling_bash"
+}
+
 run_test() {
     local name="$1"
     if "$name"; then
@@ -520,6 +562,18 @@ main() {
         echo "jq is required for swarm status tests" >&2
         exit 1
     }
+    command -v timeout >/dev/null 2>&1 || {
+        echo "timeout is required for swarm status tests" >&2
+        exit 1
+    }
+
+    run_test test_editor_collector_uses_calling_bash
+    if [[ "${1:-}" == "--editor-interpreter-only" ]]; then
+        echo "Results: $TESTS_PASSED passed, $TESTS_FAILED failed"
+        echo "Artifacts: $ARTIFACT_DIR"
+        [[ $TESTS_FAILED -eq 0 ]]
+        return
+    fi
 
     run_test test_no_tool_environment_warns
     run_test test_stubbed_tools_pass

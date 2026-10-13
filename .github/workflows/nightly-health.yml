@@ -1,0 +1,59 @@
+name: Nightly update health regressions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/lib/nightly_update.sh'
+      - 'scripts/lib/status.sh'
+      - 'scripts/generated/internal_checksums.sh'
+      - 'tests/unit/test_nightly_update.py'
+      - 'tests/unit/test_nightly_health.py'
+      - 'packages/manifest/**'
+      - '.github/workflows/nightly-health.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/lib/nightly_update.sh'
+      - 'scripts/lib/status.sh'
+      - 'scripts/generated/internal_checksums.sh'
+      - 'tests/unit/test_nightly_update.py'
+      - 'tests/unit/test_nightly_health.py'
+      - 'packages/manifest/**'
+      - '.github/workflows/nightly-health.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+      - uses: ./.github/actions/setup-shellcheck
+      - name: Validate runtime syntax and lint
+        run: |
+          bash -n scripts/lib/nightly_update.sh
+          bash -n scripts/lib/status.sh
+          shellcheck scripts/lib/nightly_update.sh scripts/lib/status.sh
+      - name: Run resource, persistence and health regressions
+        run: |
+          python3 tests/unit/test_nightly_update.py
+          python3 tests/unit/test_nightly_health.py
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Install manifest dependencies
+        working-directory: packages/manifest
+        run: bun install --frozen-lockfile
+      - name: Verify canonical artifacts without modifying them
+        working-directory: packages/manifest
+        run: bun run generate --diff

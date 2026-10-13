@@ -978,7 +978,16 @@ if [[ -n "$_MANIFEST_CHECKS_FILE" ]]; then
     # that PATH hid every per-user tool from the helpers dispatched below
     # (swarm doctor reported am/br/ntm unavailable). ensure_path already chose
     # this process's PATH, the privileged one for root.
-    _MANIFEST_SAVED_OPTS=$(set +o)
+    # Read each option in this shell. Capturing `set +o` in a command
+    # substitution can lose errexit, and replaying its text requires eval.
+    _MANIFEST_SAVED_OPTS=()
+    while IFS= read -r _MANIFEST_OPTION; do
+        if [[ -o "$_MANIFEST_OPTION" ]]; then
+            _MANIFEST_SAVED_OPTS+=(-o "$_MANIFEST_OPTION")
+        else
+            _MANIFEST_SAVED_OPTS+=(+o "$_MANIFEST_OPTION")
+        fi
+    done < <(compgen -A setopt)
     _MANIFEST_SAVED_PATH="$PATH"
 
     # shellcheck source=/dev/null
@@ -987,9 +996,11 @@ if [[ -n "$_MANIFEST_CHECKS_FILE" ]]; then
     fi
 
     # Restore original shell options and PATH
-    eval "$_MANIFEST_SAVED_OPTS" 2>/dev/null
+    for ((_MANIFEST_OPTION_INDEX = 0; _MANIFEST_OPTION_INDEX < ${#_MANIFEST_SAVED_OPTS[@]}; _MANIFEST_OPTION_INDEX += 2)); do
+        set "${_MANIFEST_SAVED_OPTS[_MANIFEST_OPTION_INDEX]}" "${_MANIFEST_SAVED_OPTS[_MANIFEST_OPTION_INDEX + 1]}"
+    done
     export PATH="$_MANIFEST_SAVED_PATH"
-    unset _MANIFEST_SAVED_OPTS _MANIFEST_SAVED_PATH
+    unset _MANIFEST_SAVED_OPTS _MANIFEST_SAVED_PATH _MANIFEST_OPTION _MANIFEST_OPTION_INDEX
 fi
 unset _MANIFEST_CHECKS_FILE
 
@@ -3291,6 +3302,66 @@ _acfs_doctor_join_by() {
     printf '%s\n' "$joined"
 }
 
+# Report credential storage metadata through the same passive collector as
+# services setup. These checks do not authenticate, refresh, or invoke providers.
+check_credential_sources() {
+    local services_script="" runtime_home="" jq_bin="" bash_bin="" timeout_bin=""
+    local metadata="" raw="" service="" state="" source="" remediation="" status="" guidance=""
+    services_script="$(_acfs_doctor_find_scripts_script "services-setup.sh" 2>/dev/null || true)"
+    runtime_home="$(_acfs_doctor_existing_abs_nonroot_dir "${TARGET_HOME:-}" 2>/dev/null || true)"
+    jq_bin="$(_acfs_doctor_system_binary_path jq 2>/dev/null || true)"
+    bash_bin="$(_acfs_doctor_system_binary_path bash 2>/dev/null || true)"
+    timeout_bin="$(_acfs_doctor_system_binary_path timeout 2>/dev/null || true)"
+
+    if [[ -z "$services_script" || -z "$runtime_home" || -z "$jq_bin" || -z "$bash_bin" || -z "$timeout_bin" ]] ||
+        ! metadata="$(
+            set +x
+            set -o pipefail
+            raw="$("$timeout_bin" -k 1 "${ACFS_DOCTOR_CREDENTIAL_TIMEOUT:-5}" "$bash_bin" -c '
+                set +x
+                source "$1" >/dev/null || exit 2
+                TARGET_HOME="$2"
+                services_setup_credential_status_json
+            ' _ "$services_script" "$runtime_home" 2>/dev/null)" || exit 1
+            printf '%s' "$raw" | "$jq_bin" -ers '
+                def member($allowed): . as $v | $allowed | index($v) != null;
+                if length != 1 then error("invalid report count") else .[0] end
+                | select(.schema_version == 1 and .kind == "acfs.credential_status" and
+                    .read_only == true and .status == "pass" and .summary.required_unmet == 0 and
+                    .safety.provider_validation_performed == false and
+                    (.services | type) == "array" and (.services | length) == 6)
+                | select(([.services[].service] | sort) == ["claude","codex","gemini","supabase","vercel","wrangler"])
+                | select(all(.services[];
+                    (.state | member(["missing","placeholder","shell_configured","file_configured","expired","refresh_required","vault_backed","unknown"])) and
+                    (.source | member(["none","environment","file","vault"])) and
+                    .requirement == "optional" and .authentication == "unverified" and
+                    (.remediation | member(["replace_or_unset_placeholder","inspect_local_config","configure_when_needed","validate_before_use","refresh_or_reauthenticate","resolve_vault_reference"]))))
+                | .services[] | [.service,.state,.source,.remediation] | @tsv
+            ' 2>/dev/null
+        )"; then
+        check "credential.sources" "Credential source metadata: unknown (authentication unverified)" "warn" \
+            "state=unknown; authentication=unverified; capture_failed" \
+            "inspect_local_config: run acfs services-setup --credential-status; check collector dependencies and target context"
+        return 0
+    fi
+
+    section "Credential sources (authentication unverified)"
+    while IFS=$'\t' read -r service state source remediation; do
+        case "$state" in
+            missing) status=skip; guidance="optional; configure this service when needed" ;;
+            placeholder) status=warn; guidance="replace or unset the placeholder before using this service" ;;
+            unknown) status=warn; guidance="inspect local credential config; storage status is unknown" ;;
+            expired|refresh_required) status=warn; guidance="use the provider CLI to refresh or sign in again; stored refresh tokens are unverified" ;;
+            vault_backed) status=warn; guidance="resolve the declared Vault reference into the provider environment or credential file, then validate before use" ;;
+            *) status=pass; guidance="stored candidate found; validate authentication before use" ;;
+        esac
+        check "credential.source.$service" "$service credential source: $state ($source; authentication unverified)" "$status" \
+            "state=$state; source=$source; requirement=optional; authentication=unverified; remediation=$remediation" \
+            "$remediation: $guidance"
+    done <<< "$metadata"
+    blank_line
+}
+
 # Check cloud tools
 check_cloud() {
     section "Cloud/DB"
@@ -3869,7 +3940,7 @@ check_stack() {
             ;;
         no_systemd)
             check "acfs.nightly" "Nightly auto-update timer" "skip" \
-                "no systemd or no user session (expected for curl|bash root installs)"
+                "no systemd or no user session (expected for noninteractive root installs)"
             ;;
         *)
             check "acfs.nightly" "Nightly auto-update timer" "warn" \
@@ -5817,6 +5888,46 @@ EOF
 # Surface per-tool version holds and post-install rollback state every doctor
 # run (issue #357): a held tool must be reported, never silently skipped, and
 # a tool whose fresh install failed verification should be visible here too.
+# The nightly wrapper's health record (#448): an always-busy host skipped its
+# update night after night while doctor still passed. Same reader as
+# `acfs status`, sourced in a subshell and only from a copy carrying the
+# health API marker, because older wrappers ran the whole update when sourced.
+check_nightly_health() {
+    local state_file="$1" helper="" first_line="" marker="" output=""
+    local level="" message="" json="" code="" fix=""
+
+    [[ -e "$state_file" || -L "$state_file" ]] || return 0
+    for helper in "$(_acfs_doctor_find_lib_script "nightly_update.sh" 2>/dev/null)" \
+        "$(_acfs_doctor_find_scripts_script "nightly-update.sh" 2>/dev/null)"; do
+        [[ -n "$helper" && -f "$helper" && -r "$helper" && ! -L "$helper" ]] || continue
+        { IFS= read -r first_line; IFS= read -r marker; } < "$helper" || continue
+        [[ "$first_line" == '#!'* && "$marker" == '# ACFS_NIGHTLY_HEALTH_API=1' ]] || continue
+        output=$(
+            # shellcheck source=/dev/null
+            source "$helper" </dev/null >/dev/null 2>&1 || exit 1
+            acfs_nightly_health_report "$state_file"
+        ) || output=""
+        IFS=$'\t' read -r level message json <<< "$output"
+        [[ "$json" =~ \"code\":\"([a-z_]+)\" ]] && code="${BASH_REMATCH[1]}"
+        case "$code" in
+            skipped|retrying|retry_overdue|stale_success)
+                fix="ACFS_NIGHTLY_MAX_RETRIES=0 ~/.acfs/scripts/nightly-update.sh  # resource-checked retry; acfs update --yes skips the load gate" ;;
+            invalid_state)
+                fix="inspect it, then: mv $state_file $state_file.bad  # the nightly refuses to run past it" ;;
+            interrupted|run_overdue)
+                fix="journalctl --user -u acfs-nightly-update.service -n 50" ;;
+        esac
+        case "$level" in
+            pass|skip) check "updates.nightly_runs" "Nightly update runs" "$level" "${message#nightly: }"; return 0 ;;
+            warn) check "updates.nightly_runs" "Nightly update runs" "warn" "${message#nightly: }" "$fix"; return 0 ;;
+        esac
+        break
+    done
+    check "updates.nightly_runs" "Nightly update runs" "warn" \
+        "execution record present but no nightly health reader is deployed" \
+        "acfs update --yes  # refreshes the ACFS runtime"
+}
+
 check_updates_health() {
     section "Updates"
 
@@ -5905,6 +6016,8 @@ check_updates_health() {
     if [[ "$reported_rollback" != "true" ]]; then
         check "updates.rollback" "Post-install rollback" "pass" "no tools rolled back"
     fi
+
+    check_nightly_health "$runtime_home/.acfs/nightly-update.state"
 
     check_runtime_deploy_skew
 
@@ -6879,6 +6992,7 @@ $(gum style --foreground "$ACFS_MUTED" "OS:") $(gum style --foreground "$ACFS_TE
     check_shell
     check_core_tools
     check_agents
+    check_credential_sources
     check_cloud
     check_stack
     check_service_binary_drift

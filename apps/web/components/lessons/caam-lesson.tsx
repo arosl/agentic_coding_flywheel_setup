@@ -839,7 +839,7 @@ function CooldownRing({ seconds, maxSeconds }: { seconds: number; maxSeconds: nu
           transition={SPRING}
         />
       </svg>
-      <span className="absolute text-[10px] font-mono text-violet-300 font-bold">
+      <span className="absolute text-xs font-mono text-violet-300 font-bold">
         {minutes}:{secs.toString().padStart(2, "0")}
       </span>
     </div>
@@ -880,7 +880,7 @@ function UsageGauge({ pct, size = 52 }: { pct: number; size?: number }) {
         />
       </svg>
       <motion.span
-        className="absolute text-[10px] font-mono font-bold"
+        className="absolute text-xs font-mono font-bold"
         animate={{ color: gaugeColor }}
         transition={SPRING}
       >
@@ -894,7 +894,7 @@ function RateLimitBar({ pct }: { pct: number }) {
   const barColor = pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500";
   return (
     <div className="w-full">
-      <div className="flex justify-between text-[10px] text-white/40 mb-0.5">
+      <div className="flex justify-between text-xs text-muted-foreground mb-0.5">
         <span>Rate Limit</span>
         <span>{pct}%</span>
       </div>
@@ -968,7 +968,7 @@ function getStatusStyles(status: AccountStatus) {
         bg: "bg-white/[0.02]",
         dot: "bg-white/20",
         label: "Standby",
-        labelColor: "text-white/40",
+        labelColor: "text-muted-foreground",
       };
   }
 }
@@ -986,10 +986,10 @@ function MiniTerminal({ lines }: { lines: string[] }) {
         <div className="w-2 h-2 rounded-full bg-red-500/60" />
         <div className="w-2 h-2 rounded-full bg-amber-500/60" />
         <div className="w-2 h-2 rounded-full bg-emerald-500/60" />
-        <span className="ml-2 text-[10px] text-white/30 font-mono">caam</span>
+        <span className="ml-2 text-xs text-muted-foreground font-mono">caam</span>
       </div>
       <div
-        className="p-3 font-mono text-[10px] leading-relaxed space-y-0.5 max-h-[180px] overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+        className="p-3 font-mono text-xs leading-relaxed space-y-0.5 max-h-[180px] overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
         tabIndex={0}
         role="region"
         aria-label="Terminal output (scrollable)"
@@ -1053,7 +1053,7 @@ function RotationArrow({
       </motion.div>
       <span className="text-xs text-emerald-400 font-medium">{toName}</span>
       {switchMs > 0 && (
-        <span className="text-[10px] font-mono text-blue-300 ml-1">{switchMs}ms</span>
+        <span className="text-xs font-mono text-blue-300 ml-1">{switchMs}ms</span>
       )}
     </motion.div>
   );
@@ -1094,9 +1094,9 @@ function AccountCard({
       {/* Header row */}
       <div className="flex items-start justify-between gap-1 mb-1.5">
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-semibold text-white/90 truncate">{account.name}</p>
+          <p className="text-xs font-semibold text-white/90 truncate">{account.name}</p>
           <span
-            className={`inline-block mt-0.5 rounded-full border px-1.5 py-0 text-[10px] font-medium ${getProviderBadgeColor(account.providerColor)}`}
+            className={`inline-block mt-0.5 rounded-full border px-1.5 py-0 text-xs font-medium ${getProviderBadgeColor(account.providerColor)}`}
           >
             {account.provider}
           </span>
@@ -1110,7 +1110,7 @@ function AccountCard({
       {/* Sparkline */}
       <div className="mt-2 flex items-center justify-between">
         <SparklineChart data={account.sparkline} color={sparkColor} width={64} height={18} />
-        <span className="text-[10px] font-mono text-white/30">
+        <span className="text-xs font-mono text-muted-foreground">
           {formatTokens(account.tokensSent)}
         </span>
       </div>
@@ -1130,7 +1130,7 @@ function AccountCard({
             ) : (
               <div className={`h-1.5 w-1.5 rounded-full ${styles.dot}`} />
             )}
-            <span className={`text-[10px] font-medium ${styles.labelColor}`}>{styles.label}</span>
+            <span className={`text-xs font-medium ${styles.labelColor}`}>{styles.label}</span>
           </>
         )}
       </div>
@@ -1146,7 +1146,7 @@ function RecoveryTimeline({ accounts }: { accounts: Account[] }) {
     <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3">
       <div className="flex items-center gap-1.5 mb-2">
         <Clock className="h-3 w-3 text-violet-400" />
-        <span className="text-[10px] font-semibold text-white/50 uppercase tracking-wider">
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
           Recovery Timeline
         </span>
       </div>
@@ -1155,7 +1155,7 @@ function RecoveryTimeline({ accounts }: { accounts: Account[] }) {
           const pct = Math.min((acc.cooldownSec / 300) * 100, 100);
           return (
             <div key={acc.id}>
-              <div className="flex justify-between text-[10px] mb-0.5">
+              <div className="flex justify-between text-xs mb-0.5">
                 <span className="text-white/60">{acc.name}</span>
                 <span className="text-violet-300 font-mono">
                   {Math.floor(acc.cooldownSec / 60)}:
@@ -1189,7 +1189,7 @@ function ProviderSummary({ accounts }: { accounts: Account[] }) {
     <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3">
       <div className="flex items-center gap-1.5 mb-2">
         <Gauge className="h-3 w-3 text-sky-400" />
-        <span className="text-[10px] font-semibold text-white/50 uppercase tracking-wider">
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
           Provider Load
         </span>
       </div>
@@ -1207,11 +1207,11 @@ function ProviderSummary({ accounts }: { accounts: Account[] }) {
 
           return (
             <div key={provider}>
-              <div className="flex justify-between text-[10px] mb-0.5">
+              <div className="flex justify-between text-xs mb-0.5">
                 <span style={{ color }} className="font-medium">
                   {provider}
                 </span>
-                <span className="text-white/40">{formatTokens(totalTokens)} total</span>
+                <span className="text-muted-foreground">{formatTokens(totalTokens)} total</span>
               </div>
               <div className="h-1 rounded-full bg-white/[0.06] overflow-hidden">
                 <motion.div
@@ -1340,7 +1340,7 @@ function InteractiveAccountRotation() {
             <p className="text-sm font-semibold text-white/90">Account Rotation Control Panel</p>
             <Sparkles className="h-4 w-4 text-blue-400" />
           </div>
-          <p className="text-xs text-white/50">
+          <p className="text-xs text-muted-foreground">
             Step through scenarios to see how CAAM manages accounts, rate limits, and emergency
             failover
           </p>
@@ -1355,7 +1355,7 @@ function InteractiveAccountRotation() {
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
             transition={SPRING}
-            className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-1.5 text-white/40 hover:text-white/70 transition-colors"
+            className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-1.5 text-muted-foreground hover:text-white/70 transition-colors"
           >
             <ChevronLeft className="h-4 w-4" />
           </motion.button>
@@ -1375,10 +1375,10 @@ function InteractiveAccountRotation() {
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                   transition={SPRING}
-                  className={`rounded-xl border px-2.5 py-1.5 text-[11px] font-medium transition-colors flex items-center gap-1.5 ${
+                  className={`rounded-xl border px-2.5 py-1.5 text-xs font-medium transition-colors flex items-center gap-1.5 ${
                     isActive
                       ? `${sColors.border} ${sColors.bg} ${sColors.text}`
-                      : "border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60"
+                      : "border-white/[0.06] bg-white/[0.02] text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   <Icon className="h-3 w-3" />
@@ -1395,7 +1395,7 @@ function InteractiveAccountRotation() {
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
             transition={SPRING}
-            className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-1.5 text-white/40 hover:text-white/70 transition-colors"
+            className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-1.5 text-muted-foreground hover:text-white/70 transition-colors"
           >
             <ChevronRight className="h-4 w-4" />
           </motion.button>
@@ -1451,8 +1451,8 @@ function InteractiveAccountRotation() {
           {/* LEFT: Account cards grid */}
           <div className="lg:col-span-2 space-y-3">
             <div className="flex items-center gap-1.5 mb-1">
-              <Users className="h-3 w-3 text-white/50" />
-              <span className="text-[10px] font-semibold text-white/50 uppercase tracking-wider">
+              <Users className="h-3 w-3 text-muted-foreground" />
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Accounts
               </span>
             </div>
@@ -1498,7 +1498,7 @@ function InteractiveAccountRotation() {
         </AnimatePresence>
 
         {/* Footer stats */}
-        <div className="flex flex-wrap items-center justify-center gap-4 text-[10px] text-white/40">
+        <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-muted-foreground">
           <div className="flex items-center gap-1">
             <Activity className="h-3 w-3" />
             <span>Active: {animatedAccounts.filter((a) => a.status === "active").length}</span>

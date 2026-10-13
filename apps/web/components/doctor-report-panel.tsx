@@ -37,21 +37,37 @@ function CountSummary({ value }: { value: Readonly<DoctorReportCounts> }) {
 }
 
 /** Keyed by the entire effective context: changed targets unmount pending readers. */
-function DoctorReportContent({ context }: { context: DoctorReportContext }) {
+function DoctorReportContent({ context, onFindingsChange }: {
+  context: DoctorReportContext;
+  onFindingsChange?: (needsAttention: boolean | null) => void;
+}) {
   const [review, setReview] = useState<DoctorReportReview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const generation = useRef(0);
   const mounted = useRef(false);
+  const findingsListener = useRef(onFindingsChange);
   const id = useId();
+  const current = doctorReportMatches(review, context) ? review : null;
+  const destinationDiffers = Boolean(
+    current &&
+    (current.reportedOS.id !== "ubuntu" || current.reportedOS.version !== ACFS_RECOMMENDED_UBUNTU),
+  );
+  const needsAttention = current ? current.needsAttention || destinationDiffers : null;
+  // A listener change is not a new installation or a reason to abandon a read.
+  // Project exactly the findings shown by this reader, including OS differences.
+  useEffect(() => {
+    findingsListener.current = onFindingsChange;
+    onFindingsChange?.(needsAttention);
+  }, [onFindingsChange, needsAttention]);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
       generation.current++;
+      findingsListener.current?.(null);
     };
   }, []);
-  const current = doctorReportMatches(review, context) ? review : null;
 
   function clear(): void {
     if (!mounted.current) return;
@@ -59,6 +75,7 @@ function DoctorReportContent({ context }: { context: DoctorReportContext }) {
     setReview(null);
     setError(null);
     setBusy(false);
+    findingsListener.current?.(null);
   }
   async function read(file: File | undefined): Promise<void> {
     if (!file || !mounted.current) return;
@@ -66,9 +83,12 @@ function DoctorReportContent({ context }: { context: DoctorReportContext }) {
     setReview(null);
     setError(null);
     setBusy(true);
+    findingsListener.current?.(null);
     try {
       const next = await reviewDoctorReportFile(file, context);
-      if (mounted.current && request === generation.current) setReview(next);
+      if (mounted.current && request === generation.current) {
+        setReview(next);
+      }
     } catch (failure) {
       if (mounted.current && request === generation.current) {
         setError(
@@ -81,9 +101,6 @@ function DoctorReportContent({ context }: { context: DoctorReportContext }) {
       if (mounted.current && request === generation.current) setBusy(false);
     }
   }
-  const destinationDiffers =
-    current &&
-    (current.reportedOS.id !== "ubuntu" || current.reportedOS.version !== ACFS_RECOMMENDED_UBUNTU);
   const selectedFailures = current?.modules.filter((module) => module.status === "fail") ?? [];
 
   return (
@@ -142,7 +159,7 @@ function DoctorReportContent({ context }: { context: DoctorReportContext }) {
           <div className="space-y-4 border-t border-border/50 pt-4">
             <h2 className="text-lg font-semibold">Reported findings for your selection</h2>
             <p role="status" className="text-sm">
-              {current.needsAttention || destinationDiffers
+              {needsAttention
                 ? "Findings, coverage gaps or context differences need review."
                 : "Mapped checks report passes. This is not a complete or authenticated verification of the installation."}
             </p>
@@ -269,10 +286,15 @@ function DoctorReportContent({ context }: { context: DoctorReportContext }) {
 }
 
 /** The ordinary health workflow remains independent; file review never sets acknowledgements. */
-export function DoctorReportPanel() {
+export function DoctorReportPanel({ onFindingsChange, showUnavailableContext = true }: {
+  /** Only an in-memory boolean projection; never report contents or identifiers. */
+  onFindingsChange?: (needsAttention: boolean | null) => void;
+  showUnavailableContext?: boolean;
+} = {}) {
   const health = useInstallationHealth();
   const [mode, , modeLoaded] = useInstallMode();
   if (!health.ready || !modeLoaded) {
+    if (!showUnavailableContext) return null;
     return (
       <p role="status" className="text-sm text-muted-foreground">
         Loading installation context for local report review...
@@ -280,6 +302,7 @@ export function DoctorReportPanel() {
     );
   }
   if (!health.vpsIP || !health.reinstallCommand || !health.selectedPlan?.ok) {
+    if (!showUnavailableContext) return null;
     return (
       <p role="status" className="text-sm text-muted-foreground">
         Review the target and selected installation before loading a doctor report. No report is
@@ -299,5 +322,5 @@ export function DoctorReportPanel() {
   };
   // This key stays in React memory only. A change, including A -> B -> A, destroys
   // the old reader instead of letting a delayed result or previous review revive.
-  return <DoctorReportContent key={JSON.stringify(context)} context={context} />;
+  return <DoctorReportContent key={JSON.stringify(context)} context={context} onFindingsChange={onFindingsChange} />;
 }

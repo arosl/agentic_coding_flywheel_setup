@@ -9220,7 +9220,7 @@ EOF
 
     private_key_redactor="$(sed -n '/^redact_private_key_blocks() {$/,/^}$/p' "$support")"
     bundle_redactor="$(sed -n '/^redact_bundle() {$/,/^}$/p' "$support")"
-    [[ "$private_key_redactor" == *'mktemp "${file}.redacted.XXXXXX") || return 1'* ]]
+    [[ "$private_key_redactor" == *'tmp_file=$(support_redaction_tempfile "$file") || return 1'* ]]
     [[ "$private_key_redactor" == *'return 1'* ]]
     [[ "$private_key_redactor" != *'|| return 0'* ]]
     [[ "$bundle_redactor" == *'if ! redact_file "$file"'* ]]
@@ -15317,6 +15317,40 @@ EOF
     [[ "${UPDATE_HELD_TOOLS[*]}" == "br" ]]
 }
 
+@test "holds: run_cmd --verbose still counts a held tool as skip+held (issue #434)" {
+    write_active_hold br
+    SUCCESS_COUNT=0; SKIP_COUNT=0; FAIL_COUNT=0; HELD_COUNT=0; UPDATE_HELD_TOOLS=()
+    VERBOSE=true; QUIET=false; ABORT_ON_FAILURE=false
+    UPDATE_LOG_FILE="$HOME/verbose-update.log"
+    : > "$UPDATE_LOG_FILE"
+
+    run_cmd "Beads Rust" update_run_verified_installer br
+
+    [[ "$FAIL_COUNT" -eq 0 ]]
+    [[ "$SKIP_COUNT" -eq 1 ]]
+    [[ "$HELD_COUNT" -eq 1 ]]
+    [[ "${UPDATE_HELD_TOOLS[*]}" == "br" ]]
+    # The command's own output still reaches the log.
+    grep -q "SKIPPED (hold): br" "$UPDATE_LOG_FILE"
+}
+
+@test "run_cmd --verbose: streams to the log and keeps success/failure accounting" {
+    SUCCESS_COUNT=0; SKIP_COUNT=0; FAIL_COUNT=0
+    VERBOSE=true; QUIET=false; ABORT_ON_FAILURE=false
+    UPDATE_LOG_FILE="$HOME/verbose-update.log"
+    : > "$UPDATE_LOG_FILE"
+    say_and_fail() { echo "about to fail"; return 7; }
+
+    run_cmd "ok step" echo "verbose ok output"
+    run_cmd "bad step" say_and_fail
+
+    [[ "$SUCCESS_COUNT" -eq 1 ]]
+    [[ "$FAIL_COUNT" -eq 1 ]]
+    grep -q "verbose ok output" "$UPDATE_LOG_FILE"
+    grep -q "about to fail" "$UPDATE_LOG_FILE"
+    grep -q "Failed: bad step (exit code: 7)" "$UPDATE_LOG_FILE"
+}
+
 @test "holds: or_existing_on_transient wrapper reports held tool as skip" {
     write_active_hold dcg
     SUCCESS_COUNT=0; SKIP_COUNT=0; FAIL_COUNT=0; HELD_COUNT=0; UPDATE_HELD_TOOLS=()
@@ -15422,18 +15456,86 @@ EOF
     assert_failure
 }
 
-@test "rollback backoff: verified installer returns the backoff exit code" {
+_backoff_installer_fixture() {
     # The setup() for this file stubs `date`; these tests need real epochs.
     date() { /bin/date "$@"; }
     mkdir -p "$HOME/.local/state/acfs"
     unset XDG_STATE_HOME
     export ACFS_HOLDS_FILE="$HOME/.acfs/holds.yaml"
-    printf 'br 2 %s\n' "$(/bin/date +%s)" > "$HOME/.local/state/acfs/update-rollback.state"
-
     FORCE_MODE=false
+    BACKOFF_OLD_SHA="$(printf 'a%.0s' {1..64})"
+    BACKOFF_NEW_SHA="$(printf 'b%.0s' {1..64})"
+    # No network: checksums "load" as the pin under test, and a download
+    # attempt is reported instead of made.
+    update_require_security() { UPDATE_SECURITY_READY=true; return 0; }
+    get_checksum() { printf '%s\n' "$BACKOFF_PINNED_SHA"; }
+    verify_checksum() { echo "VERIFY $3 $2" >&2; return 1; }
+    declare -gA KNOWN_INSTALLERS=([br]="https://example.invalid/br/install.sh")
+}
+
+@test "rollback backoff: verified installer returns the backoff exit code" {
+    _backoff_installer_fixture
+    BACKOFF_PINNED_SHA="$BACKOFF_OLD_SHA"
+    printf 'br 2 %s %s\n' "$(/bin/date +%s)" "$BACKOFF_OLD_SHA" > "$HOME/.local/state/acfs/update-rollback.state"
+
     run update_run_verified_installer_with_env br ""
     [[ "$status" -eq 94 ]]
     assert_output --partial "SKIPPED (rollback backoff)"
+    refute_output --partial "VERIFY"
+}
+
+@test "rollback backoff: a newly pinned installer is tried at once" {
+    _backoff_installer_fixture
+    BACKOFF_PINNED_SHA="$BACKOFF_NEW_SHA"
+    printf 'br 9 %s %s\n' "$(/bin/date +%s)" "$BACKOFF_OLD_SHA" > "$HOME/.local/state/acfs/update-rollback.state"
+
+    run update_run_verified_installer_with_env br ""
+    [[ "$status" -ne 94 ]]
+    refute_output --partial "SKIPPED (rollback backoff)"
+    assert_output --partial "VERIFY br $BACKOFF_NEW_SHA"
+}
+
+@test "rollback backoff: same pin keeps it, a new pin lifts it, an unknown pin keeps it" {
+    _backoff_installer_fixture
+    printf 'csctf 9 %s %s\n' "$(/bin/date +%s)" "$BACKOFF_OLD_SHA" > "$HOME/.local/state/acfs/update-rollback.state"
+
+    run update_tool_rollback_backoff_details csctf "$BACKOFF_OLD_SHA"
+    assert_success
+    run update_tool_rollback_backoff_details csctf "$BACKOFF_NEW_SHA"
+    assert_failure
+    # Callers that cannot name the pin (the claude parent-shell check) keep
+    # the plain time-based backoff.
+    run update_tool_rollback_backoff_details csctf
+    assert_success
+    run update_tool_rollback_backoff_details csctf "not-a-sha"
+    assert_success
+}
+
+@test "rollback backoff: a failure recorded before pins were tracked is retried once a pin is known" {
+    _backoff_installer_fixture
+    printf 'csctf 9 %s\n' "$(/bin/date +%s)" > "$HOME/.local/state/acfs/update-rollback.state"
+
+    run update_tool_rollback_backoff_details csctf "$BACKOFF_NEW_SHA"
+    assert_failure
+    run update_tool_rollback_backoff_details csctf
+    assert_success
+    update_tool_rollback_backoff_details csctf || true
+    [[ "$UPDATE_LAST_BACKOFF_DETAILS" == *"failed 9 time(s)"* ]]
+}
+
+@test "rollback: a failed verification records the installer pin it failed with" {
+    _backoff_installer_fixture
+    local state_file="$HOME/.local/state/acfs/update-rollback.state"
+
+    update_rollback_state_record_failure csctf "$BACKOFF_OLD_SHA"
+    update_rollback_state_record_failure csctf "$BACKOFF_NEW_SHA"
+    run grep -E "^csctf 2 [0-9]+ $BACKOFF_NEW_SHA\$" "$state_file"
+    assert_success
+
+    # Anything that is not a sha256 is not stored as one.
+    update_rollback_state_record_failure nhm "../../etc"
+    run grep -E '^nhm 1 [0-9]+$' "$state_file"
+    assert_success
 }
 
 # ============================================================
@@ -16513,4 +16615,133 @@ FAKE
     run update_herdr_palette_key
     assert_success
     [[ ! -e "$HOME/.config/herdr/config.toml" ]]
+}
+
+_tmpdir_probe_under_file_size_limit() {
+    ulimit -f 64
+    update_tmpdir_accepts_writes "$1"
+}
+
+@test "tmpdir: probe rejects a dir that takes mktemp but refuses the write" {
+    local dir
+    dir="$(create_temp_dir)"
+
+    run update_tmpdir_accepts_writes "$dir"
+    assert_success
+
+    # A file-size limit stands in for a spent tmpfs usrquota: mktemp still
+    # succeeds, then the write fails, as /tmp did for ubuntu on fmd.
+    run _tmpdir_probe_under_file_size_limit "$dir"
+    assert_failure
+    [ -z "$(ls -A "$dir")" ]
+
+    run update_tmpdir_accepts_writes "$dir/missing"
+    assert_failure
+}
+
+@test "tmpdir: a TMPDIR that takes a test write is kept" {
+    local dir
+    dir="$(create_temp_dir)"
+    export TMPDIR="$dir"
+
+    update_ensure_writable_tmpdir 2>"$HOME/tmpdir.err"
+
+    [ "$TMPDIR" = "$dir" ]
+    [ -z "$UPDATE_TMPDIR_SWITCH_NOTE" ]
+    [ ! -s "$HOME/tmpdir.err" ]
+    [ -z "$(ls -A "$dir")" ]
+}
+
+@test "tmpdir: a TMPDIR that refuses writes moves the run to the first fallback that takes one" {
+    local bad good
+    bad="$(create_temp_dir)"
+    good="$(create_temp_dir)"
+    update_tmpdir_accepts_writes() { [[ "$1" == "$good" ]]; }
+    export TMPDIR="$bad" ACFS_UPDATE_TMPDIR="$good"
+
+    update_ensure_writable_tmpdir 2>"$HOME/tmpdir.err"
+
+    [ "$TMPDIR" = "$good" ]
+    [[ "$UPDATE_TMPDIR_SWITCH_NOTE" == "TMPDIR $bad refuses writes"*"using $good for this run" ]]
+    grep -qF "TMPDIR $bad refuses writes" "$HOME/tmpdir.err"
+}
+
+@test "tmpdir: with no other fallback the run moves to the home cache" {
+    local bad
+    bad="$(create_temp_dir)"
+    update_tmpdir_accepts_writes() { [[ "$1" == "$HOME/.cache/acfs/tmp" ]]; }
+    unset ACFS_UPDATE_TMPDIR
+    export TMPDIR="$bad"
+
+    update_ensure_writable_tmpdir 2>/dev/null
+
+    [ "$TMPDIR" = "$HOME/.cache/acfs/tmp" ]
+    [ -d "$HOME/.cache/acfs/tmp" ]
+}
+
+@test "tmpdir: when nothing takes a write TMPDIR stays and the run warns" {
+    local bad
+    bad="$(create_temp_dir)"
+    update_tmpdir_accepts_writes() { return 1; }
+    unset ACFS_UPDATE_TMPDIR
+    export TMPDIR="$bad"
+
+    run update_ensure_writable_tmpdir
+    assert_success
+    assert_output --partial "no fallback took a test write"
+
+    update_ensure_writable_tmpdir 2>/dev/null
+    [ "$TMPDIR" = "$bad" ]
+    [ -z "$UPDATE_TMPDIR_SWITCH_NOTE" ]
+}
+
+@test "tmpdir: dry-run never writes a probe" {
+    local probed="$HOME/probed"
+    update_tmpdir_accepts_writes() { touch "$probed"; return 1; }
+    export DRY_RUN=true TMPDIR="$(create_temp_dir)"
+
+    update_ensure_writable_tmpdir
+
+    [ ! -e "$probed" ]
+}
+
+# A head that refuses its first write, like /tmp at a spent per-user tmpfs
+# quota (mktemp succeeds, the data write fails), then behaves normally.
+_staging_head_refusing_first_write() {
+    local real_head stub_dir
+    real_head="$(update_system_binary_path head)"
+    stub_dir="$(create_temp_dir)"
+    STAGING_HEAD_CALLS="$stub_dir/calls"
+    : > "$STAGING_HEAD_CALLS"
+    STAGING_FAKE_HEAD="$stub_dir/head"
+    printf '#!/bin/bash\nn=$(wc -l < "%s")\necho x >> "%s"\n[[ "$n" -ge 1 ]] || exit 1\nexec "%s" "$@"\n' \
+        "$STAGING_HEAD_CALLS" "$STAGING_HEAD_CALLS" "$real_head" > "$STAGING_FAKE_HEAD"
+    chmod 0755 "$STAGING_FAKE_HEAD"
+    eval "$(declare -f update_system_binary_path | sed '1s/update_system_binary_path/_staging_real_binary_path/')"
+    update_system_binary_path() {
+        if [[ "$1" == head ]]; then printf '%s\n' "$STAGING_FAKE_HEAD"; else _staging_real_binary_path "$@"; fi
+    }
+}
+
+@test "verified installer staging: /tmp that takes mktemp but refuses the write falls back to /var/tmp" {
+    [[ ! -L /tmp && -d /var/tmp && -k /var/tmp ]] || skip "needs a real /tmp and a sticky /var/tmp"
+    local prefix="acfs-bats-stage-$$" file=""
+    _staging_head_refusing_first_write
+    update_run_in_target_context() { shift; "$@"; }
+
+    file="$(update_create_target_readable_temp_file "$prefix")"
+
+    [[ "$file" == /var/tmp/"$prefix".* && -f "$file" && ! -s "$file" ]] || fail "got: $file"
+    rm -f -- "$file"
+    [[ -z "$(compgen -G "/tmp/$prefix.*")" ]] || fail "probe file left in /tmp"
+}
+
+@test "verified installer staging: fails closed when no system temp dir takes the write" {
+    local prefix="acfs-bats-stage-full-$$" out="" rc=0
+    update_run_in_target_context() { shift; "$@"; }
+
+    out="$(ulimit -f 64; update_create_target_readable_temp_file "$prefix" 2>/dev/null)" || rc=$?
+
+    [[ "$rc" -ne 0 && -z "$out" ]] || fail "rc=$rc out=$out"
+    [[ -z "$(compgen -G "/tmp/$prefix.*")$(compgen -G "/var/tmp/$prefix.*")" ]] || fail "probe file left behind"
 }

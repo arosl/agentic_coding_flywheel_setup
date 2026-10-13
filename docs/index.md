@@ -32,6 +32,7 @@ Start here, pick the one page whose line matches your question, and open only th
 - [`operations/updater-locking.md`](operations/updater-locking.md): how `acfs update` keeps to one instance per target home.
 - [`operations/incus-swarm.md`](operations/incus-swarm.md) (the fork's own page): how to move a running dev machine, VM or VPS, into an Incus swarm machine with its data and logins, and how to roll back.
 - [`operations/updater-pin-recovery.md`](operations/updater-pin-recovery.md): what to do when a downloaded installer doesn't match its pin.
+- [`operations/nightly-update-health.md`](operations/nightly-update-health.md): how `acfs status` reports the nightly updater's last result, what its warnings mean, and how to retry by hand.
 - [`operations/config-restore.md`](operations/config-restore.md): how to restore an exported module selection on a new machine.
 - [`operations/postgresql.md`](operations/postgresql.md): how the PostgreSQL 18 module installs and runs on supported Ubuntu LTS hosts.
 - [`operations/process-storm-watchdog.md`](operations/process-storm-watchdog.md): how the installer's process-storm watchdog decides to stop a run.

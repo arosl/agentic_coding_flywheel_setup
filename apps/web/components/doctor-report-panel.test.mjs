@@ -66,7 +66,10 @@ function report(
     })),
   };
 }
-function fixture() {
+function fixture(panelProps = {}) {
+  const findings = [];
+  const onFindingsChange = (value) => findings.push(value);
+  let findingsCallback = onFindingsChange;
   const health = {
     ready: true,
     vpsIP: "203.0.113.7",
@@ -190,7 +193,7 @@ function fixture() {
         nodes.push(node);
         visit(node.props.children, `${path}/children`);
       }
-      visit(jsx(panelModule.DoctorReportPanel, {}), "root");
+      visit(jsx(panelModule.DoctorReportPanel, { ...panelProps, onFindingsChange: findingsCallback }), "root");
       for (const [key, instance] of instances) {
         if (!instance.seen) {
           dispose(instance);
@@ -237,6 +240,7 @@ function fixture() {
     assert.fail("report did not settle");
   }
   return {
+    findings,
     health,
     mode,
     metadata,
@@ -246,6 +250,9 @@ function fixture() {
     render,
     choose,
     settled,
+    replaceFindingsCallback(callback) {
+      findingsCallback = callback;
+    },
     unmount() {
       for (const instance of instances.values()) dispose(instance);
       instances.clear();
@@ -400,6 +407,52 @@ test("account, mode, timestamp and OS mismatches receive explicit warnings", asy
   assert.match((await f.settled()).errors(), /five minutes in the future/);
 });
 
+for (const os of [{ id: "ubuntu", version: "24.04" }, { id: "debian", version: "12" }]) {
+  test(`an otherwise passing ${os.id} ${os.version} report projects its visible OS warning`, async () => {
+    const f = fixture();
+    const value = report([
+      { id: "agent.claude", status: "pass" },
+      { id: "tool.bun", status: "pass" },
+    ]);
+    f.choose(value);
+    assert.doesNotMatch((await f.settled()).errors(), /differs from the recommended Ubuntu/);
+    assert.equal(f.findings.at(-1), false);
+    value.os = os;
+    f.choose(value);
+    assert.match((await f.settled()).errors(), /differs from the recommended Ubuntu/);
+    assert.equal(f.findings.at(-1), true);
+  });
+}
+
+test("replacing the findings listener preserves a current review and replays its signal", async () => {
+  const f = fixture();
+  f.choose();
+  const before = (await f.settled()).text();
+  const replacement = [];
+  f.replaceFindingsCallback((value) => replacement.push(value));
+  assert.equal(f.render().text(), before);
+  assert.equal(replacement.at(-1), true);
+  f.unmount();
+  assert.equal(replacement.at(-1), null);
+  assert.equal(f.updatesAfterUnmount(), 0);
+});
+
+test("replacing the findings listener does not abandon a pending file read", async () => {
+  const f = fixture();
+  const slow = delayed();
+  f.choose(slow.file);
+  assert.equal(f.render().busy(), true);
+  const replacement = [];
+  f.replaceFindingsCallback((value) => replacement.push(value));
+  assert.equal(f.render().busy(), true);
+  slow.release();
+  const view = await f.settled();
+  assert.equal(view.busy(), false);
+  assert.match(view.text(), /Report SHA-256:/);
+  assert.equal(replacement.at(-1), true);
+  assert.equal(f.updatesAfterUnmount(), 0);
+});
+
 test("invalid replacement clears a prior report and never leaks parser input or filename", async () => {
   const f = fixture();
   f.choose();
@@ -409,6 +462,52 @@ test("invalid replacement clears a prior report and never leaks parser input or 
   const view = await f.settled();
   assert.match(view.errors(), /UTF-8 JSON/);
   assert.doesNotMatch(view.text(), /PRIVATE|TOKEN|Report SHA-256:/);
+});
+
+test("learning signal projects only a boolean and clears when the report is cleared or replaced", async () => {
+  const f = fixture();
+  f.choose();
+  await f.settled();
+  assert.equal(f.findings.at(-1), true);
+  assert.ok(f.findings.every((value) => value === null || typeof value === "boolean"));
+  f.render().clear().props.onClick();
+  assert.equal(f.findings.at(-1), null);
+  f.choose(new Blob(["invalid PRIVATE_TOKEN"]));
+  await f.settled();
+  assert.equal(f.findings.at(-1), null);
+  assert.doesNotMatch(JSON.stringify(f.findings), /PRIVATE/);
+});
+
+test("Learning Hub omits unavailable report UI without bypassing its context guards", () => {
+  const f = fixture({ showUnavailableContext: false });
+  f.health.ready = false;
+  assert.equal(f.render().file(), undefined);
+  assert.equal(f.render().text(), "");
+  f.health.ready = true;
+  f.health.vpsIP = null;
+  assert.equal(f.render().file(), undefined);
+  assert.equal(f.render().text(), "");
+  f.health.vpsIP = "203.0.113.7";
+  assert.ok(f.render().file());
+});
+
+test("a pending read cannot republish learning findings after target change or unmount", async () => {
+  const f = fixture();
+  const slow = delayed();
+  f.choose(slow.file);
+  f.health.vpsIP = "203.0.113.88";
+  f.render();
+  assert.equal(f.findings.at(-1), null);
+  slow.release();
+  await new Promise((done) => setTimeout(done, 20));
+  assert.equal(f.findings.at(-1), null);
+  const next = delayed();
+  f.choose(next.file);
+  f.unmount();
+  next.release();
+  await new Promise((done) => setTimeout(done, 20));
+  assert.equal(f.findings.at(-1), null);
+  assert.equal(f.updatesAfterUnmount(), 0);
 });
 
 function delayed(value = report()) {

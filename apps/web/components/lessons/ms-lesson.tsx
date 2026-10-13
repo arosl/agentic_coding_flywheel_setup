@@ -34,6 +34,7 @@ import { AnimatePresence, motion, useInView } from "@/components/motion";
 import {
   CodeBlock,
   CommandList,
+  DiagramScroller,
   Divider,
   FeatureCard,
   FeatureGrid,
@@ -570,7 +571,7 @@ function MiniTerminal({ lines, isVisible }: { lines: string[]; isVisible: boolea
         <div className="h-2.5 w-2.5 rounded-full bg-red-500/60" />
         <div className="h-2.5 w-2.5 rounded-full bg-yellow-500/60" />
         <div className="h-2.5 w-2.5 rounded-full bg-green-500/60" />
-        <span className="ml-2 text-[10px] text-white/30 font-mono">skill-invoke</span>
+        <span className="ml-2 text-xs text-muted-foreground font-mono">skill-invoke</span>
       </div>
       {/* Terminal body */}
       <div className="p-3 font-mono text-xs space-y-1 min-h-[80px]">
@@ -585,12 +586,12 @@ function MiniTerminal({ lines, isVisible }: { lines: string[]; isVisible: boolea
                   line.startsWith("$")
                     ? "text-emerald-400"
                     : line.startsWith("#")
-                      ? "text-white/30"
+                      ? "text-muted-foreground"
                       : line.startsWith(">")
                         ? "text-cyan-400/80"
                         : line.startsWith("!")
                           ? "text-amber-400/80"
-                          : "text-white/50"
+                          : "text-muted-foreground"
                 }
               >
                 {line}
@@ -660,12 +661,13 @@ function DependencyGraph({
   return (
     <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4 backdrop-blur-xl">
       <div className="flex items-center gap-2 mb-3">
-        <GitBranch className="h-4 w-4 text-white/40" />
+        <GitBranch className="h-4 w-4 text-muted-foreground" />
         <span className="text-xs font-bold text-white/60 uppercase tracking-wider">
           Dependency Graph
         </span>
       </div>
       <div className="relative overflow-hidden rounded-lg bg-black/20 border border-white/[0.04]">
+        <DiagramScroller label="Skill dependency graph" minWidth={400}>
         <svg
           ref={svgRef}
           viewBox="0 0 400 280"
@@ -763,8 +765,8 @@ function DependencyGraph({
                   x={pos.x}
                   y={pos.y + (isSelected ? 24 : 20)}
                   textAnchor="middle"
-                  fill={isSelected ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.4)"}
-                  fontSize={isSelected ? 9 : 8}
+                  fill={isSelected ? "rgba(255,255,255,0.9)" : "var(--muted-foreground)"}
+                  fontSize={12}
                   fontFamily="monospace"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -800,8 +802,9 @@ function DependencyGraph({
             );
           })}
         </svg>
+        </DiagramScroller>
       </div>
-      <p className="text-xs text-white/25 mt-2 text-center">
+      <p className="text-xs text-muted-foreground mt-2 text-center">
         Click nodes to explore skill dependencies
       </p>
     </div>
@@ -854,7 +857,7 @@ function StatsBar({ skills }: { skills: Skill[] }) {
             {stat.icon}
             <span className="text-base font-bold">{stat.value}</span>
           </div>
-          <span className="text-[10px] text-white/30 uppercase tracking-wider">{stat.label}</span>
+          <span className="text-xs text-muted-foreground uppercase tracking-wider">{stat.label}</span>
         </motion.div>
       ))}
     </div>
@@ -982,7 +985,7 @@ function InteractiveSkillBrowser() {
             </div>
             <div>
               <h3 className="text-sm font-bold text-white">Skill Library Dashboard</h3>
-              <p className="text-xs text-white/40">
+              <p className="text-xs text-muted-foreground">
                 Browse, search, and manage {localSkills.length} skills across{" "}
                 {CATEGORIES.length - 1} categories
               </p>
@@ -1000,7 +1003,7 @@ function InteractiveSkillBrowser() {
                 className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
                   viewMode === mode.id
                     ? "bg-primary/20 text-primary border border-primary/30"
-                    : "border-white/[0.06] text-white/40 hover:border-white/[0.12] hover:text-white/60"
+                    : "border-white/[0.06] text-muted-foreground hover:border-white/[0.12] hover:text-foreground"
                 }`}
               >
                 {mode.icon}
@@ -1020,7 +1023,7 @@ function InteractiveSkillBrowser() {
       <div className="px-6 pt-4 space-y-3">
         {/* Search bar */}
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/30" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <input
             ref={searchInputRef}
             type="text"
@@ -1032,7 +1035,7 @@ function InteractiveSkillBrowser() {
           {searchQuery && (
             <button
               onClick={() => setSearchQuery("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
             >
               <X className="h-4 w-4" />
             </button>
@@ -1054,12 +1057,12 @@ function InteractiveSkillBrowser() {
                 className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors ${
                   isActive
                     ? `${cat.borderColor} bg-gradient-to-r ${cat.gradient} ${cat.textColor}`
-                    : "border-white/[0.06] text-white/40 hover:border-white/[0.12] hover:text-white/60"
+                    : "border-white/[0.06] text-muted-foreground hover:border-white/[0.12] hover:text-foreground"
                 }`}
               >
                 {cat.icon}
                 {cat.label}
-                <span className={`ml-0.5 text-[10px] ${isActive ? "opacity-90" : "opacity-80"}`}>
+                <span className={`ml-0.5 text-xs ${isActive ? "opacity-90" : "opacity-80"}`}>
                   {count}
                 </span>
               </motion.button>
@@ -1082,8 +1085,8 @@ function InteractiveSkillBrowser() {
             >
               {filteredSkills.length === 0 ? (
                 <div className="text-center py-12">
-                  <Search className="mx-auto h-8 w-8 text-white/15 mb-3" />
-                  <p className="text-sm text-white/30">No skills match your search</p>
+                  <Search className="mx-auto h-8 w-8 text-muted-foreground mb-3" />
+                  <p className="text-sm text-muted-foreground">No skills match your search</p>
                   <button
                     onClick={() => {
                       setSearchQuery("");
@@ -1129,14 +1132,14 @@ function InteractiveSkillBrowser() {
                                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
                               )}
                             </div>
-                            <span className={`text-[10px] ${cat.textColor} opacity-90`}>
+                            <span className={`text-xs ${cat.textColor} opacity-90`}>
                               {cat.label}
                             </span>
                           </div>
                         </div>
 
                         {/* Description */}
-                        <p className="text-xs text-white/50 leading-relaxed line-clamp-2 mb-3">
+                        <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2 mb-3">
                           <HighlightMatch text={skill.description} query={searchQuery} />
                         </p>
 
@@ -1145,13 +1148,13 @@ function InteractiveSkillBrowser() {
                           {skill.triggers.slice(0, 2).map((trigger) => (
                             <span
                               key={trigger}
-                              className="rounded-md bg-white/[0.04] border border-white/[0.06] px-1.5 py-0.5 text-[10px] font-mono text-white/40"
+                              className="rounded-md bg-white/[0.04] border border-white/[0.06] px-1.5 py-0.5 text-xs font-mono text-muted-foreground"
                             >
                               {trigger}
                             </span>
                           ))}
                           {skill.triggers.length > 2 && (
-                            <span className="text-[10px] text-white/25">
+                            <span className="text-xs text-muted-foreground">
                               +{skill.triggers.length - 2}
                             </span>
                           )}
@@ -1159,7 +1162,7 @@ function InteractiveSkillBrowser() {
 
                         {/* Bottom: stats + install */}
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3 text-[10px] text-white/30">
+                          <div className="flex items-center gap-3 text-xs text-muted-foreground">
                             <span className="flex items-center gap-1">
                               <BarChart3 className="h-3 w-3" />
                               {skill.usageCount.toLocaleString()}
@@ -1184,7 +1187,7 @@ function InteractiveSkillBrowser() {
                               >
                                 <Loader2 className={`h-3.5 w-3.5 ${cat.textColor}`} />
                               </motion.div>
-                              <span className="text-[10px] text-white/40">{installProgress}%</span>
+                              <span className="text-xs text-muted-foreground">{installProgress}%</span>
                             </div>
                           ) : !skill.installed ? (
                             <motion.button
@@ -1195,12 +1198,12 @@ function InteractiveSkillBrowser() {
                                 e.stopPropagation();
                                 handleInstall(skill);
                               }}
-                              className={`rounded-md px-2.5 py-1 text-[10px] font-medium border ${cat.borderColor} ${cat.textColor} bg-transparent hover:bg-white/[0.05] transition-colors`}
+                              className={`rounded-md px-2.5 py-1 text-xs font-medium border ${cat.borderColor} ${cat.textColor} bg-transparent hover:bg-white/[0.05] transition-colors`}
                             >
                               Install
                             </motion.button>
                           ) : (
-                            <span className="text-[10px] text-emerald-400/80 font-medium">
+                            <span className="text-xs text-emerald-400/80 font-medium">
                               Installed
                             </span>
                           )}
@@ -1262,9 +1265,9 @@ function InteractiveSkillBrowser() {
                       {skill.installed ? (
                         <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
                       ) : (
-                        <Circle className="h-3.5 w-3.5 text-white/15 shrink-0" />
+                        <Circle className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                       )}
-                      <ChevronRight className="h-3 w-3 text-white/20 shrink-0" />
+                      <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />
                     </motion.button>
                   );
                 })}
@@ -1296,12 +1299,12 @@ function InteractiveSkillBrowser() {
                             </h4>
                             <div className="flex items-center gap-2 mt-0.5">
                               <span
-                                className={`text-[10px] ${getCategoryMeta(selectedSkill.category).textColor}`}
+                                className={`text-xs ${getCategoryMeta(selectedSkill.category).textColor}`}
                               >
                                 {getCategoryMeta(selectedSkill.category).label}
                               </span>
-                              <span className="text-[10px] text-white/25">|</span>
-                              <span className="text-[10px] text-white/30">
+                              <span className="text-xs text-muted-foreground">|</span>
+                              <span className="text-xs text-muted-foreground">
                                 v{selectedSkill.version}
                               </span>
                             </div>
@@ -1309,7 +1312,7 @@ function InteractiveSkillBrowser() {
                         </div>
                         <button
                           onClick={() => setSelectedSkill(null)}
-                          className="rounded-md p-1 text-white/30 hover:text-white/60 hover:bg-white/[0.05] transition-colors"
+                          className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-white/[0.05] transition-colors"
                         >
                           <X className="h-4 w-4" />
                         </button>
@@ -1331,15 +1334,15 @@ function InteractiveSkillBrowser() {
                           ) : (
                             <>
                               <span className="h-2 w-2 rounded-full bg-white/20" />
-                              <span className="text-xs text-white/40 font-medium">Available</span>
+                              <span className="text-xs text-muted-foreground font-medium">Available</span>
                             </>
                           )}
                         </div>
-                        <div className="flex items-center gap-1 text-xs text-white/30">
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
                           <Star className="h-3 w-3 text-amber-400" />
                           {selectedSkill.rating}
                         </div>
-                        <div className="flex items-center gap-1 text-xs text-white/30">
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
                           <TrendingUp className="h-3 w-3" />
                           {selectedSkill.usageCount.toLocaleString()} uses
                         </div>
@@ -1347,7 +1350,7 @@ function InteractiveSkillBrowser() {
 
                       {/* Description */}
                       <div className="mb-4">
-                        <span className="text-[10px] font-medium text-white/30 uppercase tracking-wider">
+                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                           Description
                         </span>
                         <p className="mt-1 text-sm text-white/60 leading-relaxed">
@@ -1357,14 +1360,14 @@ function InteractiveSkillBrowser() {
 
                       {/* Triggers */}
                       <div className="mb-4">
-                        <span className="text-[10px] font-medium text-white/30 uppercase tracking-wider">
+                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                           Trigger Patterns
                         </span>
                         <div className="mt-1.5 flex flex-wrap gap-1.5">
                           {selectedSkill.triggers.map((trigger) => (
                             <span
                               key={trigger}
-                              className="rounded-md border border-white/[0.08] bg-white/[0.02] px-2 py-1 text-xs font-mono text-white/50 hover:text-white/70 hover:border-white/[0.15] transition-colors"
+                              className="rounded-md border border-white/[0.08] bg-white/[0.02] px-2 py-1 text-xs font-mono text-muted-foreground hover:text-white/70 hover:border-white/[0.15] transition-colors"
                             >
                               {trigger}
                             </span>
@@ -1374,7 +1377,7 @@ function InteractiveSkillBrowser() {
 
                       {/* Commands */}
                       <div className="mb-4">
-                        <span className="text-[10px] font-medium text-white/30 uppercase tracking-wider">
+                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                           Example Commands
                         </span>
                         <div className="mt-1.5 space-y-1">
@@ -1383,7 +1386,7 @@ function InteractiveSkillBrowser() {
                               key={cmd}
                               className="rounded-lg bg-black/30 border border-white/[0.04] px-3 py-2"
                             >
-                              <code className="text-xs font-mono text-white/50">{cmd}</code>
+                              <code className="text-xs font-mono text-muted-foreground">{cmd}</code>
                             </div>
                           ))}
                         </div>
@@ -1391,7 +1394,7 @@ function InteractiveSkillBrowser() {
 
                       {/* Dependencies */}
                       <div className="mb-4">
-                        <span className="text-[10px] font-medium text-white/30 uppercase tracking-wider">
+                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                           Dependencies
                         </span>
                         <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -1404,7 +1407,7 @@ function InteractiveSkillBrowser() {
                                   onClick={() => {
                                     if (depSkill) setSelectedSkill(depSkill);
                                   }}
-                                  className="flex items-center gap-1.5 rounded-md border border-white/[0.08] bg-white/[0.02] px-2 py-1 text-xs text-white/50 hover:text-white/70 hover:border-white/[0.15] transition-colors"
+                                  className="flex items-center gap-1.5 rounded-md border border-white/[0.08] bg-white/[0.02] px-2 py-1 text-xs text-muted-foreground hover:text-white/70 hover:border-white/[0.15] transition-colors"
                                 >
                                   <ArrowRight className="h-3 w-3" />
                                   {dep}
@@ -1415,18 +1418,18 @@ function InteractiveSkillBrowser() {
                               );
                             })
                           ) : (
-                            <span className="text-xs text-white/20 italic">No dependencies</span>
+                            <span className="text-xs text-muted-foreground italic">No dependencies</span>
                           )}
                         </div>
                       </div>
 
                       {/* File path */}
                       <div>
-                        <span className="text-[10px] font-medium text-white/30 uppercase tracking-wider">
+                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                           File Path
                         </span>
                         <div className="mt-1.5 rounded-lg bg-black/30 border border-white/[0.04] px-3 py-2">
-                          <code className="text-xs font-mono text-white/50">
+                          <code className="text-xs font-mono text-muted-foreground">
                             .claude/skills/{selectedSkill.file}
                           </code>
                         </div>
@@ -1450,7 +1453,7 @@ function InteractiveSkillBrowser() {
                                     className={`h-4 w-4 ${getCategoryMeta(selectedSkill.category).textColor}`}
                                   />
                                 </motion.div>
-                                <span className="text-xs text-white/50">
+                                <span className="text-xs text-muted-foreground">
                                   Installing... {installProgress}%
                                 </span>
                               </div>
@@ -1488,8 +1491,8 @@ function InteractiveSkillBrowser() {
                       exit={{ opacity: 0 }}
                       className="rounded-xl border border-white/[0.06] bg-white/[0.01] p-12 text-center"
                     >
-                      <Eye className="mx-auto h-8 w-8 text-white/15 mb-3" />
-                      <p className="text-sm text-white/30">
+                      <Eye className="mx-auto h-8 w-8 text-muted-foreground mb-3" />
+                      <p className="text-sm text-muted-foreground">
                         Select a skill from the list to view details
                       </p>
                     </motion.div>
@@ -1534,17 +1537,17 @@ function InteractiveSkillBrowser() {
                         </h4>
                         <button
                           onClick={() => setSelectedSkill(null)}
-                          className="rounded-md p-1 text-white/30 hover:text-white/60 hover:bg-white/[0.05] transition-colors"
+                          className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-white/[0.05] transition-colors"
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
                       </div>
-                      <p className="text-xs text-white/50 leading-relaxed mb-3">
+                      <p className="text-xs text-muted-foreground leading-relaxed mb-3">
                         {selectedSkill.description}
                       </p>
                       <div className="space-y-2">
                         <div>
-                          <span className="text-[10px] text-white/30 uppercase tracking-wider font-medium">
+                          <span className="text-xs text-muted-foreground uppercase tracking-wider font-medium">
                             Depends On
                           </span>
                           <div className="mt-1 flex flex-wrap gap-1">
@@ -1552,18 +1555,18 @@ function InteractiveSkillBrowser() {
                               selectedSkill.dependencies.map((dep) => (
                                 <span
                                   key={dep}
-                                  className="rounded-md bg-violet-500/10 border border-violet-500/20 px-1.5 py-0.5 text-[10px] font-mono text-violet-400"
+                                  className="rounded-md bg-violet-500/10 border border-violet-500/20 px-1.5 py-0.5 text-xs font-mono text-violet-400"
                                 >
                                   {dep}
                                 </span>
                               ))
                             ) : (
-                              <span className="text-[10px] text-white/20 italic">None</span>
+                              <span className="text-xs text-muted-foreground italic">None</span>
                             )}
                           </div>
                         </div>
                         <div>
-                          <span className="text-[10px] text-white/30 uppercase tracking-wider font-medium">
+                          <span className="text-xs text-muted-foreground uppercase tracking-wider font-medium">
                             Used By
                           </span>
                           <div className="mt-1 flex flex-wrap gap-1">
@@ -1573,14 +1576,14 @@ function InteractiveSkillBrowser() {
                                 <button
                                   key={s.id}
                                   onClick={() => setSelectedSkill(s)}
-                                  className="rounded-md bg-cyan-500/10 border border-cyan-500/20 px-1.5 py-0.5 text-[10px] font-mono text-cyan-400 hover:bg-cyan-500/20 transition-colors"
+                                  className="rounded-md bg-cyan-500/10 border border-cyan-500/20 px-1.5 py-0.5 text-xs font-mono text-cyan-400 hover:bg-cyan-500/20 transition-colors"
                                 >
                                   {s.name}
                                 </button>
                               ))}
                             {localSkills.filter((s) => s.dependencies.includes(selectedSkill.name))
                               .length === 0 && (
-                              <span className="text-[10px] text-white/20 italic">None</span>
+                              <span className="text-xs text-muted-foreground italic">None</span>
                             )}
                           </div>
                         </div>
@@ -1594,8 +1597,8 @@ function InteractiveSkillBrowser() {
                       exit={{ opacity: 0 }}
                       className="rounded-xl border border-white/[0.06] bg-white/[0.01] p-8 text-center"
                     >
-                      <GitBranch className="mx-auto h-6 w-6 text-white/15 mb-2" />
-                      <p className="text-xs text-white/30">Click a node to explore dependencies</p>
+                      <GitBranch className="mx-auto h-6 w-6 text-muted-foreground mb-2" />
+                      <p className="text-xs text-muted-foreground">Click a node to explore dependencies</p>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -1603,7 +1606,7 @@ function InteractiveSkillBrowser() {
                 {/* File tree */}
                 <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4 backdrop-blur-xl">
                   <div className="flex items-center gap-2 mb-3">
-                    <FolderTree className="h-4 w-4 text-white/40" />
+                    <FolderTree className="h-4 w-4 text-muted-foreground" />
                     <span className="text-xs font-bold text-white/60 uppercase tracking-wider">
                       Installed Skill Files
                     </span>
@@ -1621,7 +1624,7 @@ function InteractiveSkillBrowser() {
                           <FileText className="h-3 w-3 text-violet-400/60 shrink-0" />
                         )}
                         <span
-                          className={item.type === "dir" ? "text-amber-400/80" : "text-white/50"}
+                          className={item.type === "dir" ? "text-amber-400/80" : "text-muted-foreground"}
                         >
                           {item.path}
                         </span>
@@ -1672,8 +1675,8 @@ function InteractiveSkillBrowser() {
                   })}
                 {filteredSkills.filter((s) => s.installed).length === 0 && (
                   <div className="text-center py-6">
-                    <Terminal className="mx-auto h-5 w-5 text-white/15 mb-2" />
-                    <p className="text-xs text-white/25">No installed skills to load</p>
+                    <Terminal className="mx-auto h-5 w-5 text-muted-foreground mb-2" />
+                    <p className="text-xs text-muted-foreground">No installed skills to load</p>
                   </div>
                 )}
               </div>
@@ -1700,7 +1703,7 @@ function InteractiveSkillBrowser() {
                     transition={SPRING}
                     className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4"
                   >
-                    <span className="text-[10px] font-medium text-white/30 uppercase tracking-wider">
+                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                       Quick Invoke Commands
                     </span>
                     <div className="mt-2 space-y-1.5">
@@ -1710,7 +1713,7 @@ function InteractiveSkillBrowser() {
                           className="flex items-center gap-2 rounded-lg bg-black/20 border border-white/[0.04] px-3 py-2 group"
                         >
                           <span className="text-emerald-400 text-xs">$</span>
-                          <code className="text-xs font-mono text-white/50 flex-1">{cmd}</code>
+                          <code className="text-xs font-mono text-muted-foreground flex-1">{cmd}</code>
                         </div>
                       ))}
                     </div>

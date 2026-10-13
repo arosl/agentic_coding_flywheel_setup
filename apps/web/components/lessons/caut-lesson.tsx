@@ -499,14 +499,14 @@ function ProviderBar({
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={SPRING_SNAPPY}
-              className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30"
+              className="text-xs font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30"
             >
               Rate Limited
             </motion.span>
           )}
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-[10px] text-white/30 font-mono">{provider.accountName}</span>
+          <span className="text-xs text-muted-foreground font-mono">{provider.accountName}</span>
           <span className={`text-xs font-semibold font-mono ${provider.color}`}>
             ${provider.currentCost.toFixed(2)}
           </span>
@@ -527,7 +527,7 @@ function ProviderBar({
 
       {/* Token count + sparkline */}
       <div className="flex items-center justify-between">
-        <span className="text-xs text-white/40 font-mono">
+        <span className="text-xs text-muted-foreground font-mono">
           {provider.tokensK >= 1000
             ? `${(provider.tokensK / 1000).toFixed(1)}M`
             : `${provider.tokensK}K`}{" "}
@@ -579,8 +579,8 @@ function BudgetGauge({ percent }: { percent: number }) {
     <div ref={rootRef} className="rounded-xl border border-white/[0.08] bg-black/30 p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <Gauge className="h-3.5 w-3.5 text-white/40" />
-          <span className="text-[10px] uppercase tracking-wider text-white/30 font-medium">
+          <Gauge className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
             Daily Budget
           </span>
         </div>
@@ -625,8 +625,8 @@ function BudgetGauge({ percent }: { percent: number }) {
 
       {/* Labels */}
       <div className="flex justify-between mt-1.5">
-        <span className="text-[10px] text-white/20 font-mono">$0</span>
-        <span className={`text-[10px] font-mono ${getLabelColor(clampedPercent)}`}>$50 limit</span>
+        <span className="text-xs text-muted-foreground font-mono">$0</span>
+        <span className={`text-xs font-mono ${getLabelColor(clampedPercent)}`}>$50 limit</span>
       </div>
     </div>
   );
@@ -674,7 +674,7 @@ function SavingsCounter({ target }: { target: number }) {
     <div className="rounded-xl border border-white/[0.08] bg-black/30 p-4">
       <div className="flex items-center gap-2 mb-2">
         <TrendingUp className="h-3.5 w-3.5 text-emerald-400/60" />
-        <span className="text-[10px] uppercase tracking-wider text-white/30 font-medium">
+        <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
           Savings Recovered
         </span>
       </div>
@@ -702,13 +702,13 @@ function SavingsCounter({ target }: { target: number }) {
       {target > 0 ? (
         <div className="flex items-center gap-1 mt-1">
           <ArrowDownRight className="h-3 w-3 text-emerald-400/60" />
-          <span className="text-[10px] text-emerald-400/80 font-medium">
+          <span className="text-xs text-emerald-400/80 font-medium">
             Prompt caching + provider shifting
           </span>
         </div>
       ) : (
         <div className="flex items-center gap-1 mt-1">
-          <span className="text-[10px] text-white/20 font-medium">
+          <span className="text-xs text-muted-foreground font-medium">
             No optimizations applied yet
           </span>
         </div>
@@ -777,8 +777,8 @@ function LiveLog({ lines }: { lines: string[] }) {
       className="rounded-xl border border-white/[0.08] bg-black/50 overflow-hidden"
     >
       <div className="flex items-center gap-2 px-3 py-2 border-b border-white/[0.06] bg-white/[0.02]">
-        <Terminal className="h-3 w-3 text-white/30" />
-        <span className="text-[10px] uppercase tracking-wider text-white/30 font-medium">
+        <Terminal className="h-3 w-3 text-muted-foreground" />
+        <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
           Live Feed
         </span>
         <motion.div
@@ -801,9 +801,9 @@ function LiveLog({ lines }: { lines: string[] }) {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
               transition={{ ...SPRING, delay: idx * 0.06 }}
-              className="text-[11px] font-mono text-white/50 leading-relaxed whitespace-nowrap"
+              className="text-xs font-mono text-muted-foreground leading-relaxed whitespace-nowrap"
             >
-              <span className="text-white/20 select-none">$ </span>
+              <span className="text-muted-foreground select-none">$ </span>
               {line}
             </motion.div>
           ))}
@@ -990,7 +990,7 @@ function InteractiveCostDashboardImpl() {
                 inView ? { duration: 20, repeat: Infinity, ease: "linear" } : { duration: 0.2 }
               }
             >
-              <Activity className="h-4 w-4 text-white/40" />
+              <Activity className="h-4 w-4 text-muted-foreground" />
             </motion.div>
             <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">
               Cost Operations Center
@@ -1000,7 +1000,7 @@ function InteractiveCostDashboardImpl() {
               transition={inView ? { duration: 1.5, repeat: Infinity } : { duration: 0.2 }}
               className="h-1.5 w-1.5 rounded-full bg-emerald-500"
             />
-            <span className="text-[10px] text-emerald-400/80 font-medium">LIVE</span>
+            <span className="text-xs text-emerald-400/80 font-medium">LIVE</span>
           </div>
         </div>
 
@@ -1015,10 +1015,10 @@ function InteractiveCostDashboardImpl() {
                 whileHover={{ scale: 1.04 }}
                 whileTap={{ scale: 0.96 }}
                 transition={SPRING_SNAPPY}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium whitespace-nowrap transition-colors border ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors border ${
                   stepIndex === idx
                     ? "bg-white/[0.1] text-white border-white/[0.15]"
-                    : "text-white/35 hover:text-white/55 border-transparent hover:border-white/[0.06]"
+                    : "text-muted-foreground hover:text-white/55 border-transparent hover:border-white/[0.06]"
                 }`}
               >
                 {s.icon}
@@ -1037,7 +1037,7 @@ function InteractiveCostDashboardImpl() {
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
               transition={SPRING_SNAPPY}
-              className="h-7 w-7 rounded-lg border border-white/[0.08] bg-white/[0.02] flex items-center justify-center text-white/40 hover:text-white/70 disabled:opacity-20 disabled:hover:text-white/40 shrink-0"
+              className="h-7 w-7 rounded-lg border border-white/[0.08] bg-white/[0.02] flex items-center justify-center text-muted-foreground hover:text-white/70 disabled:opacity-20 disabled:hover:text-muted-foreground shrink-0"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
             </motion.button>
@@ -1053,11 +1053,11 @@ function InteractiveCostDashboardImpl() {
               >
                 <div className="flex items-center gap-2 mb-0.5">
                   <span className="text-xs font-semibold text-white/80">{step.label}</span>
-                  <span className="text-[10px] text-white/25 font-mono">
+                  <span className="text-xs text-muted-foreground font-mono">
                     Step {stepIndex + 1}/{SCENARIO_STEPS.length}
                   </span>
                 </div>
-                <p className="text-xs text-white/40 leading-relaxed line-clamp-2">
+                <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
                   {step.description}
                 </p>
               </motion.div>
@@ -1071,7 +1071,7 @@ function InteractiveCostDashboardImpl() {
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
               transition={SPRING_SNAPPY}
-              className="h-7 w-7 rounded-lg border border-white/[0.08] bg-white/[0.02] flex items-center justify-center text-white/40 hover:text-white/70 disabled:opacity-20 disabled:hover:text-white/40 shrink-0"
+              className="h-7 w-7 rounded-lg border border-white/[0.08] bg-white/[0.02] flex items-center justify-center text-muted-foreground hover:text-white/70 disabled:opacity-20 disabled:hover:text-muted-foreground shrink-0"
             >
               <ChevronRight className="h-3.5 w-3.5" />
             </motion.button>
@@ -1098,8 +1098,8 @@ function InteractiveCostDashboardImpl() {
             className="rounded-xl border border-white/[0.08] bg-black/30 p-4"
           >
             <div className="flex items-center gap-2 mb-2">
-              <DollarSign className="h-3.5 w-3.5 text-white/40" />
-              <span className="text-[10px] uppercase tracking-wider text-white/30 font-medium">
+              <DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
                 Total Spend
               </span>
             </div>
@@ -1119,14 +1119,14 @@ function InteractiveCostDashboardImpl() {
               {step.totalCost > 30 ? (
                 <>
                   <ArrowUpRight className="h-3 w-3 text-red-400/60" />
-                  <span className="text-[10px] text-red-400/80 font-medium">
+                  <span className="text-xs text-red-400/80 font-medium">
                     Above daily average
                   </span>
                 </>
               ) : (
                 <>
                   <ArrowDownRight className="h-3 w-3 text-emerald-400/60" />
-                  <span className="text-[10px] text-emerald-400/80 font-medium">
+                  <span className="text-xs text-emerald-400/80 font-medium">
                     Within normal range
                   </span>
                 </>
@@ -1142,7 +1142,7 @@ function InteractiveCostDashboardImpl() {
           >
             <div className="flex items-center gap-2 mb-2">
               <Zap className="h-3.5 w-3.5 text-amber-400/60" />
-              <span className="text-[10px] uppercase tracking-wider text-white/30 font-medium">
+              <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
                 Total Tokens
               </span>
             </div>
@@ -1165,8 +1165,8 @@ function InteractiveCostDashboardImpl() {
               </motion.div>
             </AnimatePresence>
             <div className="flex items-center gap-1 mt-1">
-              <BarChart3 className="h-3 w-3 text-white/30" />
-              <span className="text-[10px] text-white/30 font-medium">
+              <BarChart3 className="h-3 w-3 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground font-medium">
                 Across {providerStates.filter((p) => !p.rateLimited).length} active providers
               </span>
             </div>
@@ -1182,7 +1182,7 @@ function InteractiveCostDashboardImpl() {
         {/* Provider breakdown bars */}
         <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <PieChart className="h-4 w-4 text-white/40" />
+            <PieChart className="h-4 w-4 text-muted-foreground" />
             <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">
               Provider Breakdown
             </span>
@@ -1212,8 +1212,8 @@ function InteractiveCostDashboardImpl() {
         {/* Cost distribution mini-chart */}
         <div className="rounded-xl border border-white/[0.08] bg-black/30 p-4">
           <div className="flex items-center gap-2 mb-3">
-            <BarChart3 className="h-3.5 w-3.5 text-white/40" />
-            <span className="text-[10px] uppercase tracking-wider text-white/30 font-medium">
+            <BarChart3 className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
               Cost Distribution
             </span>
           </div>
@@ -1230,7 +1230,7 @@ function InteractiveCostDashboardImpl() {
                       provider.rateLimited ? "opacity-40" : "opacity-80"
                     } min-h-[2px]`}
                   />
-                  <span className="text-[10px] text-white/30 font-mono truncate w-full text-center">
+                  <span className="text-xs text-muted-foreground font-mono truncate w-full text-center">
                     {provider.name.split(" ")[0]}
                   </span>
                 </div>
@@ -1242,7 +1242,7 @@ function InteractiveCostDashboardImpl() {
         {/* Alerts panel */}
         <div className="space-y-2">
           <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-white/40" />
+            <AlertTriangle className="h-4 w-4 text-muted-foreground" />
             <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">
               Alerts
             </span>
@@ -1251,7 +1251,7 @@ function InteractiveCostDashboardImpl() {
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               transition={SPRING_SNAPPY}
-              className="text-[10px] font-mono text-white/30 bg-white/[0.05] px-1.5 py-0.5 rounded"
+              className="text-xs font-mono text-muted-foreground bg-white/[0.05] px-1.5 py-0.5 rounded"
             >
               {step.alerts.length}
             </motion.span>
@@ -1264,8 +1264,8 @@ function InteractiveCostDashboardImpl() {
 
         {/* Footer tip */}
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06]">
-          <TrendingUp className="h-3.5 w-3.5 text-white/30 shrink-0" />
-          <span className="text-xs text-white/40">
+          <TrendingUp className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <span className="text-xs text-muted-foreground">
             Step through scenarios to see how CAUT tracks costs, detects spikes, and applies
             optimizations in real time.
           </span>

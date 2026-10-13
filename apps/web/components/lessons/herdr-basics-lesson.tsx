@@ -274,13 +274,13 @@ function CommandSection({
       {code && <CodeBlock code={code} />}
       {keyCombo && (
         <div className="flex items-center gap-2">
-          <span className="text-sm text-white/50">Press:</span>
+          <span className="text-sm text-muted-foreground">Press:</span>
           {keyCombo.map((key, i) => (
             <span key={i} className="flex items-center gap-2">
               <kbd className="px-3 py-1.5 rounded-lg bg-white/[0.06] border border-white/[0.1] text-sm font-mono text-white">
                 {key}
               </kbd>
-              {i < keyCombo.length - 1 && <span className="text-white/50">then</span>}
+              {i < keyCombo.length - 1 && <span className="text-muted-foreground">then</span>}
             </span>
           ))}
         </div>
@@ -321,11 +321,11 @@ function KeyboardShortcutGrid({ shortcuts }: { shortcuts: ShortcutItem[] }) {
                   <kbd className="px-2 py-1 rounded bg-black/40 border border-white/[0.1] text-xs font-mono text-white">
                     {key}
                   </kbd>
-                  {j < shortcut.keys.length - 1 && <span className="text-white/50 text-xs">+</span>}
+                  {j < shortcut.keys.length - 1 && <span className="text-muted-foreground text-xs">+</span>}
                 </span>
               ))}
             </div>
-            <span className="text-sm text-white/50">{shortcut.action}</span>
+            <span className="text-sm text-muted-foreground">{shortcut.action}</span>
           </div>
         </motion.div>
       ))}
@@ -665,7 +665,7 @@ function InteractiveHerdrSimulator() {
             <div className="h-3 w-3 rounded-full bg-yellow-500/70" />
             <div className="h-3 w-3 rounded-full bg-green-500/70" />
           </div>
-          <span className="ml-2 text-xs font-mono text-white/40">
+          <span className="ml-2 text-xs font-mono text-muted-foreground">
             {phase === "detached" ? "Terminal - disconnected" : "herdr - myproject"}
           </span>
         </div>
@@ -727,7 +727,7 @@ function InteractiveHerdrSimulator() {
                   <span className="text-sm font-mono text-red-400/80">
                     Detached from herdr
                   </span>
-                  <span className="text-xs font-mono text-white/30">$</span>
+                  <span className="text-xs font-mono text-muted-foreground">$</span>
                 </motion.div>
 
                 <motion.div
@@ -739,7 +739,7 @@ function InteractiveHerdrSimulator() {
                   <p className="text-xs text-emerald-400/80 text-center">
                     Your agents are still running in the background!
                     <br />
-                    <span className="text-white/40">
+                    <span className="text-muted-foreground">
                       Click &quot;Reattach&quot; to reconnect with everything preserved.
                     </span>
                   </p>
@@ -784,7 +784,7 @@ function InteractiveHerdrSimulator() {
 
       {/* Informational hints */}
       {phase === "live" && totalPanesInWindow >= MAX_SIM_PANES && (
-        <p className="text-xs text-white/40 text-center">
+        <p className="text-xs text-muted-foreground text-center">
           Maximum of {MAX_SIM_PANES} panes per tab. Try creating a new tab!
         </p>
       )}
@@ -813,7 +813,7 @@ function SimTabBar({
 
   return (
     <div
-      className={`flex items-center justify-between px-3 py-1 font-mono text-[11px] transition-colors duration-300 ${
+      className={`flex items-center justify-between px-3 py-1 font-mono text-xs transition-colors duration-300 ${
         isDetached
           ? "bg-red-950/60 border-t border-red-500/20 text-red-400/60"
           : "bg-emerald-950/60 border-t border-emerald-500/20 text-emerald-300/90"
@@ -973,19 +973,19 @@ function SimPaneContent({
   return (
     <div className="h-full flex flex-col">
       {/* Terminal output lines */}
-      <div className="flex-1 p-2 sm:p-3 overflow-hidden">
-        <div className="text-[10px] sm:text-xs font-mono leading-relaxed space-y-0">
+      <div className="flex-1 min-h-0 p-2 sm:p-3 overflow-auto" tabIndex={0}>
+        <div className="text-xs font-mono leading-relaxed space-y-0">
           {output.map((line, i) => (
             <div key={i} className="whitespace-pre">
               {line.startsWith("$") ? (
                 <>
                   <span className="text-green-400/80">ubuntu@vps</span>
-                  <span className="text-white/30">:</span>
+                  <span className="text-muted-foreground">:</span>
                   <span className="text-blue-400/70">~</span>
-                  <span className="text-white/40">{line}</span>
+                  <span className="text-muted-foreground">{line}</span>
                 </>
               ) : (
-                <span className="text-white/50">{line}</span>
+                <span className="text-muted-foreground">{line}</span>
               )}
             </div>
           ))}
@@ -993,9 +993,9 @@ function SimPaneContent({
           {isActive && (
             <div className="inline-flex items-center mt-0.5">
               <span className="text-green-400/80">ubuntu@vps</span>
-              <span className="text-white/30">:</span>
+              <span className="text-muted-foreground">:</span>
               <span className="text-blue-400/70">~</span>
-              <span className="text-white/40">$ </span>
+              <span className="text-muted-foreground">$ </span>
               <motion.span
                 animate={active ? { opacity: [1, 0] } : { opacity: 1 }}
                 transition={
@@ -1127,14 +1127,14 @@ function SimButton({
       disabled={disabled}
       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border backdrop-blur-xl transition duration-200 ${
         disabled
-          ? "border-white/[0.05] text-white/20 bg-white/[0.02] cursor-not-allowed"
+          ? "border-white/[0.05] text-muted-foreground bg-white/[0.02] cursor-not-allowed"
           : colorClasses
       }`}
     >
       {icon}
       <span>{label}</span>
       {shortcut && (
-        <kbd className="ml-1 px-1.5 py-0.5 rounded bg-black/30 border border-white/[0.08] text-[10px] font-mono text-white/40">
+        <kbd className="ml-1 px-1.5 py-0.5 rounded bg-black/30 border border-white/[0.08] text-xs font-mono text-muted-foreground">
           {shortcut}
         </kbd>
       )}

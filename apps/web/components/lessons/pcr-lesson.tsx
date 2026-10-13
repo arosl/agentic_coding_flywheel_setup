@@ -440,7 +440,7 @@ function CompactionSimulatorImpl() {
             <div className="flex flex-col items-start">
               <span className="text-xs font-semibold text-white/80">PCR Hook</span>
               <span
-                className={`text-[10px] font-medium ${pcrEnabled ? "text-emerald-400" : "text-red-400"}`}
+                className={`text-xs font-medium ${pcrEnabled ? "text-emerald-400" : "text-red-400"}`}
               >
                 {pcrEnabled ? "Enabled" : "Disabled"}
               </span>
@@ -511,10 +511,10 @@ function CompactionSimulatorImpl() {
         {/* Context usage bar */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-wider text-white/30 font-medium">
+            <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
               Context Window Usage
             </span>
-            <span className="text-xs text-white/40 font-mono">
+            <span className="text-xs text-muted-foreground font-mono">
               {contextItems.length}/{maxTokens} tokens
             </span>
           </div>
@@ -548,7 +548,7 @@ function CompactionSimulatorImpl() {
         {/* Context window visualization */}
         <div className="rounded-xl border border-white/[0.08] bg-black/40 p-4 min-h-[200px]">
           <div className="flex items-center gap-2 mb-3">
-            <Brain className="h-4 w-4 text-white/40" />
+            <Brain className="h-4 w-4 text-muted-foreground" />
             <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">
               Agent Context Window
             </span>
@@ -558,7 +558,7 @@ function CompactionSimulatorImpl() {
           <div className="space-y-1.5">
             {contextItems.length === 0 && phase === "empty" && (
               <div className="flex items-center justify-center py-8">
-                <span className="text-xs text-white/30 font-mono">
+                <span className="text-xs text-muted-foreground font-mono">
                   Empty context &mdash; click &ldquo;Fill Context&rdquo; to simulate a session
                 </span>
               </div>
@@ -627,7 +627,7 @@ function CompactionSimulatorImpl() {
                   </span>
                 </div>
                 <div className="rounded-lg bg-black/40 border border-white/[0.06] p-3">
-                  <code className="text-[11px] text-emerald-300/80 font-mono leading-relaxed block">
+                  <code className="text-xs text-emerald-300/80 font-mono leading-relaxed block">
                     {`[PCR] Context compaction detected.\n[PCR] Reminder: Re-read AGENTS.md now.\n[PCR] Restoring project rules and conventions...`}
                   </code>
                 </div>
@@ -676,7 +676,7 @@ function CompactionSimulatorImpl() {
                   : "Without PCR, the agent has no reminder to re-read project rules. It will continue working but may violate conventions like using npm instead of bun, or deleting files without permission."}
               </p>
               {phase === "compacted" && !pcrEnabled && (
-                <p className="text-xs text-white/30 mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   Toggle PCR on and reset to see how the hook prevents this.
                 </p>
               )}
@@ -694,8 +694,8 @@ function getStatusInfo(phase: SimPhase, pcrEnabled: boolean) {
     case "empty":
       return {
         Icon: Brain,
-        iconColor: "text-white/40",
-        textColor: "text-white/50",
+        iconColor: "text-muted-foreground",
+        textColor: "text-muted-foreground",
         borderClass: "rgba(255,255,255,0.08)",
         borderHex: "rgba(255,255,255,0.08)",
         label: "Agent idle — ready to start a session",
