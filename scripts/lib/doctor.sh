@@ -3243,9 +3243,11 @@ check_nhm_maintain() {
 }
 
 # nhm's herdr plugin and keys (stack.nhm, acfs-9hkh.50): herdr has nhm's
-# plugin linked, and after the takeover `nhm bind` gives prefix+a nhm's
-# palette, prefix+d its agent board and prefix+m its menu. Before it,
-# ACFS's palette keeps prefix+a. Read-only (nhm_hooks.sh plugin status).
+# plugin linked, and after the takeover `nhm bind` binds the keys in [keys]
+# of nhm's config (its palette, agent board and menu). Before it, ACFS's
+# palette keeps prefix+a. A user who opted out keeps no keys, and acfs
+# update leaves it so (acfs-uetm F1). Read-only (nhm_hooks.sh plugin
+# status).
 check_nhm_plugin() {
     local label="nhm herdr plugin" home="" helper="" state=""
 
@@ -3266,7 +3268,9 @@ check_nhm_plugin() {
     fi
     state="$(env "${env_args[@]}" timeout 30 bash "$helper" plugin status </dev/null 2>/dev/null || true)"
     case "$state" in
-        bound) check "stack.nhm.plugin" "$label" "pass" "linked; nhm's keys: prefix+a palette, prefix+d agent board, prefix+m menu" ;;
+        bound) check "stack.nhm.plugin" "$label" "pass" "linked; nhm's keys are bound ([keys] in nhm's config names them)" ;;
+        opted-out) check "stack.nhm.plugin" "$label" "pass" \
+            "linked; the user unbound nhm's keys, and acfs update keeps it so (nhm bind --force binds them)" ;;
         linked) check "stack.nhm.plugin" "$label" "pass" \
             "linked; prefix+a is ACFS's palette until nhm owns the herdr server (after the takeover: nhm bind)" ;;
         no-plugin) check "stack.nhm.plugin" "$label" "skip" "this nhm has no herdr plugin" ;;

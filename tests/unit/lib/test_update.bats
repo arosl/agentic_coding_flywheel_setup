@@ -16446,7 +16446,9 @@ write_fake_agent_clis() {
     stack="$(sed -n '/^update_stack() {$/,/^}$/p' "$PROJECT_ROOT/scripts/lib/update.sh")"
     run grep -A4 'update_run_verified_installer_or_existing_on_transient "herdr"' <<< "$stack"
     assert_output --partial "update_herdr_integrations"
-    run grep -A5 'update_run_verified_installer_or_existing_on_transient "herdr"' <<< "$stack"
+    # The keys bind after update_nhm, so a new nhm release binds in the same
+    # update (acfs-uetm F2).
+    run grep -A1 '^    update_nhm$' <<< "$stack"
     assert_output --partial "update_herdr_palette_key"
 }
 

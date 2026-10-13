@@ -7462,15 +7462,17 @@ update_herdr_integrations() {
 
 # herdr opens the command palette in a popup on prefix+a, as ntm's F6 did
 # in tmux. With nhm (stack.nhm), its herdr plugin is linked and `nhm bind`
-# gives prefix+a its palette, prefix+d its agent board and prefix+m its
-# menu, in place of ACFS's palette block (nhm_hooks.sh plugin bind,
-# acfs-9hkh.50). nhm bind refuses while ACFS's Bash owns the herdr server
-# (nhm's palette cannot send before the takeover) or when the user's
-# config uses one of the keys; ACFS's palette then keeps prefix+a
+# binds the keys in [keys] of nhm's config (its palette, agent board and
+# menu), in place of ACFS's palette block (nhm_hooks.sh plugin bind,
+# acfs-9hkh.50). It runs after update_nhm, so a new nhm release binds in
+# the same update. nhm bind refuses while ACFS's Bash owns the herdr
+# server (nhm's palette cannot send before the takeover) or when the
+# user's config uses one of the keys; ACFS's palette then keeps prefix+a
 # (palette.sh bind --auto): unless the target user's herdr config already
 # has the palette's block (bound, or unbound by `acfs palette unbind`),
-# opens the palette some other way, or uses prefix+a. A running herdr
-# server reloads its config. Never fails the update.
+# opens the palette some other way, or uses prefix+a. A user who opted out
+# of nhm's keys (nhm_hooks.sh exit 6) gets neither (acfs-uetm F1). A
+# running herdr server reloads its config. Never fails the update.
 update_herdr_palette_key() {
     local herdr_bin=""
     local target_home=""
@@ -7498,11 +7500,15 @@ update_herdr_palette_key() {
         out="${out#nhm_hooks: }"
         case "$rc" in
             0)
-                log_item "ok" "herdr keys" "nhm: prefix+a palette, prefix+d agent board, prefix+m menu"
+                log_item "ok" "herdr keys" "$out"
                 return 0
                 ;;
             3) ;;
             5) log_item "skip" "herdr keys" "$out; ACFS's palette keeps prefix+a" ;;
+            6)
+                log_item "skip" "herdr keys" "$out"
+                return 0
+                ;;
             *) log_item "warn" "herdr keys" "${out:-the plugin or nhm bind failed}; ACFS's palette keeps prefix+a" ;;
         esac
     fi
@@ -8029,11 +8035,11 @@ update_stack() {
         update_say "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[herdr]}" "${VERSION_AFTER[herdr]}"
     fi
     update_herdr_integrations
-    update_herdr_palette_key
 
     # nhm (stack.nhm) - install the release that the pinned installer URL
     # names, then make sure the default herdr server is enrolled.
     update_nhm
+    update_herdr_palette_key
 
     # minisign (issue #375): the MCP Agent Mail and CAAM installers fail
     # closed without it, so provision it once here, before either runs.

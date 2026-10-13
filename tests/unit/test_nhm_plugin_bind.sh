@@ -2,7 +2,8 @@
 # ============================================================
 # nhm's herdr plugin and keys (acfs-9hkh.50): nhm_hooks.sh plugin
 # link|bind|status, install.sh's acfs_install_herdr_keys, update.sh's
-# update_herdr_palette_key and doctor's stack.nhm.plugin check.
+# update_herdr_palette_key and doctor's stack.nhm.plugin check; a user's
+# opt-out and the bind after update_nhm (acfs-uetm).
 #
 # A fake `herdr` (plugin link and plugin list) and a fake `nhm` (bind)
 # sit in a fixture home's ~/.local/bin, and palette.sh is a stub that
@@ -48,8 +49,10 @@ BASEPATH="/usr/bin:/bin"
 
 # fixture [nhm: yes|no] [herdr: yes|no]: a fresh home with nhm's plugin
 # directory, the fakes, ACFS's copy of nhm_hooks.sh and a palette.sh stub.
-# The fake nhm's bind follows ~/nhm-bind-mode: ok (writes nhm's block),
-# refuse (exit 2, as before the takeover) or error (exit 1).
+# The fake nhm's bind follows ~/nhm-bind-mode: ok (writes nhm's block and
+# names keys from a [keys] that are not the defaults, so a caller that
+# names the defaults itself shows up), refuse (exit 2, as before the
+# takeover), optout (exit 5: nhm found an opt-out) or error (exit 1).
 fixture() {
     HOMEDIR="$(mktemp -d -p "$ROOT")"
     PLUGIN="$HOMEDIR/.local/share/nhm/plugin"
@@ -83,8 +86,12 @@ EOF
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$HOME/nhm-calls"
 case "$(cat "$HOME/nhm-bind-mode" 2>/dev/null)" in
-    ok) printf '# >>> nhm >>>\n[keys]\n# <<< nhm <<<\n' >>"$HOME/.config/herdr/config.toml" ;;
+    ok)
+        printf '# >>> nhm >>>\n[keys]\n# <<< nhm <<<\n' >>"$HOME/.config/herdr/config.toml"
+        echo "nhm bind: wrote nhm's keys (prefix+p palette, prefix+b board, prefix+n menu) to $HOME/.config/herdr/config.toml" >&2
+        echo "nhm bind: a herdr client on another machine uses its own keys: see nhm bind --print-client" >&2 ;;
     refuse) echo "nhm bind: ACFS's Bash owns this herdr server (generation 0), so nhm's palette cannot send" >&2; exit 2 ;;
+    optout) echo "nhm bind: herdr's config opts out of nhm's keys (nhm bind --unbind), so nhm bind changes nothing; nhm bind --force binds them" >&2; exit 5 ;;
     *) echo "nhm bind: boom" >&2; exit 1 ;;
 esac
 EOF
@@ -99,6 +106,15 @@ helper() { # helper <args...>: ACFS's copy of the helper in the fixture home; se
         bash "$HOMEDIR/.acfs/scripts/lib/nhm_hooks.sh" "$@" 2>&1)" || RC=$?
 }
 calls() { cat "$HOMEDIR/$1" 2>/dev/null; }
+# opt_out nhm|acfs: the block `nhm bind --unbind` or `acfs palette unbind`
+# leaves in the fixture's herdr config.
+opt_out() {
+    if [[ "$1" == nhm ]]; then
+        printf '%s\n' '# >>> nhm >>> unbound by `nhm bind --unbind`; `nhm bind --force` binds it again' '# <<< nhm <<<'
+    else
+        printf '%s\n' '# >>> acfs palette >>> unbound by `acfs palette unbind`; `acfs palette bind` binds it again' '# <<< acfs palette <<<'
+    fi >>"$HOMEDIR/.config/herdr/config.toml"
+}
 
 echo "nhm_hooks.sh plugin"
 
@@ -137,14 +153,34 @@ check "bind asks for the default server, without a reload" \
     test "$(calls nhm-calls)" = "bind --socket $HOMEDIR/.config/herdr/herdr.sock --no-reload"
 echo ok >"$HOMEDIR/nhm-bind-mode"
 helper plugin bind
-check "bind after the takeover: exit 0, the keys named" \
-    bash -c '[[ "$1" -eq 0 && "$2" == *"prefix+a palette, prefix+d agent board, prefix+m menu"* ]]' _ "$RC" "$OUT"
+check "bind after the takeover: exit 0, nhm's own line names the keys from [keys]" \
+    bash -c '[[ "$1" -eq 0 && "$2" == "nhm_hooks: nhm bind: wrote nhm'"'"'s keys (prefix+p palette, prefix+b board, prefix+n menu) to "* ]]' _ "$RC" "$OUT"
+check "and no keys of ACFS's own" lacks "prefix+a"
 check "and herdr reloads (no --no-reload)" test "$(calls nhm-calls | tail -1)" = "bind --socket $HOMEDIR/.config/herdr/herdr.sock"
 helper plugin status
 check "then: bound" test "$OUT" = bound
 echo error >"$HOMEDIR/nhm-bind-mode"
 helper plugin bind
 check "a failing nhm bind: exit 1 with its message" bash -c '[[ "$1" -eq 1 && "$2" == *"boom"* ]]' _ "$RC" "$OUT"
+
+# acfs-uetm F1: an opt-out is kept.
+for who in nhm acfs; do
+    fixture
+    helper plugin link
+    opt_out "$who"
+    helper plugin status
+    check "$who's unbound block: status opted-out, not bound" test "$OUT" = opted-out
+    echo ok >"$HOMEDIR/nhm-bind-mode"
+    helper plugin bind
+    check "$who's unbound block: bind exits 6, says why, and runs no nhm bind" \
+        bash -c '[[ "$1" -eq 6 && "$2" == *"opts out of nhm'"'"'s keys"*"nhm bind --force"* ]] && [[ ! -e "$3/nhm-calls" ]]' \
+        _ "$RC" "$OUT" "$HOMEDIR"
+done
+fixture
+echo optout >"$HOMEDIR/nhm-bind-mode"
+helper plugin bind
+check "nhm bind finds an opt-out (exit 5): bind exits 6 with nhm's reason" \
+    bash -c '[[ "$1" -eq 6 && "$2" == *"nhm_hooks: nhm bind: herdr'"'"'s config opts out"* ]]' _ "$RC" "$OUT"
 
 fixture
 mv "$PLUGIN" "$HOMEDIR/.local/share/nhm/plugin-real"
@@ -197,13 +233,40 @@ check "and ACFS's palette keeps prefix+a" test "$(calls palette-calls)" = "palet
 echo ok >"$HOMEDIR/nhm-bind-mode"
 : >"$HOMEDIR/palette-calls"
 run_update
-check "after the takeover: nhm's keys" has "ITEM ok|herdr keys|nhm: prefix+a palette, prefix+d agent board, prefix+m menu"
+check "after the takeover: nhm's own line names its keys" \
+    has "ITEM ok|herdr keys|nhm bind: wrote nhm's keys (prefix+p palette, prefix+b board, prefix+n menu) to "
 check "and palette.sh is not run" test ! -s "$HOMEDIR/palette-calls"
 check "never fails the update" has "RC 0"
 fixture
 run_update no
 check "without nhm: only ACFS's palette, as before" \
     bash -c '[[ "$1" != *"herdr keys"* && "$1" == *"ITEM ok|herdr palette key|"* ]] && [[ ! -e "$2/herdr-calls" ]]' _ "$OUT" "$HOMEDIR"
+
+# acfs-uetm F1: the opt-out survives an update, nhm's and ACFS's palette's.
+fixture
+opt_out nhm
+echo ok >"$HOMEDIR/nhm-bind-mode"
+run_update
+check "an opt-out survives the update: skip with the reason" \
+    has "ITEM skip|herdr keys|herdr's config opts out of nhm's keys"
+check "and neither nhm bind nor palette.sh runs" \
+    bash -c '[[ ! -e "$1/nhm-calls" && ! -s "$1/palette-calls" ]]' _ "$HOMEDIR"
+check "and herdr's config still holds the opt-out" grep -q '^# >>> nhm >>> unbound by ' "$HOMEDIR/.config/herdr/config.toml"
+check "never fails the update" has "RC 0"
+fixture
+echo optout >"$HOMEDIR/nhm-bind-mode"
+run_update
+check "nhm bind exits 5: skip with nhm's reason, and palette.sh is not run" \
+    bash -c '[[ "$1" == *"ITEM skip|herdr keys|nhm bind: herdr'"'"'s config opts out"* && "$1" != *"ACFS'"'"'s palette keeps"* ]] && [[ ! -s "$2/palette-calls" ]]' \
+    _ "$OUT" "$HOMEDIR"
+
+# acfs-uetm F2: update_stack binds the keys after update_nhm, so a new nhm
+# release binds in the same update.
+STACK="$(sed -n '/^update_stack() {$/,/^}$/p' "$REPO_ROOT/scripts/lib/update.sh")"
+NHM_LINE="$(grep -n '^    update_nhm$' <<<"$STACK" | cut -d: -f1)"
+KEYS_LINE="$(grep -n '^    update_herdr_palette_key$' <<<"$STACK" | cut -d: -f1)"
+check "update_stack: update_herdr_palette_key runs once, after update_nhm" \
+    bash -c '[[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[0-9]+$ && "$2" -gt "$1" ]]' _ "$NHM_LINE" "$KEYS_LINE"
 
 echo
 echo "install.sh: acfs_install_herdr_keys"
@@ -237,11 +300,19 @@ check "a fresh install (the Bash owns the server): plugin linked, ACFS's palette
     bash -c '[[ "$1" == *"RC 0"* && -s "$2/herdr-linked" ]] && [[ "$(cat "$2/palette-calls")" == "palette bind --auto --no-reload" ]]' \
     _ "$OUT" "$HOMEDIR"
 check "and nhm bind was asked without a reload" bash -c 'grep -q -- "--no-reload" "$1/nhm-calls"' _ "$HOMEDIR"
+check "and nhm's reason is logged" has "DETAIL nhm bind: ACFS's Bash owns this herdr server"
 echo ok >"$HOMEDIR/nhm-bind-mode"
 : >"$HOMEDIR/palette-calls"
 run_install yes
-check "nhm owns the server: nhm's keys, no palette.sh" \
-    bash -c '[[ "$1" == *"DETAIL nhm'"'"'s keys in herdr"* ]] && [[ ! -s "$2/palette-calls" ]]' _ "$OUT" "$HOMEDIR"
+check "nhm owns the server: nhm's own line names its keys, no palette.sh" \
+    bash -c '[[ "$1" == *"DETAIL nhm bind: wrote nhm'"'"'s keys (prefix+p palette"* ]] && [[ ! -s "$2/palette-calls" ]]' _ "$OUT" "$HOMEDIR"
+fixture
+opt_out acfs
+echo ok >"$HOMEDIR/nhm-bind-mode"
+run_install yes
+check "a re-run install keeps an opt-out: no nhm bind, no palette.sh, never fails" \
+    bash -c '[[ "$1" == *"DETAIL herdr'"'"'s config opts out of nhm'"'"'s keys"*"RC 0"* ]] && [[ ! -e "$2/nhm-calls" && ! -s "$2/palette-calls" ]]' \
+    _ "$OUT" "$HOMEDIR"
 fixture
 run_install no
 check "stack.nhm not selected: ACFS's palette only" \
@@ -283,7 +354,12 @@ check "linked before the takeover: pass, prefix+a stays ACFS's palette" \
 echo ok >"$HOMEDIR/nhm-bind-mode"
 helper plugin bind
 OUT="$(run_doctor)"
-check "bound: pass, nhm's keys" has "stack.nhm.plugin|pass|linked; nhm's keys: prefix+a palette"
+check "bound: pass, nhm's keys, without naming keys of its own" \
+    bash -c '[[ "$1" == "stack.nhm.plugin|pass|linked; nhm'"'"'s keys are bound"* && "$1" != *"prefix+"* ]]' _ "$OUT"
+: >"$HOMEDIR/.config/herdr/config.toml"
+opt_out nhm
+OUT="$(run_doctor)"
+check "opted out: pass, the user's choice kept" has "stack.nhm.plugin|pass|linked; the user unbound nhm's keys"
 rm -f "$PLUGIN/herdr-plugin.toml"
 OUT="$(run_doctor)"
 check "a release without the plugin: skip" has "stack.nhm.plugin|skip|this nhm has no herdr plugin"

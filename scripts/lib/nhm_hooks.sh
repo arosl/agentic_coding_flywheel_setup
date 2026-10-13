@@ -64,8 +64,10 @@ Usage:
                                              keys (bind: nhm bind for the
                                              default server); 0 done, 3 no
                                              plugin, 4 no herdr, 5 nhm bind
-                                             refused; status prints no-plugin,
-                                             unlinked, linked or bound
+                                             refused, 6 the user opted out
+                                             (bind nothing); status prints
+                                             no-plugin, unlinked, linked,
+                                             bound or opted-out
   nhm_hooks.sh register claude|codex [FILE]  Add the nhm-hook lines to FILE
                                              (default ~/.claude/settings.json
                                              or ~/.codex/hooks.json)
@@ -904,11 +906,15 @@ nhm_hooks_learning_profile() {
 # release. herdr stores a linked plugin's resolved path, so that directory
 # is the one to link, never current/plugin. `link` links it (idempotent;
 # it needs no herdr server). `bind` links it, then runs `nhm bind` for the
-# default herdr server: prefix+a the palette, prefix+d the agent board,
-# prefix+m the menu, in place of ACFS's palette block. nhm bind refuses
-# while ACFS's Bash owns the server (nhm's palette cannot send before the
-# takeover) or when the user's config uses one of the keys; the caller
-# then keeps ACFS's palette. `status` changes nothing.
+# default herdr server: the keys in [keys] of nhm's config (prefix+a the
+# palette, prefix+d the agent board, prefix+m the menu by default), in
+# place of ACFS's palette block. nhm bind refuses while ACFS's Bash owns
+# the server (nhm's palette cannot send before the takeover) or when the
+# user's config uses one of the keys; the caller then keeps ACFS's
+# palette. A user who opted out (`nhm bind --unbind` or `acfs palette
+# unbind` left an "unbound by" block) gets neither: `bind` exits 6, and
+# nhm bind exits 5 for the same reason (acfs-uetm F1). `status` changes
+# nothing.
 
 nhm_hooks_plugin_dir() { printf '%s/nhm/plugin\n' "${XDG_DATA_HOME:-$HOME/.local/share}"; }
 nhm_hooks_plugin_herdr_dir() { printf '%s/herdr\n' "${XDG_CONFIG_HOME:-$HOME/.config}"; }
@@ -934,9 +940,17 @@ nhm_hooks_plugin_linked() {
     [[ -n "$root" && "$(realpath -m -- "$root")" == "$(realpath -m -- "$dir")" ]]
 }
 
-# Whether the default herdr server's config holds nhm's keys.
-nhm_hooks_plugin_bound() {
-    grep -q '^# >>> nhm >>>' "$(nhm_hooks_plugin_herdr_dir)/config.toml" 2>/dev/null
+# What the default herdr server's config holds of nhm's keys: opted-out
+# (the "unbound by" block that `nhm bind --unbind` or `acfs palette unbind`
+# leaves), bound (nhm's block), or nothing.
+nhm_hooks_plugin_keys() {
+    local config=""
+    config="$(nhm_hooks_plugin_herdr_dir)/config.toml"
+    if grep -qE '^# >>> (nhm|acfs palette) >>> unbound by ' "$config" 2>/dev/null; then
+        echo opted-out
+    elif grep -q '^# >>> nhm >>>' "$config" 2>/dev/null; then
+        echo bound
+    fi
 }
 
 nhm_hooks_plugin() {
@@ -962,10 +976,9 @@ nhm_hooks_plugin() {
             echo no-plugin
         elif [[ -z "$herdr" ]] || ! nhm_hooks_plugin_linked "$herdr" "$dir"; then
             echo unlinked
-        elif nhm_hooks_plugin_bound; then
-            echo bound
         else
-            echo linked
+            out="$(nhm_hooks_plugin_keys)"
+            echo "${out:-linked}"
         fi
         return 0
     fi
@@ -990,10 +1003,15 @@ nhm_hooks_plugin() {
         nhm_hooks_note "linked nhm's herdr plugin ($dir)"
     fi
     [[ "$verb" == bind ]] || return 0
+    if [[ "$(nhm_hooks_plugin_keys)" == opted-out ]]; then
+        nhm_hooks_note "herdr's config opts out of nhm's keys ($(nhm_hooks_plugin_herdr_dir)/config.toml), so nothing is bound; nhm bind --force binds them"
+        return 6
+    fi
     out="$("$nhm" bind --socket "$(nhm_hooks_plugin_herdr_dir)/herdr.sock" "${reload[@]}" </dev/null 2>&1)" || rc=$?
     case "$rc" in
-        0) nhm_hooks_note "nhm's keys are bound: prefix+a palette, prefix+d agent board, prefix+m menu" ;;
+        0) nhm_hooks_note "${out%%$'\n'*}" ;;
         2) nhm_hooks_note "${out%%$'\n'*}"; return 5 ;;
+        5) nhm_hooks_note "${out%%$'\n'*}"; return 6 ;;
         *) nhm_hooks_note "nhm bind failed: ${out%%$'\n'*}"; return 1 ;;
     esac
     return 0
