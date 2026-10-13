@@ -739,7 +739,7 @@ const _flywheelTools: FlywheelTool[] = [
       "caam exec codex work -- 'x'   # Isolated session",
     ],
     installCommand:
-      "curl --proto '=https' --proto-redir '=https' -fsSL \"https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_account_manager/main/install.sh\" | bash",
+      "curl --proto '=https' --proto-redir '=https' -fsSL \"https://raw.githubusercontent.com/arosl/coding_agent_account_manager/v0.1.23-herdr.3/install.sh\" | bash  # needs cosign; acfs update installs it with pinned archives",
     language: "Go",
   },
   {
@@ -787,7 +787,7 @@ const _flywheelTools: FlywheelTool[] = [
     id: "dcg",
     name: "Destructive Command Guard",
     shortName: "DCG",
-    href: "https://github.com/arosl/destructive_command_guard",
+    href: "https://github.com/Dicklesworthstone/destructive_command_guard",
     icon: "ShieldAlert",
     color: "from-red-400 to-rose-500",
     tagline: "Pre-execution safety net",
@@ -893,7 +893,7 @@ conflict type (dirty tree, diverged branches, auth failures).
       "ru prune                   # Remove orphan repos",
     ],
     installCommand:
-      'curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/repo_updater/main/install.sh" | bash',
+      'curl -fsSL "https://raw.githubusercontent.com/arosl/repo_updater/v1.5.0-nhm.1/install.sh" | bash',
     language: "Bash",
   },
   {
@@ -1060,7 +1060,7 @@ sections with §n anchors), multi-model syntheses (Opus, GPT, Gemini), and full 
       "brenner doctor --json # Verify installation with JSON output",
     ],
     installCommand:
-      "curl --proto '=https' --proto-redir '=https' -fsSL \"https://raw.githubusercontent.com/Dicklesworthstone/brenner_bot/main/install.sh\" | bash",
+      "curl --proto '=https' --proto-redir '=https' -fsSL \"https://raw.githubusercontent.com/arosl/brenner_bot/v0.4.1-nhm.1/install.sh\" | bash",
     language: "TypeScript",
   },
   {
@@ -1202,7 +1202,7 @@ Robot mode (JSON API): apr robot validate <N> → apr robot run <N> → apr robo
     id: "pt",
     name: "Process Triage",
     shortName: "PT",
-    href: "https://github.com/arosl/process_triage",
+    href: "https://github.com/Dicklesworthstone/process_triage",
     icon: "Activity",
     color: "from-red-500 to-orange-600",
     tagline: "Bayesian-inference zombie/abandoned process detection and cleanup",

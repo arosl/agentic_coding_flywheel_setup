@@ -223,6 +223,34 @@ test_ledger_finds_user_tools_under_minimal_dispatch_path() {
     pass "ledger_finds_user_tools_under_minimal_dispatch_path"
 }
 
+# A tool installed from a fork must name the fork as its source (acfs-f2mc.10):
+# each default row's GitHub owner/repo matches the installer URL that
+# checksums.yaml pins for its checksum key.
+test_default_sources_match_pinned_installers() {
+    local home_dir="$ARTIFACT_DIR/sources-home" output mismatches
+    mkdir -p "$home_dir"
+    output="$(env HOME="$home_dir" PATH="/usr/bin:/bin" \
+        ACFS_PROVENANCE_CHECKSUMS_FILE="$REPO_ROOT/checksums.yaml" \
+        bash "$PROVENANCE_SH" --json)"
+    printf '%s\n' "$output" > "$ARTIFACT_DIR/default-sources.json"
+
+    mismatches="$(jq -r '
+      def repo: capture("^https://(raw\\.githubusercontent\\.com|github\\.com)/(?<r>[^/]+/[^/]+)")?.r;
+      .tools[]
+      | select(.install_method == "verified_installer")
+      | select((.expected_source | repo) != null and (.installer_reference.url // "" | repo) != null)
+      | select((.expected_source | repo) != (.installer_reference.url | repo))
+      | "\(.name): \(.expected_source) vs \(.installer_reference.url)"
+    ' <<<"$output")" || return 1
+    [[ "$(jq '[.tools[] | select(.installer_reference.url != null)] | length' <<<"$output")" -gt 0 ]] || return 1
+    if [[ -n "$mismatches" ]]; then
+        fail "default_sources_match_pinned_installers" "$mismatches"
+        return 0
+    fi
+
+    pass "default_sources_match_pinned_installers"
+}
+
 run_test() {
     local name="$1"
 
@@ -238,6 +266,7 @@ main() {
     run_test test_ledger_includes_installer_references
     run_test test_support_capture_records_provenance_json
     run_test test_ledger_finds_user_tools_under_minimal_dispatch_path
+    run_test test_default_sources_match_pinned_installers
 
     echo ""
     echo "Tests passed: $TESTS_PASSED"

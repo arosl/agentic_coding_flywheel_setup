@@ -119,6 +119,7 @@ provenance_default_tools() {
     cat <<'EOF'
 br|br|--version|verified_installer|https://github.com/Dicklesworthstone/beads_rust|br|
 bv|bv|--version|verified_installer|https://github.com/Dicklesworthstone/beads_viewer|bv|
+nhm|nhm|--version|verified_installer|https://github.com/arosl/nhm|nhm|
 herdr|herdr|--version|verified_installer|https://github.com/herdrdev/herdr|herdr|
 rch|rch|--version|verified_installer|https://github.com/Dicklesworthstone/remote_compilation_helper|rch|
 agent_mail|am|--version|verified_installer|https://github.com/Dicklesworthstone/mcp_agent_mail_rust|mcp_agent_mail|
@@ -128,7 +129,7 @@ cm|cm|--version|verified_installer|https://github.com/Dicklesworthstone/cass_mem
 caam|caam|--version|verified_installer|https://github.com/arosl/coding_agent_account_manager|caam|
 dcg|dcg|--version|verified_installer|https://github.com/arosl/destructive_command_guard|dcg|
 slb|slb|--version|verified_installer|https://github.com/Dicklesworthstone/simultaneous_launch_button|slb|
-ru|ru|--version|verified_installer|https://github.com/Dicklesworthstone/repo_updater|ru|
+ru|ru|--version|verified_installer|https://github.com/arosl/repo_updater|ru|
 bun|bun|--version|verified_installer|https://bun.sh/install|bun|
 rust|cargo|--version|verified_installer|https://sh.rustup.rs|rust|
 go|go|version|apt|Ubuntu golang-go package||
