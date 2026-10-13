@@ -147,9 +147,17 @@ if [[ -n "$NHM_VERSION" ]]; then
 else
     sandbox_nhm_build "$NHM_BUILD" || { echo "RESULT: fail (no nhm build in $NHM_BUILD)"; exit 1; }
 fi
+# E21 runs the brenner fork at the tag ACFS pins (KNOWN_INSTALLERS in
+# scripts/lib/security.sh). Without it E21 fails; it never runs the host's.
+BRENNER_TAG=""
+if [[ " $RUN_STEPS " == *" E21 "* ]]; then
+    BRENNER_TAG="$(sed -nE 's#^ *\[brenner_bot\]="https://raw\.githubusercontent\.com/arosl/brenner_bot/(v[^/"]+)/install\.sh"$#\1#p' \
+        "$ROOT_DIR/scripts/lib/security.sh")"
+    sandbox_brenner_release "$BRENNER_TAG" || echo "  (E21 will fail: brenner ${BRENNER_TAG:-<no pinned tag>} could not be fetched and verified)"
+fi
 {
-    printf 'run: %s\nrelease: %s\nsteps: %s\nacfs: %s\nnhm: %s\nstarted: %s\n' "$AUTHORISED" "$RELEASE" "$RUN_STEPS" \
-        "$(git -C "$ROOT_DIR" rev-parse HEAD)" "${NHM_VERSION:-build $NHM_BUILD}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'run: %s\nrelease: %s\nsteps: %s\nacfs: %s\nnhm: %s\nbrenner: %s\nstarted: %s\n' "$AUTHORISED" "$RELEASE" "$RUN_STEPS" \
+        "$(git -C "$ROOT_DIR" rev-parse HEAD)" "${NHM_VERSION:-build $NHM_BUILD}" "${BRENNER_TAG:-not used}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } >"$EVIDENCE/run.txt"
 
 # --- Inside the sandbox ----------------------------------------------------

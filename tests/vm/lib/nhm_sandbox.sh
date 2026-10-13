@@ -154,6 +154,28 @@ sandbox_nhm_release() {
     ln -sfn "$dest/nhm-hook" "$SANDBOX_BIN/nhm-hook" || return 1
 }
 
+# sandbox_brenner_release TAG: the arosl brenner fork's release binary for
+# E21 (acfs-sag), checked against the release's own .sha256, as the fork's
+# install.sh checks it. TAG is the one ACFS pins (v0.4.1-nhm.1).
+sandbox_brenner_release() {
+    local tag="${1:-}" arch asset base want got
+    [[ -n "${SANDBOX_ROOT:-}" ]] || { sandbox_die "sandbox_brenner_release: run sandbox_init first"; return 1; }
+    [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { sandbox_die "sandbox_brenner_release: '$tag' is not a release tag"; return 1; }
+    case "$(uname -m)" in
+        x86_64) arch=x64 ;;
+        aarch64 | arm64) arch=arm64 ;;
+        *) sandbox_die "no brenner release for $(uname -m)"; return 1 ;;
+    esac
+    asset="brenner-linux-$arch"
+    base="https://github.com/arosl/brenner_bot/releases/download/$tag"
+    curl -fsSL --proto '=https' -o "$SANDBOX_ROOT/dl/$asset.sha256" "$base/$asset.sha256" || { sandbox_die "could not fetch $base/$asset.sha256"; return 1; }
+    curl -fsSL --proto '=https' -o "$SANDBOX_ROOT/dl/$asset" "$base/$asset" || { sandbox_die "could not fetch $base/$asset"; return 1; }
+    want="$(awk -v a="$asset" '$2 == a { print $1 }' "$SANDBOX_ROOT/dl/$asset.sha256")"
+    got="$(sha256sum "$SANDBOX_ROOT/dl/$asset" | awk '{ print $1 }')"
+    [[ "$want" =~ ^[0-9a-f]{64}$ && "$got" == "$want" ]] || { sandbox_die "$asset does not match its .sha256"; return 1; }
+    cp -f "$SANDBOX_ROOT/dl/$asset" "$SANDBOX_BIN/brenner" && chmod 755 "$SANDBOX_BIN/brenner"
+}
+
 sandbox_nhm_build() {
     local dir="${1:-}" b
     [[ -n "${SANDBOX_ROOT:-}" ]] || { sandbox_die "sandbox_nhm_build: run sandbox_init first"; return 1; }
