@@ -123,6 +123,49 @@ check "the command's TMPDIR is in a gate root" bash -c '[[ "$1" == "$2"/acfs-gat
 check "the command's HOME is in the same root" bash -c '[[ "$1" == "${2%/tmp}"/home.* ]]' _ "$cmd_home" "$cmd_tmp"
 check "removes the gate root after the command" parent_empty
 
+echo "run_gate: Playwright (acfs-l3r7)"
+pw_env() { # pw_env [VAR=VALUE...]: the gate's Playwright settings, for a caller whose HOME is $WORK/realhome
+    (cd "$WORK" && env -u PLAYWRIGHT_SKIP_BROWSER_GC -u ACFS_PLAYWRIGHT_MIRROR -u PLAYWRIGHT_HOST_PLATFORM_OVERRIDE \
+        -u XDG_CACHE_HOME HOME="$WORK/realhome" "$@" bash "$GATE" --tmp-parent "$PARENT" -- \
+        bash -c 'printf "%s|%s|%s\n" "${PLAYWRIGHT_SKIP_BROWSER_GC:-}" "${ACFS_PLAYWRIGHT_MIRROR:-}" "${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-}" >"$1"' \
+        _ "$WORK/pwenv") >/dev/null 2>&1
+    IFS='|' read -r pw_gc pw_mirror pw_platform <"$WORK/pwenv"
+}
+pw_env
+check "skips Playwright's browser GC" test "$pw_gc" = 1
+check "the zip mirror stays in the caller's cache" test "$pw_mirror" = "$WORK/realhome/.cache/acfs/playwright-mirror"
+if grep -qx 'ID=ubuntu' /etc/os-release 2>/dev/null && grep -qx 'VERSION_ID="26.04"' /etc/os-release 2>/dev/null; then
+    check "Ubuntu 26.04: Playwright's 24.04 builds" bash -c '[[ "$1" == ubuntu24.04-* ]]' _ "$pw_platform"
+else
+    check "not Ubuntu 26.04: no platform override" test -z "$pw_platform"
+fi
+pw_env ACFS_PLAYWRIGHT_MIRROR="$WORK/mirror" PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=mine
+check "a caller's own mirror and platform are kept" \
+    bash -c '[[ "$1" == "$2/mirror" && "$3" == mine ]]' _ "$pw_mirror" "$WORK" "$pw_platform"
+
+# The web step against stubs: bun does nothing, and the browser helper
+# records what it is asked for.
+mkdir -p "$FIXTURE/apps/web" "$WORK/bin"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$WORK/bin/bun"
+chmod +x "$WORK/bin/bun"
+cat >"$FIXTURE/scripts/tests/ensure_playwright_browsers.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GATE_TEST_LOG"
+STUB
+web_browsers() { # web_browsers [--browser-project NAME...]: the helper's arguments
+    : >"$LOG"
+    PATH="$WORK/bin:$PATH" ACFS_BROWSER_GATE_LOCK="$WORK/browser.lock" \
+        bash "$GATE" --root "$FIXTURE" --tmp-parent "$PARENT" --step web "$@" >"$WORK/out" 2>&1 || true
+    cat "$LOG"
+}
+check "web: every project by default, so every browser" \
+    test "$(web_browsers)" = "--web $FIXTURE/apps/web chromium firefox webkit"
+check "web: Mobile Chrome needs only chromium" \
+    test "$(web_browsers --browser-project 'Mobile Chrome')" = "--web $FIXTURE/apps/web chromium"
+check "web: firefox and Mobile Safari add theirs" \
+    test "$(web_browsers --browser-project firefox --browser-project 'Mobile Safari')" = "--web $FIXTURE/apps/web chromium firefox webkit"
+check "removes the gate root after the web step" parent_empty
+
 echo "run_gate: usage"
 usage_rc() {
     local want="$1" rc=0

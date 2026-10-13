@@ -16,7 +16,9 @@
 #               ShellCheck job runs)
 #   ci          run_ci_workflows_locally.sh (--since REF when given)
 #   web         apps/web type-check, lint, build, then Playwright
-#               under the host-wide browser lock
+#               under the host-wide browser lock, after a missing
+#               browser is installed from the zip mirror
+#               (ensure_playwright_browsers.sh)
 #
 # Run it in the gate worktree at the commit you push, after
 # 'bun install --frozen-lockfile': the CI steps write into the tree.
@@ -53,6 +55,8 @@ Environment:
   ACFS_BROWSER_GATE_LOCK  The host-wide Playwright lock file (default:
                           /data/tmp/acfs-browser-gate.lock when /data/tmp
                           exists, else /tmp/acfs-browser-gate.lock)
+  ACFS_PLAYWRIGHT_MIRROR  The browser zip mirror, kept across runs
+                          (default: ~/.cache/acfs/playwright-mirror)
 
 Exit status: 0 when every step passed, 1 when one failed, 2 on bad usage.
 USAGE
@@ -106,8 +110,22 @@ fi
 REAL_HOME="$HOME"
 export BUN_INSTALL_CACHE_DIR="${BUN_INSTALL_CACHE_DIR:-$REAL_HOME/.bun/install/cache}"
 export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-${XDG_CACHE_HOME:-$REAL_HOME/.cache}/ms-playwright}"
+export ACFS_PLAYWRIGHT_MIRROR="${ACFS_PLAYWRIGHT_MIRROR:-${XDG_CACHE_HOME:-$REAL_HOME/.cache}/acfs/playwright-mirror}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$REAL_HOME/.cache}/uv}"
 unset XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME
+# Playwright's browser GC deletes a browser whose .links entries name
+# projects that are gone, and gate worktrees come and go: an install
+# deleted chromium-1208 and a fresh Firefox that way (acfs-l3r7).
+export PLAYWRIGHT_SKIP_BROWSER_GC=1
+# Playwright 1.58 has no builds for Ubuntu 26.04; its 24.04 builds run there.
+if [[ -z "${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-}" ]] \
+    && grep -qx 'ID=ubuntu' /etc/os-release 2>/dev/null \
+    && grep -qx 'VERSION_ID="26.04"' /etc/os-release 2>/dev/null; then
+    case "$(uname -m)" in
+        x86_64) export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64 ;;
+        aarch64) export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-arm64 ;;
+    esac
+fi
 
 # CI's umask. Group-writable temp dirs fail upstream's ownership checks.
 umask 022
@@ -213,10 +231,24 @@ step_web() {
     run_cmd "web: type-check" "$dir" bun run type-check || true
     run_cmd "web: lint" "$dir" bun run lint || true
     run_cmd "web: build" "$dir" bun run build || true
-    local pw_args=()
+    local pw_args=() browsers=(chromium)
     for project in "${BROWSER_PROJECTS[@]}"; do
         pw_args+=("--project=$project")
     done
+    # The browsers the run needs: chromium always (Mobile Chrome too),
+    # firefox and webkit when a project uses them, and every project does
+    # when none is named. A missing one comes from the zip mirror.
+    if [[ ${#BROWSER_PROJECTS[@]} -eq 0 ]]; then
+        browsers+=(firefox webkit)
+    fi
+    for project in "${BROWSER_PROJECTS[@]}"; do
+        case "$project" in
+            firefox) browsers+=(firefox) ;;
+            webkit|"Mobile Safari") browsers+=(webkit) ;;
+        esac
+    done
+    run_cmd "web: browsers" "$dir" flock "$ACFS_BROWSER_GATE_LOCK" \
+        bash "$ROOT/scripts/tests/ensure_playwright_browsers.sh" --web "$dir" "${browsers[@]}" || true
     port="$(free_port)"
     # One Playwright run at a time on the host: concurrent runs time out.
     run_cmd "web: playwright" "$dir" env PW_PORT="$port" \
