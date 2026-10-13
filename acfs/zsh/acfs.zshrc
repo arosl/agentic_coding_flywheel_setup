@@ -101,6 +101,8 @@ plugins=(
   # trj, 1.0-2.3 s across the fleet, and it also overrode the fast handler
   # installed from ~/.zshenv. zsh's built-in "command not found" message is
   # instant; run `command-not-found <cmd>` by hand if you want the apt hint.
+  docker
+  docker-compose
   python
   pip
   systemd
@@ -212,6 +214,13 @@ alias gcm='git commit -m'
 alias gca='git commit -a -m'
 alias gb='git branch'
 alias glog='git log --oneline --graph --decorate'
+
+# --- Docker aliases ---
+alias dc='docker compose'
+alias dps='docker ps'
+alias dpsa='docker ps -a'
+alias dimg='docker images'
+alias dex='docker exec -it'
 
 # --- Directory shortcuts ---
 alias dev='cd ~/Development'

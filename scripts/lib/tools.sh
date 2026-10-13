@@ -96,6 +96,7 @@ readonly RECOMMENDED_TOOLS=(
     "supabase"
     "vercel"
     "fly"
+    "docker"
 
     # Agent Flywheel stack
     "herdr"

@@ -1038,6 +1038,9 @@ get_tool_version() {
         gh)
             version=$(gh --version 2>/dev/null | head -1 | awk '{print $3}' || true)
             ;;
+        docker)
+            version=$(docker --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+            ;;
         postgresql|psql)
             version=$(psql --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+' | head -1 || true)
             ;;
@@ -1228,7 +1231,7 @@ EOF
     # Core tools
     local tools=(
         "rust" "bun" "uv" "go" "zsh" "tmux" "nvim"
-        "zoxide" "atuin" "fzf" "ripgrep" "gh" "postgresql"
+        "zoxide" "atuin" "fzf" "ripgrep" "gh" "docker" "postgresql"
     )
 
     for tool in "${tools[@]}"; do
@@ -1320,7 +1323,7 @@ EOF
 EOF
 
     # Core tools
-    local tools=("rust" "bun" "uv" "go" "zsh" "tmux" "nvim" "zoxide" "atuin" "fzf" "ripgrep" "gh" "postgresql")
+    local tools=("rust" "bun" "uv" "go" "zsh" "tmux" "nvim" "zoxide" "atuin" "fzf" "ripgrep" "gh" "docker" "postgresql")
     first=true
     for tool in "${tools[@]}"; do
         local version
