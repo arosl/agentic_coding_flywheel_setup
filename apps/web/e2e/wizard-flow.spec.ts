@@ -779,6 +779,8 @@ test.describe("State Persistence", () => {
       .getByRole("main")
       .getByRole("button", { name: /continue/i })
       .click();
+    // Continue navigates on the client; Firefox aborts a reload made mid-way.
+    await expect(page).toHaveURL(/\/wizard\/install-terminal/);
 
     // Reload the page
     await page.reload();

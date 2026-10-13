@@ -406,6 +406,10 @@ test.describe("Instructional text readability (bd-64cg3)", () => {
   test("font guard rejects an empty lesson body", async ({ page }) => {
     await page.goto("/learn/welcome");
     await expect(page.locator("main article section").first()).toBeVisible();
+    // The server HTML shows before hydration; emptying it earlier lets the
+    // hydration mismatch render the lesson again. The link waits for stored
+    // progress, which loads after hydration.
+    await expect(page.locator('a[aria-label="Next lesson"]')).toHaveAttribute("href", "/learn/linux-basics");
     await page.evaluate(() => {
       document.querySelector("main article")!.replaceChildren();
     });
