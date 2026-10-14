@@ -42,6 +42,36 @@ source "$1"
 update_procwatch_scan /proc
 if update_procwatch_dump /proc "$2" "test storm" 4; then echo wrote; else echo refused; fi
 '''
+# The watchdog starts on a /proc with no processes, the user swaps its
+# directory for a link, and then a storm trips the next tick; with one
+# snapshot allowed, the watcher then exits by itself.
+PROCWATCH_HARNESS = r'''
+source "$1"
+update_target_home() { printf '%s\n' "$FIXTURE_HOME"; }
+update_run_in_target_context() { shift; "$@"; }
+id() { if [[ "$1" == -u && "${3:-$2}" == alice ]]; then echo "$EUID"; else command id "$@"; fi; }
+proc="$FIXTURE_BASE/proc"
+mkdir -p "$proc" "$FIXTURE_BASE/elsewhere"
+printf '0.10 0.20 0.30 2/300 12345\n' > "$proc/loadavg"
+printf 'processor\t: 0\n' > "$proc/cpuinfo"
+export ACFS_PROCWATCH_DIR="$FIXTURE_HOME/.acfs/diagnostics/procwatch" ACFS_PROCWATCH_PROC="$proc"
+export ACFS_PROCWATCH_THRESHOLD=3 ACFS_PROCWATCH_INTERVAL=1 ACFS_PROCWATCH_MAX_DUMPS=1
+update_procwatch_start
+[[ -n "$ACFS_PROCWATCH_PID" ]]
+mv "$ACFS_PROCWATCH_DIR" "$FIXTURE_HOME/moved"
+ln -s "$FIXTURE_BASE/elsewhere" "$ACFS_PROCWATCH_DIR"
+for pid in 1001 1002 1003 1004; do
+    mkdir "$proc/$pid"
+    printf 'storm\n' > "$proc/$pid/comm"
+    printf '%s (storm) S 900 1 1 0 -1 4194304 100 0 0 0 1 2 3 4\n' "$pid" > "$proc/$pid/stat"
+    : > "$proc/$pid/cmdline"
+done
+for _ in $(seq 50); do
+    kill -0 "$ACFS_PROCWATCH_PID" 2>/dev/null || break
+    sleep 0.1
+done
+update_procwatch_stop
+'''
 
 
 AS_ROOT = (["unshare", "-r"],
@@ -155,6 +185,18 @@ class UpdateLogOwnershipTests(unittest.TestCase):
             self.assertEqual(self.run_dump(dumpfile), "refused")
         self.assertEqual(victim.read_text(), "untouched\n")
         self.assertEqual((self.base / "storm-file.txt").read_text(), "old\n")
+
+    def test_a_storm_dir_swapped_for_a_link_after_start_gets_nothing_through_it(self):
+        env = {"PATH": "/usr/bin:/bin", "HOME": str(self.home), "FIXTURE_HOME": str(self.home),
+               "FIXTURE_BASE": str(self.base), "TARGET_USER": "alice"}
+        result = subprocess.run(self.as_root + ["bash", "-c", PROCWATCH_HARNESS, "_", str(SOURCE)],
+                                capture_output=True, text=True, env=env, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(list((self.base / "elsewhere").iterdir()), [], "root wrote through the link")
+        moved = sorted(p.name for p in (self.home / "moved").iterdir())
+        self.assertEqual(len(moved), 1, moved)
+        self.assertTrue(moved[0].startswith("storm-"), moved)
+        self.assertIn(f"snapshot: {self.home}/.acfs/diagnostics/procwatch/{moved[0]}", result.stderr)
 
 
 if __name__ == "__main__":

@@ -1049,6 +1049,16 @@ update_user_mkdir() {
     update_no_link_below "$UPDATE_FOR_USER_HOME" "$dir" && [[ -d "$dir" ]]
 }
 
+# update_user_fd_is_path FD PATH TEST: descriptor FD, which root opened from
+# PATH, is PATH's own inode, passes TEST (-f or -d), and belongs to the user
+# update_for_user found. A link swapped in at PATH shows another inode.
+update_user_fd_is_path() {
+    local fd="$1" path="$2" kind="$3" uid=""
+    uid="$(id -u -- "$UPDATE_FOR_USER" 2>/dev/null || true)"
+    [[ -n "$uid" ]] && test "$kind" "/proc/$$/fd/$fd" &&
+        [[ "$(stat -L -c '%d:%i:%u' -- "/proc/$$/fd/$fd" 2>/dev/null)" == "$(stat -c '%d:%i' -- "$path" 2>/dev/null):$uid" ]]
+}
+
 # update_open_user_log: the user makes the log directory and the log
 # (UPDATE_LOG_FILE's path). Root opens the log read-only, which creates
 # nothing even through a link, checks that it opened the path's own inode, a
@@ -1058,7 +1068,7 @@ update_user_mkdir() {
 # and never the path. UPDATE_LOG_PATH keeps the path for messages. Anything
 # else: no log, one line on stderr, and the update goes on.
 update_open_user_log() {
-    local log="$UPDATE_LOG_FILE" fd="" uid="" why=""
+    local log="$UPDATE_LOG_FILE" fd="" why=""
     UPDATE_LOG_FILE=""
     if ! update_user_mkdir "$UPDATE_LOG_DIR"; then
         why="$UPDATE_FOR_USER could not make its directory, or a link is below $UPDATE_FOR_USER_HOME"
@@ -1067,9 +1077,7 @@ update_open_user_log() {
     elif [[ -L "$log" || ! -f "$log" ]] || ! { exec {fd}<"$log"; } 2>/dev/null; then
         why="it is not a regular file"
     else
-        uid="$(id -u -- "$UPDATE_FOR_USER" 2>/dev/null || true)"
-        if [[ -n "$uid" && -f "/proc/$$/fd/$fd" ]] &&
-            [[ "$(stat -L -c '%d:%i:%u' -- "/proc/$$/fd/$fd" 2>/dev/null)" == "$(stat -c '%d:%i' -- "$log" 2>/dev/null):$uid" ]]; then
+        if update_user_fd_is_path "$fd" "$log" -f; then
             UPDATE_LOG_FILE="/proc/$$/fd/$fd"
             UPDATE_LOG_PATH="$log"
             return 0
@@ -9189,6 +9197,7 @@ EOF
 
 ACFS_PROCWATCH_PID=""
 ACFS_PROCWATCH_ACTIVE_FIFO=""
+ACFS_PROCWATCH_DIR_FD=""
 
 # Result globals set by update_procwatch_scan().
 PROCWATCH_TOTAL=0
@@ -9303,7 +9312,9 @@ update_procwatch_scan() {
 # The directory can be a user's (a root run for TARGET_USER), so a name that
 # exists in any form, a planted link or file, is refused, and noclobber
 # creates the file with O_EXCL; no mktemp, which forks, during a fork storm
-# (acfs-930).
+# (acfs-930). noclobber still opens, without O_EXCL, a link to a device or
+# FIFO planted after that check, so nothing is written unless the opened
+# descriptor is a regular file.
 update_procwatch_dump() {
     local procroot="$1"
     local dumpfile="$2"
@@ -9315,10 +9326,16 @@ update_procwatch_dump() {
     local -A ppid_counts=()
     local shown=0
     local i j
+    local fd="" rc=0
 
     [[ ! -e "$dumpfile" && ! -L "$dumpfile" ]] || return 1
     local -
     set -C
+    { exec {fd}>"$dumpfile"; } 2>/dev/null || return 1
+    if [[ ! -f "/proc/self/fd/$fd" ]]; then
+        { exec {fd}>&-; } 2>/dev/null || true
+        return 1
+    fi
 
     {
         printf '# ACFS process-storm snapshot\n'
@@ -9402,9 +9419,10 @@ update_procwatch_dump() {
                     "$ppid" "${ppid_counts["$ppid"]}" "${comm:-<gone>}" "${cmdline:-<none>}"
             done
         fi
-    } 2>/dev/null > "$dumpfile" || return 1
+    } 2>/dev/null 1>&"$fd" || rc=1
 
-    return 0
+    { exec {fd}>&-; } 2>/dev/null || true
+    return "$rc"
 }
 
 # Sampling loop; runs in the background for the duration of the update. Takes
@@ -9419,9 +9437,12 @@ update_procwatch_loop() {
     local max_dumps="$6"
     local tick_fifo="${7:-}"
     local once="${8:-0}"
+    # Where snapshots are made: the directory's descriptor for a root run for
+    # a user (update_procwatch_start); dumpdir stays the path messages show.
+    local writedir="${9:-$dumpdir}"
 
     local dumps=0
-    local reason stamp dumpfile
+    local reason stamp dumpname
     local have_fifo=0
     local min_interesting="$comm_threshold"
 
@@ -9433,8 +9454,9 @@ update_procwatch_loop() {
     # `sleep` costs a fork per tick, and the whole point is to keep sampling
     # once forking stops. Opened read-write so the open itself cannot block;
     # only while it is still the FIFO, since <> would create a file through a
-    # link planted in its place.
-    if [[ -n "$tick_fifo" && -p "$tick_fifo" && ! -L "$tick_fifo" ]] && exec 8<>"$tick_fifo" 2>/dev/null; then
+    # link planted in its place. The braces keep exec from sending the
+    # watcher's own stderr, its snapshot notices, to /dev/null for good.
+    if [[ -n "$tick_fifo" && -p "$tick_fifo" && ! -L "$tick_fifo" ]] && { exec 8<>"$tick_fifo"; } 2>/dev/null; then
         have_fifo=1
     fi
 
@@ -9449,10 +9471,10 @@ update_procwatch_loop() {
 
             if [[ -n "$reason" ]]; then
                 printf -v stamp '%(%Y%m%dT%H%M%S)T' -1
-                dumpfile="$dumpdir/storm-$stamp-$$-$dumps.txt"
-                if update_procwatch_dump "$procroot" "$dumpfile" "$reason" 256; then
+                dumpname="storm-$stamp-$$-$dumps.txt"
+                if update_procwatch_dump "$procroot" "$writedir/$dumpname" "$reason" 256; then
                     printf 'acfs: process-storm watchdog tripped (%s); snapshot: %s\n' \
-                        "$reason" "$dumpfile" >&2
+                        "$reason" "$dumpdir/$dumpname" >&2
                     dumps=$(( dumps + 1 ))
                     if (( dumps >= max_dumps )); then
                         printf 'acfs: process-storm watchdog wrote %s snapshots; stopping.\n' \
@@ -9479,6 +9501,7 @@ update_procwatch_loop() {
 update_procwatch_start() {
     local procroot="${ACFS_PROCWATCH_PROC:-/proc}"
     local cores comm_threshold total_threshold interval max_dumps dumpdir tick_fifo
+    local writedir dir_fd=""
 
     [[ "${ACFS_PROCWATCH:-1}" != "0" ]] || return 0
     [[ -n "${BASH_VERSION:-}" ]] || return 0
@@ -9510,16 +9533,25 @@ update_procwatch_start() {
     (( interval > 0 && comm_threshold > 0 && total_threshold > 0 && max_dumps > 0 )) || return 0
 
     dumpdir="${ACFS_PROCWATCH_DIR:-${HOME:-/tmp}/.acfs/diagnostics/procwatch}"
-    # In a user's home for a root run, the user makes it (update_for_user).
+    writedir="$dumpdir"
+    # In a user's home for a root run, the user makes it (update_for_user),
+    # and root reaches it only through a descriptor of the directory it
+    # checked: /proc/self/fd/N, which this shell, the watcher and the commands
+    # they run each inherit. A link swapped in for the directory later, while
+    # the update runs, leads nowhere.
     if update_for_user "$dumpdir"; then
         update_user_mkdir "$dumpdir" || return 0
+        { exec {dir_fd}<"$dumpdir"; } 2>/dev/null || return 0
+        ACFS_PROCWATCH_DIR_FD="$dir_fd"
+        update_user_fd_is_path "$dir_fd" "$dumpdir" -d || { update_procwatch_stop; return 0; }
+        writedir="/proc/self/fd/$dir_fd"
     else
         mkdir -p "$dumpdir" 2>/dev/null || return 0
     fi
-    [[ -w "$dumpdir" ]] || return 0
+    [[ -w "$writedir" ]] || { update_procwatch_stop; return 0; }
 
     # One FIFO per watcher, created up front while forking still works.
-    tick_fifo="$dumpdir/.tick.$$"
+    tick_fifo="$writedir/.tick.$$"
     rm -f "$tick_fifo" 2>/dev/null || true
     mkfifo -m 0600 "$tick_fifo" 2>/dev/null || tick_fifo=""
 
@@ -9532,7 +9564,7 @@ update_procwatch_start() {
         trap - EXIT
         { exec 9>&-; } 2>/dev/null || true
         update_procwatch_loop "$procroot" "$dumpdir" "$interval" \
-            "$comm_threshold" "$total_threshold" "$max_dumps" "$tick_fifo"
+            "$comm_threshold" "$total_threshold" "$max_dumps" "$tick_fifo" 0 "$writedir"
     ) &
     ACFS_PROCWATCH_PID="$!"
     ACFS_PROCWATCH_ACTIVE_FIFO="$tick_fifo"
@@ -9545,14 +9577,17 @@ update_procwatch_start() {
 update_procwatch_stop() {
     local pid="$ACFS_PROCWATCH_PID"
     local fifo="$ACFS_PROCWATCH_ACTIVE_FIFO"
+    local dir_fd="$ACFS_PROCWATCH_DIR_FD"
 
     ACFS_PROCWATCH_PID=""
     ACFS_PROCWATCH_ACTIVE_FIFO=""
+    ACFS_PROCWATCH_DIR_FD=""
     if [[ -n "$pid" ]]; then
         kill "$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true
     fi
     if [[ -n "$fifo" ]]; then rm -f "$fifo" 2>/dev/null || true; fi
+    if [[ -n "$dir_fd" ]]; then { exec {dir_fd}<&-; } 2>/dev/null || true; fi
     return 0
 }
 
