@@ -440,7 +440,9 @@ modules:
     # indexer as systemd user units (scripts/lib/acfs-services.sh).
     install:
       # age encrypts `acfs state export` archives (scripts/lib/state_layer.sh).
-      - apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev age
+      # bc: apr computes its convergence signals with it, and turns them off
+      # without it.
+      - apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq gh git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev age bc
       - apt-get -o DPkg::Lock::Timeout=120 install -y lsd || true
       - apt-get -o DPkg::Lock::Timeout=120 install -y eza || true
       - apt-get -o DPkg::Lock::Timeout=120 install -y bat || apt-get -o DPkg::Lock::Timeout=120 install -y batcat || true
@@ -457,6 +459,7 @@ modules:
       - strace --version
       - minisign -v
       - age --version
+      - command -v bc
       - command -v lsof
       - command -v dig
       - command -v nc

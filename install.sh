@@ -8237,8 +8237,8 @@ install_cli_tools() {
     if [[ "$ACFS_DISTRO_FAMILY" == "arch" ]]; then
         # sqlite provides the headers/libs utils.caut needs at link time
         # (rusqlite without the bundled feature); Arch ships them in the
-        # main sqlite package (#372).
-        local -a arch_required_pkgs=(ripgrep fzf direnv jq git-lfs lsof bind strace rsync zstd gum github-cli minisign sqlite age)
+        # main sqlite package (#372). bc: apr's convergence signals.
+        local -a arch_required_pkgs=(ripgrep fzf direnv jq git-lfs lsof bind strace rsync zstd gum github-cli minisign sqlite age bc)
         # openbsd-netcat conflicts with gnu-netcat; only add it when no `nc`
         # provider is present so an existing choice never aborts the batch.
         if ! command_exists nc; then
@@ -8264,7 +8264,9 @@ install_cli_tools() {
         # libsqlite3-dev: utils.caut links the system libsqlite3 (rusqlite
         # without the bundled feature), so the dev package must exist before
         # its cargo build (#372). age encrypts `acfs state export` archives.
-        try_step "Installing required apt packages" $SUDO apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev age || return 1
+        # bc: apr computes its convergence signals with it, and turns them
+        # off without it.
+        try_step "Installing required apt packages" $SUDO apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev age bc || return 1
     fi
 
     # GitHub CLI (gh)
