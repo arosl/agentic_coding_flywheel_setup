@@ -11,7 +11,8 @@ It listens on 127.0.0.1 only. --port 0 (the default) takes a free port;
 --ready FILE receives {"port", "pid", "url"} once it listens. Any API key
 is accepted, and none is ever logged: --log FILE gets one JSON line per
 request with the path, model, stream flag and the whole last user text,
-never a header.
+never a header; for the Messages API also each message's role and block
+types (shape), and the tool calls asked for or results read.
 
 Replies: --script FILE is a JSON list, one entry per turn in order, each a
 string (the reply text) or {"text": ..., "delay": seconds}; after the last
@@ -25,6 +26,14 @@ a compaction (Claude Code's /compact, Codex's checkpoint) and a session
 title, are answered at once and never consume a turn. They are known by
 their prompts' wording (COMPACTION, TITLE), so a prompt that only asks
 for a summary is an ordinary turn.
+
+Tool calls (Messages API only; acfs-9hkh.94): each line of the prompt
+that reads 'mock-tool: {"name": ..., "input": {...}}', at the start of
+the line, adds that tool_use block to the turn's reply, whose stop
+reason is then tool_use, so Claude Code runs the tool. The request that
+carries the tools' results gets a short closing text and takes no turn.
+A helper request never calls a tool, and the Responses API (Codex) reads
+no such line.
 
 Pointing the CLIs at it (as exp.3 and exp.4 did):
 - Claude Code: ANTHROPIC_BASE_URL=<url> and any ANTHROPIC_API_KEY.
@@ -63,9 +72,35 @@ TITLE = ("generate a concise, single-line task title",
          "write the title in the predominant language of the session")
 
 
+# A prompt line that asks for a tool call. Only at a line's start, so a
+# prompt that quotes one (nhm's CASS excerpt of an earlier session) asks
+# for nothing.
+TOOL_LINE = re.compile(r"^mock-tool: (\{.*\})[ \t]*$", re.M)
+
+
 def says(text, word):
     """Whether text holds word as a whole word."""
     return re.search(rf"\b{word}\b", text) is not None
+
+
+def is_helper(text):
+    """Whether text is a tool's own helper request (a compaction or a title)."""
+    lower = text.lower()
+    return any(p in lower for p in COMPACTION + TITLE)
+
+
+def tool_calls(text):
+    """The tool calls a prompt asks for, one per 'mock-tool: {json}' line
+    with a name and an input object; any other line is no call."""
+    calls = []
+    for m in TOOL_LINE.finditer(text):
+        try:
+            call = json.loads(m.group(1))
+        except ValueError:
+            continue
+        if isinstance(call, dict) and isinstance(call.get("name"), str) and isinstance(call.get("input"), dict):
+            calls.append({"name": call["name"], "input": call["input"]})
+    return calls
 
 
 class State:
@@ -121,6 +156,24 @@ def anthropic_user_text(body):
         if texts:
             return texts[-1]
     return ""
+
+
+def anthropic_last_user(body):
+    """The last message, when it is the user's: all its text, and how many
+    tool results it carries (Claude Code's answer to a tool call). The
+    system messages Claude Code 2.1 puts after it are passed over."""
+    for msg in reversed(body.get("messages") or []):
+        if not isinstance(msg, dict) or msg.get("role") == "system":
+            continue
+        if msg.get("role") != "user":
+            return "", 0
+        content = msg.get("content")
+        if isinstance(content, str):
+            return content, 0
+        blocks = [c for c in content or [] if isinstance(c, dict)]
+        text = "\n".join(c.get("text", "") for c in blocks if c.get("type") == "text")
+        return text, sum(1 for c in blocks if c.get("type") == "tool_result")
+    return "", 0
 
 
 def responses_user_text(body):
@@ -210,16 +263,33 @@ class Handler(BaseHTTPRequestHandler):
     # The Anthropic Messages API (exp.4).
     def _messages(self, path, body):
         text = anthropic_user_text(body)
-        self.state.record({"method": "POST", "path": path, "model": body.get("model"), "stream": body.get("stream"),
-                           "n_messages": len(body.get("messages") or []), "user_text": text})
-        reply, delay = self.state.reply(text)
+        last_text, results = anthropic_last_user(body)
+        calls = [] if results or is_helper(text) else tool_calls(last_text)
+        rec = {"method": "POST", "path": path, "model": body.get("model"), "stream": body.get("stream"),
+               "n_messages": len(body.get("messages") or []), "user_text": text,
+               # Each message's role and block types, never their text.
+               "shape": [[m.get("role"), "text" if isinstance(m.get("content"), str) else
+                          [c.get("type") for c in m.get("content") or [] if isinstance(c, dict)]]
+                         for m in body.get("messages") or [] if isinstance(m, dict)]}
+        if calls:
+            rec["tool_calls"] = [c["name"] for c in calls]
+        if results:
+            rec["tool_results"] = results
+        self.state.record(rec)
+        if results:
+            # The tools ran: close the turn they belong to.
+            reply, delay = f"mock: read {results} tool result(s)", self.state.delay
+        else:
+            reply, delay = self.state.reply(text)
+        uses = [{"type": "tool_use", "id": "toolu_" + uuid.uuid4().hex[:24], **c} for c in calls]
+        stop = "tool_use" if uses else "end_turn"
         msg_id = "msg_" + uuid.uuid4().hex[:24]
         model = body.get("model") or "claude-mock"
         usage = {"input_tokens": 42, "output_tokens": 8, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
         if not body.get("stream"):
             time.sleep(delay)
             self._json(200, {"id": msg_id, "type": "message", "role": "assistant", "model": model,
-                             "content": [{"type": "text", "text": reply}], "stop_reason": "end_turn",
+                             "content": [{"type": "text", "text": reply}, *uses], "stop_reason": stop,
                              "stop_sequence": None, "usage": usage})
             return
         self._stream()
@@ -236,7 +306,14 @@ class Handler(BaseHTTPRequestHandler):
             self._event("content_block_delta", {"type": "content_block_delta", "index": 0,
                                                 "delta": {"type": "text_delta", "text": w}})
         self._event("content_block_stop", {"type": "content_block_stop", "index": 0})
-        self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+        for i, use in enumerate(uses, 1):
+            self._event("content_block_start", {"type": "content_block_start", "index": i,
+                                                "content_block": {**use, "input": {}}})
+            self._event("content_block_delta", {"type": "content_block_delta", "index": i,
+                                                "delta": {"type": "input_json_delta",
+                                                          "partial_json": json.dumps(use["input"])}})
+            self._event("content_block_stop", {"type": "content_block_stop", "index": i})
+        self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": stop, "stop_sequence": None},
                                       "usage": {"output_tokens": 8}})
         self._event("message_stop", {"type": "message_stop"})
 

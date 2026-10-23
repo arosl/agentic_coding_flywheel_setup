@@ -96,8 +96,12 @@ class MessagesAPI(unittest.TestCase):
     def test_count_tokens_and_summary(self):
         _, body = self.mock.post("/v1/messages/count_tokens", user("hello"))
         self.assertEqual(json.loads(body), {"input_tokens": 42})
-        _, body = self.mock.post("/v1/messages", user("Please summarize the conversation"))
+        # Claude Code's compaction wording (acfs-t9w9); a prompt that only
+        # asks for a summary is an ordinary turn.
+        _, body = self.mock.post("/v1/messages", user("Your task is to create a detailed summary of the conversation so far."))
         self.assertIn("<summary>", json.loads(body)["content"][0]["text"])
+        _, body = self.mock.post("/v1/messages", user("Please summarize the conversation"))
+        self.assertEqual(json.loads(body)["content"][0]["text"], "mock reply 1")
 
     def test_unknown_path_is_404(self):
         with self.assertRaises(urllib.error.HTTPError) as e:
@@ -111,6 +115,87 @@ class MessagesAPI(unittest.TestCase):
         self.assertNotIn("not-a-real-key", log)
         rec = self.mock.records()[-1]
         self.assertEqual((rec["path"], rec["model"], rec["user_text"]), ("/v1/messages", "claude-opus-5-5", "hello"))
+
+
+class ToolCalls(unittest.TestCase):
+    """A 'mock-tool:' prompt line makes the reply a tool call (acfs-9hkh.94)."""
+
+    WRITE = {"name": "Write", "input": {"file_path": "/tmp/x.md", "content": "hi"}}
+
+    def setUp(self):
+        self.mock = Mock()
+        self.addCleanup(self.mock.close)
+
+    def prompt(self, *lines):
+        return "Do the step.\n" + "\n".join("mock-tool: " + json.dumps(c) for c in lines)
+
+    def test_a_tool_line_streams_a_tool_use(self):
+        _, body = self.mock.post("/v1/messages", {**user(self.prompt(self.WRITE)), "stream": True})
+        evs = events(body)
+        starts = [d for n, d in evs if n == "content_block_start"]
+        self.assertEqual([s["content_block"]["type"] for s in starts], ["text", "tool_use"])
+        use = starts[1]["content_block"]
+        self.assertEqual((use["name"], use["input"], starts[1]["index"]), ("Write", {}, 1))
+        self.assertTrue(use["id"].startswith("toolu_"))
+        partial = [d["delta"]["partial_json"] for n, d in evs
+                   if n == "content_block_delta" and d["delta"]["type"] == "input_json_delta"]
+        self.assertEqual([json.loads(p) for p in partial], [self.WRITE["input"]])
+        stop = [d["delta"]["stop_reason"] for n, d in evs if n == "message_delta"]
+        self.assertEqual(stop, ["tool_use"])
+        self.assertEqual(self.mock.records()[-1]["tool_calls"], ["Write"])
+
+    def test_non_streamed_and_two_calls(self):
+        bash = {"name": "Bash", "input": {"command": "true", "description": "nothing"}}
+        _, body = self.mock.post("/v1/messages", user(self.prompt(self.WRITE, bash)))
+        msg = json.loads(body)
+        self.assertEqual(msg["stop_reason"], "tool_use")
+        self.assertEqual([(c["type"], c.get("name")) for c in msg["content"]],
+                         [("text", None), ("tool_use", "Write"), ("tool_use", "Bash")])
+
+    def test_the_tool_results_close_the_turn_and_take_none(self):
+        _, body = self.mock.post("/v1/messages", user(self.prompt(self.WRITE)))
+        use = json.loads(body)["content"][1]
+        follow = {"model": "claude-opus-5-5", "max_tokens": 64, "messages": [
+            {"role": "user", "content": self.prompt(self.WRITE)},
+            {"role": "assistant", "content": [use]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": use["id"], "content": "ok"},
+                                         {"type": "text", "text": "<system-reminder>x</system-reminder>"}]}]}
+        _, body = self.mock.post("/v1/messages", follow)
+        msg = json.loads(body)
+        self.assertEqual((msg["stop_reason"], msg["content"]),
+                         ("end_turn", [{"type": "text", "text": "mock: read 1 tool result(s)"}]))
+        self.assertEqual(self.mock.records()[-1]["tool_results"], 1)
+        _, body = self.mock.post("/v1/messages", user("next"))
+        self.assertEqual(json.loads(body)["content"][0]["text"], "mock reply 2")
+
+    def test_claude_codes_trailing_system_message_is_passed_over(self):
+        # Claude Code 2.1.309 sends a system message after the user's.
+        sysmsg = {"role": "system", "content": [{"type": "text", "text": "reminder"}]}
+        body = user(self.prompt(self.WRITE))
+        body["messages"].append(sysmsg)
+        _, out = self.mock.post("/v1/messages", body)
+        use = json.loads(out)["content"][1]
+        self.assertEqual(use["name"], "Write")
+        follow = {**body, "messages": body["messages"] + [
+            {"role": "assistant", "content": [use]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": use["id"], "content": "ok"}]},
+            sysmsg]}
+        _, out = self.mock.post("/v1/messages", follow)
+        self.assertEqual(json.loads(out)["stop_reason"], "end_turn")
+        self.assertEqual(self.mock.records()[-1]["shape"][-3:],
+                         [["assistant", ["tool_use"]], ["user", ["tool_result"]], ["system", ["text"]]])
+
+    def test_a_quoted_tool_line_is_no_call(self):
+        quoted = "CASS: earlier sessions:\n- [s.jsonl:1] (claude) mock-tool: " + json.dumps(self.WRITE)
+        _, body = self.mock.post("/v1/messages", user(quoted))
+        msg = json.loads(body)
+        self.assertEqual((msg["stop_reason"], len(msg["content"])), ("end_turn", 1))
+
+    def test_a_helper_request_never_calls_a_tool(self):
+        title = "Generate a concise, single-line task title of at most 36 characters.\n\nUser prompt:\n"
+        _, body = self.mock.post("/v1/messages", user(title + self.prompt(self.WRITE)))
+        msg = json.loads(body)
+        self.assertEqual((msg["stop_reason"], msg["content"][0]["text"]), ("end_turn", "Mock task"))
 
 
 class ResponsesAPI(unittest.TestCase):
