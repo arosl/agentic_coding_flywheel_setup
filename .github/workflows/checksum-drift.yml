@@ -2,17 +2,20 @@ name: Checksum Drift
 
 # The fork's own workflow (acfs-2iq). Pins in checksums.yaml name
 # installer scripts that change upstream often, and a stale pin used to
-# show only as a user's failed install. Once a day this compares every pin
-# with what its URL serves now (scripts/checksum-drift-check.sh, over
-# security.sh --verify --json) and fails, naming each stale pin, so drift
-# is fixed by the canonical refresh before an install trips on it. It
-# reads only: it never writes checksums.yaml. Upstream runs
+# show only as a user's failed install. Once an hour (the operator's ruling
+# on acfs-gwuy, 2026-10-23: main-tracking pins drifted four times in one
+# day) this compares every pin with what its URL serves now
+# (scripts/checksum-drift-check.sh, over security.sh --verify --json) and
+# fails, naming each stale pin, so drift is fixed by the canonical refresh
+# before an install trips on it. It reads only: it never writes
+# checksums.yaml. The local queue gets its P1 beads from the same check run
+# with --file-beads on the development host. Upstream runs
 # scripts/checksum-monitor-local.sh, which publishes to its own repository.
 # A push that changes the check runs its tests only.
 
 on:
   schedule:
-    - cron: '17 5 * * *'
+    - cron: '17 * * * *'
   workflow_dispatch: {}
   push:
     branches: [main]

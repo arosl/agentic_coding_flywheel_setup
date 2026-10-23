@@ -119,6 +119,90 @@ check "--report reads a saved report and runs nothing" \
 run_check --update
 check "an unknown option exits 2" test "$RC" -eq 2
 
+# --file-beads (acfs-gwuy) against a STUB br that keeps its beads in
+# $WORK/beads.json and logs each call's verb to $WORK/br-calls.
+cat >"$WORK/br" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+db="$STUB_WORK/beads.json"
+[[ -f "$db" ]] || echo '[]' >"$db"
+printf '%s\n' "$1${2:+ $2}" >>"$STUB_WORK/br-calls"
+case "$1" in
+    list)
+        jq -c --arg p "$3" '{issues: [.[] | select(.status != "closed" and (.title | contains($p)))]}' "$db" ;;
+    show)
+        jq -c --arg id "$2" '[.[] | select(.id == $id)]' "$db" ;;
+    comments)
+        jq -c --arg id "$3" --arg t "$4" 'map(if .id == $id then .comments += [{text: $t}] else . end)' "$db" >"$db.new"
+        mv "$db.new" "$db" ;;
+    create)
+        id="stub-$(jq length "$db")"
+        jq -c --arg id "$id" --arg title "$3" --arg type "$5" --arg prio "$7" --arg d "$9" \
+            '. + [{id: $id, title: $title, type: $type, priority: $prio, description: $d, status: "open", comments: []}]' \
+            "$db" >"$db.new"
+        mv "$db.new" "$db"
+        jq -nc --arg id "$id" '{id: $id}' ;;
+    *) exit 64 ;;
+esac
+STUB
+chmod +x "$WORK/br"
+
+hash_of() { printf "$1%.0s" {1..64}; }
+drift_report() {
+    report '[{"name":"rch","url":"https://example.test/rch/install.sh","expected":"'"$(hash_of 1)"'","actual":"'"$(hash_of "$1")"'"}]' '[]' '[]'
+}
+run_beads() {
+    : >"$WORK/br-calls"
+    ACFS_DRIFT_BR="${BR_UNDER_TEST:-$WORK/br}" run_check "$@"
+}
+beads() { jq -r "$1" "$WORK/beads.json"; }
+
+rm -f "$WORK/beads.json"
+drift_report 2
+echo 1 >"$WORK/rc"
+run_beads
+check "without --file-beads, br is never called" test ! -s "$WORK/br-calls"
+
+run_beads --file-beads
+check "a changed installer becomes one P1 bug bead, and the check still exits 1" \
+    bash -c '[[ "$1" -eq 1 ]] && [[ "$(jq length "$2")" -eq 1 ]] \
+        && jq -e ".[0] | .type == \"bug\" and .priority == \"1\"" "$2" >/dev/null' _ "$RC" "$WORK/beads.json"
+check "its title names the installer and the served hash" \
+    test "$(beads '.[0].title')" = "Checksum drift: rch's pinned installer changed upstream (now 22222222)"
+check "its description has the URL, both hashes and the canonical refresh" \
+    bash -c 'jq -e ".[0].description | contains(\"https://example.test/rch/install.sh\") and contains(\"$2\") and contains(\"$3\") and contains(\"Verified Installer Checksum Discipline\")" "$1" >/dev/null' \
+    _ "$WORK/beads.json" "$(hash_of 1)" "$(hash_of 2)"
+check "the report stays on stdout and the filing goes to stderr" \
+    bash -c 'grep -q "^| rch |" <<<"$1" && grep -q "bead stub-0: filed, rch serves 22222222" <<<"$2" && ! grep -q "^bead " <<<"$1"' _ "$OUT" "$ERR"
+
+run_beads --file-beads
+check "a rerun with the same served hash files and comments nothing" \
+    bash -c '[[ "$(jq length "$1")" -eq 1 && "$(jq ".[0].comments | length" "$1")" -eq 0 ]] && ! grep -q -E "^(create|comments)" "$2"' \
+    _ "$WORK/beads.json" "$WORK/br-calls"
+
+drift_report 3
+run_beads --file-beads
+check "a newly served hash is a comment on the open bead, not a second bead" \
+    bash -c '[[ "$(jq length "$1")" -eq 1 ]] && jq -e ".[0].comments[0].text | contains(\"$2\")" "$1" >/dev/null' \
+    _ "$WORK/beads.json" "$(hash_of 3)"
+
+jq -c '.[0].status = "closed"' "$WORK/beads.json" >"$WORK/beads.new" && mv "$WORK/beads.new" "$WORK/beads.json"
+drift_report 4
+run_beads --file-beads
+check "after its bead is closed, a new drift files a new bead" \
+    bash -c '[[ "$(jq length "$1")" -eq 2 ]] && [[ "$(jq -r ".[1].title" "$1")" == *"(now 44444444)" ]]' _ "$WORK/beads.json"
+
+rm -f "$WORK/beads.json"
+report '[]' '[{"name":"fmd","url":"https://example.test/fmd","error":"curl: (22) 404"}]' '[{"name":"half","url":"","reason":"incomplete"}]'
+run_beads --file-beads
+check "fetch errors and incomplete entries are reported, not filed" \
+    bash -c '[[ "$1" -eq 1 ]] && ! grep -q "^create" "$2"' _ "$RC" "$WORK/br-calls"
+
+drift_report 2
+BR_UNDER_TEST="$WORK/no-such-br" run_beads --file-beads
+check "--file-beads without br exits 2 and says so" \
+    bash -c '[[ "$1" -eq 2 ]] && grep -q "br not found in PATH" <<<"$2"' _ "$RC" "$ERR"
+
 echo
 echo "passed: $PASS, failed: $FAIL"
 [[ "$FAIL" -eq 0 ]]
