@@ -261,7 +261,9 @@ legacy_setup() {
     phase="$(sed -n '/^install_stack_phase() {$/,/^}$/p' "$INSTALL_SH")"
     [[ -n "$phase" ]]
     run grep -c 'acfs_optional_module_install_failed "' <<< "$phase"
-    (( output >= 37 ))
+    # mdwb went to its generated installer, which records an optional failure
+    # itself (acfs-2qhv); test_legacy_stack_manifest_pins.bats guards it.
+    (( output >= 36 ))
     # The only remaining "may have failed" text belongs to the REQUIRED Agent Mail module.
     run grep -E 'log_warn "[^"]* installation may have failed"' <<< "$phase"
     [[ "$status" -ne 0 ]]
@@ -303,7 +305,7 @@ legacy_setup() {
 
     # With the real index loaded, every legacy call site lands where the
     # manifest's optional flag says: required modules in the failure list, the
-    # rest in the optional-skip list. Guards the 37 sites against the manifest.
+    # rest in the optional-skip list. Guards the 36 sites against the manifest.
     local required_seen=0 optional_seen=0
     while IFS= read -r tool; do
         id="$(acfs_module_id_for_verified_installer_tool "$tool")"
