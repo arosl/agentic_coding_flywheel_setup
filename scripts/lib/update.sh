@@ -1029,10 +1029,11 @@ init_logging() {
     } >> "$UPDATE_LOG_FILE"
 }
 
-# Root running `acfs update` for another user (TARGET_USER) writes its log and
-# storm snapshots into that user's home. There the user makes every directory
-# and file, and root writes only to what it has checked: nothing it creates or
-# appends to by path can be a link the user swapped in (acfs-930).
+# Root running `acfs update` for another user (TARGET_USER) writes its log into
+# that user's home. There the user makes every directory and file, and root
+# writes only to what it has checked: nothing it creates or appends to by path
+# can be a link the user swapped in (acfs-930). Its storm snapshots go to
+# root's own directory instead (update_procwatch_start).
 #
 # update_for_user PATH: PATH is below the home of the user a root run is for.
 # Sets UPDATE_FOR_USER and UPDATE_FOR_USER_HOME; fails for root updating
@@ -9240,8 +9241,6 @@ EOF
 # `ps` is exactly the watchdog that cannot report on it.
 
 ACFS_PROCWATCH_PID=""
-ACFS_PROCWATCH_ACTIVE_FIFO=""
-ACFS_PROCWATCH_DIR_FD=""
 
 # Result globals set by update_procwatch_scan().
 PROCWATCH_TOTAL=0
@@ -9353,12 +9352,13 @@ update_procwatch_scan() {
 
 # Write a forensic snapshot to "$dumpfile", a new file. Assumes
 # update_procwatch_scan() has just run against the same "$procroot".
-# The directory can be a user's (a root run for TARGET_USER), so a name that
-# exists in any form, a planted link or file, is refused, and noclobber
-# creates the file with O_EXCL; no mktemp, which forks, during a fork storm
-# (acfs-930). noclobber still opens, without O_EXCL, a link to a device or
-# FIFO planted after that check, so nothing is written unless the opened
-# descriptor is a regular file.
+# A name that exists in any form, a planted link or file, is refused, and
+# noclobber creates the file with O_EXCL; no mktemp, which forks, during a
+# fork storm (acfs-930). noclobber still opens, without O_EXCL, a link to a
+# device or FIFO planted after that check, so nothing is written unless the
+# opened descriptor is a regular file. The open itself still happens, which
+# is why a root run never makes snapshots in another user's directory
+# (update_procwatch_start).
 update_procwatch_dump() {
     local procroot="$1"
     local dumpfile="$2"
@@ -9479,29 +9479,28 @@ update_procwatch_loop() {
     local comm_threshold="$4"
     local total_threshold="$5"
     local max_dumps="$6"
-    local tick_fifo="${7:-}"
+    local tick="${7:-}"
     local once="${8:-0}"
-    # Where snapshots are made: the directory's descriptor for a root run for
-    # a user (update_procwatch_start); dumpdir stays the path messages show.
-    local writedir="${9:-$dumpdir}"
 
     local dumps=0
     local reason stamp dumpname
-    local have_fifo=0
+    local have_tick=0
     local min_interesting="$comm_threshold"
 
     if (( total_threshold < min_interesting )); then
         min_interesting="$total_threshold"
     fi
 
-    # Fork-free sleep: block on a FIFO nobody writes to until `read` times out.
-    # `sleep` costs a fork per tick, and the whole point is to keep sampling
-    # once forking stops. Opened read-write so the open itself cannot block;
-    # only while it is still the FIFO, since <> would create a file through a
-    # link planted in its place. The braces keep exec from sending the
-    # watcher's own stderr, its snapshot notices, to /dev/null for good.
-    if [[ -n "$tick_fifo" && -p "$tick_fifo" && ! -L "$tick_fifo" ]] && { exec 8<>"$tick_fifo"; } 2>/dev/null; then
-        have_fifo=1
+    # Fork-free sleep (tick=1): block on a pipe nobody writes to until `read`
+    # times out. `sleep` costs a fork per tick, and the whole point is to keep
+    # sampling once forking stops. The pipe is anonymous, made by one fork
+    # here, while forking still works: <> on the process substitution's
+    # /dev/fd name holds both ends, so the read never sees EOF. It has no name
+    # that anyone could swap for a link, as a FIFO in a user's directory has
+    # (acfs-5zr1). The braces keep exec from sending the watcher's own
+    # stderr, its snapshot notices, to /dev/null for good.
+    if [[ "$tick" == "1" ]] && { exec 8<> <(:); } 2>/dev/null; then
+        have_tick=1
     fi
 
     while true; do
@@ -9516,7 +9515,7 @@ update_procwatch_loop() {
             if [[ -n "$reason" ]]; then
                 printf -v stamp '%(%Y%m%dT%H%M%S)T' -1
                 dumpname="storm-$stamp-$$-$dumps.txt"
-                if update_procwatch_dump "$procroot" "$writedir/$dumpname" "$reason" 256; then
+                if update_procwatch_dump "$procroot" "$dumpdir/$dumpname" "$reason" 256; then
                     printf 'acfs: process-storm watchdog tripped (%s); snapshot: %s\n' \
                         "$reason" "$dumpdir/$dumpname" >&2
                     dumps=$(( dumps + 1 ))
@@ -9531,21 +9530,21 @@ update_procwatch_loop() {
 
         if [[ "$once" == "1" ]]; then break; fi
 
-        if (( have_fifo )); then
+        if (( have_tick )); then
             read -r -t "$interval" -u 8 _ || true
         else
             sleep "$interval" || break
         fi
     done
 
-    if (( have_fifo )); then { exec 8>&-; } 2>/dev/null || true; fi
+    if (( have_tick )); then { exec 8>&-; } 2>/dev/null || true; fi
     return 0
 }
 
 update_procwatch_start() {
     local procroot="${ACFS_PROCWATCH_PROC:-/proc}"
-    local cores comm_threshold total_threshold interval max_dumps dumpdir tick_fifo
-    local writedir dir_fd=""
+    local cores comm_threshold total_threshold interval max_dumps dumpdir
+    local root_home=""
 
     [[ "${ACFS_PROCWATCH:-1}" != "0" ]] || return 0
     [[ -n "${BASH_VERSION:-}" ]] || return 0
@@ -9577,27 +9576,18 @@ update_procwatch_start() {
     (( interval > 0 && comm_threshold > 0 && total_threshold > 0 && max_dumps > 0 )) || return 0
 
     dumpdir="${ACFS_PROCWATCH_DIR:-${HOME:-/tmp}/.acfs/diagnostics/procwatch}"
-    writedir="$dumpdir"
-    # In a user's home for a root run, the user makes it (update_for_user),
-    # and root reaches it only through a descriptor of the directory it
-    # checked: /proc/self/fd/N, which this shell, the watcher and the commands
-    # they run each inherit. A link swapped in for the directory later, while
-    # the update runs, leads nowhere.
+    # A root run for another user (update_for_user) makes nothing in that
+    # user's home: its snapshots go to root's own directory. In a directory
+    # the user can write, root could make a snapshot only by a name the user
+    # can swap for a link at any time, and bash has no O_NOFOLLOW
+    # (update_procwatch_dump, acfs-5zr1).
     if update_for_user "$dumpdir"; then
-        update_user_mkdir "$dumpdir" || return 0
-        { exec {dir_fd}<"$dumpdir"; } 2>/dev/null || return 0
-        ACFS_PROCWATCH_DIR_FD="$dir_fd"
-        update_user_fd_is_path "$dir_fd" "$dumpdir" -d || { update_procwatch_stop; return 0; }
-        writedir="/proc/self/fd/$dir_fd"
-    else
-        mkdir -p "$dumpdir" 2>/dev/null || return 0
+        root_home="$(update_target_home root 2>/dev/null || true)"
+        [[ "$root_home" == /?* ]] || return 0
+        dumpdir="$root_home/.acfs/diagnostics/procwatch"
     fi
-    [[ -w "$writedir" ]] || { update_procwatch_stop; return 0; }
-
-    # One FIFO per watcher, created up front while forking still works.
-    tick_fifo="$writedir/.tick.$$"
-    rm -f "$tick_fifo" 2>/dev/null || true
-    mkfifo -m 0600 "$tick_fifo" 2>/dev/null || tick_fifo=""
+    mkdir -p "$dumpdir" 2>/dev/null || return 0
+    [[ -w "$dumpdir" ]] || return 0
 
     # Explicit subshell so fd 9 — the exclusive per-UID update lock (#347) —
     # can be closed in the child. If the parent were ever SIGKILLed, a watchdog
@@ -9608,10 +9598,9 @@ update_procwatch_start() {
         trap - EXIT
         { exec 9>&-; } 2>/dev/null || true
         update_procwatch_loop "$procroot" "$dumpdir" "$interval" \
-            "$comm_threshold" "$total_threshold" "$max_dumps" "$tick_fifo" 0 "$writedir"
+            "$comm_threshold" "$total_threshold" "$max_dumps" 1
     ) &
     ACFS_PROCWATCH_PID="$!"
-    ACFS_PROCWATCH_ACTIVE_FIFO="$tick_fifo"
     if declare -F log_to_file >/dev/null 2>&1; then
         log_to_file "process-storm watchdog started (pid $ACFS_PROCWATCH_PID, interval ${interval}s, name threshold $comm_threshold, table threshold $total_threshold, snapshots -> $dumpdir)"
     fi
@@ -9620,18 +9609,12 @@ update_procwatch_start() {
 
 update_procwatch_stop() {
     local pid="$ACFS_PROCWATCH_PID"
-    local fifo="$ACFS_PROCWATCH_ACTIVE_FIFO"
-    local dir_fd="$ACFS_PROCWATCH_DIR_FD"
 
     ACFS_PROCWATCH_PID=""
-    ACFS_PROCWATCH_ACTIVE_FIFO=""
-    ACFS_PROCWATCH_DIR_FD=""
     if [[ -n "$pid" ]]; then
         kill "$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true
     fi
-    if [[ -n "$fifo" ]]; then rm -f "$fifo" 2>/dev/null || true; fi
-    if [[ -n "$dir_fd" ]]; then { exec {dir_fd}<&-; } 2>/dev/null || true; fi
     return 0
 }
 

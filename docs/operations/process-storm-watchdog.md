@@ -34,6 +34,12 @@ Each trip appends a snapshot to
 - a parent histogram: every distinct PPID, how many children it had, and that
   parent's own name and argv (or `<gone>` if it already exited).
 
+`~` is the home of the user who runs `acfs update`. When root runs it for
+another user (`TARGET_USER`), the snapshots go to root's own
+`~/.acfs/diagnostics/procwatch`, and the watchdog makes nothing in that user's
+home: there the user could swap a snapshot's name for a link while the update
+runs, and bash cannot open a file without following a link.
+
 The parent histogram is the point. In the original incident the shape was
 "many distinct short-lived `sh -c` wrappers, one `ast-grep` each", which is a
 very different mechanism from "one parent forking in a loop" — and the
@@ -42,7 +48,8 @@ snapshot distinguishes them immediately.
 ## Why it uses no external commands
 
 The sampling and dumping paths are pure bash builtins: globbing `/proc`,
-`read`, `mapfile`, `printf`, and a `read -t` on a FIFO in place of `sleep`.
+`read`, `mapfile`, `printf`, and a `read -t` on an anonymous pipe in place of
+`sleep`. The pipe costs one fork, when the watchdog starts.
 The failure being diagnosed *is* fork exhaustion. A watchdog that has to fork
 `ps`, `sort`, or `sleep` is precisely the watchdog that stops working at the
 moment it becomes useful.
@@ -56,7 +63,7 @@ moment it becomes useful.
 | `ACFS_PROCWATCH_THRESHOLD` | `max(256, cores * 32)` | Trip when one process name reaches this count. |
 | `ACFS_PROCWATCH_TOTAL_THRESHOLD` | `max(2000, cores * 200)` | Trip when the whole table reaches this size. |
 | `ACFS_PROCWATCH_MAX_DUMPS` | `5` | Stop after this many snapshots in one run. |
-| `ACFS_PROCWATCH_DIR` | `~/.acfs/diagnostics/procwatch` | Snapshot directory. |
+| `ACFS_PROCWATCH_DIR` | `~/.acfs/diagnostics/procwatch` | Snapshot directory. A root run for another user uses root's own default instead when this is in that user's home. |
 | `ACFS_PROCWATCH_PROC` | `/proc` | Proc root (tests only). |
 
 The defaults scale with core count because a legitimate build peaks near one

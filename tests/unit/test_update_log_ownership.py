@@ -7,7 +7,8 @@ Ubuntu 24.04), and its init_logging writes a real log. Switching to the
 target user is a recording stub that runs the command as the namespace's
 root, `id -u alice` answers that root's uid, and chown is a recording stub,
 so no ownership on the host changes and no update step runs (acfs-7v3,
-acfs-930).
+acfs-930). The storm watchdog of such a run makes nothing in the user's
+home (acfs-5zr1).
 """
 import os
 from pathlib import Path
@@ -42,24 +43,33 @@ source "$1"
 update_procwatch_scan /proc
 if update_procwatch_dump /proc "$2" "test storm" 4; then echo wrote; else echo refused; fi
 '''
-# The watchdog starts on a /proc with no processes, the user swaps its
-# directory for a link, and then a storm trips the next tick; with one
-# snapshot allowed, the watcher then exits by itself.
+# alice has made her procwatch directory a link. A root run for her starts
+# the watchdog on a /proc with no processes, and a storm then trips the next
+# tick; with one snapshot allowed, the watcher then exits by itself. tick=
+# says whether the watcher held an anonymous pipe as its tick (fd 8).
 PROCWATCH_HARNESS = r'''
 source "$1"
-update_target_home() { printf '%s\n' "$FIXTURE_HOME"; }
-update_run_in_target_context() { shift; "$@"; }
-id() { if [[ "$1" == -u && "${3:-$2}" == alice ]]; then echo "$EUID"; else command id "$@"; fi; }
+update_target_home() {
+    if [[ "$1" == root ]]; then printf '%s\n' "$FIXTURE_BASE/roothome"; else printf '%s\n' "$FIXTURE_HOME"; fi
+}
 proc="$FIXTURE_BASE/proc"
-mkdir -p "$proc" "$FIXTURE_BASE/elsewhere"
+mkdir -p "$proc" "$FIXTURE_BASE/elsewhere" "$FIXTURE_HOME/.acfs/diagnostics"
+ln -s "$FIXTURE_BASE/elsewhere" "$FIXTURE_HOME/.acfs/diagnostics/procwatch"
 printf '0.10 0.20 0.30 2/300 12345\n' > "$proc/loadavg"
 printf 'processor\t: 0\n' > "$proc/cpuinfo"
 export ACFS_PROCWATCH_DIR="$FIXTURE_HOME/.acfs/diagnostics/procwatch" ACFS_PROCWATCH_PROC="$proc"
 export ACFS_PROCWATCH_THRESHOLD=3 ACFS_PROCWATCH_INTERVAL=1 ACFS_PROCWATCH_MAX_DUMPS=1
 update_procwatch_start
 [[ -n "$ACFS_PROCWATCH_PID" ]]
-mv "$ACFS_PROCWATCH_DIR" "$FIXTURE_HOME/moved"
-ln -s "$FIXTURE_BASE/elsewhere" "$ACFS_PROCWATCH_DIR"
+tick=none
+for _ in $(seq 50); do
+    if [[ "$(readlink "/proc/$ACFS_PROCWATCH_PID/fd/8" 2>/dev/null)" == pipe:* ]]; then
+        tick=pipe
+        break
+    fi
+    sleep 0.1
+done
+printf 'tick=%s\n' "$tick"
 for pid in 1001 1002 1003 1004; do
     mkdir "$proc/$pid"
     printf 'storm\n' > "$proc/$pid/comm"
@@ -186,17 +196,23 @@ class UpdateLogOwnershipTests(unittest.TestCase):
         self.assertEqual(victim.read_text(), "untouched\n")
         self.assertEqual((self.base / "storm-file.txt").read_text(), "old\n")
 
-    def test_a_storm_dir_swapped_for_a_link_after_start_gets_nothing_through_it(self):
+    def test_a_root_run_for_a_user_makes_storm_snapshots_in_roots_directory_only(self):
         env = {"PATH": "/usr/bin:/bin", "HOME": str(self.home), "FIXTURE_HOME": str(self.home),
                "FIXTURE_BASE": str(self.base), "TARGET_USER": "alice"}
         result = subprocess.run(self.as_root + ["bash", "-c", PROCWATCH_HARNESS, "_", str(SOURCE)],
                                 capture_output=True, text=True, env=env, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("tick=pipe", result.stdout.splitlines(), "the watcher had no pipe tick")
         self.assertEqual(list((self.base / "elsewhere").iterdir()), [], "root wrote through the link")
-        moved = sorted(p.name for p in (self.home / "moved").iterdir())
-        self.assertEqual(len(moved), 1, moved)
-        self.assertTrue(moved[0].startswith("storm-"), moved)
-        self.assertIn(f"snapshot: {self.home}/.acfs/diagnostics/procwatch/{moved[0]}", result.stderr)
+        made = sorted(str(p.relative_to(self.home)) for p in self.home.rglob("*"))
+        self.assertEqual(made, [".acfs", ".acfs/diagnostics", ".acfs/diagnostics/procwatch"],
+                         "root made something in the user's home")
+        dumpdir = self.base / "roothome/.acfs/diagnostics/procwatch"
+        dumps = sorted(p.name for p in dumpdir.iterdir())
+        self.assertEqual(len(dumps), 1, dumps)
+        self.assertTrue(dumps[0].startswith("storm-"), dumps)
+        self.assertIn("ACFS process-storm snapshot", (dumpdir / dumps[0]).read_text())
+        self.assertIn(f"snapshot: {dumpdir}/{dumps[0]}", result.stderr)
 
 
 if __name__ == "__main__":
