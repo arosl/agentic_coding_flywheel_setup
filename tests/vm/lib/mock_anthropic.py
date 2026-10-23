@@ -27,13 +27,14 @@ title, are answered at once and never consume a turn. They are known by
 their prompts' wording (COMPACTION, TITLE), so a prompt that only asks
 for a summary is an ordinary turn.
 
-Tool calls (Messages API only; acfs-9hkh.94): each line of the prompt
-that reads 'mock-tool: {"name": ..., "input": {...}}', at the start of
-the line, adds that tool_use block to the turn's reply, whose stop
-reason is then tool_use, so Claude Code runs the tool. The request that
+Tool calls (acfs-9hkh.94): each line of the prompt that reads
+'mock-tool: {"name": ..., "input": {...}}', at the start of the line,
+adds that call to the turn's reply, so the CLI runs the tool: a tool_use
+block with stop reason tool_use (Messages API; Claude Code's Write or
+Bash), or a function_call item whose arguments are the input (Responses
+API; Codex 0.162's exec_command takes {"cmd": ...}). The request that
 carries the tools' results gets a short closing text and takes no turn.
-A helper request never calls a tool, and the Responses API (Codex) reads
-no such line.
+A helper request never calls a tool.
 
 Pointing the CLIs at it (as exp.3 and exp.4 did):
 - Claude Code: ANTHROPIC_BASE_URL=<url> and any ANTHROPIC_API_KEY.
@@ -174,6 +175,24 @@ def anthropic_last_user(body):
         text = "\n".join(c.get("text", "") for c in blocks if c.get("type") == "text")
         return text, sum(1 for c in blocks if c.get("type") == "tool_result")
     return "", 0
+
+
+def responses_last_user(body):
+    """The input's last turn: the last user message's text, and how many
+    function call outputs follow it (Codex's answer to a tool call)."""
+    inp = body.get("input")
+    if isinstance(inp, str):
+        return inp, 0
+    results = 0
+    for item in reversed(inp or []):
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "function_call_output":
+            results += 1
+        elif item.get("role") == "user":
+            texts = [c["text"] for c in item.get("content") or [] if isinstance(c, dict) and c.get("text")]
+            return "\n".join(texts), results
+    return "", results
 
 
 def responses_user_text(body):
@@ -320,19 +339,35 @@ class Handler(BaseHTTPRequestHandler):
     # The OpenAI Responses API (exp.3).
     def _responses(self, path, body):
         text = responses_user_text(body)
-        self.state.record({"method": "POST", "path": path, "model": body.get("model"), "stream": body.get("stream"),
-                           "user_text": text})
-        reply, delay = self.state.reply(text)
+        last_text, results = responses_last_user(body)
+        calls = [] if results or is_helper(text) else tool_calls(last_text)
+        rec = {"method": "POST", "path": path, "model": body.get("model"), "stream": body.get("stream"),
+               "user_text": text,
+               # The tools Codex offers and its input items' types, never their text.
+               "tools": [t.get("name") or t.get("type") for t in body.get("tools") or [] if isinstance(t, dict)],
+               "shape": [i.get("type") or i.get("role") for i in body.get("input") or [] if isinstance(i, dict)]}
+        if calls:
+            rec["tool_calls"] = [c["name"] for c in calls]
+        if results:
+            rec["tool_results"] = results
+        self.state.record(rec)
+        if results:
+            # The tools ran: close the turn they belong to.
+            reply, delay = f"mock: read {results} tool result(s)", self.state.delay
+        else:
+            reply, delay = self.state.reply(text)
         rid = "resp_" + uuid.uuid4().hex[:24]
         item_id = "msg_" + uuid.uuid4().hex[:24]
         item = {"type": "message", "role": "assistant", "id": item_id, "status": "completed",
                 "content": [{"type": "output_text", "text": reply, "annotations": []}]}
+        fcalls = [{"type": "function_call", "id": "fc_" + uuid.uuid4().hex[:24], "call_id": "call_" + uuid.uuid4().hex[:24],
+                   "name": c["name"], "arguments": json.dumps(c["input"]), "status": "completed"} for c in calls]
         usage = {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0},
                  "output_tokens": 5, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 15}
         if not body.get("stream"):
             time.sleep(delay)
             self._json(200, {"id": rid, "object": "response", "status": "completed", "model": body.get("model"),
-                             "output": [item], "usage": usage})
+                             "output": [item, *fcalls], "usage": usage})
             return
         self._stream()
         self._event("response.created", {"type": "response.created", "response": {"id": rid}})
@@ -345,6 +380,16 @@ class Handler(BaseHTTPRequestHandler):
             self._event("response.output_text.delta", {"type": "response.output_text.delta", "output_index": 0,
                                                        "content_index": 0, "item_id": item_id, "delta": w})
         self._event("response.output_item.done", {"type": "response.output_item.done", "output_index": 0, "item": item})
+        for i, fc in enumerate(fcalls, 1):
+            self._event("response.output_item.added", {"type": "response.output_item.added", "output_index": i,
+                                                       "item": {**fc, "arguments": "", "status": "in_progress"}})
+            self._event("response.function_call_arguments.delta", {
+                "type": "response.function_call_arguments.delta", "output_index": i, "item_id": fc["id"],
+                "delta": fc["arguments"]})
+            self._event("response.function_call_arguments.done", {
+                "type": "response.function_call_arguments.done", "output_index": i, "item_id": fc["id"],
+                "arguments": fc["arguments"]})
+            self._event("response.output_item.done", {"type": "response.output_item.done", "output_index": i, "item": fc})
         self._event("response.completed", {"type": "response.completed", "response": {"id": rid, "usage": usage}})
 
 

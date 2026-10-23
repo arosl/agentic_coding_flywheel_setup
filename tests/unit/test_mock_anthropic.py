@@ -223,6 +223,29 @@ class ResponsesAPI(unittest.TestCase):
         with urllib.request.urlopen(self.mock.url + "/v1/models", timeout=10) as r:
             self.assertEqual(json.loads(r.read())["data"][0]["id"], "mock-model")
 
+    def test_a_tool_line_is_a_function_call(self):
+        call = {"name": "exec_command", "input": {"cmd": "true"}}
+        _, body = self.mock.post("/v1/responses", self.body("Run it.\nmock-tool: " + json.dumps(call), True))
+        evs = events(body)
+        done = [d["item"] for n, d in evs if n == "response.output_item.done"]
+        self.assertEqual([i["type"] for i in done], ["message", "function_call"])
+        fc = done[1]
+        self.assertEqual((fc["name"], json.loads(fc["arguments"])), ("exec_command", {"cmd": "true"}))
+        self.assertTrue(fc["call_id"].startswith("call_"))
+        args = [d["arguments"] for n, d in evs if n == "response.function_call_arguments.done"]
+        self.assertEqual(args, [fc["arguments"]])
+        self.assertEqual(self.mock.records()[-1]["tool_calls"], ["exec_command"])
+        # Codex sends the call and its output back after the user's message.
+        follow = self.body("Run it.\nmock-tool: " + json.dumps(call), False)
+        follow["input"] += [fc, {"type": "function_call_output", "call_id": fc["call_id"], "output": "ok"}]
+        _, body = self.mock.post("/v1/responses", follow)
+        out = json.loads(body)["output"]
+        self.assertEqual([i["type"] for i in out], ["message"])
+        self.assertEqual(out[0]["content"][0]["text"], "mock: read 1 tool result(s)")
+        self.assertEqual(self.mock.records()[-1]["tool_results"], 1)
+        _, body = self.mock.post("/v1/responses", self.body("next", False))
+        self.assertEqual(json.loads(body)["output"][0]["content"][0]["text"], "mock reply 2")
+
     def test_title_helper_takes_no_turn(self):
         self.mock.post("/v1/responses", self.body("Generate a concise, single-line task title of at most 36 characters", False))
         _, body = self.mock.post("/v1/responses", self.body("work", False))
