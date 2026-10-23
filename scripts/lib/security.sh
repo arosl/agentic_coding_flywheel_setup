@@ -214,7 +214,7 @@ ACFS_CURL_BIN=""
 ACFS_CURL_BASE_ARGS=()
 # Honest client identity for every ACFS download: name this project, never
 # borrow another product's or company's crawler User-Agent.
-ACFS_HTTP_USER_AGENT='acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)'
+ACFS_HTTP_USER_AGENT='acfs (+https://github.com/arosl/agentic_coding_flywheel_setup)'
 
 acfs_security_configure_curl() {
     local curl_help=""

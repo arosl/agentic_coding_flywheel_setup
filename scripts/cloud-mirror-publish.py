@@ -40,7 +40,7 @@ TOOLS = {
 
 def run(*args):
     if args[:2] == ("gh", "api"):
-        args = (*args, "--header", "User-Agent: acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)")
+        args = (*args, "--header", "User-Agent: acfs (+https://github.com/arosl/agentic_coding_flywheel_setup)")
     return subprocess.check_output(args, text=True, timeout=300)
 
 
@@ -72,7 +72,7 @@ class HTTPSRedirectHandler(urllib.request.HTTPRedirectHandler):
 def fetch(url):
     if not url.startswith("https://"):
         raise ValueError("HTTPS required")
-    request = urllib.request.Request(url, headers={"User-Agent": "acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)", "Accept": "*/*"})
+    request = urllib.request.Request(url, headers={"User-Agent": "acfs (+https://github.com/arosl/agentic_coding_flywheel_setup)", "Accept": "*/*"})
     opener = urllib.request.build_opener(HTTPSRedirectHandler())
     with opener.open(request, timeout=120) as response:
         if not response.url.startswith("https://"):

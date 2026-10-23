@@ -508,7 +508,7 @@ BOOTSTRAP
         expect(result.stderr).toBe("");
         expect(readFileSync(argsPath, "utf8").split("\0").slice(0, -1)).toEqual([
           "-q", "-fsSL", "--proto", "=https", "--proto-redir", "=https", "--connect-timeout", "5", "--max-time", "20",
-          "-A", "acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)", "-H", "Accept-Encoding: identity",
+          "-A", "acfs (+https://github.com/arosl/agentic_coding_flywheel_setup)", "-H", "Accept-Encoding: identity",
           CLAUDE_CODE_WEB_SCRIPT_URL,
         ]);
         expect(readFileSync(join(repo, "bootstrap-mode"), "utf8"))

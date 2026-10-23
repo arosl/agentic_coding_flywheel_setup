@@ -487,7 +487,7 @@ The public [cloud agent setup guide](https://agent-flywheel.com/cloud-agents) se
 ```bash
 #!/bin/bash
 (
-acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 0; }
+acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'acfs (+https://github.com/arosl/agentic_coding_flywheel_setup)' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 0; }
 printf '%s\n' "$acfs_cloud_setup" | bash
 )
 ```
@@ -551,7 +551,7 @@ The same public bundles work in a Linux x86_64 Codex cloud environment. In **Wor
 (
 set -o pipefail
 acfs_cloud_root="$(git rev-parse --show-toplevel)" || exit 1
-acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 1; }
+acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'acfs (+https://github.com/arosl/agentic_coding_flywheel_setup)' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 1; }
 printf '%s\n' "$acfs_cloud_setup" | ACFS_CLOUD_SKILL_DIR="$acfs_cloud_root/.agents/skills/acfs-cloud-tools" ACFS_CLOUD_AGENT=codex ACFS_CLOUD_ROOT="$acfs_cloud_root/.acfs-cloud" bash || exit 1
 acfs_cloud_exclude="$(git rev-parse --git-path info/exclude)" || exit 1
 mkdir -p "$(dirname "$acfs_cloud_exclude")" || exit 1
@@ -589,7 +589,7 @@ The provider-neutral template writes `$HOME/.acfs/cloud/AGENTS.md` and does not 
 #!/bin/bash
 (
 set -o pipefail
-acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 1; }
+acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'acfs (+https://github.com/arosl/agentic_coding_flywheel_setup)' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 1; }
 printf '%s\n' "$acfs_cloud_setup" | ACFS_CLOUD_AGENT=generic bash
 ) || exit 1
 ```
