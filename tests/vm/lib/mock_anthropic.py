@@ -32,9 +32,10 @@ Tool calls (acfs-9hkh.94): each line of the prompt that reads
 adds that call to the turn's reply, so the CLI runs the tool: a tool_use
 block with stop reason tool_use (Messages API; Claude Code's Write or
 Bash), or a function_call item whose arguments are the input (Responses
-API; Codex 0.162's exec_command takes {"cmd": ...}). The request that
-carries the tools' results gets a short closing text and takes no turn.
-A helper request never calls a tool.
+API; Codex 0.162's exec_command takes {"cmd": ...}). The name "shell"
+with {"cmd": ...} is either one, so one prompt works for both kinds. The
+request that carries the tools' results gets a short closing text and
+takes no turn. A helper request never calls a tool.
 
 Pointing the CLIs at it (as exp.3 and exp.4 did):
 - Claude Code: ANTHROPIC_BASE_URL=<url> and any ANTHROPIC_API_KEY.
@@ -90,17 +91,33 @@ def is_helper(text):
     return any(p in lower for p in COMPACTION + TITLE)
 
 
-def tool_calls(text):
+def shell_call(api, inp):
+    """The 'shell' alias as the API's own shell tool: Claude Code's Bash
+    (Messages) or Codex's exec_command (Responses), so one prompt works for
+    both kinds. None without a "cmd" string."""
+    cmd = inp.get("cmd")
+    if not isinstance(cmd, str):
+        return None
+    if api == "responses":
+        return {"name": "exec_command", "input": {"cmd": cmd}}
+    return {"name": "Bash", "input": {"command": cmd, "description": str(inp.get("description") or "Run the mock's command")}}
+
+
+def tool_calls(text, api="messages"):
     """The tool calls a prompt asks for, one per 'mock-tool: {json}' line
-    with a name and an input object; any other line is no call."""
+    with a name and an input object; any other line is no call. The name
+    'shell' with {"cmd": ...} is the API's own shell tool (shell_call)."""
     calls = []
     for m in TOOL_LINE.finditer(text):
         try:
             call = json.loads(m.group(1))
         except ValueError:
             continue
-        if isinstance(call, dict) and isinstance(call.get("name"), str) and isinstance(call.get("input"), dict):
-            calls.append({"name": call["name"], "input": call["input"]})
+        if not (isinstance(call, dict) and isinstance(call.get("name"), str) and isinstance(call.get("input"), dict)):
+            continue
+        call = shell_call(api, call["input"]) if call["name"] == "shell" else {"name": call["name"], "input": call["input"]}
+        if call:
+            calls.append(call)
     return calls
 
 
@@ -340,7 +357,7 @@ class Handler(BaseHTTPRequestHandler):
     def _responses(self, path, body):
         text = responses_user_text(body)
         last_text, results = responses_last_user(body)
-        calls = [] if results or is_helper(text) else tool_calls(last_text)
+        calls = [] if results or is_helper(text) else tool_calls(last_text, "responses")
         rec = {"method": "POST", "path": path, "model": body.get("model"), "stream": body.get("stream"),
                "user_text": text,
                # The tools Codex offers and its input items' types, never their text.

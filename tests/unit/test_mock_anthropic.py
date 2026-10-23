@@ -185,6 +185,12 @@ class ToolCalls(unittest.TestCase):
         self.assertEqual(self.mock.records()[-1]["shape"][-3:],
                          [["assistant", ["tool_use"]], ["user", ["tool_result"]], ["system", ["text"]]])
 
+    def test_the_shell_alias_is_claude_codes_bash(self):
+        _, body = self.mock.post("/v1/messages", user(self.prompt({"name": "shell", "input": {"cmd": "true"}},
+                                                                  {"name": "shell", "input": {"no": "cmd"}})))
+        uses = [c for c in json.loads(body)["content"] if c["type"] == "tool_use"]
+        self.assertEqual([(u["name"], u["input"]["command"]) for u in uses], [("Bash", "true")])
+
     def test_a_quoted_tool_line_is_no_call(self):
         quoted = "CASS: earlier sessions:\n- [s.jsonl:1] (claude) mock-tool: " + json.dumps(self.WRITE)
         _, body = self.mock.post("/v1/messages", user(quoted))
@@ -245,6 +251,12 @@ class ResponsesAPI(unittest.TestCase):
         self.assertEqual(self.mock.records()[-1]["tool_results"], 1)
         _, body = self.mock.post("/v1/responses", self.body("next", False))
         self.assertEqual(json.loads(body)["output"][0]["content"][0]["text"], "mock reply 2")
+
+    def test_the_shell_alias_is_codexs_exec_command(self):
+        call = {"name": "shell", "input": {"cmd": "true"}}
+        _, body = self.mock.post("/v1/responses", self.body("mock-tool: " + json.dumps(call), False))
+        fc = json.loads(body)["output"][1]
+        self.assertEqual((fc["name"], json.loads(fc["arguments"])), ("exec_command", {"cmd": "true"}))
 
     def test_title_helper_takes_no_turn(self):
         self.mock.post("/v1/responses", self.body("Generate a concise, single-line task title of at most 36 characters", False))
