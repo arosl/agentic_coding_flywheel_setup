@@ -185,6 +185,9 @@ Once inside a herdr workspace:
 | `Ctrl+b` then `p` | Previous tab |
 | `Ctrl+b` then `h/j/k/l` | Move between panes |
 | `Ctrl+b` then `z` | Zoom current pane |
+| `Ctrl+b` then `a` | Command palette (nhm; `onboard 6`) |
+| `Ctrl+b` then `d` | Agent board: this workspace's agents and their states (nhm) |
+| `Ctrl+b` then `m` | nhm menu: spawn, wake, retire and more |
 
 ---
 

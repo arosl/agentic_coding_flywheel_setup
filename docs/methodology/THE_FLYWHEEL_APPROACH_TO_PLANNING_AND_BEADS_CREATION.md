@@ -973,7 +973,7 @@ nhm status myproject
 herdr
 
 # Open the command palette (battle-tested prompts): Ctrl-b a in herdr
-acfs palette
+nhm palette
 ```
 
 herdr is useful, but it is not mandatory. The methodology needs a way to run multiple agents, send them prompts quickly, and keep them coordinated. It does not require tmux specifically.

@@ -1167,23 +1167,26 @@ nhm status myproject                        # each agent's name, kind, state and
 
 Tool detection always runs in the target user's context (including under `sudo`, resolved via `SUDO_USER` with `~/.local/bin`, `~/go/bin`, etc. on PATH), so user-local tools are reported accurately.
 
-### `acfs palette` — The Command Palette
+### `nhm palette` — The Command Palette, Board and Menu
 
-What `ntm palette` was in tmux: an interactive menu of the command palette's prompts, and the agents in herdr to send one to. In herdr, **Ctrl-b a** (`prefix+a`) opens it in a popup over the current tab; anywhere else, run `acfs palette`.
+What `ntm palette` was in tmux: an interactive menu of the command palette's prompts, and the agents in herdr to send one to. nhm binds three herdr keys: **Ctrl-b a** (`prefix+a`) opens the palette in a popup over the current tab, **Ctrl-b d** (`prefix+d`) the agent board (ntm's dashboard) in a tab of its own, and **Ctrl-b m** (`prefix+m`) the nhm menu in a popup. Anywhere else, run `nhm palette`, `nhm board <session>` or `nhm menu`; once nhm owns the herdr server, `acfs palette` hands over to `nhm palette`.
 
 ```bash
-acfs palette                          # pick a prompt, then the agents that get it
-acfs palette --list                   # every prompt: key, label, category, file (--json too)
-acfs palette --show fresh_review      # one prompt's text
-acfs palette bind --key prefix+space  # open it on another herdr key (default prefix+a)
-acfs palette unbind                   # remove the key; acfs update leaves it removed
+nhm palette                      # pick a prompt, then the agents that get it
+nhm palette --list               # every prompt: key, label, category, file (--json too)
+nhm palette --show fresh_review  # one prompt's text
+nhm board [session]              # the agent board (also nhm dashboard, dash, d)
+nhm bind --show                  # the keys, and whether they are bound
+nhm bind --unbind                # remove the keys; acfs update leaves them removed
 ```
 
-The first step lists the prompts by category, pinned (`ctrl-p`) and recent ones first, with a preview; type to filter, `ctrl-e` edits a prompt before it goes and `ctrl-n` writes a new one. The second step offers every agent in the workspace (`1`), each kind (`2` and up), or single agents marked with `tab`, each with its herdr status and a preview of its screen. Where nhm owns the herdr server, `acfs palette` opens nhm's palette (`nhm palette`), whose send is `nhm send <workspace> -t`, so the placeholders and the refusal of blocked agents are nhm's, described above; the palette asks for `{{thread}}` when a prompt uses it. Where ACFS's Bash still drives the agents, the send is `acfs agents send --template`.
+The palette's first step lists the prompts by category, pinned (`ctrl-p`) and recent ones first, with a preview; type to filter, and `ctrl-n` writes a new message. The second step sends to every agent in the workspace (`1`), one kind (a digit from `2`, as the palette shows), or single agents (`6`, then Space marks them); `e` edits the prompt before it goes. The send is `nhm send <workspace> -t`, so the placeholders and the refusal of blocked agents are nhm's, described above; the palette asks for any placeholder it can't fill, such as `{{thread}}`, and shows one result per agent. `f1` lists every key. The menu holds nhm's commands: the spawn wizard, wake, retire, recycle and nhm's views.
 
-Prompts come from `./command_palette.md` (in the current directory and at its git root), `~/.config/acfs/command_palette.md`, and the installed `~/.acfs/onboard/docs/ntm/command_palette.md`, first key wins; nhm's palette reads `~/.config/nhm/command_palette.md` in place of the `~/.config/acfs` file. Pins, favorites and recents live under `~/.local/state/acfs/palette/`. The key is a `[[keys.command]]` popup in herdr's `config.toml`, between `# >>> acfs palette >>>` markers. The installer and `acfs update` add it only when the file has no such block, doesn't open the palette some other way, and doesn't use `prefix+a` already. `bind` writes through a symlinked `config.toml` and keeps the file's mode, and leaves the file unchanged when `herdr config check` would report a new issue (the key in conflict, or TOML herdr couldn't parse).
+Prompts come from `./command_palette.md` (in the pane's directory and at its project root), `~/.config/nhm/command_palette.md`, and ACFS's installed `~/.acfs/onboard/docs/ntm/command_palette.md`, first key wins. Pins, favorites and recents live under `~/.local/state/nhm/palette/`.
 
-The key is in the herdr server's config. A client attached from another machine with `herdr --remote` uses that machine's keys, and herdr doesn't send local custom commands to the server, so attach with `herdr --remote <host> --remote-keybindings server` to get Ctrl-b a from a laptop.
+The keys come from `[keys]` in `~/.config/nhm/config.toml` (`palette`, `board` and `menu`; an empty value gives that one no key). `nhm bind` writes them into herdr's `config.toml` as `plugin_action` keys between `# >>> nhm >>>` markers, and removes ACFS's old `# >>> acfs palette >>>` block. The installer and `acfs update` run it once nhm owns the herdr server. It changes nothing when the rest of the config already uses one of the keys, or when `herdr config check` would report a new issue, and the log says why. `nhm bind --unbind` leaves an opt-out in their place, which `acfs update` keeps until `nhm bind --force`.
+
+The keys are in the herdr server's config. A client attached from another machine with `herdr --remote` uses that machine's keys, so attach with `herdr --remote <host> --remote-keybindings server`, or add the block that `nhm bind --print-client` prints to the client's own herdr `config.toml`.
 
 ### `acfs info` — System Overview
 

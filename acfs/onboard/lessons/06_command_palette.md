@@ -19,7 +19,7 @@ the best results from coding agents.
 In herdr, press **Ctrl-b**, then **a**. Anywhere else:
 
 ```bash
-acfs palette
+nhm palette
 ```
 
 This opens an interactive browser of all available prompts: type to filter,
@@ -63,17 +63,16 @@ The prompts are organized into categories:
 
 ### Option 1: Pick and Send
 
-1. Open the palette: **Ctrl-b a** in herdr, or `acfs palette`
-2. Select a prompt and press Enter (`ctrl-e` edits it first, `ctrl-n`
-   writes a new message)
-3. Pick who gets it: `1` every agent in this workspace, `2` and up one
-   kind (claude, codex, ...), or `tab` to mark single agents. Each agent
-   shows its herdr status (working, blocked, done) and a preview of its
-   screen
-4. Press Enter to send
+1. Open the palette: **Ctrl-b a** in herdr, or `nhm palette`
+2. Select a prompt and press Enter (`ctrl-n` writes a new message instead)
+3. Pick who gets it: `1` every agent in this workspace, a digit for one
+   kind (`2` claude, `3` codex; the palette shows the others), or `6` to
+   pick single agents (Space marks one, Enter sends). `e` edits the prompt
+   first
+4. Read the result: one line per agent, sent or refused
 
-`ctrl-p` pins a prompt to the top, `ctrl-f` marks it a favorite, and Esc
-goes back a step.
+`ctrl-p` pins a prompt to the top, `ctrl-f` marks it a favorite, Esc goes
+back a step, and `f1` shows every key.
 
 ### Option 2: Send Without The Menu (Power Move)
 
@@ -84,7 +83,7 @@ its key:
 # Send a one-off prompt to every agent in the session
 nhm send myproject "Review the changes in src/ for edge cases"
 
-# Send a palette prompt (keys: acfs palette --list)
+# Send a palette prompt (keys: nhm palette --list)
 nhm send myproject --cc -t fresh_review
 ```
 
@@ -135,7 +134,7 @@ You can add your own prompts. The palette reads, first key wins:
 ./command_palette.md
 
 # Your own, for every project
-~/.config/acfs/command_palette.md
+~/.config/nhm/command_palette.md
 
 # The one ACFS installs
 ~/.acfs/onboard/docs/ntm/command_palette.md
@@ -144,17 +143,44 @@ You can add your own prompts. The palette reads, first key wins:
 Use the installed file's format (`## Category`, then `### key | Label` and
 the prompt text), and your prompts show up in the menu.
 
-Ctrl-b a (`prefix+a` in herdr's config) is the default key.
-`acfs palette bind --key prefix+space` picks another, and
-`acfs palette unbind` removes it.
+---
 
-The key lives in the herdr config on your VPS. If you attach from your
-laptop with `herdr --remote`, herdr uses your laptop's keys, so add
-`--remote-keybindings server` to get Ctrl-b a:
+## The Palette, Board And Menu Keys
+
+nhm binds three keys in herdr:
+
+| Keys | Opens |
+|------|-------|
+| Ctrl-b a | The command palette, in a popup |
+| Ctrl-b d | The agent board: this workspace's agents and their states, in a tab of its own |
+| Ctrl-b m | The nhm menu: spawn, wake, retire and nhm's other commands, in a popup |
+
+From a shell, `nhm palette`, `nhm board <session>` and `nhm menu` open the
+same three.
+
+The keys are set in `~/.config/nhm/config.toml`:
+
+```toml
+[keys]
+palette = "prefix+a"   # the defaults
+board   = "prefix+d"
+menu    = "prefix+m"
+```
+
+Change one and run `nhm bind` to move it. `nhm bind --show` prints the
+keys. `nhm bind --unbind` removes them, and `acfs update` then leaves them
+removed until you run `nhm bind --force`.
+
+The keys live in the herdr config on your VPS. If you attach from your
+laptop with `herdr --remote`, herdr uses your laptop's keys. To get the
+VPS's keys, attach with `--remote-keybindings server`:
 
 ```bash
 herdr --remote <your-vps> --remote-keybindings server
 ```
+
+Or run `nhm bind --print-client` on the VPS, and add the block it prints
+to the herdr config on your laptop.
 
 ---
 
@@ -171,7 +197,7 @@ herdr --remote <your-vps> --remote-keybindings server
 
 ```bash
 # Open the palette (or press Ctrl-b a in herdr)
-acfs palette
+nhm palette
 
 # Browse the categories
 # Select something interesting
