@@ -502,14 +502,23 @@ step_E11() {
     check "E11: a repeated --op-id answers with the receipt" jq -e '.success and (.successful | length == 1)' \
         "$SANDBOX_EVIDENCE/e11-send-a-again.json"
     check "E11: a repeated --op-id dispatches nothing again" test "$before" -eq "$after"
-    # A busy agent: refused at the gate.
+    # A busy agent. nhm send --when ready refuses it at the gate.
+    # --robot-send types into it, as ntm's send does (nhm-r0v, the
+    # operator, 2026-10-13): its receipt names the busy gate it passed, and
+    # Claude Code takes the text once its turn ends.
     herdr agent prompt "$pane" "work slow" >/dev/null 2>&1 || true
     until_state "$pane" '^working$' 10
+    robot send-busy-ready send e11 --all --when ready "refused while busy" --json
+    check "E11: nhm send --when ready refuses a working agent (busy)" \
+        jq -e '.result.targets[0] | .submission == "refused" and .result.gate == "busy" and .error_code == "gate_busy"' \
+        "$SANDBOX_EVIDENCE/e11-send-busy-ready.json"
     robot send-busy --robot-send=e11 --all --msg="while busy" --op-id=e11-b
-    check "E11: a send to a working agent is refused (busy)" \
-        jq -e '(._nhm // .nhm) as $n | (.success | not) and ($n.targets[0].submission == "refused") and ($n.targets[0].gate == "busy")' \
+    check "E11: --robot-send types into a working agent, as ntm (submitted, gate busy)" \
+        jq -e '(._nhm // .nhm) as $n | .success and ($n.targets[0].submission == "submitted") and ($n.targets[0].gate == "busy")' \
         "$SANDBOX_EVIDENCE/e11-send-busy.json"
     until_state "$pane" '^(idle|done)$' 60
+    check "E11: and the model gets it after the turn" grep -qF 'while busy' "$SANDBOX_EVIDENCE/mock-requests.jsonl"
+    check "E11: the refused text never reached it" bash -c '! grep -qF "refused while busy" "$1"' _ "$SANDBOX_EVIDENCE/mock-requests.jsonl"
     # A fast finish: the turn ends before herdr sees it start, so nhm
     # cannot confirm the submission and says possibly_submitted, never
     # submitted.
