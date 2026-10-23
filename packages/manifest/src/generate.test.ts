@@ -682,7 +682,7 @@ describe("Generated verified installer args", () => {
       );
     }
     expect(nhm).toContain(
-      `run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.1.13' "\${verified_installer_checksum_args[@]}"`,
+      `run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.1.14' "\${verified_installer_checksum_args[@]}"`,
     );
     // A bad pin clears expected_sha256, which keeps the installer from running.
     expect(nhm).toMatch(/has no valid pin 'nhm_archive_linux_amd64'"\n\s+ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"\n\s+expected_sha256=""/);
