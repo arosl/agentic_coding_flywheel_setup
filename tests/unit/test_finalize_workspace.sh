@@ -43,11 +43,21 @@ fi
 head -n "$((total_lines - 1))" "$INSTALL_SH" > "$SOURCEABLE"
 
 # detect_environment resolves scripts/ and acfs/ next to the sourced copy, and
-# checks these files against the internal checksum ledger byte for byte.
+# checks every other file the internal checksum ledger lists byte for byte.
+# The list comes from the ledger, so a new entry can't break this (acfs-0680).
 ln -sfn "$REPO_ROOT/scripts" "$TMPROOT/scripts"
 ln -sfn "$REPO_ROOT/acfs" "$TMPROOT/acfs"
-mkdir -p "$TMPROOT/packages/onboard"
-for ledger_file in install.sh VERSION checksums.yaml acfs.manifest.yaml packages/onboard/onboard.sh; do
+mapfile -t ledger_files < <(bash -c 'source "$1" && printf "%s\n" "${!ACFS_INTERNAL_CHECKSUMS[@]}"' \
+    _ "$REPO_ROOT/scripts/generated/internal_checksums.sh")
+if [[ " ${ledger_files[*]} " != *" install.sh "* ]]; then
+    echo "FATAL: no install.sh entry read from the internal checksum ledger; update this test." >&2
+    exit 2
+fi
+for ledger_file in "${ledger_files[@]}"; do
+    case "$ledger_file" in
+        scripts/* | acfs/*) continue ;;
+    esac
+    mkdir -p "$TMPROOT/$(dirname "$ledger_file")"
     cp -p "$REPO_ROOT/$ledger_file" "$TMPROOT/$ledger_file"
 done
 
