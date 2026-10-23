@@ -3336,6 +3336,17 @@ check_nhm() {
             *) missing+=("nhm's learning profile is not set, so closed beads record no cm outcome")
                fixes+=("bash $helper learning-profile set (or acfs update)") ;;
         esac
+        # nhm's capacity provider (acfs-hd37): without it, nhm spawn starts
+        # agents while the capacity guard is red.
+        rc=0
+        HOME="$home" bash "$helper" capacity-provider check "${XDG_CONFIG_HOME:-$home/.config}/nhm/config.toml" \
+            </dev/null >/dev/null 2>&1 || rc=$?
+        case "$rc" in
+            0) notes+=("capacity provider on") ;;
+            3) notes+=("capacity provider set by your nhm config") ;;
+            *) missing+=("nhm's capacity provider is not set, so nhm spawn starts agents while the capacity guard is red")
+               fixes+=("bash $helper capacity-provider set (or acfs update)") ;;
+        esac
     fi
 
     if (( ${#missing[@]} == 0 )); then

@@ -55,7 +55,8 @@ chmod +x "$FAKEBIN/codex"
 # both files), BIN_DIR (nhm-hook in $FIX_HOME/$BIN_DIR, which NHM_BIN_DIR
 # names), PIN_URL (replaces
 # KNOWN_INSTALLERS[nhm]), DROP_PIN (a checksums.yaml entry to drop),
-# BAD_PIN (an entry whose pin becomes malformed). The repo's checksums.yaml
+# BAD_PIN (an entry whose pin becomes malformed), NHM_CONFIG (the text of
+# nhm's config.toml beforehand). The repo's checksums.yaml
 # stands in for the one update_require_security fetches.
 run_update() {
     local fn="$1"; shift
@@ -80,6 +81,10 @@ run_update() {
     if [[ -n "${DCG:-}" ]]; then
         printf '#!/bin/sh\nexit 0\n' > "$FIX_HOME/.local/bin/dcg"
         chmod 0755 "$FIX_HOME/.local/bin/dcg"
+    fi
+    if [[ -n "${NHM_CONFIG:-}" ]]; then
+        mkdir -p "$FIX_HOME/.config/nhm"
+        printf '%s\n' "$NHM_CONFIG" > "$FIX_HOME/.config/nhm/config.toml"
     fi
     if [[ -n "${BIN_DIR:-}" ]]; then
         mkdir -p "$FIX_HOME/$BIN_DIR"
@@ -333,6 +338,33 @@ check "learning: another user only warns with the command" has "ITEM warn|nhm le
 READ_ONLY=1 run_update update_nhm_learning_profile nhm
 check "learning: read-only mode writes nothing" has "ITEM skip|nhm learning profile|dry-run"
 check "learning: and no config appears" test ! -e "$FIX_HOME/.config/nhm/config.toml"
+
+# ------------------------------------------------------------
+# update_nhm_capacity_provider: nhm's [providers] capacity (acfs-hd37)
+# ------------------------------------------------------------
+capacity_in() { python3 -I -c 'import json, sys, tomllib; print(json.dumps(tomllib.load(open(sys.argv[1], "rb")).get("providers", {}).get("capacity"), separators=(",", ":")))' "$FIX_HOME/.config/nhm/config.toml"; }
+run_update update_nhm_capacity_provider nhm
+check "capacity: acfs update sets acfs capacity --guard --json in nhm's config" \
+    test "$(capacity_in)" = '["acfs","capacity","--guard","--json"]'
+check "capacity: reports it on" has "ITEM ok|nhm capacity provider|on"
+
+NHM_CONFIG=$'[learning]\nimplicit_outcome = "closed-assigned"\n\n[providers]\ncapacity = []' \
+    run_update update_nhm_capacity_provider nhm
+check "capacity: the user's own value stays" test "$(capacity_in)" = '[]'
+check "capacity: and is reported as theirs" has "ITEM ok|nhm capacity provider|left as your config sets it"
+
+NHM_CONFIG='[providers' run_update update_nhm_capacity_provider nhm
+check "capacity: a config nhm can't read only warns" has "ITEM warn|nhm capacity provider|could not set it"
+check "capacity: and stays as it is" test "$(cat "$FIX_HOME/.config/nhm/config.toml")" = '[providers'
+
+run_update update_nhm_capacity_provider
+check "capacity: no nhm does nothing" lacks "nhm capacity provider"
+SAME_USER=0 run_update update_nhm_capacity_provider nhm
+check "capacity: another user only warns with the command" has "ITEM warn|nhm capacity provider|run as ubuntu: bash"
+check "capacity: naming capacity-provider set" has "capacity-provider set"
+READ_ONLY=1 run_update update_nhm_capacity_provider nhm
+check "capacity: read-only mode writes nothing" has "ITEM skip|nhm capacity provider|dry-run"
+check "capacity: and no config appears" test ! -e "$FIX_HOME/.config/nhm/config.toml"
 
 echo
 echo "Tests passed: $TESTS_PASSED"

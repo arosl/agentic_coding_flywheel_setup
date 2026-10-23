@@ -59,6 +59,12 @@ Usage:
                                              (default $XDG_CONFIG_HOME/nhm/
                                              config.toml); check: 0 on, 3 the
                                              user's other value, 1 not set
+  nhm_hooks.sh capacity-provider check|set [FILE]
+                                             nhm's [providers] capacity =
+                                             ["acfs", "capacity", "--guard",
+                                             "--json"], so nhm spawn refuses
+                                             while the guard is red; same
+                                             FILE and exits as learning-profile
   nhm_hooks.sh plugin link|bind [--no-reload]|status
                                              nhm's herdr plugin (link) and its
                                              keys (bind: nhm bind for the
@@ -773,40 +779,54 @@ nhm_hooks_trust() {
         "$target" "$codex_bin" "$([[ "$dry_run" == true ]] && echo dry-run || echo write)" "$spec" </dev/null
 }
 
-# ---- nhm's learning profile (acfs-9hkh.88; plan-v8 2.13) ----
+# ---- ACFS's settings in nhm's config ----
 #
-# ACFS ships learning.implicit_outcome = "closed-assigned" in nhm's
-# config ($XDG_CONFIG_HOME/nhm/config.toml): `nhm feedback outcomes` then
-# records a cm outcome for each bead that closed while assigned to an
-# agent, the flywheel's OUTCOME step. nhm's own default is off.
+# ACFS ships two settings in nhm's config ($XDG_CONFIG_HOME/nhm/config.toml)
+# whose nhm defaults are off:
 #
-#   learning-profile check [FILE]  0: on; 3: the user set another value
-#                                  (theirs, left as is); 1: not set, or
-#                                  FILE cannot be read as TOML
-#   learning-profile set [FILE]    adds the setting when it is not set:
-#                                  under an existing [learning] table, or
-#                                  as a new table at the end. A file that
-#                                  is not valid TOML, and a value the
-#                                  user chose, stay as they are.
+# - the learning profile (acfs-9hkh.88; plan-v8 2.13): [learning]
+#   implicit_outcome = "closed-assigned". `nhm feedback outcomes` then
+#   records a cm outcome for each bead that closed while assigned to an
+#   agent, the flywheel's OUTCOME step.
+# - the capacity provider (acfs-hd37): [providers] capacity = ["acfs",
+#   "capacity", "--guard", "--json"]. nhm's spawn admission then refuses
+#   to start an agent while ACFS's capacity guard is red (acfs-gmbo). nhm
+#   reads the whole file at each spawn, and a file it cannot read fails
+#   the spawn, so each edit is parsed before it is written. A user who
+#   wants no provider sets capacity = [], which nhm reads as none and
+#   ACFS leaves as it is.
+#
+#   learning-profile|capacity-provider check [FILE]
+#                                  0: ACFS's value; 3: the user set another
+#                                  value (theirs, left as is); 1: not set,
+#                                  or FILE cannot be read as TOML
+#   learning-profile|capacity-provider set [FILE]
+#                                  adds the setting when it is not set:
+#                                  under an existing table, or as a new
+#                                  table at the end. A file that is not
+#                                  valid TOML, and a value the user chose,
+#                                  stay as they are.
 
-nhm_hooks_learning_file() {
+nhm_hooks_config_file() {
     printf '%s/nhm/config.toml' "${XDG_CONFIG_HOME:-$HOME/.config}"
 }
 
 # The checker and editor, in Python for its TOML parser (tomllib). argv:
-# check|set FILE. set writes FILE itself and prints "changed" or
-# "unchanged"; check exits 0, 3 or 1 as above.
-nhm_hooks_learning_driver() {
+# check|set FILE TABLE KEY WANT_JSON VALUE_TOML COMMENT: the setting is
+# TABLE.KEY, ACFS's value is WANT_JSON as JSON and VALUE_TOML as TOML, and
+# COMMENT follows the line set writes. set writes FILE itself and prints
+# "changed" or "unchanged"; check exits 0, 3 or 1 as above.
+nhm_hooks_config_driver() {
     cat <<'PY'
-import os, re, sys, tempfile
+import json, os, re, sys, tempfile
 try:
     import tomllib
 except ImportError:
     print("nhm_hooks: python3 has no tomllib (3.11+ needed)", file=sys.stderr)
     sys.exit(1)
 
-WANT = "closed-assigned"
-mode, path = sys.argv[1], sys.argv[2]
+mode, path, table, key, want_json, value_toml, comment = sys.argv[1:8]
+WANT = json.loads(want_json)
 text = ""
 if os.path.exists(path):
     try:
@@ -819,46 +839,47 @@ if os.path.exists(path):
         sys.exit(1)
 else:
     data = {}
-learning = data.get("learning")
-if learning is not None and not isinstance(learning, dict):
-    print(f"nhm_hooks: {path}: learning is not a table; left as it is", file=sys.stderr)
+section = data.get(table)
+if section is not None and not isinstance(section, dict):
+    print(f"nhm_hooks: {path}: {table} is not a table; left as it is", file=sys.stderr)
     sys.exit(1)
-value = (learning or {}).get("implicit_outcome")
+value = (section or {}).get(key)
 if mode == "check":
     sys.exit(0 if value == WANT else (3 if value is not None else 1))
 if value is not None:
     print("unchanged")
     sys.exit(0)
 nl = "\r\n" if "\r\n" in text else "\n"
-line = f'implicit_outcome = "{WANT}"   # ACFS: record cm outcomes for closed beads (plan-v8 2.13){nl}'
+line = f'{key} = {value_toml}   # {comment}{nl}'
 
 
 def candidates():
-    # Under each [learning] header line in turn: a header-like line inside
+    # Under each [TABLE] header line in turn: a header-like line inside
     # a multi-line string fails the check below, and the next one is tried.
-    for m in re.finditer(r'^[ \t]*\[[ \t]*learning[ \t]*\][ \t]*(#[^\r\n]*)?\r?$', text, re.M):
+    header = r'^[ \t]*\[[ \t]*' + re.escape(table) + r'[ \t]*\][ \t]*(#[^\r\n]*)?\r?$'
+    for m in re.finditer(header, text, re.M):
         end = text.find("\n", m.end())
         yield text + nl + line if end < 0 else text[:end + 1] + line + text[end + 1:]
-    if learning is not None:
-        # learning.* as dotted keys of the root table: a second [learning]
-        # table would redefine it, so a dotted key at the top, where the
-        # root table's keys are.
-        yield "learning." + line + text
+    if section is not None:
+        # TABLE.* as dotted keys of the root table: a second [TABLE] table
+        # would redefine it, so a dotted key at the top, where the root
+        # table's keys are.
+        yield table + "." + line + text
     else:
         sep = "" if text == "" or text.endswith(nl * 2) else (nl if text.endswith(nl) else nl * 2)
-        yield text + sep + "[learning]" + nl + line
+        yield text + sep + "[" + table + "]" + nl + line
 
 
 new = None
 for c in candidates():
     try:
-        if tomllib.loads(c).get("learning", {}).get("implicit_outcome") == WANT:
+        if tomllib.loads(c).get(table, {}).get(key) == WANT:
             new = c
             break
     except (tomllib.TOMLDecodeError, AttributeError):
         pass
 if new is None:
-    print(f"nhm_hooks: could not add the learning profile to {path}; left as it is", file=sys.stderr)
+    print(f"nhm_hooks: could not add [{table}] {key} to {path}; left as it is", file=sys.stderr)
     sys.exit(1)
 # Write it here, through a temp file beside it, keeping its mode (0600 for
 # a new file): the text, trailing blank lines included, goes through no
@@ -883,9 +904,12 @@ print("changed")
 PY
 }
 
-nhm_hooks_learning_profile() {
-    local verb="${1:-}" file="${2:-}" target="" result="" rc=0
-    [[ -n "$file" ]] || file="$(nhm_hooks_learning_file)"
+# check|set [FILE] for one setting: TABLE KEY WANT_JSON VALUE_TOML COMMENT
+# (the driver's arguments), then the verb and FILE.
+nhm_hooks_config_setting() {
+    local table="$1" key="$2" want_json="$3" value_toml="$4" comment="$5"
+    local verb="${6:-}" file="${7:-}" target="" result="" rc=0
+    [[ -n "$file" ]] || file="$(nhm_hooks_config_file)"
     command -v python3 >/dev/null 2>&1 || { nhm_hooks_note "python3 not found"; return 1; }
     target="$file"
     if [[ -L "$file" ]]; then
@@ -897,21 +921,34 @@ nhm_hooks_learning_profile() {
     fi
     case "$verb" in
         check)
-            python3 -I -c "$(nhm_hooks_learning_driver)" check "$target" </dev/null || rc=$?
+            python3 -I -c "$(nhm_hooks_config_driver)" check "$target" \
+                "$table" "$key" "$want_json" "$value_toml" "$comment" </dev/null || rc=$?
             return "$rc"
             ;;
         set)
             # The driver writes the file itself (atomically, keeping its
             # mode and line ends) and says whether it changed it.
-            result="$(python3 -I -c "$(nhm_hooks_learning_driver)" set "$target" </dev/null)" || return 1
+            result="$(python3 -I -c "$(nhm_hooks_config_driver)" set "$target" \
+                "$table" "$key" "$want_json" "$value_toml" "$comment" </dev/null)" || return 1
             if [[ "$result" == changed ]]; then
-                nhm_hooks_note "set [learning] implicit_outcome = \"closed-assigned\" in $file"
+                nhm_hooks_note "set [$table] $key = $value_toml in $file"
             else
-                nhm_hooks_note "$file already sets [learning] implicit_outcome"
+                nhm_hooks_note "$file already sets [$table] $key"
             fi
             ;;
         *) nhm_hooks_usage >&2; return 2 ;;
     esac
+}
+
+nhm_hooks_learning_profile() {
+    nhm_hooks_config_setting learning implicit_outcome '"closed-assigned"' '"closed-assigned"' \
+        'ACFS: record cm outcomes for closed beads (plan-v8 2.13)' "$@"
+}
+
+nhm_hooks_capacity_provider() {
+    nhm_hooks_config_setting providers capacity \
+        '["acfs", "capacity", "--guard", "--json"]' '["acfs", "capacity", "--guard", "--json"]' \
+        "ACFS: nhm spawn refuses while 'acfs capacity --guard' is red (acfs-hd37)" "$@"
 }
 
 # --- nhm's herdr plugin and keys (stack.nhm, acfs-9hkh.50) -------------------
@@ -1218,6 +1255,7 @@ nhm_hooks_main() {
         trust) nhm_hooks_trust "$@" ;;
         codex-dcg) nhm_hooks_codex_dcg "$@" ;;
         learning-profile) nhm_hooks_learning_profile "$@" ;;
+        capacity-provider) nhm_hooks_capacity_provider "$@" ;;
         plugin) nhm_hooks_plugin "$@" ;;
         owner) nhm_hooks_owner "$@" ;;
         statusline) nhm_hooks_statusline "$@" ;;

@@ -74,10 +74,12 @@ fixture() {
     case "$2" in
         codex|both) HOME="$WORK/home" bash "$ROOT/scripts/lib/nhm_hooks.sh" register codex 2>/dev/null ;;
     esac
-    # nhm's learning profile, as install sets it (acfs-9hkh.88); NO_LEARNING
-    # leaves it out.
+    # nhm's learning profile and capacity provider, as install sets them
+    # (acfs-9hkh.88, acfs-hd37); NO_LEARNING and NO_CAPACITY leave one out.
     [[ -n "${NO_LEARNING:-}" ]] || HOME="$WORK/home" XDG_CONFIG_HOME="" \
         bash "$ROOT/scripts/lib/nhm_hooks.sh" learning-profile set 2>/dev/null
+    [[ -n "${NO_CAPACITY:-}" ]] || HOME="$WORK/home" XDG_CONFIG_HOME="" \
+        bash "$ROOT/scripts/lib/nhm_hooks.sh" capacity-provider set 2>/dev/null
 }
 
 echo "stack.nhm.setup"
@@ -92,7 +94,7 @@ PATH="$FAKEBIN:$PATH" HOME="$WORK/home" CODEX_HOME="$WORK/home/.codex" \
     bash "$ROOT/scripts/lib/nhm_hooks.sh" trust codex "$WORK/home/.codex/hooks.json" 2>/dev/null
 out="$(run_check both)"
 check_case "enrolled, registered for both and trusted by Codex passes" \
-    bash -c '[[ "$1" == stack.nhm.setup\|pass\|enrolled*"Claude Code"*"Codex (trusted)"*"learning profile on"\| ]]' _ "$out"
+    bash -c '[[ "$1" == stack.nhm.setup\|pass\|enrolled*"Claude Code"*"Codex (trusted)"*"learning profile on; capacity provider on"\| ]]' _ "$out"
 
 # dcg's Bash guard (acfs-9hkh.81) counts among ACFS's lines: untrusted, it
 # warns with the same count and fix; trusted, the check passes.
@@ -178,7 +180,7 @@ check_case "Claude Code only, registered: passes without asking about Codex" \
 
 fixture yes none
 out="$(run_check none)"
-check_case "enrolled, no agent CLI: passes" bash -c '[[ "$1" == stack.nhm.setup\|pass\|"enrolled; learning profile on"\| ]]' _ "$out"
+check_case "enrolled, no agent CLI: passes" bash -c '[[ "$1" == stack.nhm.setup\|pass\|"enrolled; learning profile on; capacity provider on"\| ]]' _ "$out"
 
 # nhm's learning profile (acfs-9hkh.88): not set warns with the fix; the
 # user's own value is noted and passes.
@@ -187,10 +189,22 @@ out="$(run_check none)"
 check_case "no learning profile warns with the set command" \
     bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"learning profile is not set"*\|*"learning-profile set (or acfs update)" ]]' _ "$out"
 mkdir -p "$WORK/home/.config/nhm"
-printf '[learning]\nimplicit_outcome = "off"\n' >"$WORK/home/.config/nhm/config.toml"
+printf '[learning]\nimplicit_outcome = "off"\n\n[providers]\ncapacity = ["acfs", "capacity", "--guard", "--json"]\n' \
+    >"$WORK/home/.config/nhm/config.toml"
 out="$(run_check none)"
 check_case "the user's own learning value passes, noted as theirs" \
     bash -c '[[ "$1" == stack.nhm.setup\|pass\|*"learning profile set by your nhm config"* ]]' _ "$out"
+
+# nhm's capacity provider (acfs-hd37): not set warns with the fix; the
+# user's own value is noted and passes.
+NO_CAPACITY=1 fixture yes none
+out="$(run_check none)"
+check_case "no capacity provider warns with the set command" \
+    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"capacity provider is not set"*\|*"capacity-provider set (or acfs update)" ]]' _ "$out"
+printf '\n[providers]\ncapacity = []\n' >>"$WORK/home/.config/nhm/config.toml"
+out="$(run_check none)"
+check_case "the user's own capacity value passes, noted as theirs" \
+    bash -c '[[ "$1" == stack.nhm.setup\|pass\|*"capacity provider set by your nhm config"* ]]' _ "$out"
 
 fixture no none
 out="$(run_check both false)"

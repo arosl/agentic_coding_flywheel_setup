@@ -567,6 +567,66 @@ check "learning-profile: the default file is XDG_CONFIG_HOME's" \
 unset -f lp toml_value all_crlf
 
 # ------------------------------------------------------------
+# capacity-provider: nhm's [providers] capacity (acfs-hd37), the same
+# driver as learning-profile
+# ------------------------------------------------------------
+CP="$WORK/capacity"
+mkdir -p "$CP"
+cp_() { bash "$HOOKS" capacity-provider "$@"; }
+# [providers] capacity of FILE as compact JSON; "none" when unset
+cap_value() { python3 -I -c 'import json, sys, tomllib; v = tomllib.load(open(sys.argv[1], "rb")).get("providers", {}).get("capacity"); print("none" if v is None else json.dumps(v, separators=(",", ":")))' "$1"; }
+CAP_WANT='["acfs","capacity","--guard","--json"]'
+
+check "capacity-provider check: no file is not set (1)" bash -c 'bash "$1" capacity-provider check "$2"; [[ $? -eq 1 ]]' _ "$HOOKS" "$CP/none/config.toml"
+cp_ set "$CP/new/config.toml" 2>/dev/null
+check "capacity-provider set: a new config holds acfs capacity --guard --json" test "$(cap_value "$CP/new/config.toml")" = "$CAP_WANT"
+check "capacity-provider check: then 0" cp_ check "$CP/new/config.toml"
+check "capacity-provider set: a new file is 0600" test "$(stat -c %a "$CP/new/config.toml")" = 600
+
+printf '[reap]\nkeep = ["GreenCastle"]\n' >"$CP/other.toml"
+cp_ set "$CP/other.toml" 2>/dev/null
+check "capacity-provider set: a config without [providers] gets the table, its other settings kept" \
+    bash -c '[[ "$(python3 -I -c "import sys, tomllib; d = tomllib.load(open(sys.argv[1], \"rb\")); print(d[\"reap\"][\"keep\"][0], \" \".join(d[\"providers\"][\"capacity\"]))" "$1")" == "GreenCastle acfs capacity --guard --json" ]]' _ "$CP/other.toml"
+
+printf '[providers]  # mine\nother = ["x"]\n\n[quota]\nadmit_unknown = ["agy"]\n' >"$CP/table.toml"
+cp_ set "$CP/table.toml" 2>/dev/null
+check "capacity-provider set: an existing [providers] table gets the key, the user's key stays" \
+    bash -c '[[ "$(sed -n 1,3p "$1")" == "[providers]  # mine"$'"'"'\n'"'"'"capacity = [\"acfs\", \"capacity\", \"--guard\", \"--json\"]"*$'"'"'\n'"'"'"other = [\"x\"]" ]] && [[ $(grep -c "^\[providers\]" "$1") -eq 1 ]]' _ "$CP/table.toml"
+check "capacity-provider set: the result is valid TOML with the value" test "$(cap_value "$CP/table.toml")" = "$CAP_WANT"
+cp "$CP/table.toml" "$CP/table.before"
+cp_ set "$CP/table.toml" 2>/dev/null
+check "capacity-provider set again: nothing changes" cmp -s "$CP/table.toml" "$CP/table.before"
+
+for own in '[]' '["my-guard", "--json"]'; do
+    printf '[providers]\ncapacity = %s\n' "$own" >"$CP/own.toml"
+    cp "$CP/own.toml" "$CP/own.before"
+    check "capacity-provider check: the user's own value ($own) is 3" bash -c 'bash "$1" capacity-provider check "$2"; [[ $? -eq 3 ]]' _ "$HOOKS" "$CP/own.toml"
+    cp_ set "$CP/own.toml" 2>/dev/null
+    check "capacity-provider set: the user's own value ($own) stays" cmp -s "$CP/own.toml" "$CP/own.before"
+done
+
+printf '[providers\ncapacity = \n' >"$CP/bad.toml"
+cp "$CP/bad.toml" "$CP/bad.before"
+check "capacity-provider set: a file that is not TOML fails and stays as it is" \
+    bash -c '! bash "$1" capacity-provider set "$2" 2>/dev/null && cmp -s "$2" "$3"' _ "$HOOKS" "$CP/bad.toml" "$CP/bad.before"
+check "capacity-provider check: and is not set (1)" bash -c 'bash "$1" capacity-provider check "$2" 2>/dev/null; [[ $? -eq 1 ]]' _ "$HOOKS" "$CP/bad.toml"
+# An inline table is closed: no edit of it is valid TOML, so nothing is written.
+printf 'providers = { other = ["x"] }\n' >"$CP/inline.toml"
+cp "$CP/inline.toml" "$CP/inline.before"
+check "capacity-provider set: an inline [providers] table fails and stays as it is" \
+    bash -c '! bash "$1" capacity-provider set "$2" 2>/dev/null && cmp -s "$2" "$3"' _ "$HOOKS" "$CP/inline.toml" "$CP/inline.before"
+
+printf '[reap]\nkeep = []\n' >"$CP/both.toml"
+bash "$HOOKS" learning-profile set "$CP/both.toml" 2>/dev/null
+cp_ set "$CP/both.toml" 2>/dev/null
+check "capacity-provider and learning-profile: both settings in one valid file" \
+    bash -c '[[ "$(python3 -I -c "import sys, tomllib; d = tomllib.load(open(sys.argv[1], \"rb\")); print(d[\"learning\"][\"implicit_outcome\"], d[\"providers\"][\"capacity\"][2], d[\"reap\"][\"keep\"])" "$1")" == "closed-assigned --guard []" ]]' _ "$CP/both.toml"
+
+check "capacity-provider: the default file is XDG_CONFIG_HOME's" \
+    bash -c 'XDG_CONFIG_HOME="$2/xdg" bash "$1" capacity-provider set 2>/dev/null && [[ -f "$2/xdg/nhm/config.toml" ]]' _ "$HOOKS" "$CP"
+unset -f cp_ cap_value
+
+# ------------------------------------------------------------
 # statusline claude (acfs-5917): Claude Code's statusLine runs
 # nhm quota record-claude, so nhm knows Claude's windows
 # ------------------------------------------------------------

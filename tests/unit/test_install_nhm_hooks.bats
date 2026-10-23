@@ -153,6 +153,7 @@ statusline_command() {
     assert_success
     assert_output --partial "DETAIL Claude Code's statusLine is your own"
     refute_output --partial "WARN"
+    # shellcheck disable=SC2088  # the user's literal ~ in settings.json
     [[ "$(statusline_command)" == "~/bin/my-status" ]] || fail "the user's statusLine changed"
 }
 
@@ -221,4 +222,63 @@ statusline_command() {
     [[ -n "$body" ]] || fail "run_as_target not found in install.sh"
     ! grep -q 'NHM_BIN_DIR' <<< "$body" \
         || fail "install.sh's run_as_target passes NHM_BIN_DIR; nhm's clean installer would not see it"
+}
+
+# acfs-hd37: install.sh's acfs_install_nhm_capacity_provider sets nhm's
+# [providers] capacity as the target user, so nhm spawn refuses while the
+# capacity guard is red. The function runs with the installer's helpers
+# stubbed and the real nhm_hooks.sh.
+run_capacity_fn() {
+    local cap_fn="$BATS_TEST_TMPDIR/capacity_fn.sh"
+    awk '
+        /^acfs_install_nhm_capacity_provider\(\) \{/ { capture=1 }
+        capture { print }
+        capture && /^}$/ { exit }
+    ' "$PROJECT_ROOT/install.sh" > "$cap_fn"
+    [[ -s "$cap_fn" ]] || fail "acfs_install_nhm_capacity_provider not found in install.sh"
+    run env -i PATH="/usr/bin:/bin" HOME="$FIX" FIX="$FIX" FN="$cap_fn" \
+        SELECTED="${SELECTED:-1}" RUN_AS_FAILS="${RUN_AS_FAILS:-}" bash -c '
+        ACFS_HOME="$FIX/.acfs" TARGET_HOME="$FIX" TARGET_USER=ubuntu
+        run_as_target() { [[ -z "$RUN_AS_FAILS" ]] || return 1; "$@"; }
+        acfs_legacy_module_selected() { [[ "$1" == stack.nhm && "$SELECTED" == 1 ]]; }
+        try_step_optional() { shift; "$@"; }
+        log_warn() { printf "WARN %s\n" "$1"; }
+        # shellcheck source=/dev/null
+        source "$FN"
+        acfs_install_nhm_capacity_provider
+    '
+}
+
+capacity_value() {
+    python3 -I -c 'import json, sys, tomllib; print(json.dumps(tomllib.load(open(sys.argv[1], "rb")).get("providers", {}).get("capacity"), separators=(",", ":")))' \
+        "$FIX/.config/nhm/config.toml"
+}
+
+@test "capacity provider: install sets nhm's [providers] capacity to acfs capacity --guard --json" {
+    run_capacity_fn
+    assert_success
+    refute_output --partial "WARN"
+    [[ "$(capacity_value)" == '["acfs","capacity","--guard","--json"]' ]] || fail "capacity is $(capacity_value)"
+}
+
+@test "capacity provider: a value of the user's stays" {
+    mkdir -p "$FIX/.config/nhm"
+    printf '[providers]\ncapacity = []\n' > "$FIX/.config/nhm/config.toml"
+    cp "$FIX/.config/nhm/config.toml" "$BATS_TEST_TMPDIR/before.toml"
+    run_capacity_fn
+    assert_success
+    cmp -s "$FIX/.config/nhm/config.toml" "$BATS_TEST_TMPDIR/before.toml" || fail "the user's config changed"
+}
+
+@test "capacity provider: stack.nhm not selected, nothing is written" {
+    SELECTED=0 run_capacity_fn
+    assert_success
+    [[ ! -e "$FIX/.config/nhm/config.toml" ]] || fail "a config was written for a module not selected"
+}
+
+@test "capacity provider: a step that fails warns, and the install goes on" {
+    RUN_AS_FAILS=1 run_capacity_fn
+    assert_success
+    assert_output --partial "WARN nhm's capacity provider was not set (optional)"
+    [[ ! -e "$FIX/.config/nhm/config.toml" ]] || fail "a config was written"
 }
