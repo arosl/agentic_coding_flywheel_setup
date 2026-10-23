@@ -63,9 +63,9 @@ _write_leaky_bundle() {
     support_redact_identity "$BUNDLE_DIR"
 
     # No raw target or collector home anywhere in the bundle.
-    ! grep -rF -- "$SUPPORT_TARGET_HOME" "$BUNDLE_DIR"
-    ! grep -rF -- '\/home\/fixtureuser' "$BUNDLE_DIR"
-    ! grep -rF -- "HOME=$_SUPPORT_CURRENT_HOME" "$BUNDLE_DIR"
+    run ! grep -rF -- "$SUPPORT_TARGET_HOME" "$BUNDLE_DIR"
+    run ! grep -rF -- '\/home\/fixtureuser' "$BUNDLE_DIR"
+    run ! grep -rF -- "HOME=$_SUPPORT_CURRENT_HOME" "$BUNDLE_DIR"
 
     # Placeholders replace the values instead of deleting content.
     grep -qF '<REDACTED:target_home>/.cargo/bin' "$BUNDLE_DIR/config/.zshrc"
@@ -88,7 +88,8 @@ _write_leaky_bundle() {
     _write_leaky_bundle
 
     SUPPORT_IDENTITY_SCAN_STATUS=""
-    ! support_verify_identity_redaction "$BUNDLE_DIR"
+    # In this shell, not run's subshell, so the status below is the one it set.
+    if support_verify_identity_redaction "$BUNDLE_DIR"; then false; fi
     [[ "$SUPPORT_IDENTITY_SCAN_STATUS" == "fail" ]]
 }
 
@@ -100,7 +101,7 @@ _write_leaky_bundle() {
 
     redact_bundle "$BUNDLE_DIR"
 
-    ! grep -rF -- "$SUPPORT_TARGET_HOME" "$BUNDLE_DIR"
+    run ! grep -rF -- "$SUPPORT_TARGET_HOME" "$BUNDLE_DIR"
     grep -qF '<REDACTED:target_home>' "$BUNDLE_DIR/os-release-extra"
 
     SUPPORT_IDENTITY_SCAN_STATUS=""
@@ -135,7 +136,7 @@ _write_leaky_bundle() {
 
     support_redact_identity "$BUNDLE_DIR"
 
-    ! grep -rF -- "$raw_hostname" "$BUNDLE_DIR"
+    run ! grep -rF -- "$raw_hostname" "$BUNDLE_DIR"
     grep -qF '<REDACTED:hostname>' "$BUNDLE_DIR/environment.txt"
 }
 

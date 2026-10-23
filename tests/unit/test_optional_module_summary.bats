@@ -184,12 +184,12 @@ legacy_setup() {
 @test "acfs_legacy_module_is_required reads only an explicit optional=0 from the index" {
     legacy_setup
     unset ACFS_MODULE_OPTIONAL
-    ! acfs_legacy_module_is_required "stack.beads_rust"
-    ! acfs_legacy_module_is_required ""
+    run ! acfs_legacy_module_is_required "stack.beads_rust"
+    run ! acfs_legacy_module_is_required ""
     declare -gA ACFS_MODULE_OPTIONAL=(["stack.beads_rust"]="0" ["stack.power_failure_resumer"]="1")
     acfs_legacy_module_is_required "stack.beads_rust"
-    ! acfs_legacy_module_is_required "stack.power_failure_resumer"
-    ! acfs_legacy_module_is_required "stack.nosuchmodule"
+    run ! acfs_legacy_module_is_required "stack.power_failure_resumer"
+    run ! acfs_legacy_module_is_required "stack.nosuchmodule"
 }
 
 @test "legacy stack phase folds module failures recorded during the phase into its exit status" {

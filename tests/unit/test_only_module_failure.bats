@@ -58,14 +58,14 @@ _plan_three_requested() {
 
 @test "dependency-selected module is not explicitly selected" {
     _plan_three_requested
-    ! acfs_module_explicitly_selected "lang.rust"
+    run ! acfs_module_explicitly_selected "lang.rust"
 }
 
 @test "unknown module and missing plan map are not explicitly selected" {
     _plan_three_requested
-    ! acfs_module_explicitly_selected "utils.nonexistent"
+    run ! acfs_module_explicitly_selected "utils.nonexistent"
     unset ACFS_PLAN_REASON
-    ! acfs_module_explicitly_selected "utils.caut"
+    run ! acfs_module_explicitly_selected "utils.caut"
 }
 
 @test "verdict: all requested modules failed is reported as total failure" {
