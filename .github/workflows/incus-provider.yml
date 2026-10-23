@@ -2,19 +2,17 @@ name: Incus provider (stub incus)
 
 # The fork's own workflow. It runs the Incus provider's fast tier, which
 # tests scripts/providers/incus.sh, its host setup and its Tailscale
-# sidecar against a stub incus, and machine.sh, the entry command in
-# front of the launcher, against a stub launcher, and its verify checks
-# against stub agents, services and transports, and the preflight of the
-# real-Incus harness (tests/vm) against a stub incus. Upstream's
-# installer.yml runs each tests/unit script by name, so a new one needs
-# its own job.
+# sidecar against a stub incus, and the preflight of the real-Incus
+# harness (tests/vm) against a stub incus. acfs machine, the entry
+# command in front of the launcher, is scripts/lib/machine.sh, which
+# installer.yml tests. Upstream's installer.yml runs each tests/unit
+# script by name, so a new one needs its own job.
 
 on:
   push:
     branches: [main]
     paths:
       - 'scripts/providers/incus*.sh'
-      - 'scripts/providers/machine*.sh'
       - 'scripts/lib/logging.sh'
       - 'tests/unit/test_incus_*.sh'
       - 'tests/vm/test_incus_provider.sh'
@@ -24,7 +22,6 @@ on:
     branches: [main]
     paths:
       - 'scripts/providers/incus*.sh'
-      - 'scripts/providers/machine*.sh'
       - 'scripts/lib/logging.sh'
       - 'tests/unit/test_incus_*.sh'
       - 'tests/vm/test_incus_provider.sh'
@@ -52,9 +49,5 @@ jobs:
         run: HOME="$(mktemp -d)" bash tests/unit/test_incus_host_setup.sh
       - name: Tailscale sidecar against a stub incus
         run: HOME="$(mktemp -d)" bash tests/unit/test_incus_tailscale.sh
-      - name: Entry command against a stub launcher
-        run: HOME="$(mktemp -d)" bash tests/unit/test_incus_machine.sh
       - name: Real-Incus harness's preflight against a stub incus
         run: HOME="$(mktemp -d)" bash tests/unit/test_incus_harness_preflight.sh
-      - name: Machine verify against stub agents, services, incus and ssh
-        run: HOME="$(mktemp -d)" bash tests/unit/test_incus_machine_verify.sh

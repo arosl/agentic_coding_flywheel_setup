@@ -2173,7 +2173,7 @@ herdr_agents_reserved_ever() {
 # MCP endpoint, and print the tool's text result. A transport error or a
 # refusal is noted, naming the tool, and returns 1. A server that wants a
 # bearer token gets the one in Agent Mail's config.env (HTTP_BEARER_TOKEN),
-# as machine_verify.sh sends it: through a private header file, never argv.
+# sent through a private header file, never argv.
 herdr_agents_mail_call() {
     local tool="$1" arguments="$2" url response headers env_file token="" rc=0
     url="${AGENT_MAIL_URL:-http://127.0.0.1:${ACFS_AGENT_MAIL_PORT:-8765}/mcp/}"
