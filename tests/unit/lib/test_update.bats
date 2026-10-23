@@ -9787,6 +9787,117 @@ EOF
     assert_success
 }
 
+# A root run for another user (acfs-7kax): update_for_user finds that user,
+# and every write goes through the user's context, which here runs the
+# command as is and logs it.
+stub_sync_as_user() {
+    AS_USER_HOME="$1"
+    AS_USER_LOG="$2"
+    update_for_user() { UPDATE_FOR_USER=tester; UPDATE_FOR_USER_HOME="$AS_USER_HOME"; }
+    update_run_in_target_context() { shift; printf '%s\n' "$*" >> "$AS_USER_LOG"; "$@"; }
+}
+
+@test "sync_acfs_deployed run by root for a user writes as the user, replacing a link instead of following it" {
+    local temp_root repo_root deployed_home outside
+    mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+
+    temp_root="$(create_temp_dir)"
+    repo_root="$temp_root/repo"
+    deployed_home="$temp_root/home/.acfs"
+    outside="$temp_root/root-file"
+    mkdir -p "$repo_root/scripts/lib" "$repo_root/acfs/onboard/docs/ntm" "$deployed_home/scripts/lib"
+    printf "update-runtime\n" > "$repo_root/scripts/lib/update.sh"
+    printf "palette-runtime\n" > "$repo_root/acfs/onboard/docs/ntm/command_palette.md"
+    # The user swapped a deployed file for a link to a file of root's.
+    printf "root's own\n" > "$outside"
+    ln -s "$outside" "$deployed_home/scripts/lib/update.sh"
+
+    ACFS_REPO_ROOT="$repo_root"
+    UPDATE_LOG_FILE="$temp_root/update.log"
+    DRY_RUN=false
+    update_runtime_acfs_home() { printf '%s\n' "$deployed_home"; }
+    stub_sync_as_user "$temp_root/home" "$temp_root/as-user.log"
+
+    run sync_acfs_deployed
+    assert_success
+
+    run cat "$outside"
+    assert_output "root's own"
+    [[ ! -L "$deployed_home/scripts/lib/update.sh" ]]
+    run cat "$deployed_home/scripts/lib/update.sh"
+    assert_output "update-runtime"
+    [[ "$(mode_of "$deployed_home/scripts/lib/update.sh")" == "755" ]]
+    run cat "$deployed_home/onboard/docs/ntm/command_palette.md"
+    assert_output "palette-runtime"
+    # The user made the new directory, and read the checkout's source itself.
+    run grep -F "mkdir -p -- $deployed_home/onboard/docs/ntm" "$temp_root/as-user.log"
+    assert_success
+    run grep -F "$repo_root/acfs/onboard/docs/ntm/command_palette.md" "$temp_root/as-user.log"
+    assert_success
+    [[ -z "$(find "$deployed_home" -name '.acfs-sync.*')" ]]
+}
+
+@test "sync_acfs_deployed run by root for a user refuses a file below a link, and warns" {
+    local temp_root repo_root deployed_home elsewhere
+
+    temp_root="$(create_temp_dir)"
+    repo_root="$temp_root/repo"
+    deployed_home="$temp_root/home/.acfs"
+    elsewhere="$temp_root/elsewhere"
+    mkdir -p "$repo_root/acfs/onboard/docs/ntm" "$deployed_home" "$elsewhere"
+    printf "palette-runtime\n" > "$repo_root/acfs/onboard/docs/ntm/command_palette.md"
+    # The user swapped a deployed directory for a link to a directory of root's.
+    ln -s "$elsewhere" "$deployed_home/onboard"
+
+    ACFS_REPO_ROOT="$repo_root"
+    UPDATE_LOG_FILE="$temp_root/update.log"
+    DRY_RUN=false
+    update_runtime_acfs_home() { printf '%s\n' "$deployed_home"; }
+    stub_sync_as_user "$temp_root/home" "$temp_root/as-user.log"
+
+    run sync_acfs_deployed
+    assert_success
+    assert_output --partial "1 file(s) not deployed to $deployed_home"
+
+    [[ -z "$(ls -A "$elsewhere")" ]]
+    run grep -F "Refused syncing acfs/onboard/docs/ntm/command_palette.md -> $deployed_home/onboard/docs/ntm/command_palette.md" "$temp_root/update.log"
+    assert_success
+}
+
+@test "sync_acfs_deployed run by root for a user streams a git ref's source to the user" {
+    local temp_root repo_root deployed_home
+    mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+
+    temp_root="$(create_temp_dir)"
+    repo_root="$temp_root/repo"
+    deployed_home="$temp_root/home/.acfs"
+    mkdir -p "$repo_root/scripts/lib" "$deployed_home"
+    printf "committed-update-runtime\n" > "$repo_root/scripts/lib/update.sh"
+    git -C "$repo_root" init -q
+    git -C "$repo_root" add scripts/lib/update.sh
+    git -C "$repo_root" -c user.name=test -c user.email=test@example.invalid commit -q -m runtime
+    printf "uncommitted\n" > "$repo_root/scripts/lib/update.sh"
+
+    ACFS_REPO_ROOT="$repo_root"
+    UPDATE_LOG_FILE="$temp_root/update.log"
+    DRY_RUN=false
+    update_runtime_acfs_home() { printf '%s\n' "$deployed_home"; }
+    stub_sync_as_user "$temp_root/home" "$temp_root/as-user.log"
+
+    run sync_acfs_deployed HEAD
+    assert_success
+
+    run cat "$deployed_home/scripts/lib/update.sh"
+    assert_output "committed-update-runtime"
+    [[ "$(mode_of "$deployed_home/scripts/lib/update.sh")" == "755" ]]
+    # The user wrote it from the copy root streamed out of git show, and
+    # never read the checkout.
+    run grep -F -- "$deployed_home/scripts/lib/update.sh 755" "$temp_root/as-user.log"
+    assert_success
+    run grep -F "$repo_root/scripts/lib/update.sh" "$temp_root/as-user.log"
+    assert_failure
+}
+
 @test "update_normalize_runtime_modes leaves modes alone in dry-run and outside a runtime home" {
     local temp_root runtime
     mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }

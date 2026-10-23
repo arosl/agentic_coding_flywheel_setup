@@ -3560,6 +3560,43 @@ sync_acfs_deployed() {
     }
 
     local synced=0
+    local refused=0
+
+    # A root run for another user (update_for_user) never writes into that
+    # user's runtime as root (acfs-7kax): root's mkdir -p, cp and chmod would
+    # follow a link the user swapped in there, onto a file of root's. The user
+    # makes the directory (update_user_mkdir) and writes a temp file beside
+    # the target, which the user then renames over it: the rename replaces a
+    # link rather than following it, and also replaces a root-owned copy an
+    # earlier root run left. The user reads a checkout source itself, so a
+    # link there reaches only what the user can read; root streams only the
+    # temp file it made with git show.
+    local sync_as_user=false
+    if update_for_user "$acfs_home"; then
+        sync_as_user=true
+    fi
+    _acfs_sync_deployed_file_as_user() {
+        local deployed_file="$1"
+        local mode="$2"
+        local user_source="$3"
+        local streamed_source="${4:-/dev/null}"
+        local bash_bin=""
+
+        bash_bin="$(update_system_binary_path bash 2>/dev/null || true)"
+        [[ -n "$bash_bin" ]] || return 1
+        update_user_mkdir "$(dirname "$deployed_file")" || return 1
+        update_run_in_target_context "" "$bash_bin" --noprofile --norc -c '
+            set -uo pipefail
+            tmp="$(mktemp "${1%/*}/.acfs-sync.XXXXXX")" || exit 1
+            if { if [[ -n "$3" ]]; then cat -- "$3"; else cat; fi; } > "$tmp" &&
+                chmod "$2" "$tmp" && mv -f -- "$tmp" "$1"; then
+                exit 0
+            fi
+            rm -f -- "$tmp"
+            exit 1
+        ' _ "$deployed_file" "$mode" "$user_source" < "$streamed_source" >/dev/null 2>&1
+    }
+
     _acfs_sync_deployed_file() {
         local repo_rel="$1"
         local deployed_rel="$2"
@@ -3613,17 +3650,44 @@ sync_acfs_deployed() {
             return 0
         fi
 
-        mkdir -p "$(dirname "$deployed_file")"
-        cp "$source_file" "$deployed_file"
-        if [[ -n "$target_mode_override" ]]; then
-            chmod "$target_mode_override" "$deployed_file" 2>/dev/null || true
-        elif [[ -n "$source_ref" ]]; then
-            case "$source_mode" in
-                100755) chmod 755 "$deployed_file" 2>/dev/null || true ;;
-                100644) chmod 644 "$deployed_file" 2>/dev/null || true ;;
-            esac
+        if [[ "$sync_as_user" == "true" ]]; then
+            local user_mode="$target_mode_override"
+            local user_source="$source_file"
+            local streamed_source="/dev/null"
+            if [[ -n "$source_tmp" ]]; then
+                user_source=""
+                streamed_source="$source_tmp"
+            fi
+            if [[ -z "$user_mode" && -n "$source_ref" ]]; then
+                case "$source_mode" in
+                    100755) user_mode=755 ;;
+                    *) user_mode=644 ;;
+                esac
+            elif [[ -z "$user_mode" ]]; then
+                user_mode="$(stat -c '%a' "$source_file" 2>/dev/null || true)"
+                [[ "$user_mode" =~ ^[0-7]{3,4}$ ]] || user_mode=644
+            fi
+            if ! _acfs_sync_deployed_file_as_user "$deployed_file" "$user_mode" "$user_source" "$streamed_source"; then
+                log_to_file "Refused syncing $source_label -> $deployed_file: $UPDATE_FOR_USER could not write it, or a link is below $UPDATE_FOR_USER_HOME"
+                refused=$((refused + 1))
+                if [[ -n "$source_tmp" ]]; then
+                    rm -f "$source_tmp" 2>/dev/null || true
+                fi
+                return 0
+            fi
         else
-            chmod --reference="$source_file" "$deployed_file" 2>/dev/null || true
+            mkdir -p "$(dirname "$deployed_file")"
+            cp "$source_file" "$deployed_file"
+            if [[ -n "$target_mode_override" ]]; then
+                chmod "$target_mode_override" "$deployed_file" 2>/dev/null || true
+            elif [[ -n "$source_ref" ]]; then
+                case "$source_mode" in
+                    100755) chmod 755 "$deployed_file" 2>/dev/null || true ;;
+                    100644) chmod 644 "$deployed_file" 2>/dev/null || true ;;
+                esac
+            else
+                chmod --reference="$source_file" "$deployed_file" 2>/dev/null || true
+            fi
         fi
         log_to_file "Synced $source_label -> $deployed_file"
         synced=$((synced + 1))
@@ -3842,6 +3906,9 @@ sync_acfs_deployed() {
         else
             log_to_file "Synced $synced file(s) from repo to $acfs_home"
         fi
+    fi
+    if [[ $refused -gt 0 ]]; then
+        log_item "warn" "ACFS runtime" "$refused file(s) not deployed to $acfs_home: $UPDATE_FOR_USER could not write them, or a link is below $UPDATE_FOR_USER_HOME (see the update log)"
     fi
 
     update_normalize_runtime_modes "$acfs_home"
