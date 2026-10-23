@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-10-23T21:25:27+00:00
+# checksums.yaml - Auto-generated 2026-10-23T22:18:05+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -64,7 +64,7 @@ installers:
 
   csctf:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/chat_shared_conversation_to_file/main/install.sh"
-    sha256: "f22f92d30d8afea5c54c63d2515b35df415c6174e4a804200339293fe7ef155c"
+    sha256: "14acc19faa8fc8a11ea10144e93d3c9cba4682e77e894f97b988e351f9466360"
 
   dcg:
     url: "https://raw.githubusercontent.com/arosl/destructive_command_guard/4275b028f53d197128ca9d4e879dba6cf3a32c70/install.sh"
@@ -168,7 +168,7 @@ installers:
 
   rch:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/remote_compilation_helper/main/install.sh"
-    sha256: "69e740b13b2ce770a8f833ab19d1db324928f6434922e7e4a7a556d1cccfab05"
+    sha256: "9f21772d5a3d8cb4a940f47a75f02b8db00977e89e2b29fc82c35a3699eadb86"
 
   ru:
     url: "https://raw.githubusercontent.com/arosl/repo_updater/v1.5.0-nhm.2/install.sh"
