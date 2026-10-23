@@ -373,6 +373,12 @@ jobs:
             mode: safe
     container:
       image: ubuntu:${{ matrix.ubuntu }}
+      # HashiCorp's vault package sets cap_ipc_lock=+ep on /usr/bin/vault.
+      # Docker's default capability set lacks IPC_LOCK, and a binary with an
+      # effective file capability outside the bounding set fails to exec with
+      # EPERM, so tools.vault's verify failed although the install worked
+      # (acfs-gx45). A VPS or an Incus container has IPC_LOCK.
+      options: --cap-add=IPC_LOCK
     env:
       DEBIAN_FRONTEND: noninteractive
     steps:
@@ -402,6 +408,19 @@ jobs:
           # Skip preflight in CI - GitHub Actions containers have limited disk (17GB < 20GB required)
           # Skip Ubuntu upgrade in CI - containers can't reboot during workflow
           ACFS_CI=true bash install.sh --yes --skip-preflight --skip-ubuntu-upgrade --mode ${{ matrix.mode }}
+
+      - name: Vault capability evidence (acfs-gx45)
+        if: always()
+        run: |
+          # Diagnostics only: the install summary reports tools.vault's verdict.
+          grep -E '^Cap(Bnd|Eff):' /proc/self/status
+          if vault_bin="$(command -v vault)"; then
+            # libcap2-bin arrives with the install (iproute2 depends on it).
+            if command -v getcap >/dev/null 2>&1; then getcap "$(readlink -f "$vault_bin")"; fi
+            vault --version || echo "vault --version failed: exit $?"
+          else
+            echo "vault is not installed"
+          fi
 
       - name: Run doctor
         run: |
