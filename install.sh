@@ -8056,9 +8056,10 @@ acfs_dotfile_write_as_target() {
 
 # A regular dotfile that root left behind goes to the user first, so the
 # user's own write can change it. -h: a link swapped in after the test is
-# changed itself, not followed (acfs-573x).
+# changed itself, not followed (acfs-573x). One link only: a hard link to a
+# root file looks like a regular file, where fs.protected_hardlinks is 0.
 acfs_dotfile_own_for_target() {
-    [[ -f "$1" && ! -L "$1" ]] || return 0
+    [[ -f "$1" && ! -L "$1" && "$(stat -c %h -- "$1" 2>/dev/null)" == "1" ]] || return 0
     $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$1" 2>/dev/null || true
 }
 
@@ -8234,7 +8235,8 @@ EOF
         } | acfs_dotfile_write_as_target "$user_profile" \
             || acfs_dotfile_warn_unwritten "$user_profile" "$profile_path_line"
     elif grep -Fxq "$legacy_profile_path_line" "$user_profile" 2>/dev/null; then
-        run_as_target sed -i "s|^$(profile_path_sed_literal "$legacy_profile_path_line")$|$profile_path_line|" "$user_profile" \
+        # --follow-symlinks: a dotfiles link stays a link, and its file is edited.
+        run_as_target sed --follow-symlinks -i "s|^$(profile_path_sed_literal "$legacy_profile_path_line")$|$profile_path_line|" "$user_profile" \
             || acfs_dotfile_warn_unwritten "$user_profile" "$profile_path_line"
     elif ! profile_path_has_fragment "$user_profile" '.local/bin' || \
          ! profile_path_has_fragment "$user_profile" '.atuin/bin'; then
@@ -8258,7 +8260,7 @@ EOF
         } | acfs_dotfile_write_as_target "$user_zprofile" \
             || acfs_dotfile_warn_unwritten "$user_zprofile" "$profile_path_line"
     elif grep -Fxq "$legacy_profile_path_line" "$user_zprofile" 2>/dev/null; then
-        run_as_target sed -i "s|^$(profile_path_sed_literal "$legacy_profile_path_line")$|$profile_path_line|" "$user_zprofile" \
+        run_as_target sed --follow-symlinks -i "s|^$(profile_path_sed_literal "$legacy_profile_path_line")$|$profile_path_line|" "$user_zprofile" \
             || acfs_dotfile_warn_unwritten "$user_zprofile" "$profile_path_line"
     elif ! profile_path_has_fragment "$user_zprofile" '.local/bin' || \
          ! profile_path_has_fragment "$user_zprofile" '.atuin/bin'; then

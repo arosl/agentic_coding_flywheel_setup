@@ -49,13 +49,19 @@ variable_owner_chowns() {
     local body
     body="$(sed -n '/^setup_shell() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
     [[ -n "$body" ]]
-    # No redirect into a dotfile from install.sh's own shell.
-    ! grep -nE '>>? *"\$user_(zshrc|profile|zprofile)"' <<<"$body"
+    # No redirect into a dotfile from install.sh's own shell. (A negated
+    # `! grep` can't fail a bats test: set -e ignores it.)
+    local redirects
+    redirects="$(grep -nE '>>? *"\$user_(zshrc|profile|zprofile)"' <<<"$body" || true)"
+    printf '%s\n' "$redirects"
+    [[ -z "$redirects" ]]
     # Every sed -i, mv or cp of a dotfile runs as the target user.
-    local edits
-    edits="$(grep -nE '(sed -i|mv -T| cp ).*"\$user_(zshrc|profile|zprofile)"' <<<"$body")"
+    local edits unwrapped
+    edits="$(grep -nE '(sed [^|]*-i|mv -T| cp ).*"\$user_(zshrc|profile|zprofile)"' <<<"$body")"
     [[ -n "$edits" ]]
-    ! grep -v 'run_as_target' <<<"$edits"
+    unwrapped="$(grep -v 'run_as_target' <<<"$edits" || true)"
+    printf '%s\n' "$unwrapped"
+    [[ -z "$unwrapped" ]]
 }
 
 # Makes the home read-only to this shell, as root's view would be if root
@@ -102,7 +108,7 @@ run_setup_shell() {
     }
     acfs_run_verified_upstream_script_as_target() { :; }
     set_default_shell() { return 0; }
-    chown() { :; }
+    chown() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/chown.log"; }
 
     SUDO=""
     TARGET_USER="tester"
@@ -219,4 +225,29 @@ run_setup_shell() {
     [[ -L "$TARGET_HOME/.profile" && -L "$TARGET_HOME/.zshrc" ]]
     grep -Fq 'export PATH="$HOME/.local/bin:' "$TARGET_HOME/dotfiles/profile"
     grep -Fq '.acfs/zsh/acfs.zshrc' "$TARGET_HOME/dotfiles/zshrc"
+}
+
+@test "a dotfiles link holding the legacy PATH line stays a link, and its file gets the new line" {
+    mkdir -p "$TARGET_HOME/dotfiles"
+    # shellcheck disable=SC2016  # The literal line ~/.profile holds.
+    printf '%s\n' 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"' \
+        > "$TARGET_HOME/dotfiles/profile"
+    ln -s "$TARGET_HOME/dotfiles/profile" "$TARGET_HOME/.profile"
+    run run_setup_shell
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"rc=0"* ]]
+    [[ -L "$TARGET_HOME/.profile" ]]
+    grep -Fq '$HOME/.atuin/bin:$PATH"' "$TARGET_HOME/dotfiles/profile"
+}
+
+@test "a ~/.profile with a second hard link is not chowned; a lone one is, with -h" {
+    printf '# my profile\n' > "$TARGET_HOME/.profile"
+    printf '# my zprofile\n' > "$TARGET_HOME/.zprofile"
+    mkdir -p "$BATS_TEST_TMPDIR/other"
+    ln "$TARGET_HOME/.profile" "$BATS_TEST_TMPDIR/other/profile"
+    run run_setup_shell
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"rc=0"* ]]
+    [[ -z "$(grep -F "$TARGET_HOME/.profile" "$BATS_TEST_TMPDIR/chown.log" || true)" ]]
+    [[ "$(grep -F "$TARGET_HOME/.zprofile" "$BATS_TEST_TMPDIR/chown.log")" == "-h tester:tester $TARGET_HOME/.zprofile" ]]
 }
