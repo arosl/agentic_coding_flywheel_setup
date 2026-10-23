@@ -69,13 +69,13 @@ sample_inventory_fixture() {
       "display_name": "Local ACFS host",
       "role": "swarm-controller",
       "status": "active",
-      "manual_tags": ["primary", "ntm"],
+      "manual_tags": ["primary", "nhm"],
       "last_probe_at": "$probe_at",
       "probe_source": "manual",
       "resources": {"cpu_count": 64, "mem_total_mib": 262144, "disk_available_mib": 524288},
-      "capacity": {"workload": "standard", "recommended_agents": 25, "safe_agents": 44, "source": "acfs capacity --json --recommend-herdr"},
+      "capacity": {"workload": "standard", "recommended_agents": 25, "safe_agents": 44, "source": "acfs capacity --json --recommend-nhm"},
       "rch": {"worker": false, "controller": true, "workers_total": 8, "workers_healthy": 8},
-      "herdr": {"can_launch": true, "preferred_labels": ["swarm-25"]},
+      "nhm": {"can_launch": true, "preferred_labels": ["swarm-25"]},
       "ru": {"can_sync_repos": true},
       "notes": "operator note",
       "rack": "a1"
@@ -89,7 +89,7 @@ sample_inventory_fixture() {
       "resources": {"cpu_count": 32, "mem_total_mib": 131072, "disk_available_mib": 262144},
       "capacity": {"workload": "heavy", "recommended_agents": 0, "safe_agents": 0, "source": "reserved for RCH"},
       "rch": {"worker": true, "controller": false, "slots_total": 12, "slots_available": 10},
-      "herdr": {"can_launch": false, "preferred_labels": []},
+      "nhm": {"can_launch": false, "preferred_labels": []},
       "ru": {"can_sync_repos": false}
     },
     {
@@ -101,7 +101,7 @@ sample_inventory_fixture() {
       "resources": {},
       "capacity": {"recommended_agents": 20, "safe_agents": 30},
       "rch": {},
-      "herdr": {"can_launch": false},
+      "nhm": {"can_launch": false},
       "ru": {"can_sync_repos": false}
     }
   ]
@@ -140,7 +140,7 @@ sensitive_inventory_fixture() {
       "resources": {},
       "capacity": {},
       "rch": {},
-      "herdr": {},
+      "nhm": {},
       "ru": {}
     }
   ]
@@ -155,8 +155,8 @@ duplicate_inventory_fixture() {
   "updated_at": "2026-05-08T00:00:00Z",
   "defaults": {"workload": "standard", "stale_after_hours": 24},
   "hosts": [
-    {"id":"local","role":"swarm-controller","status":"active","last_probe_at":null,"resources":{},"capacity":{},"rch":{},"herdr":{},"ru":{}},
-    {"id":"local","role":"swarm-worker","status":"active","last_probe_at":null,"resources":{},"capacity":{},"rch":{},"herdr":{},"ru":{}}
+    {"id":"local","role":"swarm-controller","status":"active","last_probe_at":null,"resources":{},"capacity":{},"rch":{},"nhm":{},"ru":{}},
+    {"id":"local","role":"swarm-worker","status":"active","last_probe_at":null,"resources":{},"capacity":{},"rch":{},"nhm":{},"ru":{}}
   ]
 }
 JSON
@@ -177,7 +177,7 @@ stale_inventory_fixture() {
       "resources": {},
       "capacity": {"recommended_agents": 25, "safe_agents": 44},
       "rch": {},
-      "herdr": {"can_launch": true},
+      "nhm": {"can_launch": true},
       "ru": {}
     }
   ]
@@ -202,7 +202,7 @@ role_boundary_inventory_fixture() {
       "resources": {},
       "capacity": {"recommended_agents": 4, "safe_agents": 6},
       "rch": {},
-      "herdr": {"can_launch": true},
+      "nhm": {"can_launch": true},
       "ru": {}
     },
     {
@@ -213,7 +213,7 @@ role_boundary_inventory_fixture() {
       "resources": {},
       "capacity": {"recommended_agents": 99, "safe_agents": 120},
       "rch": {"worker": true},
-      "herdr": {"can_launch": true},
+      "nhm": {"can_launch": true},
       "ru": {}
     },
     {
@@ -224,7 +224,7 @@ role_boundary_inventory_fixture() {
       "resources": {},
       "capacity": {"recommended_agents": 30, "safe_agents": 40},
       "rch": {},
-      "herdr": {"can_launch": true},
+      "nhm": {"can_launch": true},
       "ru": {}
     }
   ]
@@ -459,7 +459,7 @@ test_validate_reports_nonobject_host_without_crashing() {
     pass "validate_reports_nonobject_host_without_crashing"
 }
 
-test_validate_rejects_ntm_host_without_herdr() {
+test_validate_rejects_ntm_host_without_nhm() {
     local inventory output
     inventory="$(ntm_host_inventory_fixture)"
     output="$(run_inventory_json ntm-host validate --inventory "$inventory")"
@@ -467,10 +467,10 @@ test_validate_rejects_ntm_host_without_herdr() {
     jq -e '
       .status == "fail" and
       .unknown_field_count == 1 and
-      (.errors[] | select(.code == "invalid_herdr" and .path == "hosts[0].herdr"))
+      (.errors[] | select(.code == "invalid_nhm" and .path == "hosts[0].nhm"))
     ' <<< "$output" >/dev/null || return 1
 
-    pass "validate_rejects_ntm_host_without_herdr"
+    pass "validate_rejects_ntm_host_without_nhm"
 }
 
 test_validate_rejects_sensitive_fields() {
@@ -570,7 +570,7 @@ main() {
     run_test test_privileged_execution_uses_fixed_interpreter_and_path
     run_test test_validate_rejects_invalid_stale_after_hours
     run_test test_validate_reports_nonobject_host_without_crashing
-    run_test test_validate_rejects_ntm_host_without_herdr
+    run_test test_validate_rejects_ntm_host_without_nhm
     run_test test_validate_rejects_sensitive_fields
     run_test test_duplicate_ids_write_validate_artifacts
     run_test test_malformed_import_export_write_error_artifacts

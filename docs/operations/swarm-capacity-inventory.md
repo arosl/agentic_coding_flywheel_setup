@@ -26,7 +26,8 @@ worker configuration by itself.
   offload and worker queue management.
 - It is not an RU inventory. RU remains responsible for repository sync and
   sweep orchestration.
-- It is not an agent launcher. herdr manages agent workspaces and panes.
+- It is not an nhm launcher. nhm remains responsible for creating herdr
+  workspaces and panes.
 - It is not a secrets store. SSH keys, tokens, provider credentials, and private
   hostnames must not be stored in the inventory.
 - It does not replace `acfs capacity`; local capacity output remains the source
@@ -65,7 +66,7 @@ a known sensitive field name.
       "display_name": "Local ACFS host",
       "role": "swarm-controller",
       "status": "active",
-      "manual_tags": ["primary", "herdr"],
+      "manual_tags": ["primary", "nhm"],
       "last_probe_at": "2026-05-08T00:00:00Z",
       "probe_source": "manual",
       "resources": {
@@ -77,7 +78,7 @@ a known sensitive field name.
         "workload": "standard",
         "recommended_agents": 44,
         "safe_agents": 64,
-        "source": "acfs capacity --json --recommend-herdr"
+        "source": "acfs capacity --json --recommend-nhm"
       },
       "rch": {
         "worker": false,
@@ -85,7 +86,7 @@ a known sensitive field name.
         "workers_total": 8,
         "workers_healthy": 8
       },
-      "herdr": {
+      "nhm": {
         "can_launch": true,
         "preferred_labels": ["swarm-25", "review"]
       },
@@ -119,7 +120,7 @@ a known sensitive field name.
         "slots_total": 12,
         "slots_available": 10
       },
-      "herdr": {
+      "nhm": {
         "can_launch": false,
         "preferred_labels": []
       },
@@ -153,7 +154,7 @@ Required host fields:
 | `resources` | object | CPU, memory, and disk summary. |
 | `capacity` | object | Recommended and safe agent counts for this host role. |
 | `rch` | object | RCH relationship summary. |
-| `herdr` | object | Whether starting herdr agents is appropriate on this host. |
+| `nhm` | object | Whether nhm launches are appropriate on this host. |
 | `ru` | object | Whether RU repo sync is appropriate on this host. |
 
 Sensitive fields are forbidden at any depth:
@@ -199,7 +200,7 @@ RU remains the multi-repo sync tool. Inventory can mark whether a host is
 appropriate for `ru sync` or `ru commit-sweep`, but it must not run RU commands
 or infer repo paths from RU state.
 
-### herdr
+### nhm
 
 herdr manages the agent workspace, and nhm, which owns the herdr server, starts
 the agents in it. Inventory can suggest labels and per-host agent counts that
@@ -292,7 +293,7 @@ JSON output:
   "hosts": [],
   "warnings": [],
   "next_commands": [
-    "acfs capacity --json --recommend-herdr",
+    "acfs capacity --json --recommend-nhm",
     "rch status --json",
     "acfs swarm plan --agents 25"
   ]
@@ -420,6 +421,6 @@ Create implementation work in separate slices:
 
 Implement the inventory as an advisory local JSON contract first. The first
 code slice should validate and report; import/export and support-bundle capture
-can follow once the schema is pinned. ACFS should keep RCH, RU, herdr, Beads, and
+can follow once the schema is pinned. ACFS should keep RCH, RU, nhm, Beads, and
 Agent Mail as separate tools and use the inventory only to help an operator make
 better launch decisions.

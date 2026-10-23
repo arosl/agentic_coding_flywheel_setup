@@ -86,6 +86,9 @@ make_stub_dir() {
     stub_dir="$(mktemp -d "$ARTIFACT_DIR/stubs.XXXXXX")"
     # Restricted tool PATHs must still exercise the real timeout boundary.
     ln -s "$(command -v timeout)" "$stub_dir/timeout"
+    # A HOME without ~/.local/bin/nhm: nhm there wins over PATH, so a host's
+    # nhm would run instead of a stub (acfs-9hkh.84).
+    mkdir "$stub_dir/home"
     printf '%s\n' "$stub_dir"
 }
 
@@ -97,12 +100,13 @@ write_executable() {
 }
 
 # Fake herdr with a running server holding the given numbers of workspaces
-# and agents. Its JSON keeps the shape of real herdr 0.9.3 `workspace list`
-# and `agent list` output (captured 2026-10-09), trimmed, with generic labels.
+# and tabs (tmux's sessions and windows). Its JSON keeps the shape of real
+# herdr 0.9.3 `workspace list` and `tab list` output, trimmed, with generic
+# labels.
 write_herdr_stub() {
     local stub_dir="$1"
     printf '%s\n' "$2" > "$stub_dir/herdr.workspaces"
-    printf '%s\n' "$3" > "$stub_dir/herdr.agents"
+    printf '%s\n' "$3" > "$stub_dir/herdr.tabs"
     cat > "$stub_dir/herdr" <<'STUB'
 #!/usr/bin/env bash
 dir="$(dirname "$0")"
@@ -115,9 +119,9 @@ case "$1 $2" in
   "workspace list")
     printf '{"id":"cli:workspace:list","result":{"type":"workspace_list","workspaces":[%s]}}\n' \
       "$(entries "$(cat "$dir/herdr.workspaces")" '{"active_tab_id":"w@:t1","agent_status":"idle","focused":false,"label":"project-@","number":@,"pane_count":1,"tab_count":1,"workspace_id":"w@"}')" ;;
-  "agent list")
-    printf '{"id":"cli:agent:list","result":{"agents":[%s],"type":"agent_list"}}\n' \
-      "$(entries "$(cat "$dir/herdr.agents")" '{"agent":"claude","agent_status":"idle","pane_id":"w1:p@","tab_id":"w1:t1","terminal_id":"term_@","workspace_id":"w1"}')" ;;
+  "tab list")
+    printf '{"id":"cli:tab:list","result":{"tabs":[%s],"type":"tab_list"}}\n' \
+      "$(entries "$(cat "$dir/herdr.tabs")" '{"agent_status":"idle","focused":false,"label":"tab-@","number":@,"pane_count":1,"tab_id":"w1:t@","workspace_id":"w1"}')" ;;
   *) exit 2 ;;
 esac
 STUB
@@ -146,6 +150,10 @@ test_stubbed_tools_pass() {
     local stub_dir
     stub_dir="$(make_stub_dir)"
 
+    write_executable "$stub_dir/nhm" '#!/usr/bin/env bash
+[[ "$1" == "--robot-status" ]] || exit 2
+echo "{\"sessions\":[{\"name\":\"main\"}]}"'
+
     write_herdr_stub "$stub_dir" 2 5
 
     write_executable "$stub_dir/am" '#!/usr/bin/env bash
@@ -172,16 +180,15 @@ case "$*" in
 esac'
 
     local output
-    output="$(run_and_capture stubbed_tools env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
+    output="$(run_and_capture stubbed_tools env HOME="$stub_dir/home" PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
     write_artifact "stubbed_tools.json" "$output"
 
     jq -e '
       .status == "pass" and
-      .probes.herdr.status == "pass" and
-      .probes.herdr.available == true and
-      .probes.herdr.server_ok == true and
-      .probes.herdr.workspace_count == 2 and
-      .probes.herdr.agent_count == 5 and
+      .probes.nhm.available == true and
+      .probes.nhm.robot_status_ok == true and
+      .probes.nhm.herdr_workspace_count == 2 and
+      .probes.nhm.herdr_tab_count == 5 and
       .probes.agent_mail.status == "pass" and
       .probes.agent_mail.healthy == true and
       .probes.beads.ready_count == 1 and
@@ -255,12 +262,7 @@ test_partial_swarm_records_down_subsystems() {
     local stub_dir
     stub_dir="$(make_stub_dir)"
 
-    # herdr is installed, but no server is running: the error real herdr
-    # 0.9.3 prints (captured 2026-10-09; socket path generic).
-    write_executable "$stub_dir/herdr" '#!/usr/bin/env bash
-[[ "$1 $2" == "workspace list" || "$1 $2" == "agent list" ]] || exit 2
-echo "{\"id\":\"cli:${1}:list\",\"error\":{\"code\":\"server_not_running\",\"message\":\"no herdr server is running at /home/user/.config/herdr/herdr.sock; run \`herdr\` to start or attach it\"}}" >&2
-exit 1'
+    write_herdr_stub "$stub_dir" 1 4
 
     write_executable "$stub_dir/am" '#!/usr/bin/env bash
 [[ "$1 $2 $3" == "doctor check --json" ]] || exit 2
@@ -284,17 +286,15 @@ echo "{\"recommendation\":{\"id\":\"bd-ready\"}}"'
 echo "not json"'
 
     local output
-    output="$(run_and_capture partial_swarm env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
+    output="$(run_and_capture partial_swarm env HOME="$stub_dir/home" PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
     write_artifact "partial_swarm.json" "$output"
 
     jq -e '
       .status == "warn" and
-      .probes.herdr.status == "warn" and
-      .probes.herdr.available == true and
-      .probes.herdr.server_ok == false and
-      .probes.herdr.workspace_count == null and
-      .probes.herdr.agent_count == null and
-      any(.probes.herdr.warnings[]; contains("herdr server is not running or timed out")) and
+      .probes.nhm.status == "warn" and
+      .probes.nhm.herdr_available == true and
+      .probes.nhm.herdr_workspace_count == 1 and
+      .probes.nhm.herdr_tab_count == 4 and
       .probes.agent_mail.available == true and
       .probes.agent_mail.status == "warn" and
       any(.probes.agent_mail.warnings[]; contains("Agent Mail doctor check failed or timed out")) and
@@ -323,7 +323,11 @@ Filesystem 1K-blocks Used Available Use% Mounted on
 /dev/test 1000000 488000 512000 49% /tmp
 DF'
 
-    write_herdr_stub "$stub_dir" 1 0
+    write_executable "$stub_dir/nhm" '#!/usr/bin/env bash
+[[ "$1" == "--robot-status" ]] || exit 2
+echo "{\"sessions\":[]}"'
+
+    write_herdr_stub "$stub_dir" 1 1
 
     write_executable "$stub_dir/am" '#!/usr/bin/env bash
 [[ "$1 $2 $3" == "doctor check --json" ]] || exit 2
@@ -371,18 +375,18 @@ test_timeout_becomes_structured_warning() {
     local stub_dir
     stub_dir="$(make_stub_dir)"
 
-    write_executable "$stub_dir/herdr" '#!/usr/bin/env bash
+    write_executable "$stub_dir/nhm" '#!/usr/bin/env bash
 sleep 2
-echo "{\"id\":\"cli:workspace:list\",\"result\":{\"type\":\"workspace_list\",\"workspaces\":[]}}"'
+echo "{\"sessions\":[]}"'
 
     local output
-    output="$(run_and_capture timeout_warning env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
+    output="$(run_and_capture timeout_warning env HOME="$stub_dir/home" PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
     write_artifact "timeout_warning.json" "$output"
 
     jq -e '
       .status == "warn" and
-      .probes.herdr.status == "warn" and
-      any(.probes.herdr.warnings[]; contains("herdr server is not running or timed out"))
+      .probes.nhm.status == "warn" and
+      any(.probes.nhm.warnings[]; contains("nhm --robot-status failed or timed out"))
     ' <<<"$output" >/dev/null || return 1
 
     pass "timeout_becomes_structured_warning"
@@ -454,60 +458,31 @@ esac'
     pass "wall_clock_stepping_back_keeps_durations"
 }
 
-# acfs-9hkh.27: swarm_status.sh beside a fake herdr_agents.sh whose owner
-# probe answers $2, and a fake nhm that prints nhm's --robot-status fixture
-# (or fails with $3 = fail). Prints the JSON.
-run_with_owner() {
-    local name="$1" owner="$2" nhm_mode="${3:-ok}" stub_dir lib
+# acfs-9hkh.84: nhm in ~/.local/bin, where ACFS installs it, wins over one on
+# PATH. The one there prints nhm's --robot-status fixture; the one on PATH
+# fails.
+test_local_bin_nhm_wins_over_path() {
+    local stub_dir output
     stub_dir="$(make_stub_dir)"
     write_herdr_stub "$stub_dir" 1 2
-    lib="$stub_dir/lib"
-    mkdir -p "$lib"
-    cp "$SWARM_STATUS_SH" "$lib/swarm_status.sh"
-    write_executable "$lib/herdr_agents.sh" "#!/usr/bin/env bash
-[[ \"\$1\" == owner ]] || exit 2
-echo \"owner: $owner (fake)\" >&2
-echo $owner"
-    if [[ "$nhm_mode" == fail ]]; then
-        write_executable "$stub_dir/nhm" '#!/usr/bin/env bash
-exit 1'
-    else
-        write_executable "$stub_dir/nhm" "#!/usr/bin/env bash
+    mkdir -p "$stub_dir/home/.local/bin"
+    write_executable "$stub_dir/home/.local/bin/nhm" "#!/usr/bin/env bash
 [[ \"\$1\" == --robot-status ]] || exit 2
 cat '$REPO_ROOT/tests/fixtures/nhm/robot_status.json'"
-    fi
-    # Its own HOME: ~/.local/bin/nhm wins over PATH, so a host's nhm there
-    # would run instead of the fake (acfs-9hkh.84).
-    mkdir -p "$stub_dir/home"
-    run_and_capture "$name" env HOME="$stub_dir/home" PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=2 bash "$lib/swarm_status.sh" --json
-}
+    write_executable "$stub_dir/nhm" '#!/usr/bin/env bash
+exit 1'
 
-test_nhm_backend_adds_the_nhm_probe() {
-    local output
-    output="$(run_with_owner nhm_backend nhm)"
-    write_artifact "nhm_backend.json" "$output"
-    jq -e '.probes.nhm == {status: "pass", available: true, robot_status_ok: true, session_count: 1,
-             agent_count: 2, duration_ms: .probes.nhm.duration_ms, warnings: []}
-           and .probes.herdr.available == true' <<<"$output" >/dev/null \
-        || { fail "nhm_backend_adds_the_nhm_probe" "$output"; return 1; }
-    pass "nhm_backend_adds_the_nhm_probe"
-}
+    output="$(run_and_capture local_bin_nhm env HOME="$stub_dir/home" PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=2 "$BASH" "$SWARM_STATUS_SH" --nhm-only)"
+    write_artifact "local_bin_nhm.json" "$output"
 
-test_bash_backend_has_no_nhm_probe() {
-    local output
-    output="$(run_with_owner bash_backend acfs-bash)"
-    jq -e '(.probes | has("nhm") | not) and .probes.herdr.available == true' <<<"$output" >/dev/null \
-        || { fail "bash_backend_has_no_nhm_probe" "$output"; return 1; }
-    pass "bash_backend_has_no_nhm_probe"
-}
+    jq -e '
+      .status == "pass" and
+      .probes.nhm == {status: "pass", available: true, robot_status_ok: true, herdr_available: true,
+        herdr_query_ok: true, herdr_workspace_count: 1, herdr_tab_count: 2,
+        duration_ms: .probes.nhm.duration_ms, warnings: []}
+    ' <<<"$output" >/dev/null || return 1
 
-test_nhm_backend_failure_is_a_warning() {
-    local output
-    output="$(run_with_owner nhm_backend_fail nhm fail)"
-    jq -e '.probes.nhm.status == "warn" and .probes.nhm.robot_status_ok == false
-           and (.warnings | index("nhm --robot-status failed or timed out")) != null and .status != "pass"' \
-        <<<"$output" >/dev/null || { fail "nhm_backend_failure_is_a_warning" "$output"; return 1; }
-    pass "nhm_backend_failure_is_a_warning"
+    pass "local_bin_nhm_wins_over_path"
 }
 
 test_editor_collector_uses_calling_bash() {
@@ -516,6 +491,8 @@ test_editor_collector_uses_calling_bash() {
     jq_bin="$(command -v jq)"
     timeout_bin="$(command -v timeout)" || return 1
     printf '%s\n' '{"completed_phases":["finalize"]}' > "$stub_dir/state.json"
+    write_executable "$stub_dir/nhm" '#!/usr/bin/env bash
+printf "{}\n"'
     write_herdr_stub "$stub_dir" 1 3
     write_executable "$stub_dir/older-bash" '#!/usr/bin/env bash
 printf "called\n" > "$EDITOR_OLD_BASH_MARKER"
@@ -524,6 +501,7 @@ exit 99'
     # Execute the actual editor function and collector. The resolver deliberately
     # offers an unusable older Bash; a modern caller must keep its interpreter.
     output="$(run_and_capture editor_interpreter env \
+        HOME="$stub_dir/home" \
         PATH="$stub_dir:$(dirname "$BASH"):$PATH" \
         EDITOR_OLD_BASH_MARKER="$stub_dir/older-bash-called" \
         "$BASH" -c '
@@ -544,7 +522,7 @@ exit 99'
 
     [[ "$(cat "$ARTIFACT_DIR/editor_interpreter.exit")" == 0 ]] || return 1
     jq -e '.status == "ok" and .sessions.status == "ok" and
-        .sessions.workspace_count == 1 and .sessions.agent_count == 3' <<<"$output" >/dev/null || return 1
+        .sessions.session_count == 1 and .sessions.window_count == 3' <<<"$output" >/dev/null || return 1
     [[ ! -e "$stub_dir/older-bash-called" ]] || return 1
     pass "editor_collector_uses_calling_bash"
 }
@@ -584,9 +562,7 @@ main() {
     run_test test_rch_queue_timeout_becomes_structured_warning
     run_test test_human_output
     run_test test_wall_clock_stepping_back_keeps_durations
-    run_test test_nhm_backend_adds_the_nhm_probe
-    run_test test_bash_backend_has_no_nhm_probe
-    run_test test_nhm_backend_failure_is_a_warning
+    run_test test_local_bin_nhm_wins_over_path
 
     echo "Results: $TESTS_PASSED passed, $TESTS_FAILED failed"
     echo "Artifacts: $ARTIFACT_DIR"

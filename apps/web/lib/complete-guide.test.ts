@@ -71,7 +71,7 @@ describe("complete guide derived claims", () => {
     for (const command of [
       "acfs machine up dev",
       "acfs machine verify dev",
-      "acfs capacity --recommend-herdr",
+      "acfs capacity --recommend-nhm",
       "acfs swarm plan --agents",
       "nhm spawn myproject --cc=",
       "nhm send myproject",

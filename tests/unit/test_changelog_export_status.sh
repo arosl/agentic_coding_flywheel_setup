@@ -12010,7 +12010,7 @@ JSON
         jq -e '{schema_version, status, install_status: .install.status, phases: .install.completed_phases, provider: .provider.name, sessions: .sessions.status, automatic: .execute_automatically} ==
           {schema_version:1,status:"ok",install_status:"complete",phases:["finalize","user_setup"],provider:"hetzner",sessions:"not_requested",automatic:false} and
           .freshness.cache == "none" and .freshness.state_updated_at == "2026-10-11T10:00:00Z" and
-          .generated_at != null and .install.tools_present == 24 and .sessions.workspace_count == null' "$PROTOCOL_OUTPUT" >/dev/null &&
+          .generated_at != null and .install.tools_present == 24 and .sessions.session_count == null' "$PROTOCOL_OUTPUT" >/dev/null &&
         cmp -s "$PROTOCOL_HOME/.acfs/state.json" "$PROTOCOL_HOME/state.before" &&
         [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
         harness_pass "editor complete snapshot is passive and preserves state"
@@ -12079,20 +12079,26 @@ test_status_editor_active_phase_beats_prior_completion() {
 test_status_editor_live_counts_skip_unrelated_tools() {
     status_protocol_setup live
     printf '%s\n' '{"completed_phases":["finalize"]}' > "$PROTOCOL_HOME/.acfs/state.json"
+    cat > "$PROTOCOL_HOME/.local/bin/nhm" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == --robot-status ]] || exit 99
+printf '%s\n' '{"session":"fixture-private-session-token"}'
+EOF
+    chmod +x "$PROTOCOL_HOME/.local/bin/nhm"
     cat > "$PROTOCOL_HOME/.local/bin/herdr" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
-  "workspace list") printf '%s\n' '{"result":{"workspaces":[{"label":"fixture-private-one"},{"label":"fixture-private-two"}]}}' ;;
-  "agent list") printf '%s\n' '{"result":{"agents":[{"pane_id":"fixture-private-1"},{},{},{},{}]}}' ;;
+  "workspace list") printf '%s\n' '{"id":"cli:workspace:list","result":{"type":"workspace_list","workspaces":[{"label":"fixture-private-one"},{"label":"fixture-private-two"}]}}' ;;
+  "tab list") printf '%s\n' '{"id":"cli:tab:list","result":{"tabs":[{"label":"fixture-private-1"},{},{},{},{}],"type":"tab_list"}}' ;;
   *) exit 99 ;;
 esac
 EOF
     if status_protocol_run 0 live --ide --live &&
-        jq -e '.sessions.status == "ok" and .sessions.herdr_available == true and
-          .sessions.workspace_count == 2 and .sessions.agent_count == 5' "$PROTOCOL_OUTPUT" >/dev/null &&
+        jq -e '.sessions.status == "ok" and .sessions.nhm_available == true and
+          .sessions.session_count == 2 and .sessions.window_count == 5' "$PROTOCOL_OUTPUT" >/dev/null &&
         ! grep -Fq fixture-private "$PROTOCOL_OUTPUT" && [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
-        harness_pass "editor live snapshot reuses herdr and skips unrelated tools"
-    else harness_fail "editor live snapshot reuses herdr and skips unrelated tools"; fi
+        harness_pass "editor live snapshot reuses nhm/herdr and skips unrelated tools"
+    else harness_fail "editor live snapshot reuses nhm/herdr and skips unrelated tools"; fi
 }
 
 test_status_editor_advice_is_constant_and_not_executed() {
@@ -12150,7 +12156,7 @@ test_status_editor_missing_dependencies_are_explicit() {
         ) > "$output" 2> "$output.stderr" || actual=$?
         if [[ "$actual" == "$expected" ]] &&
             jq -e --arg dependency "$dependency" 'if $dependency == "jq" then .error == "jq_unavailable" and .status == "error"
-              else .sessions.status == "unavailable" and .sessions.workspace_count == null and .status == "warn" end' "$output" >/dev/null; then
+              else .sessions.status == "unavailable" and .sessions.session_count == null and .status == "warn" end' "$output" >/dev/null; then
             harness_pass "editor missing $dependency dependency is explicit"
         else harness_fail "editor missing $dependency dependency is explicit"; fi
     done
@@ -12166,8 +12172,8 @@ EOF
     local started="$SECONDS" elapsed=0
     if status_protocol_run 1 timeout --ide --live; then
         elapsed=$((SECONDS - started))
-        if (( elapsed <= 7 )) && jq -e '.sessions.status == "warn" and .sessions.workspace_count == null and
-            .sessions.agent_count == null and .next_actions[0].reason == "session_query_unavailable"' "$PROTOCOL_OUTPUT" >/dev/null; then
+        if (( elapsed <= 7 )) && jq -e '.sessions.status == "warn" and .sessions.session_count == null and
+            .sessions.window_count == null and .next_actions[0].reason == "session_query_unavailable"' "$PROTOCOL_OUTPUT" >/dev/null; then
             harness_pass "timed-out session query stays bounded and reports unknown counts"
             return
         fi
@@ -12212,7 +12218,7 @@ assert len(examples) == 4, "Expected four documented editor snapshots"
 for example in examples:
     scenario = example["scenario"]
     payload = json.loads((Path(sys.argv[2]) / (scenario + ".json")).read_text())
-    observed = {"scenario": scenario, "status": payload["status"], "install_status": payload["install"]["status"], "sessions_status": payload["sessions"]["status"], "workspace_count": payload["sessions"]["workspace_count"]}
+    observed = {"scenario": scenario, "status": payload["status"], "install_status": payload["install"]["status"], "sessions_status": payload["sessions"]["status"], "session_count": payload["sessions"]["session_count"]}
     assert observed == example, scenario + " README/CLI drift"
 PY
     then harness_pass "documented editor snapshots match actual CLI outputs"

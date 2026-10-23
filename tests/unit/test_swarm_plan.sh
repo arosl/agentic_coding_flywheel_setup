@@ -85,7 +85,7 @@ healthy_status_fixture() {
     "beads": {"status": "pass", "available": true, "ready_count": 12, "in_progress_count": 0, "open_count": 20, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "queue_json_ok": true, "queue_depth": 0, "active_build_count": 0, "workers_total": 8, "workers_healthy": 8, "workers_busy": 0, "workers_offline": 0, "slots_total": 32, "slots_available": 24, "pressure_warning_count": 0, "stale_worker_count": 0, "warnings": []},
-    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 2, "agent_count": 2, "warnings": []}
+    "nhm": {"status": "pass", "available": true, "robot_status_ok": true, "herdr_available": true, "herdr_workspace_count": 2, "herdr_tab_count": 8, "warnings": []}
   }
 }
 JSON
@@ -102,7 +102,7 @@ busy_rch_status_fixture() {
     "beads": {"status": "pass", "available": true, "ready_count": 12, "in_progress_count": 1, "open_count": 20, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "warn", "available": true, "status_json_ok": true, "queue_json_ok": true, "queue_depth": 7, "active_build_count": 6, "workers_total": 8, "workers_healthy": 8, "workers_busy": 5, "workers_offline": 0, "slots_total": 32, "slots_available": 4, "pressure_warning_count": 2, "stale_worker_count": 0, "warnings": ["rch reports 2 worker(s) with elevated pressure"]},
-    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 3, "agent_count": 3, "warnings": []}
+    "nhm": {"status": "pass", "available": true, "robot_status_ok": true, "herdr_available": true, "herdr_workspace_count": 3, "herdr_tab_count": 10, "warnings": []}
   }
 }
 JSON
@@ -119,7 +119,7 @@ missing_agent_mail_status_fixture() {
     "beads": {"status": "pass", "available": true, "ready_count": 5, "in_progress_count": 0, "open_count": 12, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "queue_json_ok": true, "queue_depth": 0, "active_build_count": 0, "workers_total": 8, "workers_healthy": 8, "workers_busy": 0, "workers_offline": 0, "slots_total": 32, "slots_available": 20, "pressure_warning_count": 0, "stale_worker_count": 0, "warnings": []},
-    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 1, "agent_count": 1, "warnings": []}
+    "nhm": {"status": "pass", "available": true, "robot_status_ok": true, "herdr_available": true, "herdr_workspace_count": 1, "herdr_tab_count": 4, "warnings": []}
   }
 }
 JSON
@@ -136,7 +136,7 @@ high_load_status_fixture() {
     "beads": {"status": "pass", "available": true, "ready_count": 5, "in_progress_count": 0, "open_count": 12, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "queue_json_ok": true, "queue_depth": 0, "active_build_count": 0, "workers_total": 8, "workers_healthy": 8, "workers_busy": 0, "workers_offline": 0, "slots_total": 32, "slots_available": 20, "pressure_warning_count": 0, "stale_worker_count": 0, "warnings": []},
-    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 1, "agent_count": 1, "warnings": []}
+    "nhm": {"status": "pass", "available": true, "robot_status_ok": true, "herdr_available": true, "herdr_workspace_count": 1, "herdr_tab_count": 4, "warnings": []}
   }
 }
 JSON
@@ -153,7 +153,7 @@ low_memory_status_fixture() {
     "beads": {"status": "pass", "available": true, "ready_count": 5, "in_progress_count": 0, "open_count": 12, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "queue_json_ok": true, "queue_depth": 0, "active_build_count": 0, "workers_total": 8, "workers_healthy": 8, "workers_busy": 0, "workers_offline": 0, "slots_total": 32, "slots_available": 20, "pressure_warning_count": 0, "stale_worker_count": 0, "warnings": []},
-    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 1, "agent_count": 1, "warnings": []}
+    "nhm": {"status": "pass", "available": true, "robot_status_ok": true, "herdr_available": true, "herdr_workspace_count": 1, "herdr_tab_count": 4, "warnings": []}
   }
 }
 JSON
@@ -170,7 +170,7 @@ stale_work_status_fixture() {
     "beads": {"status": "pass", "available": true, "ready_count": 5, "in_progress_count": 2, "stale_in_progress_count": 1, "open_count": 12, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "warnings": []},
     "rch": {"status": "pass", "available": true, "status_json_ok": true, "queue_json_ok": true, "queue_depth": 0, "active_build_count": 0, "workers_total": 8, "workers_healthy": 8, "workers_busy": 0, "workers_offline": 0, "slots_total": 32, "slots_available": 20, "pressure_warning_count": 0, "stale_worker_count": 0, "warnings": []},
-    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 1, "agent_count": 1, "warnings": []}
+    "nhm": {"status": "pass", "available": true, "robot_status_ok": true, "herdr_available": true, "herdr_workspace_count": 1, "herdr_tab_count": 4, "warnings": []}
   }
 }
 JSON
@@ -272,7 +272,7 @@ test_warning_within_capacity_proceeds_with_review() {
     jq -e '
       .status == "warn" and
       .recommendation == "launch_with_review" and
-      (.checks[] | select(.id == "active_agents" and .status == "warn")) and
+      (.checks[] | select(.id == "active_sessions" and .status == "warn")) and
       .quiesce_advisory.recommendation == "proceed" and
       .quiesce_advisory.recommended_agents == 2
     ' <<<"$output" >/dev/null || return 1

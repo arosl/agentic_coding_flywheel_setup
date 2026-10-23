@@ -7,7 +7,7 @@ the command is a read-only planner.
 ## Purpose
 
 Large ACFS hosts can run many agents, but launch decisions should still account
-for local capacity, RCH queue pressure, existing herdr agents, active
+for local capacity, RCH queue pressure, existing nhm/herdr activity, active
 Beads work, Agent Mail reservation pressure, and stale coordination state. The
 admission model answers one question:
 
@@ -40,7 +40,7 @@ The planner accepts:
 | `requested_agents` | yes | CLI flag such as `--agents 25` or profile name such as `25-agents` |
 | `workload` | yes | `light`, `standard`, or `heavy`; same vocabulary as `capacity.sh` |
 | `swarm_status` | yes | `acfs swarm status --json` or `scripts/lib/swarm_status.sh --json` |
-| `capacity` | yes | `acfs capacity --json --profile <N> --recommend-herdr` |
+| `capacity` | yes | `acfs capacity --json --profile <N> --recommend-nhm` |
 | `simulation` | recommended | `acfs swarm simulate --json --counts 10,25,50` or selected counts |
 | `agent_mail_pressure` | optional | future reservation summary, degraded to warning when unavailable |
 | `repo_policy` | advisory | local `AGENTS.md` and README presence/read freshness |
@@ -186,7 +186,7 @@ Required checks:
 | `rch_pressure` | RCH unavailable only when workload is light, or queue/worker pressure is clear. | RCH has a queue, busy workers, stale telemetry, or pressure warnings but enough slots remain. | RCH is required for the workload and unavailable, invalid, or has no available slots. |
 | `coordination_health` | Agent Mail, Beads, and bv probes are healthy. | Optional coordination probes degrade but Beads and bv remain usable. | Beads or bv JSON commands are unavailable for swarm planning. |
 | `active_work` | No in-progress Beads and no stale reservations reported. | In-progress Beads exist or stale reservations are suspected. | A requested launch would overlap active exclusive reservations without operator review. |
-| `herdr` | herdr is installed and its server answers `herdr workspace list`. | herdr is installed but its server is not running. | herdr is unavailable for the intended launch path. |
+| `nhm_herdr` | nhm robot status is healthy and herdr has expected capacity. | nhm is degraded but herdr is usable. | nhm and herdr are unavailable for the intended launch path. |
 | `policy_freshness` | Local `AGENTS.md`/README have been read in the current session. | Freshness is unknown. | Never fail solely on this check; emit a warning instead. |
 
 ## Thresholds
@@ -232,7 +232,7 @@ Recommended: 18 agents
 Safe maximum: 32 agents
 RCH: queue=4 active=2 workers=7/7 busy=2 slots=64/82 pressure=2 stale=0
 Beads: ready=12 in_progress=1
-herdr: workspaces=2 agents=8
+nhm/herdr: workspaces=2 tabs=8
 Recommendation: Reduce to 18 agents or wait for RCH pressure to clear
 Quiesce: scale_down - Scale down to 18 agents or wait for pressure to clear.
 

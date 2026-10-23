@@ -187,7 +187,7 @@ swarm_plan_collect_capacity_json() {
         --json \
         --workload "$SWARM_PLAN_WORKLOAD" \
         --profile "${SWARM_PLAN_AGENTS}-agents" \
-        --recommend-herdr
+        --recommend-nhm
 }
 
 # A trailing sentinel preserves whitespace through command substitution. Bash
@@ -240,13 +240,13 @@ swarm_plan_validate_snapshot() {
         if . == null then true else
           type == "object" and diagnostic
           and (. as $o | all(["available", "healthy", "status_json_ok", "queue_json_ok",
-            "robot_ok", "server_ok"][];
+            "robot_ok", "robot_status_ok", "herdr_available"][];
             . as $k | $o[$k] == null or ($o[$k] | type == "boolean")))
           and counts(["queue_depth", "active_build_count", "slots_available", "slots_total",
             "workers_total", "workers_healthy", "workers_busy", "workers_offline",
             "pressure_warning_count", "stale_worker_count", "ready_count", "open_count",
             "in_progress_count", "stale_in_progress_count", "stale_work_count", "stale_count",
-            "workspace_count", "agent_count"])
+            "herdr_workspace_count", "herdr_tab_count"])
         end;
       length == 1 and (.[0] |
         type == "object" and .schema_version == 1
@@ -256,8 +256,7 @@ swarm_plan_validate_snapshot() {
             and counts(["cpu_count", "mem_available_kb"])
             and (.load_1m == null or (.load_1m | nonnegative)))
           and (.probes | type == "object"
-            and (.herdr | type == "object")
-            and all(.agent_mail, .beads, .bv, .rch, .herdr; probe))
+            and all(.agent_mail, .beads, .bv, .rch, .nhm; probe))
           and (.stale_work == null or (.stale_work | type == "object"
             and counts(["total_stale_count", "stale_count"])))
         else
@@ -275,16 +274,6 @@ swarm_plan_validate_snapshot() {
           and (.recommendations == null or (.recommendations | type == "array"
             and all(.[]; type == "string")))
         end)
-    ' >/dev/null 2>&1
-}
-
-# Whether status snapshot $2 predates herdr: a status report that has probes
-# but no probes.herdr (such as one with the old probes.ntm). The validator
-# refuses it too; this only names why.
-swarm_plan_status_predates_herdr() {
-    local jq_bin="$1" input="$2"
-    printf '%s' "$input" | "$jq_bin" -e '
-        type == "object" and (.probes | type == "object") and (.probes.herdr == null)
     ' >/dev/null 2>&1
 }
 
@@ -346,7 +335,7 @@ $status as $s
 | ($s.probes.beads // {}) as $beads
 | ($s.probes.bv // {}) as $bv
 | ($s.probes.rch // {}) as $rch
-| ($s.probes.herdr // {}) as $herdr
+| ($s.probes.nhm // {}) as $nhm
 | ($s.host // {}) as $host
 | (n($host.cpu_count)) as $host_cpu_count
 | (n($host.load_1m)) as $host_load_1m
@@ -414,7 +403,7 @@ $status as $s
        elif ($c.status == "warn" or $c.profile_check.status == "warn") then "Capacity model reports warnings requiring review"
        else "Requested count is within the capacity recommendation" end);
       ($c.recommendations // []);
-      ["acfs capacity --json --profile " + ($requested_agents | tostring) + "-agents --recommend-herdr"]
+      ["acfs capacity --json --profile " + ($requested_agents | tostring) + "-agents --recommend-nhm"]
     ),
     check(
       "host_pressure";
@@ -428,7 +417,7 @@ $status as $s
         if ($host_cpu_count > 0 and $host_load_ratio >= 1.25) then "load_1m=" + ($host_load_1m | tostring) + " cpu_count=" + ($host_cpu_count | tostring) else empty end,
         if ($host.mem_available_kb != null and $host_mem_available_kb < 4194304) then "mem_available_kb=" + ($host_mem_available_kb | tostring) else empty end
       ]);
-      ["acfs swarm status --json", "acfs capacity --json --recommend-herdr"]
+      ["acfs swarm status --json", "acfs capacity --json --recommend-nhm"]
     ),
     check(
       "rch_pressure";
@@ -468,15 +457,17 @@ $status as $s
       ["br ready --json", "bv --robot-next", "mcp-agent-mail doctor check --json"]
     ),
     check(
-      "herdr";
-      (if (b($herdr.available) | not) then "fail"
-       elif (b($herdr.server_ok)) then "pass"
-       else "warn" end);
-      (if (b($herdr.available) | not) then "herdr is unavailable for launch command generation"
-       elif (b($herdr.server_ok)) then "herdr server is usable"
-       else "herdr is installed, but its server is not running" end);
-      ($herdr.warnings // []);
-      ["herdr workspace list", "herdr agent list"]
+      "nhm_herdr";
+      (if (b($nhm.available) | not) then "fail"
+       elif (b($nhm.robot_status_ok)) then "pass"
+       elif (b($nhm.herdr_available)) then "warn"
+       else "fail" end);
+      (if (b($nhm.available) | not) then "nhm is unavailable for launch command generation"
+       elif (b($nhm.robot_status_ok)) then "nhm robot status is usable"
+       elif (b($nhm.herdr_available)) then "nhm robot status is uncertain, but herdr is usable"
+       else "nhm and herdr are unavailable" end);
+      ($nhm.warnings // []);
+      ["nhm --robot-status", "herdr workspace list"]
     ),
     check(
       "active_work";
@@ -488,11 +479,11 @@ $status as $s
       ["br list --status in_progress --json", "acfs swarm status --json", "acfs swarm doctor --stale-hours 12"]
     ),
     check(
-      "active_agents";
-      (if n($herdr.agent_count) >= $requested_agents and $requested_agents > 1 then "warn" else "pass" end);
-      (if n($herdr.agent_count) >= $requested_agents and $requested_agents > 1 then "Live herdr agent count is already at or above the requested agent count" else "Existing herdr agents do not block planning" end);
+      "active_sessions";
+      (if n($nhm.herdr_workspace_count) >= $requested_agents and $requested_agents > 1 then "warn" else "pass" end);
+      (if n($nhm.herdr_workspace_count) >= $requested_agents and $requested_agents > 1 then "Existing herdr workspace count is already at or above the requested agent count" else "Existing herdr activity does not block planning" end);
       [];
-      ["herdr agent list", "acfs swarm status --json"]
+      ["nhm --robot-status", "acfs swarm status --json"]
     )
   ] as $checks
 | (if any($checks[]; .status == "fail") then "fail" elif any($checks[]; .status == "warn") then "warn" else "pass" end) as $plan_status
@@ -560,7 +551,7 @@ $status as $s
       passed: ([$checks[] | select(.status == "pass")] | length),
       beads_ready: ($beads.ready_count // null),
       beads_in_progress: ($beads.in_progress_count // null),
-      herdr_agents: ($herdr.agent_count // null),
+      herdr_workspaces: ($nhm.herdr_workspace_count // null),
       rch_queue_depth: ($rch.queue_depth // null),
       rch_slots_available: ($rch.slots_available // null)
     },
@@ -626,7 +617,7 @@ swarm_plan_jq_error_report() {
                     status: "fail",
                     summary: $message,
                     details: [],
-                    commands: ["acfs swarm status --json", "acfs capacity --json --recommend-herdr"]
+                    commands: ["acfs swarm status --json", "acfs capacity --json --recommend-nhm"]
                 }
             ],
             launch_profile: {recommended: false, not_executed: true, agent_count: null, label: null, mix: null, command: null},
@@ -638,7 +629,7 @@ swarm_plan_jq_error_report() {
                 does_not: ["kill sessions", "delete files", "release reservations", "mutate Beads"]
             },
             warnings: [$message],
-            next_commands: ["acfs swarm status --json", "acfs capacity --json --recommend-herdr"],
+            next_commands: ["acfs swarm status --json", "acfs capacity --json --recommend-nhm"],
             examples: []
         }'
 }
@@ -669,10 +660,6 @@ swarm_plan_build_report() {
     capacity_json="${capacity_json%.}"
 
     if ! swarm_plan_validate_snapshot "$jq_bin" status "$status_json"; then
-        if swarm_plan_status_predates_herdr "$jq_bin" "$status_json"; then
-            swarm_plan_jq_error_report "swarm status JSON predates herdr: it has no probes.herdr (an old snapshot); take a new one with 'acfs swarm status --json'" "$jq_bin"
-            return 0
-        fi
         swarm_plan_jq_error_report "swarm status JSON is malformed, ambiguous, unsupported or exceeds input limits" "$jq_bin"
         return 0
     fi

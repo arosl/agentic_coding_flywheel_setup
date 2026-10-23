@@ -135,7 +135,7 @@ write_inventory_fixture() {
       "resources": {"cpu_count": 64, "mem_total_mib": 262144, "disk_available_mib": 524288},
       "capacity": {"workload": "standard", "recommended_agents": 25, "safe_agents": 44},
       "rch": {"worker": false, "controller": true, "workers_total": 8, "workers_healthy": 8},
-      "herdr": {"can_launch":true, "preferred_labels": ["swarm-25"]},
+      "nhm": {"can_launch": true, "preferred_labels": ["swarm-25"]},
       "ru": {"can_sync_repos": true}
     },
     {
@@ -146,7 +146,7 @@ write_inventory_fixture() {
       "resources": {},
       "capacity": {"recommended_agents": 0, "safe_agents": 0},
       "rch": {"worker": true, "controller": false},
-      "herdr": {"can_launch":false},
+      "nhm": {"can_launch": false},
       "ru": {"can_sync_repos": false}
     },
     {
@@ -157,7 +157,7 @@ write_inventory_fixture() {
       "resources": {},
       "capacity": {"recommended_agents": 20, "safe_agents": 30},
       "rch": {},
-      "herdr": {"can_launch":false},
+      "nhm": {"can_launch": false},
       "ru": {"can_sync_repos": false}
     }
   ]
@@ -194,7 +194,7 @@ write_sensitive_inventory_fixture() {
       "resources": {"cpu_count": 64, "mem_total_mib": 262144, "disk_available_mib": 524288},
       "capacity": {"workload": "standard", "recommended_agents": 25, "safe_agents": 44},
       "rch": {"worker": false, "controller": true, "workers_total": 8, "workers_healthy": 8},
-      "herdr": {"can_launch":true, "preferred_labels": ["swarm-25"]},
+      "nhm": {"can_launch": true, "preferred_labels": ["swarm-25"]},
       "ru": {"can_sync_repos": true},
       "notes": "operator note ghp_abcdefghijklmnopqrstuvwxyz1234567890ABCD /home/alice/private",
       "ssh_user": "ubuntu",
@@ -210,7 +210,7 @@ write_sensitive_inventory_fixture() {
       "resources": {},
       "capacity": {"recommended_agents": 0, "safe_agents": 0},
       "rch": {"worker": true, "controller": false},
-      "herdr": {"can_launch":false},
+      "nhm": {"can_launch": false},
       "ru": {"can_sync_repos": false}
     },
     {
@@ -221,7 +221,7 @@ write_sensitive_inventory_fixture() {
       "resources": {},
       "capacity": {"recommended_agents": 20, "safe_agents": 30},
       "rch": {},
-      "herdr": {"can_launch":false},
+      "nhm": {"can_launch": false},
       "ru": {"can_sync_repos": false}
     }
   ]

@@ -10,7 +10,7 @@ set -uo pipefail
 CAPACITY_JSON=false
 CAPACITY_WORKLOAD="standard"
 CAPACITY_PROFILE=""
-CAPACITY_RECOMMEND_HERDR=false
+CAPACITY_RECOMMEND_NHM=false
 CAPACITY_RESOURCE_PROFILE=false
 CAPACITY_RESOURCE_PROFILE_APPLY=false
 CAPACITY_RESOURCE_PROFILE_DISABLE=false
@@ -26,7 +26,7 @@ Options:
   --json                  Emit machine-readable JSON
   --workload <name>       light, standard, or heavy (default: standard)
   --profile <agents>      Check a target agent count, e.g. 25 or 25-agents
-  --recommend-herdr       Include an nhm launch recommendation
+  --recommend-nhm         Include an nhm launch recommendation
   --resource-profile      Report opt-in systemd resource profile wrappers
   --apply-resource-profile
                           Write opt-in ACFS wrapper files under ~/.acfs
@@ -60,7 +60,8 @@ Environment overrides for tests:
   ACFS_CAPACITY_MEM_TOTAL_KB
   ACFS_CAPACITY_DISK_AVAILABLE_KB
   ACFS_CAPACITY_RCH_AVAILABLE=true|false
-  ACFS_CAPACITY_HERDR_AVAILABLE=true|false
+  ACFS_CAPACITY_NHM_AVAILABLE=true|false
+  ACFS_CAPACITY_HERDR_AVAILABLE=true|false (the guard's agent count)
   ACFS_CAPACITY_SYSTEMD_RUN_AVAILABLE=true|false
   ACFS_CAPACITY_SYSTEMD_USER_AVAILABLE=true|false
   ACFS_CAPACITY_BIN_DIR
@@ -89,8 +90,8 @@ capacity_parse_args() {
                 CAPACITY_PROFILE="$2"
                 shift 2
                 ;;
-            --recommend-herdr)
-                CAPACITY_RECOMMEND_HERDR=true
+            --recommend-nhm)
+                CAPACITY_RECOMMEND_NHM=true
                 shift
                 ;;
             --resource-profile)
@@ -910,12 +911,12 @@ capacity_apply_process_limits() {
 }
 
 capacity_collect_model() {
-    local cpu_count mem_total_kb disk_available_kb rch_available herdr_available
+    local cpu_count mem_total_kb disk_available_kb rch_available nhm_available
     cpu_count="$(capacity_read_cpu_count)"
     mem_total_kb="$(capacity_read_mem_total_kb)"
     disk_available_kb="$(capacity_read_disk_available_kb)"
     rch_available="$(capacity_tool_available rch ACFS_CAPACITY_RCH_AVAILABLE)"
-    herdr_available="$(capacity_tool_available herdr ACFS_CAPACITY_HERDR_AVAILABLE)"
+    nhm_available="$(capacity_tool_available nhm ACFS_CAPACITY_NHM_AVAILABLE)"
     CAPACITY_PHYSICAL_MEM_TOTAL_MIB=$((mem_total_kb / 1024))
     capacity_apply_process_limits "$cpu_count" "$mem_total_kb"
     mem_total_kb="$CAPACITY_EFFECTIVE_MEM_TOTAL_KB"
@@ -998,7 +999,7 @@ capacity_collect_model() {
     CAPACITY_SAFE_AGENTS="$safe_agents"
     CAPACITY_RECOMMENDED_AGENTS="$recommended_agents"
     CAPACITY_RCH_AVAILABLE="$rch_available"
-    CAPACITY_HERDR_AVAILABLE="$herdr_available"
+    CAPACITY_NHM_AVAILABLE="$nhm_available"
     CAPACITY_REQUESTED_AGENTS="$requested_agents"
     CAPACITY_PROFILE_STATUS="$profile_status"
     CAPACITY_PROFILE_REASON="$profile_reason"
@@ -1035,8 +1036,8 @@ capacity_emit_json() {
         --argjson safe_agents "$CAPACITY_SAFE_AGENTS" \
         --argjson recommended_agents "$CAPACITY_RECOMMENDED_AGENTS" \
         --argjson rch_available "$CAPACITY_RCH_AVAILABLE" \
-        --argjson herdr_available "$CAPACITY_HERDR_AVAILABLE" \
-        --argjson recommend_herdr "$CAPACITY_RECOMMEND_HERDR" \
+        --argjson nhm_available "$CAPACITY_NHM_AVAILABLE" \
+        --argjson recommend_nhm "$CAPACITY_RECOMMEND_NHM" \
         --arg status "$CAPACITY_STATUS" '
         {
             schema_version: 1,
@@ -1052,7 +1053,7 @@ capacity_emit_json() {
             resource_limits: $process_limits,
             tools: {
                 rch: {available: $rch_available},
-                herdr: {available: $herdr_available}
+                nhm: {available: $nhm_available}
             },
             assumptions: {
                 workload: $workload,
@@ -1084,12 +1085,12 @@ capacity_emit_json() {
                     if $recommended_agents > 0 then "Start at the recommended tier, then increase only after status/doctor checks stay clean." else empty end
                 ]
             ),
-            herdr: {
-                recommended: $recommend_herdr,
-                agent_count: (if $recommend_herdr then $recommended_agents else null end),
-                launch_plan: (if $recommend_herdr then "Create one coordinator session plus focused worker sessions sized to the recommended agent count." else null end),
+            nhm: {
+                recommended: $recommend_nhm,
+                agent_count: (if $recommend_nhm then $recommended_agents else null end),
+                launch_plan: (if $recommend_nhm then "Create one coordinator session plus focused worker sessions sized to the recommended agent count." else null end),
                 profiles: (
-                    if $recommend_herdr then
+                    if $recommend_nhm then
                         def profile_status($count):
                             if $count <= $recommended_agents then "pass"
                             elif $count <= $safe_agents then "warn"
@@ -1141,7 +1142,7 @@ capacity_emit_human() {
     echo ""
     echo "Tooling"
     echo "  RCH available:       $CAPACITY_RCH_AVAILABLE"
-    echo "  herdr available:     $CAPACITY_HERDR_AVAILABLE"
+    echo "  nhm available:       $CAPACITY_NHM_AVAILABLE"
 
     if [[ -n "$CAPACITY_PROFILE" ]]; then
         echo ""
@@ -1151,7 +1152,7 @@ capacity_emit_human() {
         echo "  Reason:              $CAPACITY_PROFILE_REASON"
     fi
 
-    if [[ "$CAPACITY_RECOMMEND_HERDR" == "true" ]]; then
+    if [[ "$CAPACITY_RECOMMEND_NHM" == "true" ]]; then
         echo ""
         echo "nhm Recommendation"
         echo "  Agent count:         $CAPACITY_RECOMMENDED_AGENTS"

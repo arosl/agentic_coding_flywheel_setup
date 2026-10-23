@@ -32,7 +32,7 @@ class InventoryProbeTests(unittest.TestCase):
         self.report = {
             "schema_version": 1, "status": "pass", "generated_at": "1999-01-01T00:00:00Z",
             "host": {"cpu_count": 32, "mem_total_mib": 131072, "disk_available_mib": 262144},
-            "tools": {"herdr": {"available": True}, "rch": {"available": True}},
+            "tools": {"nhm": {"available": True}, "rch": {"available": True}},
             "assumptions": {"workload": "standard"},
             "capacity": {"recommended_agent_count": 20, "safe_agent_count": 30},
         }
@@ -68,7 +68,7 @@ class InventoryProbeTests(unittest.TestCase):
         host["resources"]["disk_class"] = "fast"
         host["rch"] = {"controller": True, "workers_total": 4}
         host["ru"] = {"can_sync_repos": True}
-        host["herdr"]["preferred_labels"] = ["work"]
+        host["nhm"]["preferred_labels"] = ["work"]
         other = copy.deepcopy(host)
         other["id"] = "worker-b"
         data["hosts"].append(other)
@@ -86,7 +86,7 @@ class InventoryProbeTests(unittest.TestCase):
         self.assertEqual(h["capacity"]["recommended_agents"], 20)
         self.assertEqual(h["capacity"]["safe_agents"], 30)
         self.assertEqual(h["role"], "swarm-worker")
-        self.assertIs(h["herdr"]["can_launch"], False)
+        self.assertIs(h["nhm"]["can_launch"], False)
         self.assertFalse(h["local_observation"]["live_admission_checked"])
         self.assertGreaterEqual(dt.datetime.fromisoformat(h["last_probe_at"].replace("Z", "+00:00")), before)
         self.assertEqual(h["last_probe_at"], snapshot["updated_at"])
@@ -95,7 +95,7 @@ class InventoryProbeTests(unittest.TestCase):
 
     def test_explicit_new_host_launch_opt_in_flows_into_placement(self):
         snapshot = self.probe("--allow-launch", "--role", "swarm-controller")
-        self.assertTrue(snapshot["hosts"][0]["herdr"]["can_launch"])
+        self.assertTrue(snapshot["hosts"][0]["nhm"]["can_launch"])
         path = self.root / "snapshot.json"
         path.write_text(json.dumps(snapshot))
         plan = json.loads(self.run_cli("plan", "--inventory", path, "--agents", "10").stdout)
@@ -111,8 +111,8 @@ class InventoryProbeTests(unittest.TestCase):
         self.assertEqual(snapshot["hosts"][1], original["hosts"][1])
         for field in ("display_name", "manual_tags", "notes", "rch", "ru", "role", "status"):
             self.assertEqual(h[field], original["hosts"][0][field])
-        self.assertFalse(h["herdr"]["can_launch"])
-        self.assertEqual(h["herdr"]["preferred_labels"], ["work"])
+        self.assertFalse(h["nhm"]["can_launch"])
+        self.assertEqual(h["nhm"]["preferred_labels"], ["work"])
         self.assertEqual(h["resources"]["disk_class"], "fast")
         self.assertEqual(h["capacity"]["custom_limit_reason"], "operator managed")
         self.assertNotEqual(h["last_probe_at"], original["hosts"][0]["last_probe_at"])
@@ -127,7 +127,7 @@ class InventoryProbeTests(unittest.TestCase):
             self.probe("--inventory", path, *args, code=2)
         h = self.probe("--inventory", path)["hosts"][0]
         self.assertEqual((h["role"], h["status"]), ("rch-worker", "disabled"))
-        self.assertFalse(h["herdr"]["can_launch"])
+        self.assertFalse(h["nhm"]["can_launch"])
 
     def test_preserves_existing_workload_unless_explicitly_changed(self):
         path, data = self.base()
@@ -150,22 +150,22 @@ class InventoryProbeTests(unittest.TestCase):
         self.calculator()
         self.assertEqual(self.probe("--inventory", path)["hosts"][0]["capacity"]["workload"], "heavy")
 
-    def test_missing_herdr_withdraws_capability_and_blocks_new_opt_in(self):
+    def test_missing_nhm_withdraws_capability_and_blocks_new_opt_in(self):
         path, data = self.base()
-        data["hosts"][0]["herdr"]["can_launch"] = True
+        data["hosts"][0]["nhm"]["can_launch"] = True
         path.write_text(json.dumps(data))
-        self.report["tools"]["herdr"]["available"] = False
+        self.report["tools"]["nhm"]["available"] = False
         self.calculator()
-        self.assertFalse(self.probe("--inventory", path)["hosts"][0]["herdr"]["can_launch"])
+        self.assertFalse(self.probe("--inventory", path)["hosts"][0]["nhm"]["can_launch"])
         refusal = self.run_cli("probe-local", "--host-id", "worker-a", "--allow-launch", code=2)
-        self.assertIn("herdr availability", json.loads(refusal.stdout)["message"])
-        self.assertFalse(self.probe()["hosts"][0]["herdr"]["can_launch"])
+        self.assertIn("nhm availability", json.loads(refusal.stdout)["message"])
+        self.assertFalse(self.probe()["hosts"][0]["nhm"]["can_launch"])
 
     def test_build_only_and_disabled_new_roles_cannot_opt_in(self):
         for role in ("rch-worker", "disabled"):
             self.probe("--role", role, "--allow-launch", code=2)
             h = self.probe("--role", role)["hosts"][0]
-            self.assertFalse(h["herdr"]["can_launch"])
+            self.assertFalse(h["nhm"]["can_launch"])
             self.assertEqual(h["role"], role)
 
     def test_zero_capacity_and_warn_status_are_recorded_not_replaced(self):
@@ -179,7 +179,7 @@ class InventoryProbeTests(unittest.TestCase):
 
     def test_child_receives_no_fixture_overrides_credentials_or_startup_settings(self):
         self.env.update({"ACFS_CAPACITY_CPU_COUNT": "99999", "ACFS_CAPACITY_MEM_TOTAL_KB": "99999",
-                         "ACFS_CAPACITY_HERDR_AVAILABLE": "true", "ACFS_CAPACITY_BIN_DIR": "/secret/tools",
+                         "ACFS_CAPACITY_NHM_AVAILABLE": "true", "ACFS_CAPACITY_BIN_DIR": "/secret/tools",
                          "ACFS_CAPACITY_DISK_PATH": "/secret/mount", "HTTP_PROXY": "http://secret.invalid",
                          "AGENT_MAIL_TOKEN": "never-emit-this-secret", "PYTHONPATH": "/secret/modules"})
         self.probe()
@@ -224,7 +224,7 @@ class InventoryProbeTests(unittest.TestCase):
             self.calculator()
             self.probe(code=2)
         self.report = copy.deepcopy(original)
-        self.report["tools"]["herdr"]["available"] = "true"
+        self.report["tools"]["nhm"]["available"] = "true"
         self.calculator()
         self.probe(code=2)
 
@@ -364,7 +364,7 @@ def live_capacity_smoke():
         assert local["resources"]["cpu_count"] != 999999
         assert local["capacity"]["workload"] == "heavy"
         assert 0 <= local["capacity"]["recommended_agents"] <= local["capacity"]["safe_agents"]
-        assert not local["herdr"]["can_launch"]
+        assert not local["nhm"]["can_launch"]
         run("validate", "--inventory", output, "--json")
         other = {**copy.deepcopy(local), "id": "other-b", "last_probe_at": "2000-01-01T00:00:00Z"}
         measured["hosts"].append(other)

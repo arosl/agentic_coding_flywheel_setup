@@ -15,7 +15,7 @@ _acfs_completions() {
     local doctor_flags="--json --deep --no-cache --fix --dry-run -h --help"
     local status_flags="--json --short --check-updates -h --help"
     local info_flags="--json --html --minimal"
-    local capacity_flags="--json --workload --profile --recommend-herdr -h --help"
+    local capacity_flags="--json --workload --profile --recommend-nhm -h --help"
     local policy_lint_flags="--json --human --root --file -h --help"
     local credential_preflight_flags="--json --human --home --acfs-home --root --file --exclude --max-bytes -h --help"
     local agent_readiness_flags="--json --quiet --no-version --home --path --rehearse --help"

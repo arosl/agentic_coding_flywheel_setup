@@ -57,7 +57,7 @@ high_capacity_status_fixture() {
   "status": "pass",
   "host": {"status": "pass", "duration_ms": 1, "warnings": [], "cpu_count": 128, "load_1m": 4, "mem_total_kb": 268435456, "mem_available_kb": 251658240, "disk_available_kb": 419430400},
   "probes": {
-    "herdr": {"status": "pass", "available": true, "server_ok": true, "workspace_count": 2, "agent_count": 2, "duration_ms": 1, "warnings": []},
+    "nhm": {"status": "pass", "available": true, "robot_status_ok": true, "herdr_available": true, "herdr_workspace_count": 2, "herdr_tab_count": 8, "duration_ms": 1, "warnings": []},
     "agent_mail": {"status": "pass", "available": true, "healthy": true, "duration_ms": 1, "warnings": []},
     "beads": {"status": "pass", "available": true, "ready_count": 9, "in_progress_count": 0, "open_count": 20, "duration_ms": 1, "warnings": []},
     "bv": {"status": "pass", "available": true, "robot_ok": true, "duration_ms": 1, "warnings": []},
@@ -74,7 +74,7 @@ low_capacity_status_fixture() {
   "status": "warn",
   "host": {"status": "warn", "duration_ms": 1, "warnings": ["low memory"], "cpu_count": 2, "load_1m": 1, "mem_total_kb": 4194304, "mem_available_kb": 1048576, "disk_available_kb": 20971520},
   "probes": {
-    "herdr": {"status": "warn", "available": true, "server_ok": false, "workspace_count": null, "agent_count": null, "duration_ms": 1, "warnings": []},
+    "nhm": {"status": "warn", "available": true, "robot_status_ok": false, "herdr_available": true, "herdr_workspace_count": 0, "herdr_tab_count": 0, "duration_ms": 1, "warnings": []},
     "agent_mail": {"status": "warn", "available": false, "healthy": null, "duration_ms": 1, "warnings": []},
     "beads": {"status": "warn", "available": false, "ready_count": null, "in_progress_count": null, "open_count": null, "duration_ms": 1, "warnings": []},
     "bv": {"status": "warn", "available": false, "robot_ok": false, "duration_ms": 1, "warnings": []},
@@ -99,7 +99,7 @@ run_sim_json() {
         ACFS_CAPACITY_MEM_TOTAL_KB=268435456 \
         ACFS_CAPACITY_DISK_AVAILABLE_KB=419430400 \
         ACFS_CAPACITY_RCH_AVAILABLE=true \
-        ACFS_CAPACITY_HERDR_AVAILABLE=true \
+        ACFS_CAPACITY_NHM_AVAILABLE=true \
         bash "$SWARM_SIM_SH" --json --status-file "$fixture" --artifact-dir "$run_artifacts" "$@" > "$output_file"
     status=$?
     set -e
@@ -125,6 +125,8 @@ test_default_10_25_50_scenarios_pass() {
     [[ -f "$run_dir/scenario_25/resource_sample.json" ]] || return 1
     [[ -f "$run_dir/scenario_50/timing.json" ]] || return 1
     jq -e '.simulation_only == true and .not_a_provider_factory_test == true' "$run_dir/summary.json" >/dev/null || return 1
+    # nhm spawn counts per kind and has no --count.
+    jq -e '.launch.command == "nhm spawn acfs-sim --cc=10 --label swarm-10 --dry-run"' "$run_dir/scenario_10/launch_plan.json" >/dev/null || return 1
 
     pass "default_10_25_50_scenarios_pass"
 }
@@ -169,7 +171,7 @@ test_low_capacity_fails_large_profile() {
         ACFS_CAPACITY_MEM_TOTAL_KB=4194304 \
         ACFS_CAPACITY_DISK_AVAILABLE_KB=20971520 \
         ACFS_CAPACITY_RCH_AVAILABLE=false \
-        ACFS_CAPACITY_HERDR_AVAILABLE=true \
+        ACFS_CAPACITY_NHM_AVAILABLE=true \
         bash "$SWARM_SIM_SH" --json --status-file "$fixture" --artifact-dir "$ARTIFACT_DIR/low-artifacts" --counts 50)"
     status=$?
     set -e
@@ -191,7 +193,7 @@ test_human_output_declares_simulation_only() {
         ACFS_CAPACITY_MEM_TOTAL_KB=268435456 \
         ACFS_CAPACITY_DISK_AVAILABLE_KB=419430400 \
         ACFS_CAPACITY_RCH_AVAILABLE=true \
-        ACFS_CAPACITY_HERDR_AVAILABLE=true \
+        ACFS_CAPACITY_NHM_AVAILABLE=true \
         bash "$SWARM_SIM_SH" --status-file "$fixture" --artifact-dir "$ARTIFACT_DIR/human-artifacts")"
     status=$?
     set -e

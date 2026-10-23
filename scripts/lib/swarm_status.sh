@@ -10,7 +10,7 @@
 set -euo pipefail
 
 SWARM_STATUS_JSON=false
-SWARM_STATUS_HERDR_ONLY=false
+SWARM_STATUS_NHM_ONLY=false
 SWARM_STATUS_TIMEOUT="${ACFS_SWARM_STATUS_TIMEOUT:-3}"
 SWARM_STATUS_GENERATED_AT="$(date -Iseconds 2>/dev/null || date)"
 SWARM_STATUS_OVERALL="pass"
@@ -25,25 +25,15 @@ HOST_MEM_TOTAL_KB=0
 HOST_MEM_AVAILABLE_KB=0
 HOST_DISK_AVAILABLE_KB=0
 
-# Who drives agents here (acfs-9hkh.27): herdr_agents.sh owner says nhm only
-# when nhm is installed, enrolled for this herdr server and owns it. Then the
-# nhm probe (upstream's ntm probe, with nhm) runs beside the herdr one.
-SWARM_STATUS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SWARM_STATUS_BACKEND="acfs-bash"
 NHM_STATUS="warn"
 NHM_WARNINGS=()
 NHM_DURATION_MS=0
 NHM_AVAILABLE=false
 NHM_ROBOT_STATUS_OK=false
-NHM_SESSION_COUNT="null"
-NHM_AGENT_COUNT="null"
-HERDR_STATUS="warn"
-HERDR_WARNINGS=()
-HERDR_DURATION_MS=0
-HERDR_AVAILABLE=false
-HERDR_SERVER_OK=false
-HERDR_WORKSPACE_COUNT="null"
-HERDR_AGENT_COUNT="null"
+NHM_HERDR_AVAILABLE=false
+NHM_HERDR_QUERY_OK=false
+NHM_HERDR_WORKSPACE_COUNT="null"
+NHM_HERDR_TAB_COUNT="null"
 
 AGENT_MAIL_STATUS="warn"
 AGENT_MAIL_WARNINGS=()
@@ -89,7 +79,7 @@ Usage: acfs swarm status [OPTIONS]
 
 Options:
   --json       Emit machine-readable JSON
-  --herdr-only Query only herdr; skip host, nhm, Beads, mail, BV and RCH probes
+  --nhm-only   Query only nhm/herdr; skip host, Beads, mail, BV and RCH probes
   --help, -h   Show this help
 
 Environment:
@@ -104,8 +94,8 @@ swarm_status_parse_args() {
                 SWARM_STATUS_JSON=true
                 shift
                 ;;
-            --herdr-only)
-                SWARM_STATUS_HERDR_ONLY=true
+            --nhm-only)
+                SWARM_STATUS_NHM_ONLY=true
                 SWARM_STATUS_JSON=true
                 shift
                 ;;
@@ -357,87 +347,33 @@ swarm_status_collect_host() {
     HOST_DURATION_MS="$(swarm_status_duration_ms "$start_ms")"
 }
 
-swarm_status_collect_herdr() {
-    local start_ms=""
-    start_ms="$(swarm_status_now_ms)"
-
-    local herdr_bin=""
-    local jq_bin=""
-    local output=""
-    local count=""
-    local exit_status=0
-
-    herdr_bin="$(swarm_status_binary_path herdr 2>/dev/null || true)"
-    if [[ -z "$herdr_bin" ]]; then
-        HERDR_WARNINGS+=("herdr not found in PATH")
-        HERDR_DURATION_MS="$(swarm_status_duration_ms "$start_ms")"
-        return 0
-    fi
-
-    HERDR_AVAILABLE=true
+# The length of one list in a herdr JSON answer, or null without jq or that
+# list. Only counts are kept, never workspace or tab labels.
+swarm_status_herdr_count() {
+    local output="$1" key="$2" jq_bin="" count=""
     jq_bin="$(swarm_status_binary_path jq 2>/dev/null || true)"
-    # `herdr status server` exits 0 with no server running; the list commands
-    # exit 1 with a server_not_running error. Only counts are kept, never
-    # workspace labels or agent names.
-    output="$(swarm_status_run_with_timeout "$SWARM_STATUS_TIMEOUT" "$herdr_bin" workspace list)" || exit_status=$?
-    if [[ $exit_status -eq 0 && -n "$output" ]]; then
-        HERDR_SERVER_OK=true
-        if [[ -n "$jq_bin" ]]; then
-            count="$(printf '%s' "$output" | "$jq_bin" -r '.result.workspaces | length' 2>/dev/null || true)"
-            [[ "$count" =~ ^[0-9]+$ ]] && HERDR_WORKSPACE_COUNT="$count"
-        fi
+    if [[ -n "$jq_bin" ]]; then
+        count="$(printf '%s' "$output" | "$jq_bin" -r --arg key "$key" '.result[$key] | if type == "array" then length else empty end' 2>/dev/null || true)"
+    fi
+    if [[ "$count" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$count"
     else
-        HERDR_WARNINGS+=("herdr server is not running or timed out")
+        printf 'null\n'
     fi
-
-    if [[ "$HERDR_SERVER_OK" == true ]]; then
-        exit_status=0
-        output="$(swarm_status_run_with_timeout "$SWARM_STATUS_TIMEOUT" "$herdr_bin" agent list)" || exit_status=$?
-        if [[ $exit_status -eq 0 && -n "$output" ]]; then
-            if [[ -n "$jq_bin" ]]; then
-                count="$(printf '%s' "$output" | "$jq_bin" -r '.result.agents | length' 2>/dev/null || true)"
-                [[ "$count" =~ ^[0-9]+$ ]] && HERDR_AGENT_COUNT="$count"
-            fi
-        else
-            HERDR_WARNINGS+=("herdr agent list failed or timed out")
-        fi
-    fi
-
-    if [[ "$HERDR_SERVER_OK" == true && ${#HERDR_WARNINGS[@]} -eq 0 ]]; then
-        HERDR_STATUS="pass"
-    fi
-    HERDR_DURATION_MS="$(swarm_status_duration_ms "$start_ms")"
 }
 
-# Fail-safe: anything but a clear "nhm" from the owner probe is acfs-bash.
-swarm_status_detect_backend() {
-    local helper="$SWARM_STATUS_SCRIPT_DIR/herdr_agents.sh"
-    local output=""
-    [[ -f "$helper" && ! -L "$helper" ]] || return 0
-    # The runner merges stderr (the probe's reason) into stdout; the answer
-    # is the last line.
-    output="$(swarm_status_run_with_timeout "$SWARM_STATUS_TIMEOUT" bash "$helper" owner)" || return 0
-    [[ "${output##*$'\n'}" == nhm ]] && SWARM_STATUS_BACKEND="nhm"
-    return 0
-}
-
-# Upstream's ntm probe, with nhm in ntm's place: --robot-status answers, and
-# its sessions (an array of StatusSessionHeader) give the counts that
-# upstream read from tmux.
 swarm_status_collect_nhm() {
     local start_ms=""
     start_ms="$(swarm_status_now_ms)"
 
     local nhm_bin=""
-    local jq_bin=""
+    local herdr_bin=""
     local output=""
-    local count=""
     local exit_status=0
 
     # One lookup, as everywhere in ACFS (acfs-9hkh.84): ~/.local/bin, where
-    # ACFS installs nhm, then PATH; a caller's NHM_BIN_DIR is not where
-    # ACFS put it.
-    if [[ -x "$HOME/.local/bin/nhm" ]]; then
+    # ACFS installs nhm, then PATH.
+    if [[ -x "${HOME:-}/.local/bin/nhm" ]]; then
         nhm_bin="$HOME/.local/bin/nhm"
     else
         nhm_bin="$(swarm_status_binary_path nhm 2>/dev/null || true)"
@@ -447,13 +383,6 @@ swarm_status_collect_nhm() {
         output="$(swarm_status_run_with_timeout "$SWARM_STATUS_TIMEOUT" "$nhm_bin" --robot-status)" || exit_status=$?
         if [[ $exit_status -eq 0 && -n "$output" ]]; then
             NHM_ROBOT_STATUS_OK=true
-            jq_bin="$(swarm_status_binary_path jq 2>/dev/null || true)"
-            if [[ -n "$jq_bin" ]]; then
-                count="$(printf '%s' "$output" | "$jq_bin" -r 'if (.sessions | type) == "array" then .sessions | length else empty end' 2>/dev/null || true)"
-                [[ "$count" =~ ^[0-9]+$ ]] && NHM_SESSION_COUNT="$count"
-                count="$(printf '%s' "$output" | "$jq_bin" -r 'if (.sessions | type) == "array" then [.sessions[].agent_count | numbers] | add // 0 else empty end' 2>/dev/null || true)"
-                [[ "$count" =~ ^[0-9]+$ ]] && NHM_AGENT_COUNT="$count"
-            fi
         else
             NHM_WARNINGS+=("nhm --robot-status failed or timed out")
         fi
@@ -461,8 +390,36 @@ swarm_status_collect_nhm() {
         NHM_WARNINGS+=("nhm not found in PATH")
     fi
 
+    # herdr's workspaces and tabs are tmux's sessions and windows. Its list
+    # commands exit 1 when no herdr server runs.
+    herdr_bin="$(swarm_status_binary_path herdr 2>/dev/null || true)"
+    if [[ -n "$herdr_bin" ]]; then
+        NHM_HERDR_AVAILABLE=true
+        exit_status=0
+        output="$(swarm_status_run_with_timeout "$SWARM_STATUS_TIMEOUT" "$herdr_bin" workspace list)" || exit_status=$?
+        if [[ $exit_status -eq 0 && -n "$output" ]]; then
+            NHM_HERDR_QUERY_OK=true
+            NHM_HERDR_WORKSPACE_COUNT="$(swarm_status_herdr_count "$output" workspaces)"
+            exit_status=0
+            output="$(swarm_status_run_with_timeout "$SWARM_STATUS_TIMEOUT" "$herdr_bin" tab list)" || exit_status=$?
+            if [[ $exit_status -eq 0 && -n "$output" ]]; then
+                NHM_HERDR_TAB_COUNT="$(swarm_status_herdr_count "$output" tabs)"
+            else
+                NHM_WARNINGS+=("herdr tab list failed or timed out")
+            fi
+        else
+            NHM_HERDR_WORKSPACE_COUNT=0
+            NHM_HERDR_TAB_COUNT=0
+            NHM_WARNINGS+=("herdr has no listable workspaces or timed out")
+        fi
+    else
+        NHM_WARNINGS+=("herdr not found in PATH")
+    fi
+
     if [[ "$NHM_AVAILABLE" == true && "$NHM_ROBOT_STATUS_OK" == true ]]; then
         NHM_STATUS="pass"
+    elif [[ "$NHM_HERDR_AVAILABLE" == true ]]; then
+        NHM_STATUS="warn"
     fi
     NHM_DURATION_MS="$(swarm_status_duration_ms "$start_ms")"
 }
@@ -648,17 +605,15 @@ swarm_status_collect_rch() {
 
 swarm_status_collect_all() {
     swarm_status_collect_host
-    swarm_status_detect_backend
-    swarm_status_collect_herdr
-    [[ "$SWARM_STATUS_BACKEND" != nhm ]] || swarm_status_collect_nhm
+    swarm_status_collect_nhm
     swarm_status_collect_agent_mail
     swarm_status_collect_beads
     swarm_status_collect_bv
     swarm_status_collect_rch
 
-    SWARM_STATUS_WARNINGS=("${HOST_WARNINGS[@]}" "${HERDR_WARNINGS[@]}" "${NHM_WARNINGS[@]}" "${AGENT_MAIL_WARNINGS[@]}" "${BEADS_WARNINGS[@]}" "${BV_WARNINGS[@]}" "${RCH_WARNINGS[@]}")
+    SWARM_STATUS_WARNINGS=("${HOST_WARNINGS[@]}" "${NHM_WARNINGS[@]}" "${AGENT_MAIL_WARNINGS[@]}" "${BEADS_WARNINGS[@]}" "${BV_WARNINGS[@]}" "${RCH_WARNINGS[@]}")
 
-    if [[ "$HOST_STATUS" == "fail" || "$HERDR_STATUS" == "fail" || "$AGENT_MAIL_STATUS" == "fail" || "$BEADS_STATUS" == "fail" || "$BV_STATUS" == "fail" || "$RCH_STATUS" == "fail" ]]; then
+    if [[ "$HOST_STATUS" == "fail" || "$NHM_STATUS" == "fail" || "$AGENT_MAIL_STATUS" == "fail" || "$BEADS_STATUS" == "fail" || "$BV_STATUS" == "fail" || "$RCH_STATUS" == "fail" ]]; then
         SWARM_STATUS_OVERALL="fail"
     elif [[ ${#SWARM_STATUS_WARNINGS[@]} -gt 0 ]]; then
         SWARM_STATUS_OVERALL="warn"
@@ -674,30 +629,16 @@ swarm_status_emit_json() {
         return 0
     fi
 
-    local warnings_json host_warnings_json herdr_warnings_json agent_mail_warnings_json beads_warnings_json bv_warnings_json rch_warnings_json
+    local warnings_json host_warnings_json nhm_warnings_json agent_mail_warnings_json beads_warnings_json bv_warnings_json rch_warnings_json
     warnings_json="$(swarm_status_json_array "$jq_bin" "${SWARM_STATUS_WARNINGS[@]}")"
     host_warnings_json="$(swarm_status_json_array "$jq_bin" "${HOST_WARNINGS[@]}")"
-    herdr_warnings_json="$(swarm_status_json_array "$jq_bin" "${HERDR_WARNINGS[@]}")"
+    nhm_warnings_json="$(swarm_status_json_array "$jq_bin" "${NHM_WARNINGS[@]}")"
     agent_mail_warnings_json="$(swarm_status_json_array "$jq_bin" "${AGENT_MAIL_WARNINGS[@]}")"
     beads_warnings_json="$(swarm_status_json_array "$jq_bin" "${BEADS_WARNINGS[@]}")"
     bv_warnings_json="$(swarm_status_json_array "$jq_bin" "${BV_WARNINGS[@]}")"
     rch_warnings_json="$(swarm_status_json_array "$jq_bin" "${RCH_WARNINGS[@]}")"
 
-    # The nhm probe appears only when nhm drives agents here (acfs-9hkh.27).
-    local nhm_json="null"
-    if [[ "$SWARM_STATUS_BACKEND" == nhm ]]; then
-        nhm_json="$("$jq_bin" -n --arg status "$NHM_STATUS" \
-            --argjson available "$NHM_AVAILABLE" --argjson robot_status_ok "$NHM_ROBOT_STATUS_OK" \
-            --argjson session_count "$NHM_SESSION_COUNT" --argjson agent_count "$NHM_AGENT_COUNT" \
-            --argjson duration_ms "$(swarm_status_json_number "$NHM_DURATION_MS")" \
-            --argjson warnings "$(swarm_status_json_array "$jq_bin" "${NHM_WARNINGS[@]}")" \
-            '{status: $status, available: $available, robot_status_ok: $robot_status_ok,
-              session_count: $session_count, agent_count: $agent_count,
-              duration_ms: $duration_ms, warnings: $warnings}')"
-    fi
-
     "$jq_bin" -n \
-        --argjson nhm "$nhm_json" \
         --arg generated_at "$SWARM_STATUS_GENERATED_AT" \
         --arg status "$SWARM_STATUS_OVERALL" \
         --argjson warnings "$warnings_json" \
@@ -709,13 +650,15 @@ swarm_status_emit_json() {
         --argjson host_mem_total_kb "$(swarm_status_json_number "$HOST_MEM_TOTAL_KB")" \
         --argjson host_mem_available_kb "$(swarm_status_json_number "$HOST_MEM_AVAILABLE_KB")" \
         --argjson host_disk_available_kb "$(swarm_status_json_number "$HOST_DISK_AVAILABLE_KB")" \
-        --arg herdr_status "$HERDR_STATUS" \
-        --argjson herdr_warnings "$herdr_warnings_json" \
-        --argjson herdr_duration_ms "$(swarm_status_json_number "$HERDR_DURATION_MS")" \
-        --argjson herdr_available "$HERDR_AVAILABLE" \
-        --argjson herdr_server_ok "$HERDR_SERVER_OK" \
-        --argjson herdr_workspace_count "$HERDR_WORKSPACE_COUNT" \
-        --argjson herdr_agent_count "$HERDR_AGENT_COUNT" \
+        --arg nhm_status "$NHM_STATUS" \
+        --argjson nhm_warnings "$nhm_warnings_json" \
+        --argjson nhm_duration_ms "$(swarm_status_json_number "$NHM_DURATION_MS")" \
+        --argjson nhm_available "$NHM_AVAILABLE" \
+        --argjson nhm_robot_status_ok "$NHM_ROBOT_STATUS_OK" \
+        --argjson nhm_herdr_available "$NHM_HERDR_AVAILABLE" \
+        --argjson nhm_herdr_query_ok "$NHM_HERDR_QUERY_OK" \
+        --argjson nhm_herdr_workspace_count "$NHM_HERDR_WORKSPACE_COUNT" \
+        --argjson nhm_herdr_tab_count "$NHM_HERDR_TAB_COUNT" \
         --arg agent_mail_status "$AGENT_MAIL_STATUS" \
         --argjson agent_mail_warnings "$agent_mail_warnings_json" \
         --argjson agent_mail_duration_ms "$(swarm_status_json_number "$AGENT_MAIL_DURATION_MS")" \
@@ -766,14 +709,16 @@ swarm_status_emit_json() {
                 disk_available_kb: $host_disk_available_kb
             },
             probes: {
-                herdr: {
-                    status: $herdr_status,
-                    available: $herdr_available,
-                    server_ok: $herdr_server_ok,
-                    workspace_count: $herdr_workspace_count,
-                    agent_count: $herdr_agent_count,
-                    duration_ms: $herdr_duration_ms,
-                    warnings: $herdr_warnings
+                nhm: {
+                    status: $nhm_status,
+                    available: $nhm_available,
+                    robot_status_ok: $nhm_robot_status_ok,
+                    herdr_available: $nhm_herdr_available,
+                    herdr_query_ok: $nhm_herdr_query_ok,
+                    herdr_workspace_count: $nhm_herdr_workspace_count,
+                    herdr_tab_count: $nhm_herdr_tab_count,
+                    duration_ms: $nhm_duration_ms,
+                    warnings: $nhm_warnings
                 },
                 agent_mail: {
                     status: $agent_mail_status,
@@ -818,17 +763,14 @@ swarm_status_emit_json() {
                     warnings: $rch_warnings
                 }
             }
-        } | if $nhm == null then . else .probes.nhm = $nhm end'
+        }'
 }
 
 swarm_status_emit_human() {
     echo "ACFS Swarm Status"
     echo "Status: $SWARM_STATUS_OVERALL"
     echo "Host: ${HOST_CPU_COUNT} CPU, ${HOST_MEM_AVAILABLE_KB}/${HOST_MEM_TOTAL_KB} KiB memory available"
-    echo "herdr: $HERDR_STATUS (${HERDR_WORKSPACE_COUNT} workspaces, ${HERDR_AGENT_COUNT} agents)"
-    if [[ "$SWARM_STATUS_BACKEND" == nhm ]]; then
-        echo "nhm: $NHM_STATUS (${NHM_SESSION_COUNT} sessions, ${NHM_AGENT_COUNT} agents)"
-    fi
+    echo "nhm/herdr: $NHM_STATUS (${NHM_HERDR_WORKSPACE_COUNT} workspaces, ${NHM_HERDR_TAB_COUNT} tabs)"
     echo "Agent Mail: $AGENT_MAIL_STATUS"
     echo "Beads: $BEADS_STATUS (ready=${BEADS_READY_COUNT}, in_progress=${BEADS_IN_PROGRESS_COUNT}, open=${BEADS_OPEN_COUNT})"
     echo "bv: $BV_STATUS"
@@ -842,12 +784,12 @@ swarm_status_emit_human() {
 
 swarm_status_main() {
     swarm_status_parse_args "$@"
-    if [[ "$SWARM_STATUS_HERDR_ONLY" == true ]]; then
+    if [[ "$SWARM_STATUS_NHM_ONLY" == true ]]; then
         local jq_bin=""
         jq_bin="$(swarm_status_binary_path jq 2>/dev/null || true)"
-        [[ -n "$jq_bin" ]] || { echo "Error: jq is required for herdr-only JSON" >&2; return 2; }
-        swarm_status_collect_herdr
-        swarm_status_emit_json | "$jq_bin" '{schema_version, generated_at, status: .probes.herdr.status, probes: {herdr: .probes.herdr}}'
+        [[ -n "$jq_bin" ]] || { echo "Error: jq is required for nhm-only JSON" >&2; return 2; }
+        swarm_status_collect_nhm
+        swarm_status_emit_json | "$jq_bin" '{schema_version, generated_at, status: .probes.nhm.status, probes: {nhm: .probes.nhm}}'
         return
     fi
     swarm_status_collect_all

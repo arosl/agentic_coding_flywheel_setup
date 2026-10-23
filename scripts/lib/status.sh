@@ -284,7 +284,7 @@ _status_print_help() {
     echo "  --short           Minimal output for shell prompt integration"
     echo "  --check-updates   Include network-based update checks (slower)"
     echo "  --ide             Versioned, redacted JSON contract for editor integrations"
-    echo "  --live            With --ide, query only herdr with bounded timeouts"
+    echo "  --live            With --ide, query only nhm/herdr with bounded timeouts"
     echo ""
     echo "Exit codes:"
     echo "  0  Healthy"
@@ -1251,7 +1251,7 @@ _status_print() {
 
 # Editor payloads use an allowlist; raw state, tool output, identities and
 # provider identifiers never cross this interface. No commands are executed
-# from generated advice. The live path reuses only the herdr collector.
+# from generated advice. The live path reuses only the nhm/herdr collector.
 _status_editor_json() {
     local state_file="$1" tool_count="$2" health="$3" jq_bin="$4"
     local state_json='{}' state_status=missing live_status=not_requested
@@ -1280,8 +1280,8 @@ _status_editor_json() {
         bash_bin="$BASH"
         if [[ -n "$timeout_bin" && -n "$bash_bin" && -r "$collector_script" ]]; then
             live_status=error
-            if output="$(ACFS_SWARM_STATUS_TIMEOUT=1 "$timeout_bin" --kill-after=1 5 "$bash_bin" "$collector_script" --json --herdr-only 2>/dev/null)" &&
-                live_json="$(printf '%s' "$output" | "$jq_bin" -ce 'select(.schema_version == 1 and (.probes.herdr | type) == "object") | .probes.herdr' 2>/dev/null)"; then
+            if output="$(ACFS_SWARM_STATUS_TIMEOUT=1 "$timeout_bin" --kill-after=1 5 "$bash_bin" "$collector_script" --json --nhm-only 2>/dev/null)" &&
+                live_json="$(printf '%s' "$output" | "$jq_bin" -ce 'select(.schema_version == 1 and (.probes.nhm | type) == "object") | .probes.nhm' 2>/dev/null)"; then
                 live_status=ok
             else
                 live_json='{}'
@@ -1314,7 +1314,7 @@ _status_editor_json() {
          elif $state.install_status == null and ($completed | index("finalize")) != null then "complete"
          elif ($completed | length) > 0 then "partial"
          else "unknown" end) as $install_status |
-        (if $live_status == "ok" and $live.server_ok != true then "warn" else $live_status end) as $sessions_status |
+        (if $live_status == "ok" and $live.herdr_query_ok != true then "warn" else $live_status end) as $sessions_status |
         (if $install_status == "failed" or $state_status != "ok" then "error"
          elif $install_status != "complete" or $health != "ok" or ($sessions_status != "ok" and $sessions_status != "not_requested") then "warn" else "ok" end) as $status |
         {
@@ -1323,7 +1323,7 @@ _status_editor_json() {
           freshness: {cache: "none", state_updated_at: (($state.last_updated // $state.updated_at // null) | stamp), sessions: $sessions_status},
           install: {status: $install_status, mode: ($state.mode as $m | if ["vibe","safe"] | index($m) then $m else null end), completed_phases: $completed, current_phase: ($state.current_phase | phase), failed_phase: ($state.failed_phase | phase), failed_phases: ($failed_phases | map(phase) | map(select(. != null))), tools_present: $tool_count},
           provider: {name: $provider, source: "local_state", identifiers_omitted: true},
-          sessions: {status: $sessions_status, herdr_available: (if ($live.available | type) == "boolean" then $live.available else null end), workspace_count: (if $live.server_ok == true then $live.workspace_count | count else null end), agent_count: (if $live.server_ok == true then $live.agent_count | count else null end)},
+          sessions: {status: $sessions_status, nhm_available: (if ($live.available | type) == "boolean" then $live.available else null end), session_count: (if $live.herdr_query_ok == true then $live.herdr_workspace_count | count else null end), window_count: (if $live.herdr_query_ok == true then $live.herdr_tab_count | count else null end)},
           collectors: {install: $state_status, tools: "ok", sessions: $live_status, provider: (if $provider == null then "unknown" else "ok" end)},
           redaction: {policy: "allowlist", omitted_fields: ["identities","paths","ip_addresses","provider_ids","credentials","raw_errors","session_names","tool_output"], count_semantics: "recognized_sensitive_fields_omitted", count: ([$state | paths(scalars) as $p | select(($p[-1] | type) == "string" and ($p[-1] | test("token|password|secret|credential|target_user|target_home|hostname|ip_address|failed_error|current_step|failed_step"; "i"))) | $p] | length)},
           commands: [

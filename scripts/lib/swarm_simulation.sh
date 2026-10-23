@@ -3,7 +3,7 @@
 # ACFS Swarm Simulation - dry-run fleet-scale harness
 #
 # Runs deterministic 10/25/50 logical-agent simulations without
-# launching tmux sessions, model CLIs, or CPU-heavy build commands.
+# launching herdr workspaces, model CLIs, or CPU-heavy build commands.
 # ============================================================
 
 set -euo pipefail
@@ -29,7 +29,7 @@ swarm_sim_usage() {
 Usage: acfs swarm simulate [OPTIONS]
 
 Dry-run-only simulation harness for 10/25/50 logical ACFS agents.
-No tmux sessions, model CLIs, Agent Mail mutations, Beads updates, or
+No herdr workspaces, model CLIs, Agent Mail mutations, Beads updates, or
 CPU-heavy build commands are executed.
 
 Options:
@@ -269,7 +269,7 @@ swarm_sim_fallback_status_json() {
                 disk_available_kb: 0
             },
             probes: {
-                herdr: {status: "warn", available: false, server_ok: false, workspace_count: null, agent_count: null, duration_ms: 0, warnings: ["not probed"]},
+                nhm: {status: "warn", available: false, robot_status_ok: false, herdr_available: false, herdr_workspace_count: null, herdr_tab_count: null, duration_ms: 0, warnings: ["not probed"]},
                 agent_mail: {status: "warn", available: false, healthy: null, duration_ms: 0, warnings: ["not probed"]},
                 beads: {status: "warn", available: false, ready_count: null, in_progress_count: null, open_count: null, duration_ms: 0, warnings: ["not probed"]},
                 bv: {status: "warn", available: false, robot_ok: false, duration_ms: 0, warnings: ["not probed"]},
@@ -516,7 +516,7 @@ swarm_sim_capacity_json() {
 
     if [[ -f "$SWARM_CAPACITY_SCRIPT" ]]; then
         set +e
-        output="$(bash "$SWARM_CAPACITY_SCRIPT" --json --workload "$SWARM_SIM_WORKLOAD" --profile "${count}-agents" --recommend-herdr 2>/dev/null)"
+        output="$(bash "$SWARM_CAPACITY_SCRIPT" --json --workload "$SWARM_SIM_WORKLOAD" --profile "${count}-agents" --recommend-nhm 2>/dev/null)"
         exit_status=$?
         set -e
         if [[ $exit_status -eq 0 && -n "$output" ]] && printf '%s' "$output" | "$jq_bin" . >/dev/null 2>&1; then
@@ -532,14 +532,14 @@ swarm_sim_capacity_json() {
             schema_version: 1,
             status: "warn",
             assumptions: {workload: $workload},
-            tools: {rch: {available: false}, herdr: {available: false}},
+            tools: {rch: {available: false}, nhm: {available: false}},
             capacity: {safe_agent_count: null, recommended_agent_count: null},
             profile_check: {
                 status: "warn",
                 requested_agents: $count,
                 reason: "capacity.sh unavailable; scenario shape only"
             },
-            herdr: {agent_count: $count, profiles: []}
+            nhm: {agent_count: $count, profiles: []}
         }'
 }
 
@@ -561,7 +561,8 @@ swarm_sim_launch_plan_json() {
             },
             launch: {
                 dry_run: true,
-                command: ("ntm spawn acfs-sim --count " + ($count | tostring) + " --label swarm-" + ($count | tostring) + " --dry-run"),
+                # nhm spawn counts per kind and has no --count.
+                command: ("nhm spawn acfs-sim --cc=" + ($count | tostring) + " --label swarm-" + ($count | tostring) + " --dry-run"),
                 not_executed: true
             },
             coordination: {
@@ -811,7 +812,7 @@ swarm_sim_emit_human() {
     echo "ACFS Swarm Simulation"
     echo "Status: $("$jq_bin" -r '.status' "$summary_file")"
     echo "Artifacts: $("$jq_bin" -r '.artifact_dir' "$summary_file")"
-    echo "Simulation only: no agents, tmux sessions, model CLIs, Beads updates, or CPU-heavy commands were executed."
+    echo "Simulation only: no agents, herdr workspaces, model CLIs, Beads updates, or CPU-heavy commands were executed."
     echo ""
     echo "Scenarios:"
     "$jq_bin" -r '.scenarios[] | "  - \(.scenario.agent_count) agents: \(.status) (\(.checks | map(select(.status == "fail")) | length) fail, \(.checks | map(select(.status == "warn")) | length) warn)"' "$summary_file"

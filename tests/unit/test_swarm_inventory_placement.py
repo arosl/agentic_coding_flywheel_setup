@@ -24,7 +24,7 @@ class InventoryPlacementTests(unittest.TestCase):
             self.assertLessEqual(allocation["agents"], allocation["recorded_recommendation"])
             self.assertLessEqual(allocation["agents"], allocation["safe_agents"])
         self.assertFalse(any(plan["mutations"].values()))
-        self.assertNotIn("ntm spawn", result.stdout)
+        self.assertNotIn("nhm spawn", result.stdout)
         return plan
 
     def test_allocates_target_across_hosts(self):
@@ -56,7 +56,7 @@ class InventoryPlacementTests(unittest.TestCase):
 
     def test_excluded_hosts_never_supply_capacity(self):
         self.data["hosts"] = [host("a", 20, 24), host("veto", 100, 120), host("old", 100, 120)]
-        self.data["hosts"][1]["herdr"]["can_launch"] = False
+        self.data["hosts"][1]["nhm"]["can_launch"] = False
         self.data["hosts"][2]["last_probe_at"] = stamp(48)
         result = self.plan(25, code=1)
         self.assertEqual(result["assigned_agents"], 20)
@@ -100,7 +100,7 @@ class InventoryPlacementTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("NOT additional agents", result.stdout)
         self.assertIn("No agents launched", result.stdout)
-        self.assertNotIn("ntm spawn", result.stdout)
+        self.assertNotIn("nhm spawn", result.stdout)
 
     def test_invalid_plan_arguments_are_inert(self):
         cases = [[], ["--agents", "0"], ["--agents", "-1"], ["--agents", "01"], ["--agents", "1.5"],

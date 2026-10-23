@@ -63,7 +63,7 @@ cat <<'"'"'JSON'"'"'
   "warnings": [],
   "host": {"cpu_count": 64, "mem_available_kb": 134217728, "disk_available_kb": 209715200},
   "probes": {
-    "herdr": {"status": "pass", "workspace_count": 3, "agent_count": 12},
+    "nhm": {"status": "pass", "herdr_workspace_count": 3, "herdr_tab_count": 12},
     "agent_mail": {"status": "pass", "available": true, "healthy": true},
     "beads": {"status": "pass", "ready_count": 9, "in_progress_count": 0},
     "bv": {"status": "pass", "robot_ok": true},
@@ -79,10 +79,10 @@ cat <<'"'"'JSON'"'"'
 {
   "schema_version": 1,
   "status": "warn",
-  "warnings": ["herdr uncertain", "active beads"],
+  "warnings": ["nhm uncertain", "active beads"],
   "host": {"cpu_count": 16, "mem_available_kb": 4194304, "disk_available_kb": 31457280},
   "probes": {
-    "herdr": {"status": "warn", "workspace_count": 1, "agent_count": 4},
+    "nhm": {"status": "warn", "herdr_workspace_count": 1, "herdr_tab_count": 4},
     "agent_mail": {"status": "pass", "available": true, "healthy": true},
     "beads": {"status": "pass", "ready_count": 4, "in_progress_count": 2},
     "bv": {"status": "pass", "robot_ok": true},
@@ -101,7 +101,7 @@ cat <<'"'"'JSON'"'"'
   "warnings": [],
   "host": {"cpu_count": 8, "disk_available_kb": 10485760},
   "probes": {
-    "herdr": {"status": "pass", "workspace_count": 0, "agent_count": 0},
+    "nhm": {"status": "pass", "herdr_workspace_count": 0, "herdr_tab_count": 0},
     "agent_mail": {"status": "pass", "available": true, "healthy": true},
     "beads": {"status": "pass", "ready_count": 1, "in_progress_count": 0},
     "rch": {"status": "pass", "status_json_ok": true}
@@ -119,7 +119,7 @@ cat <<'"'"'JSON'"'"'
   "warnings": ["low memory headroom", "rch queue delayed"],
   "host": {"cpu_count": 8, "mem_available_kb": 1048576, "disk_available_kb": 20971520},
   "probes": {
-    "herdr": {"status": "pass", "workspace_count": 2, "agent_count": 6},
+    "nhm": {"status": "pass", "herdr_workspace_count": 2, "herdr_tab_count": 6},
     "agent_mail": {"status": "pass", "available": true, "healthy": true},
     "beads": {"status": "pass", "ready_count": 2, "in_progress_count": 0},
     "bv": {"status": "pass", "robot_ok": true},
@@ -230,7 +230,8 @@ test_terminal_includes_swarm_panel() {
     printf '%s\n' "$output" > "$ARTIFACT_DIR/terminal.txt"
 
     grep -Fq "Swarm Operations" <<<"$output" || return 1
-    grep -Fq "workspaces=3 agents=12" <<<"$output" || return 1
+    grep -Fq "nhm/herdr:" <<<"$output" || return 1
+    grep -Fq "workspaces=3 tabs=12" <<<"$output" || return 1
     grep -Fq "ready=9 in_progress=0" <<<"$output" || return 1
     grep -Fq "Safe to launch or scale a swarm" <<<"$output" || return 1
 
@@ -246,7 +247,7 @@ test_json_includes_swarm_summary() {
     jq -e '
       .swarm.status == "warn" and
       .swarm.herdr_workspaces == "1" and
-      .swarm.herdr_agents == "4" and
+      .swarm.herdr_tabs == "4" and
       .swarm.in_progress_beads == "2" and
       .swarm.rch == "warn" and
       .swarm.warning_count == 2 and
@@ -263,7 +264,7 @@ test_html_includes_dashboard_panel() {
     printf '%s\n' "$output" > "$ARTIFACT_DIR/info.html"
 
     grep -Fq "<h2>Swarm Operations</h2>" <<<"$output" || return 1
-    grep -Fq "workspaces=3 agents=12" <<<"$output" || return 1
+    grep -Fq '<span class="label">nhm/herdr</span><span>workspaces=3 tabs=12</span>' <<<"$output" || return 1
     grep -Fq "Agent Mail=pass RCH=pass" <<<"$output" || return 1
     grep -Fq "128 GiB mem, 200 GiB disk" <<<"$output" || return 1
 

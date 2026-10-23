@@ -1885,7 +1885,7 @@ acfs machine verify dev            # every configured login still answers
 
 # Inside the machine: how many agents it can carry right now, then a
 # queue-aware plan (advisory; it launches nothing)
-acfs capacity --recommend-herdr
+acfs capacity --recommend-nhm
 acfs swarm plan --agents 8 --profile balanced --workload standard
 
 # Start them: each agent gets an Agent Mail name, a herdr pane bound to

@@ -10,7 +10,7 @@ and workload:
 
 ```bash
 acfs swarm status --json > swarm_status.json
-acfs capacity --json --profile 10-agents --workload standard --recommend-herdr > capacity.json
+acfs capacity --json --profile 10-agents --workload standard --recommend-nhm > capacity.json
 ```
 
 Replay the saved evidence, including on a different machine:

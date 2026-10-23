@@ -47,7 +47,7 @@ run_capacity_json() {
     ACFS_CAPACITY_MEM_TOTAL_KB="$2" \
     ACFS_CAPACITY_DISK_AVAILABLE_KB="$3" \
     ACFS_CAPACITY_RCH_AVAILABLE="$4" \
-    ACFS_CAPACITY_HERDR_AVAILABLE="$5" \
+    ACFS_CAPACITY_NHM_AVAILABLE="$5" \
     bash "$CAPACITY_SH" --json "${@:6}"
 }
 
@@ -57,7 +57,7 @@ write_fixture_artifact() {
     local mem_total_kb="$3"
     local disk_available_kb="$4"
     local rch_available="$5"
-    local herdr_available="$6"
+    local nhm_available="$6"
     shift 6
 
     {
@@ -66,7 +66,7 @@ write_fixture_artifact() {
         echo "mem_total_kb=$mem_total_kb"
         echo "disk_available_kb=$disk_available_kb"
         echo "rch_available=$rch_available"
-        echo "herdr_available=$herdr_available"
+        echo "nhm_available=$nhm_available"
         printf 'args='
         printf ' %q' "$@"
         printf '\n'
@@ -87,13 +87,13 @@ run_capacity_json_fixture() {
     local mem_total_kb="$3"
     local disk_available_kb="$4"
     local rch_available="$5"
-    local herdr_available="$6"
+    local nhm_available="$6"
     shift 6
 
-    write_fixture_artifact "$name" "$cpu_count" "$mem_total_kb" "$disk_available_kb" "$rch_available" "$herdr_available" "$@"
+    write_fixture_artifact "$name" "$cpu_count" "$mem_total_kb" "$disk_available_kb" "$rch_available" "$nhm_available" "$@"
 
     local output
-    output="$(run_capacity_json "$cpu_count" "$mem_total_kb" "$disk_available_kb" "$rch_available" "$herdr_available" "$@")"
+    output="$(run_capacity_json "$cpu_count" "$mem_total_kb" "$disk_available_kb" "$rch_available" "$nhm_available" "$@")"
     write_output_artifact "$name" "json" "$output"
     printf '%s\n' "$output"
 }
@@ -149,23 +149,23 @@ EOF
 
 test_high_capacity_json() {
     local output
-    output="$(run_capacity_json_fixture high_capacity_json 64 268435456 314572800 true true --profile 25-agents --recommend-herdr)"
+    output="$(run_capacity_json_fixture high_capacity_json 64 268435456 314572800 true true --profile 25-agents --recommend-nhm)"
 
     jq -e '
       .schema_version == 1 and
       .host.cpu_count == 64 and
       .host.mem_total_mib == 262144 and
       .tools.rch.available == true and
-      .tools.herdr.available == true and
+      .tools.nhm.available == true and
       .capacity.safe_agent_count == 64 and
       .capacity.recommended_agent_count == 44 and
       .profile_check.status == "pass" and
-      .herdr.recommended == true and
-      .herdr.agent_count == 44 and
-      (.herdr.profiles | length) == 4 and
-      (.herdr.profiles[] | select(.agents == 25 and .status == "pass" and .command == "nhm spawn myproject --label swarm-25 --cc=10 --cod=10 --agy=5 --assign --stagger-mode=smart")) and
-      (.herdr.profiles[] | select(.agents == 50 and .status == "warn" and (.rch_policy | contains("rch exec --")))) and
-      (has("ntm") | not)
+      .nhm.recommended == true and
+      .nhm.agent_count == 44 and
+      (.nhm.profiles | length) == 4 and
+      (.nhm.profiles[] | select(.agents == 25 and .status == "pass" and .command == "nhm spawn myproject --label swarm-25 --cc=10 --cod=10 --agy=5 --assign --stagger-mode=smart")) and
+      (.nhm.profiles[] | select(.agents == 50 and .status == "warn" and (.rch_policy | contains("rch exec --")))) and
+      (has("ntm") | not) and (has("herdr") | not)
     ' <<<"$output" >/dev/null || return 1
 
     pass "high_capacity_json"
@@ -246,14 +246,14 @@ test_human_output() {
         ACFS_CAPACITY_MEM_TOTAL_KB=33554432 \
         ACFS_CAPACITY_DISK_AVAILABLE_KB=104857600 \
         ACFS_CAPACITY_RCH_AVAILABLE=true \
-        ACFS_CAPACITY_HERDR_AVAILABLE=false \
-        bash "$CAPACITY_SH" --workload standard --profile 5 --recommend-herdr
+        ACFS_CAPACITY_NHM_AVAILABLE=false \
+        bash "$CAPACITY_SH" --workload standard --profile 5 --recommend-nhm
     )"
-    write_fixture_artifact human_output 8 33554432 104857600 true false --workload standard --profile 5 --recommend-herdr
+    write_fixture_artifact human_output 8 33554432 104857600 true false --workload standard --profile 5 --recommend-nhm
     write_output_artifact "human_output" "txt" "$output"
 
     grep -Fq "ACFS Capacity Report" <<<"$output" || return 1
-    grep -Fq "herdr available:     false" <<<"$output" || return 1
+    grep -Fq "nhm available:       false" <<<"$output" || return 1
     grep -Fq "Recommended agents:" <<<"$output" || return 1
     grep -Fq "Profile Check" <<<"$output" || return 1
     grep -Fq "Launch Profiles" <<<"$output" || return 1

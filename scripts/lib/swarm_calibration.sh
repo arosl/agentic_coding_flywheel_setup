@@ -5,7 +5,7 @@
 # Reads local swarm simulation/rehearsal artifacts plus optional RCH timing
 # evidence, then explains whether the static capacity assumptions look
 # conservative, aligned, or too aggressive for this host. This command never
-# mutates capacity defaults, RCH, herdr, Beads, or Agent Mail.
+# mutates capacity defaults, RCH, nhm, Beads, or Agent Mail.
 # ============================================================
 
 set -euo pipefail
@@ -29,7 +29,7 @@ Options:
 
 The command is advisory-only. It reads local artifact files and prints a
 calibration report, but it never phones home, changes capacity defaults,
-launches agents, mutates RCH/herdr state, sends Agent Mail, or updates Beads.
+launches agents, mutates RCH/nhm state, sends Agent Mail, or updates Beads.
 EOF
 }
 
@@ -467,7 +467,7 @@ swarm_calibration_build_report() {
             mutations: {
               capacity_defaults: false,
               rch: false,
-              ntm: false,
+              nhm: false,
               beads: false,
               agent_mail: false,
               filesystem_inputs_only: true
@@ -510,7 +510,7 @@ swarm_calibration_build_report() {
               if ($valid | length) == 0 then
                 ["acfs swarm simulate --mock-rehearsal --artifact-dir <dir>", "acfs swarm calibration --artifact-dir <dir>"]
               elif $posture == "too_aggressive" or $posture == "aggressive_near_limit" then
-                ["acfs swarm simulate --mock-rehearsal --counts 10 --artifact-dir <dir>", "acfs capacity --json --recommend-herdr"]
+                ["acfs swarm simulate --mock-rehearsal --counts 10 --artifact-dir <dir>", "acfs capacity --json --recommend-nhm"]
               else
                 ["acfs swarm simulate --mock-rehearsal --counts 10 --artifact-dir <dir>", "acfs swarm calibration --artifact-dir <dir>"]
               end

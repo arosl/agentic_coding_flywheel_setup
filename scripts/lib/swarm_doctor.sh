@@ -130,7 +130,7 @@ def check($id; $status; $summary; $details; $commands):
 | ($s.probes.beads // {}) as $beads
 | ($s.probes.bv // {}) as $bv
 | ($s.probes.rch // {}) as $rch
-| ($s.probes.herdr // {}) as $herdr
+| ($s.probes.nhm // {}) as $nhm
 | ($s.host // {}) as $host
 | arr($beads.in_progress_items // $beads.in_progress // $beads.active_items) as $bead_items
 | arr($am.file_reservations // $am.reservations // $am.active_reservations) as $reservation_items
@@ -272,15 +272,17 @@ def check($id; $status; $summary; $details; $commands):
       ["rch status", "rch workers probe --all", "rch exec -- cargo test"]
     ),
     check(
-      "herdr";
-      (if (b($herdr.available) | not) then "fail"
-       elif (b($herdr.server_ok)) then "pass"
-       else "warn" end);
-      (if (b($herdr.available) | not) then "herdr is unavailable"
-       elif (b($herdr.server_ok)) then "herdr server is usable"
-       else "herdr is installed, but its server is not running" end);
-      ($herdr.warnings // []);
-      ["herdr workspace list", "herdr agent list"]
+      "nhm";
+      (if (b($nhm.available) | not) then "fail"
+       elif (b($nhm.robot_status_ok)) then "pass"
+       elif (b($nhm.herdr_available)) then "warn"
+       else "fail" end);
+      (if (b($nhm.available) | not) then "nhm is unavailable"
+       elif (b($nhm.robot_status_ok)) then "nhm robot status is usable"
+       elif (b($nhm.herdr_available)) then "nhm robot status is uncertain, but herdr is available"
+       else "nhm and herdr are unavailable" end);
+      ($nhm.warnings // []);
+      ["nhm --robot-status", "herdr workspace list"]
     ),
     check(
       "resource_pressure";
@@ -294,7 +296,7 @@ def check($id; $status; $summary; $details; $commands):
        elif ($disk_gib < 50) then "Available disk is low for a large swarm"
        else "Local resource pressure is acceptable" end);
       ($host.warnings // []);
-      ["acfs capacity --recommend-herdr", "acfs swarm status --json"]
+      ["acfs capacity --recommend-nhm", "acfs swarm status --json"]
     ),
     check(
       "active_work";

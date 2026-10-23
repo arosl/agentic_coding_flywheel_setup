@@ -2553,40 +2553,56 @@ capture_swarm_timeline_json() {
             '{status: $status, reason: $reason, ready_count: $ready, in_progress_count: $in_progress, open_count: $open, dependency_cycle_count: $dependency_cycles}')"
     fi
 
-    local herdr_bin=""
-    local herdr_json='{"status":"skipped","reason":"herdr not found in PATH"}'
-    local herdr_probe_status="skipped"
-    local herdr_probe_reason="herdr not found in PATH"
+    local herdr_bin="" nhm_bin=""
+    local nhm_json='{"status":"skipped","reason":"herdr and nhm not found in PATH"}'
+    local nhm_probe_status="skipped"
+    local nhm_probe_reason="herdr and nhm not found in PATH"
     herdr_bin="$(support_binary_path_any herdr 2>/dev/null || true)"
-    if [[ -n "$herdr_bin" ]]; then
-        local herdr_server_ok=false
-        local workspace_count=null
-        local agent_count=null
+    # ~/.local/bin first, where ACFS installs nhm (acfs-9hkh.84).
+    if [[ -x "${HOME:-}/.local/bin/nhm" ]]; then
+        nhm_bin="$HOME/.local/bin/nhm"
+    else
+        nhm_bin="$(support_binary_path_any nhm 2>/dev/null || true)"
+    fi
+    if [[ -n "$herdr_bin" || -n "$nhm_bin" ]]; then
+        local nhm_robot_ok=false
+        local workspace_count=0
+        local tab_count=0
+        local herdr_warning=""
+        local nhm_output=""
         local herdr_output=""
         local herdr_count=""
-        # Counts only: workspace labels and agent names stay out of the bundle.
-        if herdr_output="$(support_run_with_timeout "$SWARM_TIMELINE_TIMEOUT" "$herdr_bin" workspace list)" && [[ -n "$herdr_output" ]]; then
-            herdr_server_ok=true
-            herdr_count="$(printf '%s' "$herdr_output" | "$jq_bin" -r '.result.workspaces | length' 2>/dev/null || true)"
-            [[ "$herdr_count" =~ ^[0-9]+$ ]] && workspace_count="$herdr_count"
-            if herdr_output="$(support_run_with_timeout "$SWARM_TIMELINE_TIMEOUT" "$herdr_bin" agent list)"; then
-                herdr_count="$(printf '%s' "$herdr_output" | "$jq_bin" -r '.result.agents | length' 2>/dev/null || true)"
-                [[ "$herdr_count" =~ ^[0-9]+$ ]] && agent_count="$herdr_count"
+        if [[ -n "$nhm_bin" ]] && nhm_output="$(support_run_with_timeout "$SWARM_TIMELINE_TIMEOUT" "$nhm_bin" --robot-status)"; then
+            [[ -n "$nhm_output" ]] && nhm_robot_ok=true
+        fi
+        # herdr's workspaces and tabs are tmux's sessions and windows.
+        if [[ -n "$herdr_bin" ]]; then
+            if herdr_output="$(support_run_with_timeout "$SWARM_TIMELINE_TIMEOUT" "$herdr_bin" workspace list)" && [[ -n "$herdr_output" ]]; then
+                herdr_count="$(printf '%s' "$herdr_output" | "$jq_bin" -r '.result.workspaces | length' 2>/dev/null || true)"
+                [[ "$herdr_count" =~ ^[0-9]+$ ]] && workspace_count="$herdr_count"
+                if herdr_output="$(support_run_with_timeout "$SWARM_TIMELINE_TIMEOUT" "$herdr_bin" tab list)"; then
+                    herdr_count="$(printf '%s' "$herdr_output" | "$jq_bin" -r '.result.tabs | length' 2>/dev/null || true)"
+                    [[ "$herdr_count" =~ ^[0-9]+$ ]] && tab_count="$herdr_count"
+                fi
+            else
+                herdr_warning="herdr has no listable workspaces or timed out"
             fi
         fi
-        herdr_probe_status="pass"
-        herdr_probe_reason="herdr summary collected without workspace labels or agent names"
-        if [[ "$herdr_server_ok" != true ]]; then
-            herdr_probe_status="warn"
-            herdr_probe_reason="herdr server is not running or timed out"
+        nhm_probe_status="pass"
+        nhm_probe_reason="nhm/herdr summary collected without workspace labels"
+        if [[ -n "$herdr_warning" && "$nhm_robot_ok" != true ]]; then
+            nhm_probe_status="warn"
+            nhm_probe_reason="$herdr_warning"
         fi
-        herdr_json="$("$jq_bin" -n \
-            --arg status "$herdr_probe_status" \
-            --arg reason "$herdr_probe_reason" \
-            --argjson herdr_server_ok "$herdr_server_ok" \
+        nhm_json="$("$jq_bin" -n \
+            --arg status "$nhm_probe_status" \
+            --arg reason "$nhm_probe_reason" \
+            --argjson nhm_available "$( [[ -n "$nhm_bin" ]] && echo true || echo false )" \
+            --argjson nhm_robot_ok "$nhm_robot_ok" \
+            --argjson herdr_available "$( [[ -n "$herdr_bin" ]] && echo true || echo false )" \
             --argjson workspaces "$workspace_count" \
-            --argjson agents "$agent_count" \
-            '{status: $status, reason: $reason, herdr_available: true, herdr_server_ok: $herdr_server_ok, workspace_count: $workspaces, agent_count: $agents}')"
+            --argjson tabs "$tab_count" \
+            '{status: $status, reason: $reason, nhm_available: $nhm_available, nhm_robot_status_ok: $nhm_robot_ok, herdr_available: $herdr_available, herdr_workspace_count: $workspaces, herdr_tab_count: $tabs}')"
     fi
 
     local rch_bin=""
@@ -2665,9 +2681,9 @@ capture_swarm_timeline_json() {
         --argjson beads "$beads_json" \
         --arg beads_probe_status "$beads_probe_status" \
         --arg beads_probe_reason "$beads_probe_reason" \
-        --argjson herdr "$herdr_json" \
-        --arg herdr_probe_status "$herdr_probe_status" \
-        --arg herdr_probe_reason "$herdr_probe_reason" \
+        --argjson nhm "$nhm_json" \
+        --arg nhm_probe_status "$nhm_probe_status" \
+        --arg nhm_probe_reason "$nhm_probe_reason" \
         --argjson rch "$rch_json" \
         --arg rch_probe_status "$rch_probe_status" \
         --arg rch_probe_reason "$rch_probe_reason" \
@@ -2675,13 +2691,13 @@ capture_swarm_timeline_json() {
         '{
             schema_version: 1,
             generated_at: $generated_at,
-            status: ([$telemetry_probe_status, $agent_mail_probe_status, $beads_probe_status, $herdr_probe_status, $rch_probe_status] as $statuses | if (($statuses | index("warn")) or ($statuses | index("skipped"))) then "warn" else "pass" end),
+            status: ([$telemetry_probe_status, $agent_mail_probe_status, $beads_probe_status, $nhm_probe_status, $rch_probe_status] as $statuses | if (($statuses | index("warn")) or ($statuses | index("skipped"))) then "warn" else "pass" end),
             privacy: $privacy,
             probes: [
                 {id: "telemetry", status: $telemetry_probe_status, reason: $telemetry_probe_reason},
                 {id: "agent_mail", status: $agent_mail_probe_status, reason: $agent_mail_probe_reason},
                 {id: "beads", status: $beads_probe_status, reason: $beads_probe_reason},
-                {id: "herdr", status: $herdr_probe_status, reason: $herdr_probe_reason},
+                {id: "nhm", status: $nhm_probe_status, reason: $nhm_probe_reason},
                 {id: "rch", status: $rch_probe_status, reason: $rch_probe_reason},
                 {id: "resource_pressure", status: ($resource_pressure.status // "skipped"), reason: "derived from redacted host metrics"}
             ],
@@ -2689,7 +2705,7 @@ capture_swarm_timeline_json() {
                 telemetry: $telemetry,
                 agent_mail: $agent_mail,
                 beads: $beads,
-                herdr: $herdr,
+                nhm: $nhm,
                 rch: $rch,
                 resource_pressure: $resource_pressure
             }

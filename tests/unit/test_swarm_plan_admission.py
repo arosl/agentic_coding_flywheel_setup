@@ -27,8 +27,8 @@ def healthy_status():
                     "workers_total": 8, "workers_healthy": 8, "workers_busy": 0,
                     "workers_offline": 0, "slots_total": 32, "slots_available": 24,
                     "pressure_warning_count": 0, "stale_worker_count": 0},
-            "herdr": {"status": "pass", "available": True, "server_ok": True,
-                      "agent_count": 2},
+            "nhm": {"status": "pass", "available": True, "robot_status_ok": True,
+                    "herdr_available": True, "herdr_workspace_count": 2},
         },
     }
 
@@ -192,7 +192,7 @@ class SwarmAdmissionTests(unittest.TestCase):
         code, text = self.run_plan(human=True)
         self.assertEqual(code, 1)
         self.assertIn("Wait before launching", text)
-        self.assertNotIn("ntm spawn", text)
+        self.assertNotIn("nhm spawn", text)
         self.assertNotIn("Launch command", text)
 
 
