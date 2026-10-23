@@ -17,8 +17,8 @@ own, `swarm-<session>-<first 12 hex of the review hash>`. None or more than one
 is refused.
 
 Inspect every proposed slot, agent type, Agent Mail name, pane, terminal and
-shell PID. Slots are assigned to the same native-agent types (Claude, Codex or
-`agy`) in the order the agents started: nhm's slot `N.M` when nhm started the
+shell PID. By default, slots are assigned to the same native-agent types
+(Claude, Codex or `agy`) in the order the agents started: nhm's slot `N.M` when nhm started the
 launch, otherwise tab creation order, which the launcher's one-at-a-time start
 made the slot order. A pane runs its agent when a foreground process has the
 agent type as its name or its argv[0], as `agy-real` does under `agy-locked`.
@@ -60,6 +60,73 @@ adoption, is not part of it. Changing a pane, tab, terminal, shell, workspace,
 request, or policy requires a new preview. The topology is rechecked before
 result publication and again afterward. The same receipt-directory lock used by
 normal launch prevents cooperating launch/recovery operations from racing.
+
+## Recover reordered agents, or a workspace with other agents
+
+When the start order no longer gives the intended assignments, bind **every
+saved launch slot** to its exact herdr pane. Other agents may then stay in the
+launch's workspace, for example a helper started there by hand, and recovery
+doesn't adopt them:
+
+```bash
+acfs swarm launch --recover --receipt /absolute/path/launch.json \
+  --target 1:w2:p7 --target 2:w2:p3 --target 3:w2:p2
+```
+
+Slots are the positions in the intent's `request.agents`, starting at 1. Each
+slot appears exactly once, with a distinct pane. The selected pane must run the
+native agent type saved for that slot, in the saved repository; the right count
+of each type is not enough. A partial mapping, an id that isn't a herdr pane id
+(such as a tab id `w2:t3` or a tmux `%7`), a missing pane, a pane that runs
+another process, and a duplicate or malformed identity are refused.
+
+Review the returned `targets` and run its `adopt_command`, which keeps every
+binding and the approval digest. Changing a binding, or switching between
+`selection: "explicit"` and `selection: "layout"`, needs a new preview, even
+when both give the same targets today. The order of the flags doesn't change
+the digest, and neither does the order of herdr's agent list.
+
+Only the selected agents are adopted and rechecked. The other agents get no
+command or work, may be outside the repository, and may change their processes
+without moving a saved slot. Every agent in the workspace is still checked for
+a valid, distinct pane and terminal: a selection never hides a duplicate or
+malformed identity. nhm's bindings are read for the selected panes only.
+Without `--target`, recovery keeps its strict rule: the workspace holds exactly
+the launch's agents.
+
+## Wait for agents that are still starting
+
+An agent may still be starting after the launcher's response was lost. Preview
+with a bounded, read-only wait rather than running recovery again by hand:
+
+```bash
+acfs swarm launch --recover --receipt /absolute/path/launch.json --wait 60
+```
+
+`--wait` takes 0 to 300 seconds; 0, the default, is a single observation. A
+positive value needs **two consecutive identical observations** of the agents'
+identities. As in approval, an agent's state, such as an open dialog, isn't
+part of them. An agent that herdr doesn't list yet, and a pane whose foreground
+is still a startup shell (`bash`, `zsh`, `sh`, `dash`, `fish`), are retried.
+Every selected pane must run its native agent before a preview is returned. The
+preview reports `readiness_observations`. A running agent process doesn't prove
+that the agent is logged in, that its model answers, or that its name is
+registered.
+
+One deadline covers every herdr, nhm and Agent Mail query and every pause.
+`--timeout` still bounds each query, shortened to what is left of the wait.
+These fail at once, never as a startup delay: more agents than the launch saved,
+an agent of the wrong type or outside the repository, another process in a pane,
+a duplicate or malformed identity, an unavailable herdr or nhm, a failed command
+and invalid output. Every agent is checked before an incomplete workspace counts
+as still starting. An intent changed during the wait, or a result published
+meanwhile, voids the preview; no retained file is overwritten.
+
+Waiting never writes a result or starts an agent. Review the final preview and
+run its `adopt_command`, which **leaves out `--wait`**. `--adopt` with a positive
+wait is refused before any query: approval applies to the exact identities
+reviewed, not to later ones. A timeout is not permission to launch again or to
+delete the original receipt.
 
 ## Reconcile a saved launch using only its receipt
 
@@ -114,8 +181,10 @@ must be preserved for inspection. Recovery does not erase evidence to enable
 another attempt. A result that already exists should go through ordinary launch
 reconciliation, not adoption.
 
-Missing, extra, shell-only, wrong-repository or duplicate agents, and duplicate
-terminals or shells, prevent recovery. Unsafe receipt paths and non-private,
+Without `--target`, missing, extra, shell-only, wrong-repository or duplicate
+agents, and duplicate terminals or shells, prevent recovery. With `--target`,
+the agent, process and repository checks apply to the selected agents, and the
+identity checks to every agent in the workspace. Unsafe receipt paths and non-private,
 symlinked, hardlinked or special-file intents are rejected, and so is an
 ntm-era `acfs.swarm-launch.v1` intent. Input and observation sizes are bounded
 to 1 MiB. `--timeout` bounds each herdr query to 1-30 seconds (default 10); raw
@@ -134,10 +203,13 @@ python3 -B -m unittest discover -s tests/unit -p 'test_swarm_launch_recovery*.py
 
 The tests execute the real recovery CLI against a local read-only herdr contract
 fixture. They cover successful handoff-compatible results, identity-bound
-approval, lost and renamed names, concurrent-directory locks, changing intents
-and agents, create-only result races, partial-result preservation, invalid
-inputs, output limits and deadlines. They do not start paid agents or certify a
-live provider session.
+approval, lost and renamed names, nhm's bindings, concurrent-directory locks,
+changing intents and agents, create-only result races, partial-result
+preservation, explicit slot bindings, other agents in the workspace, startup
+waits, stable observations, invalid inputs, output limits and shared deadlines.
+Deterministic-clock tests cover each query's shrinking budget and a success that
+arrives after the deadline. They do not start paid agents or certify a live
+provider session.
 
 Integration tests additionally reproduce a lost startup response through the
 actual launcher, recover its saved workspace, and reconcile using only the
