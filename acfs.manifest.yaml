@@ -3994,6 +3994,9 @@ modules:
       tool: rano
       runner: bash
       url: "https://raw.githubusercontent.com/Dicklesworthstone/rano/main/install.sh"
+      # rano's installer keeps its files in TMPDIR when it ends, so it gets a
+      # TMPDIR of its own, which ACFS removes (acfs-i5s0).
+      env: ["TMPDIR=$TARGET_HOME/.cache/acfs/installer-tmp/rano.XXXXXX"]
     install: []
     verify:
       - rano --help || rano --version

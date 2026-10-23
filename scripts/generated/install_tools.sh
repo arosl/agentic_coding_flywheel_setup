@@ -1976,11 +1976,57 @@ acfs_generated_install_utils_rano() {
             local install_success=false
             local verified_installer_file=""
             local verified_installer_chmod_bin=""
+            local verified_installer_env_ready=true
+
+            local verified_installer_tmpdir_template="$TARGET_HOME"'/.cache/acfs/installer-tmp/rano.XXXXXX'
+            local verified_installer_tmpdir_parent="${verified_installer_tmpdir_template%/*}"
+            local verified_installer_tmpdir_prefix="${verified_installer_tmpdir_template%XXXXXX}"
+            local verified_installer_tmpdir=""
+            local verified_installer_tmpdir_suffix=""
+            local verified_installer_tmpdir_owned=false
+            local verified_installer_mkdir_bin=""
+            local verified_installer_mktemp_bin=""
+            if [[ "$verified_installer_tmpdir_template" != *XXXXXX* ]]; then
+                log_error "utils.rano: installer TMPDIR template must contain XXXXXX: $verified_installer_tmpdir_template"
+                verified_installer_env_ready=false
+            elif ! verified_installer_mkdir_bin="$(acfs_generated_system_binary_path mkdir 2>/dev/null)"; then
+                log_error "utils.rano: trusted mkdir not found for installer TMPDIR"
+                verified_installer_env_ready=false
+            elif ! verified_installer_mktemp_bin="$(acfs_generated_system_binary_path mktemp 2>/dev/null)"; then
+                log_error "utils.rano: trusted mktemp not found for installer TMPDIR"
+                verified_installer_env_ready=false
+            elif [[ "$verified_installer_tmpdir_parent" != "$TARGET_HOME/.cache/acfs/installer-tmp" ]]; then
+                log_error "utils.rano: installer TMPDIR parent escaped the approved target-home path"
+                verified_installer_env_ready=false
+            elif [[ -L "$TARGET_HOME" || -L "$TARGET_HOME/.cache" || -L "$TARGET_HOME/.cache/acfs" || -L "$verified_installer_tmpdir_parent" ]]; then
+                log_error "utils.rano: refusing installer TMPDIR through a symlinked target-home path"
+                verified_installer_env_ready=false
+            elif ! run_as_target "$verified_installer_mkdir_bin" -p "$verified_installer_tmpdir_parent"; then
+                log_error "utils.rano: failed to prepare installer TMPDIR parent: $verified_installer_tmpdir_parent"
+                verified_installer_env_ready=false
+            elif [[ ! -d "$verified_installer_tmpdir_parent" || -L "$TARGET_HOME" || -L "$TARGET_HOME/.cache" || -L "$TARGET_HOME/.cache/acfs" || -L "$verified_installer_tmpdir_parent" ]]; then
+                log_error "utils.rano: installer TMPDIR parent is not a confined real directory"
+                verified_installer_env_ready=false
+            elif ! verified_installer_tmpdir="$(run_as_target "$verified_installer_mktemp_bin" -d "$verified_installer_tmpdir_template" 2>/dev/null)"; then
+                log_error "utils.rano: failed to create installer TMPDIR from template: $verified_installer_tmpdir_template"
+                verified_installer_env_ready=false
+            elif [[ -z "$verified_installer_tmpdir" ]]; then
+                log_error "utils.rano: installer TMPDIR creation returned an empty path"
+                verified_installer_env_ready=false
+            else
+                verified_installer_tmpdir_suffix="${verified_installer_tmpdir#"$verified_installer_tmpdir_prefix"}"
+                if [[ "$verified_installer_tmpdir" != "$verified_installer_tmpdir_prefix"* || -z "$verified_installer_tmpdir_suffix" || "$verified_installer_tmpdir_suffix" == *[!A-Za-z0-9]* || ! -d "$verified_installer_tmpdir" || -L "$verified_installer_tmpdir" || -L "$verified_installer_tmpdir_parent" ]]; then
+                    log_error "utils.rano: installer TMPDIR escaped its trusted template: $verified_installer_tmpdir"
+                    verified_installer_env_ready=false
+                else
+                    verified_installer_tmpdir_owned=true
+                fi
+            fi
 
                 # Cleared per attempt so a stale reason from an earlier module can
                 # never be misattributed to this one.
                 ACFS_LAST_MODULE_FAILURE_REASON=""
-            if acfs_security_init; then
+            if [[ "$verified_installer_env_ready" = "true" ]] && acfs_security_init; then
                 local known_installers_decl=""
                 # Check if KNOWN_INSTALLERS is available as an associative array (declare -A)
                 known_installers_decl="$(declare -p KNOWN_INSTALLERS 2>/dev/null || true)"
@@ -2011,7 +2057,7 @@ acfs_generated_install_utils_rano() {
                         elif ! "$verified_installer_chmod_bin" 0444 "$verified_installer_file"; then
                             log_error "utils.rano: failed to make verified installer staging file read-only"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
-                        elif run_as_target_runner 'bash' "$verified_installer_file"; then
+                        elif run_as_target_runner 'env' "TMPDIR=$verified_installer_tmpdir" 'bash' "$verified_installer_file"; then
                             install_success=true
                         else
                             log_error "utils.rano: verified installer execution failed"
@@ -2034,12 +2080,33 @@ acfs_generated_install_utils_rano() {
                     ACFS_LAST_MODULE_FAILURE_REASON="missing dependency"
                 fi
             else
-                log_error "utils.rano: acfs_security_init failed - check security.sh and checksums.yaml"
-                ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
+                if [[ "$verified_installer_env_ready" != "true" ]]; then
+                    log_error "utils.rano: verified installer environment setup failed"
+                    ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
+                else
+                    log_error "utils.rano: acfs_security_init failed - check security.sh and checksums.yaml"
+                    ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
+                fi
             fi
             if [[ -n "$verified_installer_file" ]]; then
                 _acfs_remove_temp_files "$verified_installer_file"
                 verified_installer_file=""
+            fi
+
+            # Remove this run's TMPDIR on every outcome. Only the exact directory mktemp
+            # returned, and the template check accepted, qualifies. It is re-checked here
+            # and removed as the target user; a cleanup problem only warns, so it can
+            # never change the install result or its failure reason.
+            if [[ "$verified_installer_tmpdir_owned" = "true" ]]; then
+                local verified_installer_rm_bin=""
+                if [[ "$verified_installer_tmpdir" != "$verified_installer_tmpdir_prefix"* || -z "$verified_installer_tmpdir_suffix" || "$verified_installer_tmpdir_suffix" == *[!A-Za-z0-9]* || "$verified_installer_tmpdir" != "$verified_installer_tmpdir_parent/"* || "$verified_installer_tmpdir_parent" != "$TARGET_HOME/.cache/acfs/installer-tmp" || -L "$TARGET_HOME" || -L "$TARGET_HOME/.cache" || -L "$TARGET_HOME/.cache/acfs" || -L "$verified_installer_tmpdir_parent" || -L "$verified_installer_tmpdir" ]]; then
+                    log_warn "utils.rano: leaving installer TMPDIR that no longer matches its trusted template: $verified_installer_tmpdir"
+                elif ! verified_installer_rm_bin="$(acfs_generated_system_binary_path rm 2>/dev/null)"; then
+                    log_warn "utils.rano: trusted rm not found; leaving installer TMPDIR: $verified_installer_tmpdir"
+                elif ! run_as_target "$verified_installer_rm_bin" -rf --one-file-system -- "$verified_installer_tmpdir"; then
+                    log_warn "utils.rano: failed to remove installer TMPDIR: $verified_installer_tmpdir"
+                fi
+                verified_installer_tmpdir_owned=false
             fi
 
             # Verified install is required - no fallback

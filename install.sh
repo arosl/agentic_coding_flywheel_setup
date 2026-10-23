@@ -5974,8 +5974,11 @@ acfs_run_verified_upstream_script_as_target_with_env() {
 
     # Upstream installers stage downloads in TMPDIR and some enforce multi-GB
     # free-space floors. On systems where /tmp is a small tmpfs (common on
-    # Arch/Omarchy laptops), stage on real disk instead.
+    # Arch/Omarchy laptops), stage on real disk instead. rano's installer
+    # keeps its files in TMPDIR when it ends, so rano always stages on real
+    # disk, in a directory removed below (acfs-i5s0).
     local tmpdir_assignment=""
+    local tmpdir_reason=""
     local tmp_avail_kb=""
     local df_bin=""
     local awk_bin=""
@@ -5997,6 +6000,11 @@ acfs_run_verified_upstream_script_as_target_with_env() {
         return 1
     fi
     if [[ -n "$tmp_avail_kb" ]] && (( tmp_avail_kb < 2097152 )); then
+        tmpdir_reason="Low space on /tmp ($(( tmp_avail_kb / 1024 ))MB)"
+    elif [[ "$tool" == rano ]]; then
+        tmpdir_reason="rano's installer keeps its files in TMPDIR"
+    fi
+    if [[ -n "$tmpdir_reason" ]]; then
         acfs_tmpdir_parent="$TARGET_HOME/.cache/acfs/installer-tmp"
         local acfs_mkdir_bin=""
         local acfs_mktemp_bin=""
@@ -6042,7 +6050,7 @@ acfs_run_verified_upstream_script_as_target_with_env() {
             return 1
         fi
         tmpdir_assignment="TMPDIR=$acfs_tmpdir"
-        log_detail "Low space on /tmp ($(( tmp_avail_kb / 1024 ))MB); staging upstream installers in $acfs_tmpdir"
+        log_detail "$tmpdir_reason; staging upstream installers in $acfs_tmpdir"
     fi
 
     # Keep the established `runner -s -- args...` contract: the verified file
@@ -6064,7 +6072,7 @@ acfs_run_verified_upstream_script_as_target_with_env() {
     fi
 
     _acfs_remove_temp_files "$staged_installer"
-    # Remove this run's low-space TMPDIR whatever the installer did. Only the
+    # Remove this run's own TMPDIR whatever the installer did. Only the
     # exact mktemp result qualifies; it is re-checked and removed as the target
     # user, and a cleanup problem only warns, so run_status is never masked.
     if [[ -n "$acfs_tmpdir" ]]; then
