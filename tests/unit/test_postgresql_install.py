@@ -339,6 +339,9 @@ class PostgresRecoveryTests(unittest.TestCase):
             functions.append(source[start:end])
         self.authored = '\n'.join(functions).replace('/var/lib/postgres/data', str(self.data))
         self.authored = self.authored.replace('/run/systemd/system', str(self.root / 'systemd'))
+        # The fixtures model root (runuser, no sudo), so the authored code
+        # takes its root branch whichever user runs the test, CI's included.
+        self.authored = self.authored.replace('$EUID', '0')
 
     def shell(self, command, code=0, **env):
         fixtures = r'''set -euo pipefail

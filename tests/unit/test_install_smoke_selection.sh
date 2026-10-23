@@ -29,7 +29,8 @@ source "$SCRIPT_DIR/install_helpers.sh"
 
 # The smoke test and the helpers it calls, taken from install.sh. A helper
 # that doesn't exist in this install.sh extracts as nothing.
-for smoke_fn in _smoke_module_selected _smoke_join acfs_smoke_install_fix_command run_smoke_test; do
+for smoke_fn in _smoke_module_selected _smoke_join acfs_smoke_install_fix_command \
+    acfs_legacy_module_is_required run_smoke_test; do
     eval "$(sed -n "/^${smoke_fn}() {/,/^}$/p" "$INSTALLER")"
 done
 unset smoke_fn
@@ -58,8 +59,12 @@ acfs_early_getent_passwd_entry() {
     [[ "$SMOKE_EXTERNAL_ACCOUNT" == "true" ]] && shell="/bin/bash"
     printf '%s:x:1000:1000::%s:%s\n' "$1" "$TARGET_HOME" "$shell"
 }
-acfs_is_externally_managed_user() { [[ "$SMOKE_EXTERNAL_ACCOUNT" == "true" ]]; }
-acfs_external_shell_handoff_configured() { return 1; }
+# Since upstream's #473 the shell check is user.sh's
+# user_login_shell_configured, which refuses that account.
+user_login_shell_configured() { [[ "$SMOKE_EXTERNAL_ACCOUNT" != "true" ]]; }
+user_select_login_shell() { printf '%s\n' /usr/bin/zsh; }
+# No local PostgreSQL server answers; db.postgres18 is optional.
+acfs_postgres_ready() { return 1; }
 # sudo, /data/projects and the stack tools pass; herdr works when its fake
 # binary is there.
 _smoke_run_as_target() {
@@ -140,24 +145,26 @@ fix_lines() {
     grep -F 'Fix:' <<< "$SMOKE_OUTPUT" || true
 }
 
-test_default_selection_passes_all_eight() {
+# Fourteen critical checks: the eight module and host checks, and since
+# upstream's #474 the six required CLIs (direnv, git-lfs, strace, lsof, dig, nc).
+test_default_selection_passes_all_fourteen() {
     make_target
-    select_with_skips || { fail "default_selection_passes_all_eight" "default selection failed"; return 1; }
+    select_with_skips || { fail "default_selection_passes_all_fourteen" "default selection failed"; return 1; }
     run_smoke
-    [[ "$SMOKE_STATUS" -eq 0 && "$SMOKE_OUTPUT" == *"Smoke test: 8/8 critical passed"* ]] \
-        || { fail "default_selection_passes_all_eight" "status $SMOKE_STATUS, output: $SMOKE_OUTPUT"; return 1; }
+    [[ "$SMOKE_STATUS" -eq 0 && "$SMOKE_OUTPUT" == *"Smoke test: 14/14 critical passed"* ]] \
+        || { fail "default_selection_passes_all_fourteen" "status $SMOKE_STATUS, output: $SMOKE_OUTPUT"; return 1; }
     [[ "$SMOKE_OUTPUT" == *"✅ Agents: claude, codex, agy"* && "$SMOKE_OUTPUT" == *"✅ Languages: bun, uv, cargo, go available"* ]] \
-        || { fail "default_selection_passes_all_eight" "pass lines changed: $SMOKE_OUTPUT"; return 1; }
+        || { fail "default_selection_passes_all_fourteen" "pass lines changed: $SMOKE_OUTPUT"; return 1; }
     [[ "$SMOKE_OUTPUT" != *"not selected"* ]] \
-        || { fail "default_selection_passes_all_eight" "a default install reported a skip: $SMOKE_OUTPUT"; return 1; }
-    pass "default_selection_passes_all_eight"
+        || { fail "default_selection_passes_all_fourteen" "a default install reported a skip: $SMOKE_OUTPUT"; return 1; }
+    pass "default_selection_passes_all_fourteen"
 }
 
 test_skipped_codex_is_not_a_failure() {
     make_target codex
     select_with_skips agents.codex || { fail "skipped_codex_is_not_a_failure" "--skip agents.codex failed selection"; return 1; }
     run_smoke
-    [[ "$SMOKE_STATUS" -eq 0 && "$SMOKE_OUTPUT" == *"Smoke test: 8/8 critical passed"* ]] \
+    [[ "$SMOKE_STATUS" -eq 0 && "$SMOKE_OUTPUT" == *"Smoke test: 14/14 critical passed"* ]] \
         || { fail "skipped_codex_is_not_a_failure" "status $SMOKE_STATUS, output: $SMOKE_OUTPUT"; return 1; }
     [[ "$SMOKE_OUTPUT" == *"⚠️ Agents: codex skipped (not selected)"* && "$SMOKE_OUTPUT" == *"✅ Agents: claude, agy"* ]] \
         || { fail "skipped_codex_is_not_a_failure" "no skipped line for codex: $SMOKE_OUTPUT"; return 1; }
@@ -171,7 +178,7 @@ test_skipped_onboard_drops_out_of_the_count() {
     select_with_skips agents.codex acfs.onboard \
         || { fail "skipped_onboard_drops_out_of_the_count" "--skip agents.codex --skip acfs.onboard failed selection"; return 1; }
     run_smoke
-    [[ "$SMOKE_STATUS" -eq 0 && "$SMOKE_OUTPUT" == *"Smoke test: 7/7 critical passed"* ]] \
+    [[ "$SMOKE_STATUS" -eq 0 && "$SMOKE_OUTPUT" == *"Smoke test: 13/13 critical passed"* ]] \
         || { fail "skipped_onboard_drops_out_of_the_count" "status $SMOKE_STATUS, output: $SMOKE_OUTPUT"; return 1; }
     [[ "$SMOKE_OUTPUT" == *"⚠️ Onboard: skipped (not selected)"* ]] \
         || { fail "skipped_onboard_drops_out_of_the_count" "no skipped line for onboard: $SMOKE_OUTPUT"; return 1; }
@@ -191,18 +198,18 @@ test_missing_selected_agent_still_fails() {
     pass "missing_selected_agent_still_fails"
 }
 
-# A critical check that ran but only warned still counts in the total, so
-# the summary doesn't claim every critical check passed.
-test_warned_critical_check_stays_in_the_total() {
+# An externally managed account whose login shell is bash, with no zsh
+# handoff, fails the shell check since upstream's 2e2c3a99; it used to warn.
+test_external_bash_login_fails_the_shell_check() {
     make_target
-    select_with_skips || { fail "warned_critical_check_stays_in_the_total" "default selection failed"; return 1; }
+    select_with_skips || { fail "external_bash_login_fails_the_shell_check" "default selection failed"; return 1; }
     SMOKE_EXTERNAL_ACCOUNT=true
     run_smoke
     SMOKE_EXTERNAL_ACCOUNT=false
-    [[ "$SMOKE_STATUS" -eq 0 && "$SMOKE_OUTPUT" == *"⚠ Shell: externally managed account reports /bin/bash"* \
-        && "$SMOKE_OUTPUT" == *"Smoke test: 7/8 critical passed"* ]] \
-        || { fail "warned_critical_check_stays_in_the_total" "status $SMOKE_STATUS, output: $SMOKE_OUTPUT"; return 1; }
-    pass "warned_critical_check_stays_in_the_total"
+    [[ "$SMOKE_STATUS" -ne 0 && "$SMOKE_OUTPUT" == *"✖ Shell: approved zsh configuration could not be verified (found: /bin/bash)"* \
+        && "$SMOKE_OUTPUT" == *"Smoke test: 13/14 critical passed, 1 critical failed"* ]] \
+        || { fail "external_bash_login_fails_the_shell_check" "status $SMOKE_STATUS, output: $SMOKE_OUTPUT"; return 1; }
+    pass "external_bash_login_fails_the_shell_check"
 }
 
 test_unresolved_selection_checks_everything() {
@@ -230,11 +237,11 @@ test_smoke_test_runs_only_without_only_selectors() {
 
 run_all_tests() {
     source_manifest_index
-    test_default_selection_passes_all_eight
+    test_default_selection_passes_all_fourteen
     test_skipped_codex_is_not_a_failure
     test_skipped_onboard_drops_out_of_the_count
     test_missing_selected_agent_still_fails
-    test_warned_critical_check_stays_in_the_total
+    test_external_bash_login_fails_the_shell_check
     test_unresolved_selection_checks_everything
     test_smoke_test_runs_only_without_only_selectors
 

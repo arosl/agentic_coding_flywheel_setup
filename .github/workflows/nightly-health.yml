@@ -11,6 +11,10 @@ permissions:
 
 jobs:
   regression:
+    # Upstream's fixed patch, qualified against one doctor.sh blob. The fork's
+    # doctor.sh is never that blob, so the job's first step fails anywhere
+    # else; the fork runs it only on upstream (acfs-f2mc.11).
+    if: github.repository == 'Dicklesworthstone/agentic_coding_flywheel_setup'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

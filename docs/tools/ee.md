@@ -101,7 +101,7 @@ ee init --workspace . --force --skip-boilerplate
 ```bash
 # A durable rule
 ee remember --workspace . --level procedural --kind rule --tags release,ci \
-  "Run cargo test and clippy with --all-targets before tagging a release; cargo check misses test-only compile errors."
+  "Run cargo test and clippy with --all-targets before tagging a release; cargo check misses test-only compile errors." # acfs-policy-lint: allow builds.rch_for_cpu_heavy
 
 # A failure and its cause
 ee remember --workspace . --kind failure \
