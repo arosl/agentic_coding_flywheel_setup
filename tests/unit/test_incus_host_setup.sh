@@ -105,8 +105,11 @@ case "$1 ${2:-}" in
         printf '%s\n' "${@:4}" >"$STUB_DIR/network-create.args"
         ;;
     "network acl")
-        # network acl create <name>, the ACL as JSON on stdin
-        jq . >"$(obj "/1.0/network-acls/$4")"
+        # network acl create|edit <name>, the ACL as JSON on stdin. Read
+        # whole before the file is opened: in "query | jq | edit" the query
+        # still reads it, as Incus reads the ACL before the edit's PUT.
+        acl="$(jq .)"
+        printf '%s\n' "$acl" >"$(obj "/1.0/network-acls/$4")"
         ;;
     "project create")
         put "/1.0/projects/$3" '{config: {}}'
@@ -375,6 +378,23 @@ run_setup --storage "$STORAGE_DIR" --test-project --rch-worker 192.168.5.20
 check "exits 1" rc_is 1
 check "names the ACL" err_has 'acfs-swarm-egress exists with other egress rules'
 check "changes nothing" no_creates
+check "lists the worker's SSH allow as added" err_has '+ {"action":"allow","destination":"192.168.5.20/32"'
+check "lists the old private-range reject as dropped" err_has '- {"action":"reject","destination":"10.0.0.0/'
+check "prints the command that takes the rules" err_has 'incus network acl edit --force-local acfs-swarm-egress$'
+# The printed command, run as the operator would, against the stub.
+TAKE="$(sed -n 's/^ *\(incus query --force-local .*\)$/\1/p' "$CASE/err")"
+set +e
+PATH="$WORK/bin:$PATH" STUB_DIR="$CASE" bash -c "$TAKE" 2>"$CASE/take.err"
+TAKE_RC=$?
+set -e
+check "the printed command runs" bash -c '[[ "$1" -eq 0 ]]' _ "$TAKE_RC"
+check "it keeps the ACL's description" \
+    jq_is /1.0/network-acls/acfs-swarm-egress '.description | startswith("ACFS containers")' true
+: >"$CASE/calls"
+run_setup --storage "$STORAGE_DIR" --test-project --rch-worker 192.168.5.20
+check "the re-run after it: exits 0" rc_is 0
+check "the re-run after it: changes nothing" no_creates
+check "the worker is reachable over SSH" acl_allows acfs-swarm-egress 192.168.5.20 tcp 22
 
 echo "== re-run on a host set up before the sidecar's ACL"
 new_case nosidecaracl

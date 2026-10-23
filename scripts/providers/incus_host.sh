@@ -649,11 +649,36 @@ normalized_rules() {
            | map(tojson) | sort' <<<"$1"
 }
 
+# acl_differs <name> <existing ACL JSON> <wanted rules>: stops the run with
+# the rules the ACL lacks and has extra, and a command that takes the wanted
+# egress rules. The edit keeps its description, config and ingress rules:
+# `incus network acl edit` reads them from stdin with the egress rules, and
+# a PATCH would not keep them.
+acl_differs() {
+    local name="$1" json="$2" rules="$3" have want rule quoted
+    have="$(normalized_rules "$(jq -c '.egress // []' <<<"$json")")"
+    want="$(normalized_rules "$rules")"
+    log_error "network ACL $name exists with other egress rules than these options give; it is left as it is"
+    log_detail "Rules these options add:"
+    while IFS= read -r rule; do log_detail "  + $rule"; done \
+        < <(jq -rn --argjson h "$have" --argjson w "$want" '$w - $h | .[]')
+    log_detail "Rules these options drop:"
+    while IFS= read -r rule; do log_detail "  - $rule"; done \
+        < <(jq -rn --argjson h "$have" --argjson w "$want" '$h - $w | .[]')
+    # The rules hold only actions, addresses, protocols and ports, so single
+    # quotes are enough; anything else is quoted for the shell.
+    quoted="'$rules'"
+    [[ "$rules" != *"'"* ]] || quoted="$(printf '%q' "$rules")"
+    log_detail "To take them (only the egress rules change), run on this hypervisor, then run host setup again:"
+    log_detail "  incus query --force-local /1.0/network-acls/$name | jq --argjson egress $quoted '.egress = \$egress' | incus network acl edit --force-local $name"
+    exit 1
+}
+
 ensure_acl() {
     local name="$1" description="$2" rules="$3" json
     if json="$(incus_get "/1.0/network-acls/$name")"; then
         [[ "$(normalized_rules "$(jq -c '.egress // []' <<<"$json")")" == "$(normalized_rules "$rules")" ]] \
-            || die "network ACL $name exists with other egress rules than these options give; it is left as it is. Compare with: incus network acl show $name" 1
+            || acl_differs "$name" "$json" "$rules"
         log_info "Network ACL $name is in place"
         return 0
     fi
