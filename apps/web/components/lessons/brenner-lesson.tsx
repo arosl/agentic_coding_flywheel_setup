@@ -250,11 +250,11 @@ brenner excerpt build --sections 42-50 --json`}
           >
             <h3 className="font-semibold text-primary mb-2">Brenner + herdr</h3>
             <p className="text-muted-foreground text-sm">
-              ACFS installs no ntm, so start the research agents yourself, one per herdr pane. Run{" "}
-              <code className="text-primary">brenner cockpit start … --skip-ntm --skip-broadcast</code>{" "}
-              so Brenner sends the kickoff through Agent Mail only, then tell each idle agent to
-              read its inbox with{" "}
-              <code className="text-primary">herdr agent prompt &lt;agent&gt; &quot;…&quot;</code>.
+              ACFS installs Brenner&apos;s arosl fork, whose cockpit runs the research agents through
+              nhm in ntm&apos;s place.{" "}
+              <code className="text-primary">brenner cockpit start</code> starts them in herdr with{" "}
+              <code className="text-primary">nhm spawn</code> and sends the kickoff through Agent Mail
+              and <code className="text-primary">nhm send --all</code>.
             </p>
           </motion.div>
           <motion.div

@@ -16585,15 +16585,17 @@ write_fake_agent_clis() {
     stack="$(sed -n '/^update_stack() {$/,/^}$/p' "$PROJECT_ROOT/scripts/lib/update.sh")"
     run grep -A4 'update_run_verified_installer_or_existing_on_transient "herdr"' <<< "$stack"
     assert_output --partial "update_herdr_integrations"
-    # The keys bind after update_nhm, so a new nhm release binds in the same
-    # update (acfs-uetm F2).
-    run grep -A1 '^    update_nhm$' <<< "$stack"
-    assert_output --partial "update_herdr_palette_key"
+    # nhm takes the server over after update_nhm, and the keys bind after
+    # that, so a new nhm release binds in the same update (acfs-uetm F2,
+    # acfs-9hkh.93).
+    run grep -A2 '^    update_nhm$' <<< "$stack"
+    assert_line --index 1 "    update_nhm_owner"
+    assert_line --index 2 "    update_herdr_palette_key"
 }
 
 # A fake herdr for update_herdr_palette_key: `config check` passes, and
 # `server reload-config` is recorded in ~/herdr-reloads. palette.sh is the
-# deployed copy under ~/.acfs.
+# deployed copy under ~/.acfs, which nothing may run any more.
 write_fake_herdr_for_palette_key() {
     mkdir -p "$HOME/.local/bin" "$HOME/.acfs/scripts/lib"
     cp "$PROJECT_ROOT/scripts/lib/palette.sh" "$HOME/.acfs/scripts/lib/palette.sh"
@@ -16609,19 +16611,15 @@ FAKE
     unset HERDR_CONFIG_PATH
 }
 
-@test "update_herdr_palette_key binds prefix+a to the palette popup and reloads herdr" {
+@test "update_herdr_palette_key binds no key without nhm: ACFS's palette no longer stands in" {
     write_fake_herdr_for_palette_key
     DRY_RUN=false
 
     run update_herdr_palette_key
     assert_success
-    assert_output --partial "herdr palette key"
-    run grep -xF 'key = "prefix+a"' "$HOME/.config/herdr/config.toml"
-    assert_success
-    run grep -xF "command = \"bash '$HOME/.acfs/scripts/lib/palette.sh'\"" "$HOME/.config/herdr/config.toml"
-    assert_success
-    run cat "$HOME/herdr-reloads"
-    assert_output "reload"
+    refute_output --partial "palette"
+    [[ ! -e "$HOME/.config/herdr/config.toml" ]]
+    [[ ! -e "$HOME/herdr-reloads" ]]
 }
 
 @test "update_herdr_palette_key leaves a palette key the user unbound unbound" {
@@ -16644,7 +16642,7 @@ FAKE
     DRY_RUN=true
     run update_herdr_palette_key
     assert_success
-    assert_output --partial "dry-run: would run palette.sh bind --auto"
+    refute_output --partial "palette.sh"
     [[ ! -e "$HOME/.config/herdr/config.toml" ]]
 
     rm -f "$HOME/.local/bin/herdr"

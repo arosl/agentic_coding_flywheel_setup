@@ -10779,30 +10779,52 @@ acfs_install_nhm_learning_profile() {
         log_warn "nhm's learning profile was not set (optional): see nhm_hooks.sh learning-profile check"
 }
 
+# nhm owns the herdr server on every install (acfs-9hkh.93): nhm_hooks.sh
+# owner take runs nhm's takeover, a dry run first. nhm reads ACFS's Bash
+# state with the acfs command, so this runs once finalize has installed
+# it. On a fresh install no herdr server runs and the Bash keeps nothing,
+# so only the owner changes; on a re-run the takeover imports what the
+# Bash keeps, or refuses and changes nothing. Without stack.nhm, ACFS's
+# Bash stays the owner. Never fails the install: acfs update tries again,
+# and acfs doctor (stack.nhm.owner) names the fix.
+acfs_install_nhm_owner() {
+    local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh" out="" rc=0
+    if [[ ! -f "$nhm_hooks" ]] || ! acfs_legacy_module_selected "stack.nhm"; then
+        return 0
+    fi
+    out="$(run_as_target bash "$nhm_hooks" owner take 2>&1)" || rc=$?
+    out="${out##*$'\n'}"
+    out="${out#nhm_hooks: }"
+    case "$rc" in
+        0) log_detail "$out" ;;
+        3) ;;
+        *) log_warn "$out; nhm's keys stay unbound until nhm owns the server (acfs doctor: stack.nhm.owner)" ;;
+    esac
+    return 0
+}
+
 # herdr opens the command palette in a popup on prefix+a, as ntm's F6 did
 # in tmux. With nhm (stack.nhm), its herdr plugin is linked and `nhm bind`
 # binds the keys in [keys] of nhm's config (its palette, agent board and
-# menu; nhm_hooks.sh plugin bind, acfs-9hkh.50). nhm bind refuses while
-# ACFS's Bash owns the herdr server, as on a fresh install before the
-# takeover, or when the user's config uses one of the keys; ACFS's palette
-# then keeps prefix+a. A user who opted out of nhm's keys (exit 6) gets
-# neither (acfs-uetm F1). bind --auto never takes a key or binding the
-# user's herdr config has. Install starts no herdr server, so there is none
-# to reload. Never fails the install.
+# menu; nhm_hooks.sh plugin bind, acfs-9hkh.50). It runs after
+# acfs_install_nhm_owner: nhm bind refuses while ACFS's Bash owns the herdr
+# server, and when the user's config uses one of the keys. Then nothing is
+# bound, and the log says why (acfs-9hkh.93). A user who opted out of
+# nhm's keys (exit 6) keeps that (acfs-uetm F1). Install starts no herdr
+# server, so there is none to reload. Never fails the install.
 acfs_install_herdr_keys() {
     local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh" out="" rc=0
-    if [[ -f "$nhm_hooks" ]] && acfs_legacy_module_selected "stack.nhm"; then
-        out="$(run_as_target bash "$nhm_hooks" plugin bind --no-reload 2>&1)" || rc=$?
-        out="${out##*$'\n'}"
-        out="${out#nhm_hooks: }"
-        case "$rc" in
-            0|6) log_detail "$out"; return 0 ;;
-            3|5) log_detail "$out" ;;
-            *) log_warn "nhm's herdr plugin or keys were not set up (optional): $out; ACFS's palette keeps prefix+a" ;;
-        esac
+    if [[ ! -f "$nhm_hooks" ]] || ! acfs_legacy_module_selected "stack.nhm"; then
+        return 0
     fi
-    try_step "Binding the command palette to prefix+a in herdr" \
-        run_as_target bash "$ACFS_HOME/scripts/lib/palette.sh" bind --auto --no-reload || true
+    out="$(run_as_target bash "$nhm_hooks" plugin bind --no-reload 2>&1)" || rc=$?
+    out="${out##*$'\n'}"
+    out="${out#nhm_hooks: }"
+    case "$rc" in
+        0|3|5|6) log_detail "$out" ;;
+        *) log_warn "nhm's herdr plugin or keys were not set up (optional): $out" ;;
+    esac
+    return 0
 }
 
 # dcg's Bash guard for Codex (stack.dcg; nhm_hooks.sh codex-dcg,
@@ -11130,7 +11152,6 @@ finalize() {
     try_step "Setting lib scripts permissions" $SUDO chmod 755 "$ACFS_HOME/scripts/lib/"*.sh "$ACFS_HOME/scripts/nightly-update.sh" || return 1
     try_step "Setting generated scripts permissions" $SUDO find "$ACFS_HOME/scripts/generated" -maxdepth 1 -type f -name '*.sh' -exec chmod 755 {} + || return 1
     try_step "Setting scripts ownership" acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/scripts" || return 1
-    acfs_install_herdr_keys
     try_step "Configuring ACFS nightly update timer" configure_acfs_nightly_timer || return 1
 
     # Install newproj command scripts (used by acfs newproj CLI and TUI wizard)
@@ -11181,6 +11202,10 @@ finalize() {
     try_step "Setting acfs permissions" $SUDO chmod 755 "$ACFS_HOME/bin/acfs" || return 1
     try_step "Setting acfs ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/acfs" || return 1
     try_step "Linking acfs command" acfs_link_primary_bin_command "$ACFS_HOME/bin/acfs" "acfs" || return 1
+    # nhm's takeover reads the Bash's state with the acfs command just
+    # installed, and nhm's keys need nhm as the owner (acfs-9hkh.93).
+    acfs_install_nhm_owner
+    acfs_install_herdr_keys
 
     # State layer (acfs-ioo3.3): where the launcher mounted a state volume
     # (/etc/acfs/state), install the lease unit that keeps the volume to

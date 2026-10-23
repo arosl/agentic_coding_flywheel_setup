@@ -61,7 +61,7 @@ export const manifestCommands: ManifestCommand[] = [
     cliName: "brenner",
     cliAliases: [],
     description: "Brenner Bot - research session manager with hypothesis tracking",
-    commandExample: "brenner cockpit start --skip-ntm --skip-broadcast ...",
+    commandExample: "brenner cockpit start --thread-id RS-001 --to Claude,Codex ...",
     docsUrl: "https://github.com/Dicklesworthstone/brenner_bot",
   },
   {
