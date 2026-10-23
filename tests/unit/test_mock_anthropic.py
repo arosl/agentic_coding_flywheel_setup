@@ -294,6 +294,17 @@ class ResponsesAPI(unittest.TestCase):
 
 
 class Script(unittest.TestCase):
+    def test_a_reply_line_is_the_turns_reply(self):
+        mock = Mock(script=["first"])
+        self.addCleanup(mock.close)
+        _, body = mock.post("/v1/messages", user("Say it.\nmock-reply: You've hit your limit · resets 5pm (UTC)"))
+        self.assertEqual(json.loads(body)["content"][0]["text"], "You've hit your limit · resets 5pm (UTC)")
+        _, body = mock.post("/v1/messages", user("quoted: mock-reply: no"))
+        self.assertEqual(json.loads(body)["content"][0]["text"], "mock reply 2")
+        _, body = mock.post("/v1/responses", {"model": "m", "stream": False, "input": [
+            {"role": "user", "content": [{"type": "input_text", "text": "mock-reply: codex says"}]}]})
+        self.assertEqual(json.loads(body)["output"][0]["content"][0]["text"], "codex says")
+
     def test_turns_in_order_then_default(self):
         mock = Mock(script=["first", {"text": "second, slowly", "delay": 0.2}])
         self.addCleanup(mock.close)

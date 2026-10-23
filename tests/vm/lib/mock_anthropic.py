@@ -39,6 +39,10 @@ takes no turn. A helper request never calls a tool, and a compaction
 that carries tool results (one in the middle of a turn) is answered as
 a compaction.
 
+Reply: a prompt line 'mock-reply: TEXT', at the start of the line, makes
+TEXT the turn's reply on either API, ahead of the script (the turn still
+counts), so a step can put a line on the agent's screen.
+
 Context (Messages API): a prompt line 'mock-context: N' has the turn's
 reply report N input tokens, so Claude Code finds its context full and
 compacts before it sends the tool results, in the middle of the turn,
@@ -88,6 +92,9 @@ TOOL_LINE = re.compile(r"^mock-tool: (\{.*\})[ \t]*$", re.M)
 # A prompt line that has the turn's reply report that many input tokens,
 # so Claude Code finds its context full and compacts before it goes on.
 CONTEXT_LINE = re.compile(r"^mock-context: ([0-9]{1,9})[ \t]*$", re.M)
+# A prompt line whose text is the turn's reply (a line on the agent's
+# screen, such as a usage-limit message).
+REPLY_LINE = re.compile(r"^mock-reply: (.+?)[ \t]*$", re.M)
 
 
 def says(text, word):
@@ -161,6 +168,9 @@ class State:
         with self.lock:
             self.turn += 1
             n = self.turn
+        asked = REPLY_LINE.search(text)
+        if asked:
+            return asked.group(1), self.delay
         if n <= len(self.script):
             entry = self.script[n - 1]
             if isinstance(entry, str):
