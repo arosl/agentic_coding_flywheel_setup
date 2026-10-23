@@ -142,7 +142,7 @@ run_update update_nhm nhm
 NHM_AMD64="linux-amd64=$(awk '/^  nhm_archive_linux_amd64:$/ { f = 1 } f && /sha256:/ { gsub(/[" ]|sha256:/, ""); print; exit }' "$REPO_ROOT/checksums.yaml")"
 NHM_ARM64="linux-arm64=$(awk '/^  nhm_archive_linux_arm64:$/ { f = 1 } f && /sha256:/ { gsub(/[" ]|sha256:/, ""); print; exit }' "$REPO_ROOT/checksums.yaml")"
 check "update_nhm: installs the release the pinned URL names, with its archive pins from checksums.yaml" \
-    has "RUN nhm 0.1.11: update_run_verified_installer nhm --version 0.1.11 --archive-sha256 $NHM_AMD64 --archive-sha256 $NHM_ARM64"
+    has "RUN nhm 0.1.12: update_run_verified_installer nhm --version 0.1.12 --archive-sha256 $NHM_AMD64 --archive-sha256 $NHM_ARM64"
 
 DROP_PIN=nhm_archive_linux_arm64 run_update update_nhm nhm
 check "update_nhm: a missing archive pin installs nothing" lacks "RUN nhm 0"
