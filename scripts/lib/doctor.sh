@@ -2856,6 +2856,12 @@ check_core_tools() {
     # release signatures with it and fails closed without it. (The arosl
     # caam fork's installer checks ACFS's archive pins instead, acfs-7mu.3.)
     check_command "tool.minisign" "minisign (Agent Mail release verification)" "minisign" "$(doctor_pkg_install_hint minisign)"
+    # age encrypts `acfs state export` archives, and apr computes its
+    # convergence signals with bc. cli.modern installs both, and
+    # _is_bespoke_covered skips its manifest checks as covered here
+    # (acfs-5mkj).
+    check_command "tool.age" "age (acfs state export encryption)" "age" "$(doctor_pkg_install_hint age)"
+    check_command "tool.bc" "bc (apr convergence signals)" "bc" "$(doctor_pkg_install_hint bc)"
     check_command "tool.dig" "dig (dnsutils)" "dig" "sudo apt-get -o DPkg::Lock::Timeout=120 install -y dnsutils"
     check_command "tool.nc" "nc (netcat-openbsd)" "nc" "sudo apt-get -o DPkg::Lock::Timeout=120 install -y netcat-openbsd"
     check_ast_grep
