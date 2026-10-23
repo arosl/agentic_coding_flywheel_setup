@@ -593,12 +593,17 @@ state_private_gid() {
 # A row's top when another account can reach what is below it: it
 # grants other access, or group access through a group that isn't the
 # user's private one. Below a top that grants neither, modes expose
-# nothing (a umask-002 file inside a 0700 directory).
+# nothing (a umask-002 file inside a 0700 directory). With an ACL (ls
+# marks it with a + after the mode) the group bits are the ACL's mask,
+# which named users and groups share, so then any group bit counts.
 state_top_exposure() {
-    local target="$1" private_gid="$2"
+    local target="$1" private_gid="$2" listing
     local -a group=(-perm /0070)
     [[ -e "$target" ]] || return 0
-    [[ -n "$private_gid" ]] && group+=(! -gid "$private_gid")
+    listing="$(ls -ld -- "$target" 2>/dev/null)" || listing=""
+    if [[ -n "$private_gid" && "${listing:10:1}" != "+" ]]; then
+        group+=(! -gid "$private_gid")
+    fi
     find "$target" -maxdepth 0 \( -type f -o -type d \) \( -perm /0007 -o \( "${group[@]}" \) \) \
         -printf '%m %p\n' 2>/dev/null || true
 }
@@ -1406,8 +1411,9 @@ state_cmd_doctor() {
     fi
 
     # Credentials that sit on another filesystem than the home: every
-    # marker, and a private row that is one file (~/.claude.json, which
-    # holds Claude Code's account state but is no marker).
+    # marker (caam's is its vault directory), and a private row that is
+    # one file (~/.claude.json, which holds Claude Code's account state
+    # but is no marker).
     local marker dev_home dev off=() files
     dev_home="$(stat -c %d "$STATE_HOME" 2>/dev/null || echo "")"
     for row in "${ROWS[@]}"; do
@@ -1416,7 +1422,7 @@ state_cmd_doctor() {
         files="${markers//,/ }"
         [[ "$policy" == "private" && -f "$STATE_HOME/$path" ]] && files+=" $path"
         for marker in $files; do
-            [[ -f "$STATE_HOME/$marker" ]] || continue
+            [[ -e "$STATE_HOME/$marker" ]] || continue
             dev="$(stat -c %d "$STATE_HOME/$marker" 2>/dev/null || echo "")"
             [[ -n "$dev_home" && "$dev" != "$dev_home" ]] && off+=("$marker")
         done

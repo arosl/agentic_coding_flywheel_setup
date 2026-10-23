@@ -169,6 +169,17 @@ fi
 PATH="${PATH#*:}" exec stat "$@"
 STUB
 
+# ls: ACL_ON names a path that lists with an ACL's + after its mode, as
+# setfacl leaves it; everything else goes to the real ls.
+cat >"$BIN/ls" <<'STUB'
+#!/usr/bin/env bash
+if [[ -n "${ACL_ON:-}" && "$*" == "-ld -- $ACL_ON" ]]; then
+    PATH="${PATH#*:}" ls -ld -- "$ACL_ON" | sed 's/^\(..........\)./\1+/'
+    exit 0
+fi
+PATH="${PATH#*:}" exec ls "$@"
+STUB
+
 # getent: the user's primary group is the user's alone, unless
 # GROUP_MEMBERS lists members or PASSWD_EXTRA adds an account (the
 # runner's own groups vary).
@@ -578,7 +589,19 @@ check "doctor warns on it when the group has another member" \
 PASSWD_EXTRA="other:x:4242:$(id -g)::/home/o:/bin/sh" run "$A" doctor --json
 check "doctor warns on it when another account has the group as its own" \
     bash -c 'jq -e ".[] | select(.id == \"state.modes\" and .status == \"warn\" and (.details | contains(\"codex\")))" "$1" >/dev/null' _ "$OUT"
+# An ACL makes the group bits its mask, shared with named users: 0750
+# in the private group lets such a user in.
+chmod 0750 "$A/home/.codex"
+ACL_ON="$A/home/.codex" run "$A" doctor --json
+check "doctor warns on a row top with an ACL and a group bit, though in the private group" \
+    bash -c 'jq -e ".[] | select(.id == \"state.modes\" and .status == \"warn\" and (.details | contains(\"codex\")))" "$1" >/dev/null' _ "$OUT"
 chmod 0700 "$A/home/.codex"
+ACL_ON="$A/home/.codex" run "$A" doctor --json
+check "doctor passes a 0700 row top with an ACL, whose mask grants nothing" \
+    bash -c 'jq -e ".[] | select(.id == \"state.modes\" and .status == \"pass\")" "$1" >/dev/null' _ "$OUT"
+OFF_DEVICE="$A/home/.local/share/caam/vault" run "$A" doctor --json
+check "doctor fails the credentials when a mount covers caam's vault directory" \
+    bash -c 'jq -e ".[] | select(.id == \"state.credentials\" and .status == \"fail\" and .details == \"on another filesystem than the home: .local/share/caam/vault\")" "$1" >/dev/null' _ "$OUT"
 LEASE_ACTIVE=failed LEASE_RESULT=exit-code run "$A" doctor --json
 check "doctor fails the lease when its unit failed" \
     bash -c 'jq -e ".[] | select(.id == \"state.lease\" and .status == \"fail\")" "$1" >/dev/null' _ "$OUT"
