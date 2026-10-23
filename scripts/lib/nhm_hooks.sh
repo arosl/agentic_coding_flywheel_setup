@@ -1085,6 +1085,9 @@ nhm_hooks_owner() {
         [[ "$rc" -eq 0 ]] || break
     done
     err="$(jq -r '.error // empty' <<<"$out" 2>/dev/null || true)"
+    # nhm joins one refusal per token or wake entry with newlines; the note
+    # is one line, since install and update log only its last line.
+    err="${err//$'\n'/; }"
     case "$rc" in
         0)
             done_line="$(jq -r '"generation \(.result.owner.generation); agents imported: \(.result.bindings.imported // 0)"' <<<"$out" 2>/dev/null || true)"

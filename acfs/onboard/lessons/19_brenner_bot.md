@@ -75,18 +75,28 @@ brenner session publish --thread-id RS-001 --to Claude,Codex
 
 ### Running the Agents in herdr
 
-ACFS installs no ntm, so start the research agents yourself, one per herdr
-pane, and have brenner send the kickoff through Agent Mail only:
+ACFS installs the arosl fork of brenner, whose cockpit runs the research
+agents through nhm in ntm's place. `brenner cockpit start` starts them in
+herdr with `nhm spawn`, and sends the kickoff through Agent Mail and
+`nhm send --all`:
 
 ```bash
 brenner cockpit start --thread-id RS-001 --sender <YourAgentName> --to Claude,Codex \
-  --role-map <roles> --excerpt-file excerpt.md --question "hypothesis about X" \
-  --skip-ntm --skip-broadcast
+  --role-map <roles> --excerpt-file excerpt.md --question "hypothesis about X"
 ```
 
-An idle agent doesn't read its mail by itself. Tell it to with
-`herdr agent prompt <agent> "Read your Agent Mail inbox."`.
-Check brenner's setup with `brenner doctor --skip-ntm`.
+The cockpit starts one Claude, one Codex and one Antigravity agent. To
+start others, give nhm's spawn arguments, for example
+`--ntm-args="--cc=2 --cod=1"`. Add `--dry-run` to see the nhm commands
+first. Check brenner's setup with `brenner doctor`: it checks nhm in ntm's
+place.
+
+Without nhm (stack.nhm not selected), start the agents yourself, one per
+herdr pane, and add `--skip-ntm --skip-broadcast`: brenner then sends the
+kickoff through Agent Mail only. An idle agent doesn't read its mail by
+itself. Tell it to with
+`herdr agent prompt <agent> "Read your Agent Mail inbox."`, and check the
+setup with `brenner doctor --skip-ntm`.
 
 ### Session Outputs
 

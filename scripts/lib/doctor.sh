@@ -3220,6 +3220,57 @@ _acfs_doctor_nhm_codex_trust() {
     fi
 }
 
+# Who drives agents on the default herdr server (acfs-9hkh.93): every
+# install ends with nhm as the owner, because install.sh and acfs update
+# run nhm's takeover (nhm_hooks.sh owner take: a dry run first; it refuses
+# rather than leave a Bash agent behind). owner.toml in nhm's instance
+# directory names the owner, and a missing file is ACFS's Bash, as
+# herdr_agents.sh reads it. Without stack.nhm, ACFS's Bash tools stay the
+# owner by choice. Read-only.
+check_nhm_owner() {
+    local label="herdr server owner" home="" state_root="" dir="" inst="" socket="" owner=""
+
+    if ! doctor_binary_exists "nhm"; then
+        check "stack.nhm.owner" "$label" "skip" "nhm not installed: ACFS's Bash tools (acfs agents) drive agents"
+        return
+    fi
+    home="$(doctor_runtime_home)"
+    # Run as another user (root), the doctor reads the target's default path.
+    state_root="${XDG_STATE_HOME:-$home/.local/state}/nhm"
+    if [[ -n "${TARGET_USER:-}" && "$TARGET_USER" != "$(id -un 2>/dev/null || true)" ]]; then
+        state_root="$home/.local/state/nhm"
+    fi
+    # The instance ACFS enrolls (--session default); nhm writes the keys as
+    # session = "default" and owner = "nhm".
+    for dir in "$state_root"/inst-*/; do
+        dir="${dir%/}"
+        [[ "${dir##*/}" =~ ^inst-[0-9a-f]{12}$ && -f "$dir/instance.toml" ]] || continue
+        if grep -qx 'session = "default"' "$dir/instance.toml" 2>/dev/null; then
+            inst="$dir"
+            break
+        fi
+    done
+    if [[ -z "$inst" ]]; then
+        check "stack.nhm.owner" "$label" "skip" "nhm is not enrolled for the default herdr server (see the nhm check)"
+        return
+    fi
+    socket="$(sed -n 's/^socket_path = "\(.*\)"$/\1/p' "$inst/instance.toml" 2>/dev/null || true)"
+    if [[ ! -e "$inst/owner.toml" ]]; then
+        owner="acfs-bash"
+    else
+        owner="$(sed -n -E "s/^[[:space:]]*owner[[:space:]]*=[[:space:]]*[\"']([a-z-]+)[\"'][[:space:]]*(#.*)?$/\1/p" "$inst/owner.toml" 2>/dev/null | head -n 1 || true)"
+    fi
+    case "$owner" in
+        nhm) check "stack.nhm.owner" "$label" "pass" "nhm drives agents on the default herdr server" ;;
+        acfs-bash) check "stack.nhm.owner" "$label" "warn" \
+            "ACFS's Bash tools drive agents on the default herdr server, not nhm, so nhm's keys stay unbound" \
+            "Run: nhm admin takeover --dry-run --socket ${socket:-<herdr.sock>} (it lists what it imports or why it refuses), then the same with --yes; acfs update runs both" ;;
+        *) check "stack.nhm.owner" "$label" "warn" \
+            "$inst/owner.toml names neither nhm nor acfs-bash, so both refuse every agent change" \
+            "Repair it by hand (owner = \"nhm\", generation = <n>, updated_at = <UTC time>); nhm admin takeover --dry-run --socket ${socket:-<herdr.sock>} names the parse error" ;;
+    esac
+}
+
 # nhm's maintenance pass (stack.nhm, plan-v8 F.29): ACFS runs `nhm
 # maintain --once` from nhm-maintain.timer (scripts/lib/nhm_maintain_timer.sh).
 # Without the timer only nhm's board or `nhm maintain --loop` runs it.
@@ -3289,8 +3340,9 @@ check_nhm_plugin() {
         bound) check "stack.nhm.plugin" "$label" "pass" "linked; nhm's keys are bound ([keys] in nhm's config names them)" ;;
         opted-out) check "stack.nhm.plugin" "$label" "pass" \
             "linked; the user unbound nhm's keys, and acfs update keeps it so (nhm bind --force binds them)" ;;
-        linked) check "stack.nhm.plugin" "$label" "pass" \
-            "linked; prefix+a is ACFS's palette until nhm owns the herdr server (after the takeover: nhm bind)" ;;
+        linked) check "stack.nhm.plugin" "$label" "warn" \
+            "linked, but nhm's keys are not bound: nhm bind binds them once nhm owns the herdr server (stack.nhm.owner) and no key of the user's config is in the way" \
+            "Run: bash $helper plugin bind (it names why nhm bind refuses), or acfs update" ;;
         no-plugin) check "stack.nhm.plugin" "$label" "skip" "this nhm has no herdr plugin" ;;
         unlinked) check "stack.nhm.plugin" "$label" "warn" "nhm's herdr plugin is not linked, so its board and menu are missing" \
             "Run: bash $helper plugin link (or acfs update)" ;;
@@ -3929,6 +3981,7 @@ check_stack() {
     # Agent Mail Stop hook for Claude Code and Codex
     check_agent_mail_stop_hook
     check_nhm
+    check_nhm_owner
     check_nhm_maintain
     check_nhm_plugin
     check_nhm_quota_statusline
