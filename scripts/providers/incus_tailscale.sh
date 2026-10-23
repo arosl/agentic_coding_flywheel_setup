@@ -18,16 +18,23 @@
 #
 # The sidecar keeps its node state on its own volume,
 # acfs-ts-<machine>-state, so rebuilding the sidecar keeps its login. Its
-# NIC carries acfs-vm-egress: it reaches the internet (the coordination
-# server, DERP) and no private range; bridge ACLs don't filter traffic
-# between instances on one bridge, so it still reaches the machine.
+# NIC carries acfs-sidecar-egress, which host-setup creates: the internet
+# (the coordination server, DERP), DNS and DHCP on the bridge's gateway,
+# and TCP to the instances on the bridge; no other private range. An ACL
+# on a NIC also filters traffic to the other instances on its bridge, so
+# that ACL leaves the bridge's subnet open for TCP, or serve couldn't reach
+# the machine. It allows the gateway's DNS and DHCP itself rather than
+# relying on Incus's baseline rules, which miss a unicast lease renewal.
+# A sidecar that gets no IPv4 address stops the run within a minute.
 #
 # Re-running is safe: an existing sidecar must be this machine's (its
 # user.acfs.tailscale-for) and is reused as it is, a login is kept, a
 # forward already in place is kept, and a different forward on a port is
-# refused, never changed. The machine itself is never changed. The auth key reaches the
-# sidecar on stdin into a file only root can read, and is removed when
-# `tailscale up` returns; it is never in argv or in the output.
+# refused, never changed. A sidecar whose NIC carries another ACL is
+# warned about and left as it is. The machine itself is never changed.
+# The auth key reaches the sidecar on stdin into a file only root can
+# read, and is removed when `tailscale up` returns; it is never in argv or
+# in the output.
 #
 # Progress goes to stderr; stdout carries only the tailnet name.
 # ============================================================
@@ -51,11 +58,15 @@ SIDECAR_LAUNCH_ARGS=(-p default
     -c boot.autostart=true)
 ROOT_SIZE="4GiB"
 STATE_SIZE="1GiB"
-# Only the internet: the launcher and host-setup create it.
-ACL_NAME="acfs-vm-egress"
+# The internet, the gateway's DNS and DHCP, and TCP on the bridge: host-setup
+# creates it.
+ACL_NAME="acfs-sidecar-egress"
 TARGET_USER="ubuntu"
 AUTH_KEY_PATH="/run/acfs-tailscale-authkey"
 AGENT_TIMEOUT_SECONDS=300
+# Polls, 3 s apart, for an IPv4 address: a lease takes seconds, and without
+# one cloud-init would only time out.
+LEASE_POLLS=20
 CLOUD_INIT_TIMEOUT_SECONDS=600
 INCUS_ENV_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/acfs/incus.env"
 
@@ -220,7 +231,7 @@ machine_network() {
 
 check_acl() {
     incus_run network acl show "$(qualified "$ACL_NAME")" >/dev/null 2>&1 \
-        || die "network ACL $ACL_NAME doesn't exist; run 'scripts/providers/incus.sh host-setup' (or create the machine) first" 1
+        || die "network ACL $ACL_NAME doesn't exist; run 'scripts/providers/incus.sh host-setup' on the Incus host first (re-running it adds what is missing)" 1
 }
 
 user_data() {
@@ -263,14 +274,20 @@ ensure_state_volume() {
 
 # Creates the sidecar stopped, attaches its state and starts it. An existing
 # sidecar must be this machine's; it is started if stopped, and its state
-# device added if an earlier run stopped before that.
+# device added if an earlier run stopped before that. Its NIC's ACL is
+# never changed, only warned about.
 ensure_sidecar() {
-    local nic="$1" sidecar_json owner
+    local nic="$1" sidecar_json owner acls
     if sidecar_json="$(api_get "/1.0/instances/$sidecar")"; then
         owner="$(jq -r '.config["user.acfs.tailscale-for"] // ""' <<<"$sidecar_json")"
         [[ "$owner" == "$machine" ]] \
             || die "an instance $sidecar exists that isn't this machine's sidecar (user.acfs.tailscale-for='$owner'); left untouched" 1
         log_info "Using the existing sidecar $(qualified "$sidecar")"
+        # The command sets the default actions too: without them the ACL's
+        # default rejects everything it doesn't allow, the internet as well.
+        acls="$(jq -r --arg n "$nic" '.expanded_devices[$n]["security.acls"] // ""' <<<"$sidecar_json")"
+        [[ "$acls" == "$ACL_NAME" ]] \
+            || log_warn "the sidecar's NIC $nic carries $([[ -n "$acls" ]] && echo "the ACL $acls" || echo "no ACL"), not $ACL_NAME; it is left as it is. To move it: incus config device set $(qualified "$sidecar") $nic security.acls=$ACL_NAME security.acls.default.egress.action=allow security.acls.default.ingress.action=allow"
     else
         log_step "Creating the sidecar $(qualified "$sidecar") from $IMAGE (512 MiB, $ROOT_SIZE root on pool $ACFS_INCUS_POOL)"
         incus_run init "$IMAGE" "$(qualified "$sidecar")" "${SIDECAR_LAUNCH_ARGS[@]}" \
@@ -299,6 +316,21 @@ sidecar_exec() {
     incus_run exec "$(qualified "$sidecar")" -- "$@"
 }
 
+# Without a lease cloud-init can't install tailscale, so a sidecar that has
+# no global IPv4 address after LEASE_POLLS polls stops the run here.
+wait_ipv4() {
+    local poll
+    log_step "Waiting for the sidecar's IPv4 address (DHCP on the bridge)"
+    for ((poll = 1; poll <= LEASE_POLLS; poll++)); do
+        api_get "/1.0/instances/$sidecar/state" \
+            | jq -e '[.network // {} | to_entries[] | select(.key != "lo")
+                | .value.addresses[]? | select(.family == "inet" and .scope == "global")] | length > 0' \
+                >/dev/null 2>&1 && return 0
+        ((poll == LEASE_POLLS)) || sleep 3
+    done
+    die "the sidecar has no IPv4 address about $((LEASE_POLLS * 3))s after its start: no DHCP lease. Check the ACL on its NIC (it should be $ACL_NAME): incus config device show $(qualified "$sidecar")" 1
+}
+
 wait_ready() {
     local deadline=$((SECONDS + AGENT_TIMEOUT_SECONDS)) output state exit_code
     log_step "Waiting for the sidecar to accept incus exec"
@@ -306,6 +338,7 @@ wait_ready() {
         ((SECONDS < deadline)) || die "the sidecar didn't accept incus exec within ${AGENT_TIMEOUT_SECONDS}s" 1
         sleep 3
     done
+    wait_ipv4
     deadline=$((SECONDS + CLOUD_INIT_TIMEOUT_SECONDS))
     log_step "Waiting for cloud-init (installs tailscale)"
     # As in incus.sh: `cloud-init status` exits 0 while running or done, 1 on

@@ -3,7 +3,8 @@
 # scripts/providers/incus_tailscale.sh (incus.sh tailscale) against a STUB incus
 #
 # Proves the sidecar's decisions: what it is created with, that it joins
-# the machine's bridge behind acfs-vm-egress, that tailscaled runs in
+# the machine's bridge behind acfs-sidecar-egress, that a sidecar without
+# a lease stops the run before cloud-init's wait, that tailscaled runs in
 # userspace mode, that the auth key never reaches argv or output and is
 # removed in the sidecar, which forwards it serves, and that a re-run
 # reuses what exists and refuses what it would have to change. The stub
@@ -40,12 +41,20 @@ check() {
 # ------------------------------------------------------------
 # The stub. incus logs "<stdin>\t<argv>" per call ("null" when stdin is
 # /dev/null), drops a "r:" remote prefix from every argument, and keeps
-# each API object as $STUB_DIR/api/<path>.json with "/" as "_". `exec`
-# plays the sidecar: cloud-init answers $STUB_CLOUD_INIT, getent resolves
-# only $STUB_RESOLVES, and Tailscale's state is $STUB_DIR/ts.json (status)
-# and $STUB_DIR/serve.json (serve status).
+# each API object as $STUB_DIR/api/<path>.json with "/" as "_". A running
+# instance's state has a global IPv4 address once it has been polled more
+# than $STUB_LEASE_AFTER times (default 0). `exec` plays the sidecar:
+# cloud-init answers $STUB_CLOUD_INIT, getent resolves only $STUB_RESOLVES,
+# and Tailscale's state is $STUB_DIR/ts.json (status) and
+# $STUB_DIR/serve.json (serve status). sleep only counts, in
+# $STUB_DIR/sleeps.
 # ------------------------------------------------------------
 mkdir -p "$WORK/bin"
+cat >"$WORK/bin/sleep" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_DIR/sleeps"
+STUB
+chmod +x "$WORK/bin/sleep"
 cat >"$WORK/bin/incus" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -62,6 +71,18 @@ edit() { local file; file="$(obj "$1")"; jq "${@:2}" "$file" >"$file.new"; mv "$
 ts() { local file="$STUB_DIR/$1"; jq "${@:2}" "$file" >"$file.new"; mv "$file.new" "$file"; }
 
 case "$1 ${2:-}" in
+    "query "*/state)
+        instance="$(obj "${2%/state}")"
+        [[ -f "$instance" ]] || { echo "Error: Not Found" >&2; exit 1; }
+        polls=$(($(cat "$STUB_DIR/state-polls" 2>/dev/null || echo 0) + 1))
+        printf '%s\n' "$polls" >"$STUB_DIR/state-polls"
+        lease=false
+        if [[ "$(jq -r .status "$instance")" == Running ]] && ((polls > ${STUB_LEASE_AFTER:-0})); then lease=true; fi
+        jq -n --argjson lease "$lease" '{network: {
+            lo: {addresses: [{family: "inet", address: "127.0.0.1", scope: "local"}]},
+            eth0: {addresses: ([{family: "inet6", address: "fe80::216:3eff:fe00:1", scope: "link"}]
+                + if $lease then [{family: "inet", address: "10.0.0.9", scope: "global"}] else [] end)}}}'
+        ;;
     "query "*)
         [[ -f "$(obj "$2")" ]] || { echo "Error: Not Found" >&2; exit 1; }
         cat "$(obj "$2")"
@@ -79,7 +100,19 @@ case "$1 ${2:-}" in
         printf '%s\n' "${@:4}" >"$STUB_DIR/init.args"
         owner=""
         for a in "${@:4}"; do [[ "$a" != user.acfs.tailscale-for=* ]] || owner="${a#*=}"; done
-        jq -n --arg o "$owner" '{status: "Stopped", config: {"user.acfs.tailscale-for": $o}, devices: {}}' >"$(obj "/1.0/instances/$3")"
+        # Each "-d <device>,<key>=<value>" becomes that device's key, as
+        # incus init's overrides do (the stub expands no profile).
+        devices='{}'
+        prev=""
+        for a in "${@:4}"; do
+            if [[ "$prev" == -d ]]; then
+                kv="${a#*,}"
+                devices="$(jq -c --arg d "${a%%,*}" --arg k "${kv%%=*}" --arg v "${kv#*=}" '.[$d][$k] = $v' <<<"$devices")"
+            fi
+            prev="$a"
+        done
+        jq -n --arg o "$owner" --argjson d "$devices" \
+            '{status: "Stopped", config: {"user.acfs.tailscale-for": $o}, devices: $d, expanded_devices: $d}' >"$(obj "/1.0/instances/$3")"
         ;;
     "config device")
         # config device add <instance> <device> disk <key=value>...
@@ -144,7 +177,7 @@ new_case() {
     api /1.0/instances/dev '{status: "Running", config: {}, expanded_devices: {eth0: {type: "nic", network: "incusbr0", name: "eth0"}, root: {type: "disk", path: "/"}}}'
     api /1.0/profiles/default '{devices: {eth0: {type: "nic", network: "incusbr0", name: "eth0"}, root: {type: "disk", path: "/", pool: "acfs"}}}'
     api /1.0/networks/incusbr0 '{managed: true, type: "bridge", config: {"ipv4.address": "10.0.0.1/24"}}'
-    api /1.0/network-acls/acfs-vm-egress '{}'
+    api /1.0/network-acls/acfs-sidecar-egress '{}'
     jq -n '{BackendState: "NeedsLogin", Self: {DNSName: "dev.tail1234.ts.net."}}' >"$CASE/stub/ts.json"
     printf '{}\n' >"$CASE/stub/serve.json"
     printf '%s\n' "$KEY" >"$CASE/key"
@@ -158,6 +191,7 @@ run() {
     env -i PATH="$WORK/bin:/usr/bin:/bin" HOME="$CASE/home" STUB_DIR="$CASE/stub" \
         ${STUB_CLOUD_INIT:+STUB_CLOUD_INIT="$STUB_CLOUD_INIT"} \
         ${STUB_RESOLVES:+STUB_RESOLVES="$STUB_RESOLVES"} \
+        ${STUB_LEASE_AFTER:+STUB_LEASE_AFTER="$STUB_LEASE_AFTER"} \
         ${STUB_UP_FAILS:+STUB_UP_FAILS=1} ${STUB_NO_TAILSCALE:+STUB_NO_TAILSCALE=1} \
         bash "$SIDECAR" "$@" >"$CASE/out" 2>"$CASE/err" || status=$?
     printf '%s\n' "$status" >"$CASE/status"
@@ -195,7 +229,8 @@ check "with its own uid/gid range" init_has security.idmap.isolated=true
 check "with a hard memory limit" init_has limits.memory.enforce=hard
 check "marks whose sidecar it is" init_has user.acfs.tailscale-for=dev
 check "puts its root on the pool" init_has root,pool=acfs
-check "its NIC carries acfs-vm-egress" init_has eth0,security.acls=acfs-vm-egress
+check "its NIC carries acfs-sidecar-egress" init_has eth0,security.acls=acfs-sidecar-egress
+check "which lets traffic the ACL doesn't name through" init_has eth0,security.acls.default.egress.action=allow
 check "adds no host device" bash -c "! grep -qE 'unix-char|/dev/net/tun|nesting=true' '$CASE/stub/init.args'"
 check "user-data runs tailscaled in userspace mode" grep -qF -- '--tun=userspace-networking' "$CASE/stub/init.args"
 check "user-data installs tailscale from Tailscale's repository" grep -qF 'pkgs.tailscale.com/stable/ubuntu/$codename' "$CASE/stub/init.args"
@@ -219,6 +254,7 @@ run dev
 check "exits 0 without a key" status_is 0
 check "prints the same name" out_is dev.tail1234.ts.net
 check "creates nothing" created_nothing
+check "doesn't warn about the sidecar's own ACL" bash -c "! grep -qF 'is left as it is' '$CASE/err'"
 check "doesn't start a running sidecar" not_called "start acfs-ts-dev"
 check "doesn't log in again" bash -c "! grep -qE 'tailscale up|sh -c' '$CASE/stub/calls'"
 check "doesn't serve again" bash -c "! grep -q 'serve --bg' '$CASE/stub/calls'"
@@ -285,13 +321,48 @@ check "the key is in no argv, output or error" key_nowhere
 
 echo "== a half-made sidecar"
 new_case half
-api /1.0/instances/acfs-ts-dev '{status: "Stopped", config: {"user.acfs.tailscale-for": "dev"}, devices: {}}'
+api /1.0/instances/acfs-ts-dev '{status: "Stopped", config: {"user.acfs.tailscale-for": "dev"}, devices: {},
+    expanded_devices: {eth0: {type: "nic", network: "incusbr0", "security.acls": "acfs-sidecar-egress"}}}'
 api /1.0/storage-pools/acfs/volumes/custom/acfs-ts-dev-state '{config: {size: "1GiB"}}'
 run dev --auth-key-file "$CASE/key"
 check "exits 0" status_is 0
 check "doesn't create it again" bash -c "! grep -qP '\tinit ' '$CASE/stub/calls'"
 check "adds the missing state device" sidecar_is '.devices.state.source == "acfs-ts-dev-state"'
 check "starts it" called "start acfs-ts-dev"
+
+echo "== an older sidecar behind acfs-vm-egress"
+new_case oldacl
+api /1.0/instances/acfs-ts-dev '{status: "Running", config: {"user.acfs.tailscale-for": "dev"},
+    devices: {state: {type: "disk", pool: "acfs", source: "acfs-ts-dev-state", path: "/var/lib/tailscale"}},
+    expanded_devices: {eth0: {type: "nic", network: "incusbr0", "security.acls": "acfs-vm-egress"}}}'
+api /1.0/storage-pools/acfs/volumes/custom/acfs-ts-dev-state '{config: {size: "1GiB"}}'
+run dev --auth-key-file "$CASE/key"
+check "exits 0" status_is 0
+check "warns that its NIC carries the other ACL" err_has "the sidecar's NIC eth0 carries the ACL acfs-vm-egress, not acfs-sidecar-egress; it is left as it is"
+check "names the command that moves it, with the default actions that keep the internet open" \
+    err_has "incus config device set acfs-ts-dev eth0 security.acls=acfs-sidecar-egress security.acls.default.egress.action=allow security.acls.default.ingress.action=allow"
+check "doesn't change its devices" bash -c "! grep -qP '\tconfig device' '$CASE/stub/calls'"
+new_case noaclnic
+api /1.0/instances/acfs-ts-dev '{status: "Running", config: {"user.acfs.tailscale-for": "dev"},
+    devices: {state: {type: "disk", pool: "acfs", source: "acfs-ts-dev-state", path: "/var/lib/tailscale"}},
+    expanded_devices: {eth0: {type: "nic", network: "incusbr0"}}}'
+api /1.0/storage-pools/acfs/volumes/custom/acfs-ts-dev-state '{config: {size: "1GiB"}}'
+run dev --auth-key-file "$CASE/key"
+check "one with no ACL is warned about as well" err_has "the sidecar's NIC eth0 carries no ACL, not acfs-sidecar-egress"
+
+echo "== no DHCP lease"
+new_case nolease
+STUB_LEASE_AFTER=1000 run dev --auth-key-file "$CASE/key"
+check "exits 1" status_is 1
+check "says there is no lease and names the ACL" err_has "no DHCP lease. Check the ACL on its NIC (it should be acfs-sidecar-egress)"
+check "after 20 polls, 3 s apart" bash -c "[[ \$(cat '$CASE/stub/state-polls') == 20 && \$(grep -cx 3 '$CASE/stub/sleeps') == 19 ]]"
+check "before cloud-init's wait" not_called "cloud-init status"
+check "and before login" bash -c "! grep -qE 'tailscale up|sh -c' '$CASE/stub/calls'"
+new_case latelease
+STUB_LEASE_AFTER=4 run dev --auth-key-file "$CASE/key"
+check "a lease on the fifth poll is waited for" status_is 0
+check "with four pauses" bash -c "[[ \$(grep -cx 3 '$CASE/stub/sleeps') == 4 ]]"
+check "a link-local or loopback address is no lease" bash -c "[[ \$(cat '$CASE/stub/state-polls') == 5 ]]"
 
 echo "== an instance by that name that isn't the sidecar"
 new_case foreign
@@ -328,9 +399,11 @@ check "before login" bash -c "! grep -q 'sh -c' '$CASE/stub/calls'"
 
 echo "== what host-setup provides"
 new_case noacl
-rm "$CASE/stub/api/_1.0_network-acls_acfs-vm-egress.json"
+rm "$CASE/stub/api/_1.0_network-acls_acfs-sidecar-egress.json"
+api /1.0/network-acls/acfs-vm-egress '{}'
 run dev --auth-key-file "$CASE/key"
-check "a missing ACL exits 1" status_is 1
+check "a missing acfs-sidecar-egress exits 1, even with acfs-vm-egress there" status_is 1
+check "and says host-setup adds it" err_has "network ACL acfs-sidecar-egress doesn't exist; run 'scripts/providers/incus.sh host-setup'"
 check "and creates nothing" created_nothing
 new_case noenv
 rm "$CASE/home/.config/acfs/incus.env"

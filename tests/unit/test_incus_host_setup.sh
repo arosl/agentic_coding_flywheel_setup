@@ -258,12 +258,36 @@ check "stdout stays empty" stdout_empty
 check "creates the profile" config_is /1.0/profiles/acfs-swarm security.privileged false
 check "creates no project" not_called 'project create'
 check "creates no bridge" not_called 'network create'
-check "creates the vm ACL (the launcher and the sidecar use it)" \
+check "creates the vm ACL (the launcher uses it)" \
     jq_is /1.0/network-acls/acfs-vm-egress '[.egress[] | .action]' '["reject"]'
 check "swarm ACL: allows the host API on the gateway" acl_allows acfs-swarm-egress 10.20.30.1 tcp 8443
 check "swarm ACL: rejects SSH into 10/8 (no test bridge to allow)" acl_rejects acfs-swarm-egress 10.99.0.50 tcp 22
 check "swarm ACL: rejects ICMP into 10/8" acl_rejects acfs-swarm-egress 10.99.0.50 icmp4
 check "swarm ACL: allows the internet" acl_allows acfs-swarm-egress 1.1.1.1 tcp 443
+check "creates the sidecar ACL" called 'network acl create --quiet acfs-sidecar-egress'
+check "sidecar ACL: its description" \
+    jq_is /1.0/network-acls/acfs-sidecar-egress .description \
+    '"ACFS Tailscale sidecars: DNS and DHCP on the bridge'"'"'s gateway and TCP to the instances on the bridge; no other private ranges"'
+check "sidecar ACL: allows DNS over UDP on the gateway" acl_allows acfs-sidecar-egress 10.20.30.1 udp 53
+check "sidecar ACL: allows DNS over TCP on the gateway" acl_allows acfs-sidecar-egress 10.20.30.1 tcp 53
+check "sidecar ACL: allows a unicast DHCP renewal to the gateway" acl_allows acfs-sidecar-egress 10.20.30.1 udp 67
+check "sidecar ACL: rejects other UDP to the gateway" acl_rejects acfs-sidecar-egress 10.20.30.1 udp 123
+check "sidecar ACL: rejects UDP 68 to the gateway (a client port)" acl_rejects acfs-sidecar-egress 10.20.30.1 udp 68
+check "sidecar ACL: rejects SSH to the gateway" acl_rejects acfs-sidecar-egress 10.20.30.1 tcp 22
+check "sidecar ACL: rejects the host API on the gateway" acl_rejects acfs-sidecar-egress 10.20.30.1 tcp 8443
+check "sidecar ACL: allows SSH to the machine on the bridge" acl_allows acfs-sidecar-egress 10.20.30.7 tcp 22
+check "sidecar ACL: allows another forwarded port on the bridge" acl_allows acfs-sidecar-egress 10.20.30.254 tcp 8080
+check "sidecar ACL: rejects UDP to the bridge's instances" acl_rejects acfs-sidecar-egress 10.20.30.7 udp 53
+check "sidecar ACL: rejects the next subnet in 10/8" acl_rejects acfs-sidecar-egress 10.20.31.1 tcp 22
+check "sidecar ACL: rejects the rest of 10/8" acl_rejects acfs-sidecar-egress 10.99.0.50 tcp 22
+check "sidecar ACL: rejects the LAN" acl_rejects acfs-sidecar-egress 192.168.1.1 tcp 443
+check "sidecar ACL: rejects the tailnet's range" acl_rejects acfs-sidecar-egress 100.100.1.1 tcp 443
+check "sidecar ACL: rejects link-local (cloud metadata)" acl_rejects acfs-sidecar-egress 169.254.169.254 tcp 80
+check "sidecar ACL: rejects IPv6 ULA" acl_rejects acfs-sidecar-egress fd00::1 tcp 443
+check "sidecar ACL: rejects IPv6 link-local" acl_rejects acfs-sidecar-egress fe80::1 udp 53
+check "sidecar ACL: leaves DHCPv6 to multicast alone" acl_allows acfs-sidecar-egress ff02::1:2 udp 547
+check "sidecar ACL: allows the internet (coordination, DERP)" acl_allows acfs-sidecar-egress 1.1.1.1 tcp 443
+check "sidecar ACL: allows STUN" acl_allows acfs-sidecar-egress 1.1.1.1 udp 3478
 check "creates no certificate" not_called 'config trust'
 check "incus.env records the pool, and no test project or bridge" env_is acfs "$STORAGE_DIR"
 check "incus.env has no test lines" env_lacks 'ACFS_INCUS_PROJECT\|ACFS_INCUS_BRIDGE_TESTS'
@@ -351,6 +375,23 @@ run_setup --storage "$STORAGE_DIR" --test-project --rch-worker 192.168.5.20
 check "exits 1" rc_is 1
 check "names the ACL" err_has 'acfs-swarm-egress exists with other egress rules'
 check "changes nothing" no_creates
+
+echo "== re-run on a host set up before the sidecar's ACL"
+new_case nosidecaracl
+run_setup --storage "$STORAGE_DIR"
+rm "$CASE/api/_1.0_network-acls_acfs-sidecar-egress.json"
+: >"$CASE/calls"
+run_setup --storage "$STORAGE_DIR"
+check "exits 0" rc_is 0
+check "creates the sidecar ACL" called 'network acl create --quiet acfs-sidecar-egress'
+check "creates no other ACL" bash -c "[[ \$(grep -c 'network acl create' '$CASE/calls') == 1 ]]"
+check "the new ACL lets the sidecar reach the machine" acl_allows acfs-sidecar-egress 10.20.30.7 tcp 22
+: >"$CASE/calls"
+seed /1.0/network-acls/acfs-sidecar-egress "$(api /1.0/network-acls/acfs-sidecar-egress | jq '.egress |= map(select(.action != "allow")) + [{action: "allow", destination: "10.20.30.0/24", protocol: "udp", state: "enabled"}]')"
+run_setup --storage "$STORAGE_DIR"
+check "a sidecar ACL with other rules: exits 1" rc_is 1
+check "a sidecar ACL with other rules: names it" err_has 'acfs-sidecar-egress exists with other egress rules'
+check "a sidecar ACL with other rules: changes nothing" no_creates
 
 echo "== without --test-project, after a run that made the test bridge and stopped at the project"
 new_case bridgeonly

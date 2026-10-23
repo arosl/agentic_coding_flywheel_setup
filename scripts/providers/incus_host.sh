@@ -5,9 +5,10 @@
 # Prepares the hypervisor (the physical machine that runs Incus) once, as an
 # Incus admin there: the storage pool at the location you give, the
 # policy-only profile acfs-swarm for ACFS containers, and the egress ACLs
-# acfs-swarm-egress and acfs-vm-egress. With --test-project, for ACFS's own
-# tests, also the restricted project acfs-tests on its own bridge acfstest0,
-# and optionally a client certificate restricted to acfs-tests. It records
+# acfs-swarm-egress, acfs-vm-egress and acfs-sidecar-egress (the Tailscale
+# sidecar's). With --test-project, for ACFS's own tests, also the
+# restricted project acfs-tests on its own bridge acfstest0, and
+# optionally a client certificate restricted to acfs-tests. It records
 # the result in ${XDG_CONFIG_HOME:-~/.config}/acfs/incus.env, which incus.sh
 # reads.
 #
@@ -40,6 +41,8 @@ VM_ACL="acfs-vm-egress"
 # the launcher finds this ACL as its own.
 VM_ACL_DESCRIPTION="ACFS instances: no egress to private, CGNAT or link-local ranges"
 SWARM_ACL_DESCRIPTION="ACFS containers: the hypervisor's Incus API, SSH to the test instances and the rch workers; no other private ranges"
+SIDECAR_ACL="acfs-sidecar-egress"
+SIDECAR_ACL_DESCRIPTION="ACFS Tailscale sidecars: DNS and DHCP on the bridge's gateway and TCP to the instances on the bridge; no other private ranges"
 PRIVATE_V4=(10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16)
 PRIVATE_V6=(fc00::/7 fe80::/10)
 SWARM_API_PORT=8443
@@ -129,6 +132,8 @@ ${XDG_CONFIG_HOME:-~/.config}/acfs/incus.env.
 ACFS containers reach the internet, and of private addresses only the
 hypervisor's Incus API (8443 on their bridge's gateway), SSH and ping to the
 test instances on acfstest0 (with --test-project), and SSH to the rch workers.
+Tailscale sidecars (incus.sh tailscale) reach the internet, DNS and DHCP on
+the gateway, and TCP to the instances on that bridge.
 
 Re-running is safe: absent objects are created, and existing ones are checked
 and never changed. See scripts/providers/incus.md.
@@ -532,25 +537,32 @@ ensure_test_project() {
 }
 
 # ------------------------------------------------------------
-# The egress ACLs. Incus applies every reject before any allow, so the swarm
-# ACL's reject ranges leave out what the containers may reach, and the
-# narrower rejects then close the ports they may not. The bridge's DHCP and
-# DNS on the gateway still work: Incus puts those baseline rules before any
-# ACL's.
+# The egress ACLs. Incus applies every reject before any allow, so an ACL's
+# reject ranges leave out what the instances may reach, and the narrower
+# rejects then close the ports they may not.
+#
+# Incus 6.0.5's source, for an ACL on a bridged NIC (what the launcher and
+# the sidecar set): it needs the nftables firewall driver. Ahead of the
+# ACL, the NIC accepts only DHCPv4 from 0.0.0.0, DHCPv6 and router
+# solicitations to multicast, ARP and ND, and DNS to the bridge's own
+# addresses; a unicast lease renewal to the gateway meets the ACL. And the
+# instance's egress rejects also drop its traffic to the other instances on
+# the bridge, not only traffic leaving it.
 # ------------------------------------------------------------
 
-# The bridge the containers' NIC uses: the default profile's.
-swarm_gateway() {
+# The IPv4 address, with its prefix, of the bridge the containers' NIC
+# uses (the default profile's): "10.1.2.1/24", the gateway in its subnet.
+swarm_bridge_address() {
     local profile network json address
     profile="$(incus_get /1.0/profiles/default)" || die "could not read the default profile" 1
     network="$(jq -r '[.devices[] | select(.type == "nic") | .network // ""][0] // ""' <<<"$profile")"
-    [[ -n "$network" ]] || die "the default profile has no NIC on an Incus network; the swarm ACL needs a managed bridge" 1
+    [[ -n "$network" ]] || die "the default profile has no NIC on an Incus network; the egress ACLs need a managed bridge" 1
     json="$(incus_get "/1.0/networks/$network")" || die "could not read network $network" 1
     jq -e '.managed == true and .type == "bridge"' <<<"$json" >/dev/null \
-        || die "network $network isn't a managed bridge; the swarm ACL needs one" 1
+        || die "network $network isn't a managed bridge; the egress ACLs need one" 1
     address="$(jq -r '.config["ipv4.address"] // ""' <<<"$json")"
     cidr_parse "$address" >/dev/null || die "network $network has no IPv4 address (ipv4.address='$address')" 1
-    printf '%s\n' "${address%/*}"
+    printf '%s\n' "$address"
 }
 
 # rule <action> <destination> [protocol] [ports]: one rule as JSON.
@@ -600,6 +612,35 @@ swarm_acl_rules() {
 
 vm_acl_rules() {
     rule reject "$(join_by , "${PRIVATE_V4[@]}" "${PRIVATE_V6[@]}")" | jq -sc .
+}
+
+# The sidecar's ACL (incus.sh tailscale). Its bridge's subnet is left out of
+# the private-range rejects: `tailscale serve` dials the machine there over
+# TCP, and the ACL on the sidecar's NIC filters that traffic too. On the
+# gateway only DNS and DHCP pass (udp 67 is the server's port; the replies
+# come in), so a lease renewal doesn't depend on Incus's baseline rules.
+# IPv6's private ranges are rejected whole: DHCPv6 and router solicitations
+# go to multicast, outside them, and DNS has the gateway's IPv4 address.
+sidecar_acl_rules() {
+    local bridge_address="$1" gateway net reject=() others=() cidr
+    gateway="${bridge_address%/*}"
+    net="$(cidr_network "$bridge_address")"
+    for cidr in "${PRIVATE_V4[@]}"; do
+        while IFS= read -r cidr; do reject+=("$cidr"); done < <(cidr_subtract "$cidr" "$net")
+    done
+    reject+=("${PRIVATE_V6[@]}")
+    while IFS= read -r cidr; do others+=("$cidr"); done < <(cidr_subtract "$net" "$gateway/32")
+
+    {
+        rule reject "$(join_by , "${reject[@]}")"
+        rule reject "$gateway/32" tcp 1-52,54-65535
+        rule reject "$gateway/32" udp 1-52,54-66,68-65535
+        # A /32 bridge has no other address.
+        ((${#others[@]} == 0)) || rule reject "$(join_by , "${others[@]}")" udp
+        rule allow "$gateway/32" tcp 53
+        rule allow "$gateway/32" udp 53,67
+        rule allow "$net" tcp
+    } | jq -sc .
 }
 
 # The rules compared as sets, without the fields Incus fills in empty.
@@ -694,8 +735,9 @@ main() {
     add_memory_config
     test_project_image_servers
 
-    local gateway
-    gateway="$(swarm_gateway)"
+    local bridge_address gateway
+    bridge_address="$(swarm_bridge_address)"
+    gateway="${bridge_address%/*}"
     # The pool is named before anything is created, so that a hypervisor
     # already set up with another pool is refused untouched.
     [[ "$storage" == */* ]] || pool_name="$storage"
@@ -706,6 +748,7 @@ main() {
     [[ "$test_project" == false ]] || ensure_test_bridge
     ensure_acl "$VM_ACL" "$VM_ACL_DESCRIPTION" "$(vm_acl_rules)"
     ensure_acl "$SWARM_ACL" "$SWARM_ACL_DESCRIPTION" "$(swarm_acl_rules "$gateway")"
+    ensure_acl "$SIDECAR_ACL" "$SIDECAR_ACL_DESCRIPTION" "$(sidecar_acl_rules "$bridge_address")"
     if [[ "$test_project" == true ]]; then
         ensure_test_project
         ensure_client_cert
