@@ -3107,7 +3107,7 @@ EOF
         ' _ "$AUTOFIX_EXISTING_SH" "$chown_log" 2>/dev/null)
 
     if printf '%s\n' "$output" | jq -e '
-        (.chown_args | startswith("2001:3002 "))
+        (.chown_args | startswith("-h 2001:3002 "))
         and (.chown_args | contains(".acfs-clean."))
         and (.file_contents | contains("keep_me=1"))
         and (.file_contents | contains(".acfs") | not)

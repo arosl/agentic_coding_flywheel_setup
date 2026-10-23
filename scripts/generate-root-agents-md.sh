@@ -102,7 +102,7 @@ CANONICAL="$CANONICAL_DIR/flywheel-agent-guide.md"
 fix_ownership() {
     local path="$1"
     if [[ $EUID -eq 0 && "$TARGET_USER" != "root" ]]; then
-        chown "$TARGET_USER:$TARGET_USER" "$path" 2>/dev/null || true
+        chown -h "$TARGET_USER:$TARGET_USER" "$path" 2>/dev/null || true
     fi
 }
 

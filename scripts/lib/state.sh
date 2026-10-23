@@ -451,7 +451,7 @@ state_init() {
                 chown_bin="$(state_system_binary_path chown 2>/dev/null || true)"
                 id_bin="$(state_system_binary_path id 2>/dev/null || true)"
                 if [[ -n "$chown_bin" && -n "$id_bin" ]]; then
-                    "$sudo_bin" -n "$chown_bin" "$("$id_bin" -u):$("$id_bin" -g)" "$state_dir" 2>/dev/null || true
+                    "$sudo_bin" -n "$chown_bin" -h "$("$id_bin" -u):$("$id_bin" -g)" "$state_dir" 2>/dev/null || true
                 fi
             else
                 return 1
@@ -475,11 +475,11 @@ state_init() {
                 chown_bin="$(state_system_binary_path chown 2>/dev/null || true)"
                 if [[ -n "$chown_bin" ]]; then
                     if [[ -n "$target_group" ]]; then
-                        "$chown_bin" "$TARGET_USER:$target_group" "$state_dir" 2>/dev/null \
-                            || "$chown_bin" "$TARGET_USER:$TARGET_USER" "$state_dir" 2>/dev/null \
+                        "$chown_bin" -h "$TARGET_USER:$target_group" "$state_dir" 2>/dev/null \
+                            || "$chown_bin" -h "$TARGET_USER:$TARGET_USER" "$state_dir" 2>/dev/null \
                             || true
                     else
-                        "$chown_bin" "$TARGET_USER" "$state_dir" 2>/dev/null || true
+                        "$chown_bin" -h "$TARGET_USER" "$state_dir" 2>/dev/null || true
                     fi
                 fi
             fi
@@ -643,11 +643,11 @@ state_write_atomic() {
                     dir_target_group="$(id -gn "$TARGET_USER" 2>/dev/null || true)"
                 fi
                 if [[ -n "$dir_target_group" ]]; then
-                    chown "$TARGET_USER:$dir_target_group" "$target_dir" 2>/dev/null \
-                        || chown "$TARGET_USER:$TARGET_USER" "$target_dir" 2>/dev/null \
+                    chown -h "$TARGET_USER:$dir_target_group" "$target_dir" 2>/dev/null \
+                        || chown -h "$TARGET_USER:$TARGET_USER" "$target_dir" 2>/dev/null \
                         || true
                 else
-                    chown "$TARGET_USER" "$target_dir" 2>/dev/null || true
+                    chown -h "$TARGET_USER" "$target_dir" 2>/dev/null || true
                 fi
             fi
         fi
@@ -711,11 +711,11 @@ state_write_atomic() {
             fi
 
             if [[ -n "$target_group" ]]; then
-                chown "$TARGET_USER:$target_group" "$temp_file" 2>/dev/null \
-                    || chown "$TARGET_USER:$TARGET_USER" "$temp_file" 2>/dev/null \
+                chown -h "$TARGET_USER:$target_group" "$temp_file" 2>/dev/null \
+                    || chown -h "$TARGET_USER:$TARGET_USER" "$temp_file" 2>/dev/null \
                     || true
             else
-                chown "$TARGET_USER" "$temp_file" 2>/dev/null || true
+                chown -h "$TARGET_USER" "$temp_file" 2>/dev/null || true
             fi
         fi
     fi

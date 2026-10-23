@@ -24,18 +24,23 @@ teardown() {
     chmod -R u+w "$BATS_TEST_TMPDIR" 2>/dev/null || true
 }
 
-# Each code line of install.sh whose chown gives a path to $TARGET_USER.
-target_user_chowns() {
-    grep -nE '(^|[^[:alnum:]_-])chown( +-[[:alpha:]]+)* +"\$(\{TARGET_USER\}|TARGET_USER)[:"]' \
-        "$PROJECT_ROOT/install.sh" | grep -vE '^[0-9]+:[[:space:]]*#'
+# Each code line whose chown gives a path to an owner held in a variable
+# ($TARGET_USER, $target_user, $(state_uid), ...), in install.sh, the scripts
+# and libraries it runs as root, and the manifest's install snippets.
+# acfs-4qz1 widened it from install.sh alone.
+variable_owner_chowns() {
+    grep -nHE '(^|[^[:alnum:]_-])(chown|"\$chown_bin")( +-[[:alpha:]]+)* +"\$' \
+        "$PROJECT_ROOT/install.sh" "$PROJECT_ROOT"/scripts/*.sh "$PROJECT_ROOT"/scripts/lib/*.sh \
+        "$PROJECT_ROOT/acfs.manifest.yaml" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#'
 }
 
-@test "install.sh gives the target user its files only with chown -h" {
+@test "install.sh and the scripts it runs give a user its files only with chown -h" {
     local chowns missing
-    chowns="$(target_user_chowns)"
+    chowns="$(variable_owner_chowns)"
     # The pattern still finds the call sites, so the check can't pass empty.
-    (( $(wc -l <<<"$chowns") >= 20 ))
-    missing="$(grep -vE 'chown +-[[:alpha:]]*h[[:alpha:]]* ' <<<"$chowns" || true)"
+    (( $(wc -l <<<"$chowns") >= 40 ))
+    # -R passes too: GNU and uutils chown -R lchown a link given on the command line.
+    missing="$(grep -vE '(chown|"\$chown_bin")( +-[[:alpha:]]+)* +-[[:alpha:]]*[hR][[:alpha:]]* ' <<<"$chowns" || true)"
     printf '%s\n' "$missing"
     [[ -z "$missing" ]]
 }

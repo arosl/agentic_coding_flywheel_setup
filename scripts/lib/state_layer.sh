@@ -979,7 +979,7 @@ state_cmd_export() {
         state_die "export failed; no archive was written"
     fi
     chmod 0600 "$partial"
-    chown "$(state_uid):$(state_gid)" "$partial"
+    chown -h "$(state_uid):$(state_gid)" "$partial"
     if ! ln -T -- "$partial" "$file" 2>/dev/null; then
         rm -f -- "$partial"
         state_die "refusing to overwrite $file"
@@ -1210,7 +1210,7 @@ state_make_parents() {
         parent="${parent:+$parent/}$part"
         if [[ ! -d "$dir/$parent" ]]; then
             mkdir -m 0700 "$dir/$parent"
-            chown "$(state_owner_for_base "$base")" "$dir/$parent"
+            chown -h "$(state_owner_for_base "$base")" "$dir/$parent"
         fi
     done
 }
@@ -1271,7 +1271,7 @@ state_merge_authorized_keys() {
         awk 'NF && !seen[$0]++' "$old" >"$tmp"
     fi
     chmod 0600 "$tmp"
-    chown "$(state_uid):$(state_gid)" "$tmp"
+    chown -h "$(state_uid):$(state_gid)" "$tmp"
     mv -f "$tmp" "$new"
 }
 

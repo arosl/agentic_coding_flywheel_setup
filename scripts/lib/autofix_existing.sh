@@ -1494,7 +1494,7 @@ clean_shell_configs() {
 
                 temp_owner=$(stat -c '%u:%g' "$temp_file" 2>/dev/null || stat -f '%u:%g' "$temp_file" 2>/dev/null)
                 if [[ -n "$orig_owner" && -n "$temp_owner" && "$orig_owner" != "$temp_owner" ]]; then
-                    if ! chown "$orig_owner" "$temp_file" 2>/dev/null; then
+                    if ! chown -h "$orig_owner" "$temp_file" 2>/dev/null; then
                         log_error "[CLEAN] Failed to preserve ownership for $config"
                         rm -f "$temp_file" 2>/dev/null || true
                         failed=1

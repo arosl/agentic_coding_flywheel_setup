@@ -140,9 +140,11 @@ modules:
           # Seed /data/projects/AGENTS.md ONLY when absent. An existing file
           # may contain user-authored rules and is never overwritten; use
           # `acfs agents install` for explicit, non-overwriting deployment.
-          if [[ -f "$target_home/.acfs/docs/AGENTS.workspace.md" && ! -e /data/projects/AGENTS.md ]]; then
+          # A link of any kind is skipped too: root never writes or chowns
+          # through a path the user controls (acfs-4qz1).
+          if [[ -f "$target_home/.acfs/docs/AGENTS.workspace.md" && ! -e /data/projects/AGENTS.md && ! -L /data/projects/AGENTS.md ]]; then
             cp "$target_home/.acfs/docs/AGENTS.workspace.md" /data/projects/AGENTS.md
-            chown "${TARGET_USER:-ubuntu}:${TARGET_USER:-ubuntu}" /data/projects/AGENTS.md 2>/dev/null || true
+            chown -h "${TARGET_USER:-ubuntu}:${TARGET_USER:-ubuntu}" /data/projects/AGENTS.md 2>/dev/null || true
           fi
     verify:
       - test -d /data/projects

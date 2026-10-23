@@ -46,7 +46,7 @@ if ! declare -f acfs_log_init >/dev/null 2>&1; then
 
         # Fix ownership so target user can read logs
         if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
-            chown "${TARGET_USER}:${TARGET_USER}" "$log_dir" "$ACFS_LOG_FILE" 2>/dev/null || true
+            chown -h "${TARGET_USER}:${TARGET_USER}" "$log_dir" "$ACFS_LOG_FILE" 2>/dev/null || true
         fi
 
         # Tee stderr: all stderr output goes to both terminal and log file.
@@ -116,7 +116,7 @@ if ! declare -f acfs_log_close >/dev/null 2>&1; then
 
             # Fix ownership
             if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
-                chown "${TARGET_USER}:${TARGET_USER}" "$ACFS_LOG_FILE" 2>/dev/null || true
+                chown -h "${TARGET_USER}:${TARGET_USER}" "$ACFS_LOG_FILE" 2>/dev/null || true
             fi
         fi
         ACFS_LOG_INITIALIZED=false
