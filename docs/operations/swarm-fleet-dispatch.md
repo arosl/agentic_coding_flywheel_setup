@@ -210,3 +210,70 @@ These tests are not real SSH/VPS/herdr or authenticated-provider acceptance.
 The command requires Linux and system OpenSSH on the controller, a complete
 trusted ACFS checkout, and already installed native launchers on remote hosts.
 It is not a new installed `acfs` subcommand.
+
+## Batched immutable receipt reads
+
+Add `--batch-receipts` to `--reconcile` or to an explicitly approved `--resume`
+operation to group immutable intent reads without changing send authority:
+
+```bash
+python3 -I scripts/swarm-fleet-dispatch.py \
+  --launch-state "$HOME/fleet-wave-1" --batches fleet-batches.json \
+  --known-hosts "$HOME/.ssh/known_hosts" --identity-file "$HOME/.ssh/id_ed25519" \
+  --state-dir "$HOME/fleet-work-wave-1" --reconcile --batch-receipts
+```
+
+It changes neither the dispatch journal schema nor its approval digest. It is
+rejected for new preview/send operations and never silently falls back to
+individual reads after a batch failure. Omitting it keeps individual reads.
+
+For each attempted host, one SSH operation snapshots up to 32 selected native
+intents with a fixed read-only Python helper. The controller validates each exact
+request locally. Only intents that pass go on to the existing single-operation
+read of their delivery's result file. A missing or invalid intent never
+authorizes a result read, much less another send. Thus 32 successfully verified
+deliveries need 33 SSH operations instead of 64: one bounded intent-read batch
+plus the same 32 result-file reads that ordinary recovery makes.
+
+Every result goes through the same controller-side request, target, status and
+evidence checks as an individual read; a `refused` result is still
+`delivery_refused`. A batch's successful transport status is not submission
+proof. Responses are bound to the complete nonce-bearing request, exact item
+count and operation order. Malformed, reordered or mismatched envelopes are
+unconfirmed. Valid envelopes can report individual unavailable intents without
+hiding healthy peers. Raw evidence is carried only on the private SSH
+connection, never in user reports.
+
+The fixed batch helper starts no agent, receives no work payload, runs no herdr
+command and creates no files. It only opens the reviewed private intent paths,
+with the single reader's directory and file rules (the user's private group may
+write a directory, but not through an access ACL).
+
+Batch mode has explicit additional bounds: 32 unique receipt items, 64 KiB of
+request data, 32 KiB per captured intent and 1 MiB for the framed response.
+Unsafe paths, oversized intents, transport loss or an invalid envelope fail
+closed.
+
+```bash
+python3 -B tests/unit/test_swarm_fleet_receipt_batch.py -v
+```
+
+These tests cover intent-before-result ordering, per-delivery result validation,
+batch-envelope binding, journal reconciliation, approved continuation and the
+offline audit below. The batch helper runs for real on private files, links,
+FIFOs, hardlinks and oversized input. The tests do not establish live
+SSH/herdr/provider acceptance or task completion.
+
+## Offline local recovery audit
+
+Use `--audit` with the same launch state, batch selection, trust files and dispatch
+state to validate only the controller journals. Audit acquires the same locks and
+runs the same launch/dispatch history validators, but it does not construct SSH
+transport, contact a host, read a result file, start agents or send work.
+
+The report labels each selected host `recorded_submitted`,
+`attempted_unconfirmed`, or `not_attempted`. A complete local journal returns
+`recorded`/exit 0; incomplete history returns `partial`/exit 1. These labels
+describe local evidence only: `remote_submission_verified` and
+`agent_execution_verified` are always false. Use `--reconcile` when live
+submission evidence is required.
