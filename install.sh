@@ -5318,6 +5318,16 @@ acfs_verify_authored_module() {
             executable="$(binary_path go 2>/dev/null)" || executable="/usr/local/go/bin/go"
             run_as_target "$executable" version >/dev/null 2>&1
             ;;
+        shell.omz)
+            # setup_shell keeps an Arch-family system's own prompt and skips
+            # Oh My Zsh, its plugins, Powerlevel10k and ~/.p10k.zsh there, so
+            # the module is ready with ACFS's zshrc and the zsh login shell
+            # (acfs-yz54). Elsewhere the manifest's verify decides.
+            [[ "${ACFS_DISTRO_FAMILY:-}" == "arch" ]] || return 2
+            run_as_target_shell 'test -f ~/.acfs/zsh/acfs.zshrc' >/dev/null 2>&1 || return 1
+            # shellcheck disable=SC2016 # expanded by the target user's shell
+            run_as_target_shell 'source "${ACFS_LIB_DIR:-$HOME/.acfs/scripts/lib}/user.sh" && user_login_shell_configured' >/dev/null 2>&1
+            ;;
         lang.nvm)
             executable="$(_target_latest_nvm_node_bin 2>/dev/null)" || return 1
             run_as_target "$executable/node" --version >/dev/null 2>&1
