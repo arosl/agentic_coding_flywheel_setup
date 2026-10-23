@@ -255,7 +255,7 @@ Tests that need their own Incus instances run them in `acfs-tests`, a project th
 - **Network:** its default profile puts each instance's NIC on `acfstest0` behind `acfs-test-egress`, which rejects every private, CGNAT and link-local range: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`, `169.254.0.0/16`, `fc00::/7` and `fe80::/10`. The internet passes.
 
 **To let a machine use it:**
-1. **The certificate:** inside the machine, any `incus` command (`incus remote list`) creates its client certificate, `~/.config/incus/client.crt`. Copy that file to the host.
+1. **The certificate:** inside the machine, `incus remote generate-certificate` creates its client certificate, `~/.config/incus/client.crt`. `incus remote list` and the commands that use only the local socket don't create it. If the command says a certificate is already present, use that one. Copy that file to the host.
 2. **Trust it:** on the host, `incus.sh host-setup … --test-project --client-cert client.crt --client-name dev`. The certificate is trusted for `acfs-tests` only.
 3. **Expose the API:** host setup doesn't make Incus listen on the network. Set `core.https_address` to the gateway address of the machine's bridge, port 8443, and allow that port in the host's firewall. `acfs-swarm-egress` already lets the containers reach exactly that address and port.
 4. **Add the remote:** inside the machine, `incus remote add host https://<gateway>:8443`. Before you accept the server's certificate, compare its fingerprint with the host's own `incus info`. The machine then reaches the instances on `acfstest0` over SSH and ping, and nothing else of the host's.
