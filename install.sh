@@ -7952,6 +7952,11 @@ setup_filesystem() {
     try_step "Setting ACFS directory ownership" acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$ACFS_HOME" || return 1
     try_step "Creating ACFS log directory" $SUDO mkdir -p "$ACFS_LOG_DIR" || return 1
 
+    # base.filesystem's verify requires the ACFS-owned copy of the workspace
+    # AGENTS.md template, which only the generated installer wrote (acfs-qe94).
+    try_step "Installing AGENTS.md template (~/.acfs/docs)" install_asset "acfs/AGENTS.md" "$ACFS_HOME/docs/AGENTS.workspace.md" || return 1
+    try_step_optional "Setting AGENTS.md template ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/docs/AGENTS.workspace.md" || true
+
     # Install essential ACFS scripts early so `acfs doctor` works even after early failures.
     # This is critical for debugging failed installs - users need `acfs doctor` to work
     # even if the install failed in Phase 3 (languages) before finalization.
