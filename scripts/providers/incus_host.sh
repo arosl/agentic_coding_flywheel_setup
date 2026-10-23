@@ -593,8 +593,11 @@ swarm_acl_rules() {
     {
         rule reject "$(join_by , "${reject[@]}")"
         rule reject "$gateway/32" tcp "1-$((SWARM_API_PORT - 1)),$((SWARM_API_PORT + 1))-65535"
-        rule reject "$gateway/32" udp
+        # A lease renewal to the gateway (udp 67) meets these rules (above);
+        # DNS to it doesn't.
+        rule reject "$gateway/32" udp 1-66,68-65535
         rule allow "$gateway/32" tcp "$SWARM_API_PORT"
+        rule allow "$gateway/32" udp 67
         if [[ -n "$test_net" ]]; then
             rule reject "$test_gateway/32"
             rule reject "$test_net" tcp 1-21,23-65535

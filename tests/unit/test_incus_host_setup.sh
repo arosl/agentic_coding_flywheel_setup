@@ -342,6 +342,10 @@ check "vm ACL: the launcher's description" \
 check "swarm ACL: allows the host API on the gateway" acl_allows acfs-swarm-egress 10.20.30.1 tcp 8443
 check "swarm ACL: rejects SSH to the gateway" acl_rejects acfs-swarm-egress 10.20.30.1 tcp 22
 check "swarm ACL: rejects UDP to the gateway" acl_rejects acfs-swarm-egress 10.20.30.1 udp 123
+check "swarm ACL: allows a DHCP renewal to the gateway" acl_allows acfs-swarm-egress 10.20.30.1 udp 67
+check "swarm ACL: rejects udp 68 on the gateway" acl_rejects acfs-swarm-egress 10.20.30.1 udp 68
+check "swarm ACL: rejects udp 66 on the gateway" acl_rejects acfs-swarm-egress 10.20.30.1 udp 66
+check "swarm ACL: allows udp 67 to the gateway only" acl_rejects acfs-swarm-egress 10.20.30.2 udp 67
 check "swarm ACL: allows SSH to a test instance" acl_allows acfs-swarm-egress 10.99.0.50 tcp 22
 check "swarm ACL: allows ICMP to a test instance" acl_allows acfs-swarm-egress 10.99.0.50 icmp4
 check "swarm ACL: rejects other ports on a test instance" acl_rejects acfs-swarm-egress 10.99.0.50 tcp 80
@@ -412,6 +416,26 @@ run_setup --storage "$STORAGE_DIR"
 check "a sidecar ACL with other rules: exits 1" rc_is 1
 check "a sidecar ACL with other rules: names it" err_has 'acfs-sidecar-egress exists with other egress rules'
 check "a sidecar ACL with other rules: changes nothing" no_creates
+
+echo "== a host set up before the swarm ACL allowed DHCP renewals"
+new_case oldswarm
+run_setup --storage "$STORAGE_DIR"
+# The rules as they were: every UDP to the gateway rejected, no udp 67 allow.
+seed /1.0/network-acls/acfs-swarm-egress "$(api /1.0/network-acls/acfs-swarm-egress | jq '.egress |=
+    map(select((.action == "allow" and .protocol == "udp") | not)
+        | if .destination == "10.20.30.1/32" and .protocol == "udp" then del(.destination_port) else . end)')"
+check "the old rules reject a renewal" acl_rejects acfs-swarm-egress 10.20.30.1 udp 67
+: >"$CASE/calls"
+run_setup --storage "$STORAGE_DIR"
+check "exits 1" rc_is 1
+check "changes nothing" no_creates
+check "lists the udp 67 allow as added" err_has '+ {"action":"allow","destination":"10.20.30.1/32","state":"enabled","protocol":"udp","destination_port":"67"}'
+check "lists the old UDP reject as dropped" err_has '- {"action":"reject","destination":"10.20.30.1/32","state":"enabled","protocol":"udp"}'
+TAKE="$(sed -n 's/^ *\(incus query --force-local .*\)$/\1/p' "$CASE/err")"
+PATH="$WORK/bin:$PATH" STUB_DIR="$CASE" bash -c "$TAKE" 2>"$CASE/take.err" || true
+run_setup --storage "$STORAGE_DIR"
+check "after the printed command: exits 0" rc_is 0
+check "after the printed command: a renewal passes" acl_allows acfs-swarm-egress 10.20.30.1 udp 67
 
 echo "== without --test-project, after a run that made the test bridge and stopped at the project"
 new_case bridgeonly
