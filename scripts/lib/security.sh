@@ -568,7 +568,7 @@ declare -gA KNOWN_INSTALLERS=(
     # dcg: a fork commit pins the installer, so a push to the fork's main can't
     # break verification; move it on purpose, with a review (acfs-0l5a). The
     # v0.15.4 tag's installer predates fixes this one has.
-    [dcg]="https://raw.githubusercontent.com/arosl/destructive_command_guard/a17f5a739df931c66801165b389efd84f1bac7a4/install.sh"
+    [dcg]="https://raw.githubusercontent.com/arosl/destructive_command_guard/4275b028f53d197128ca9d4e879dba6cf3a32c70/install.sh"
     [ru]="https://raw.githubusercontent.com/arosl/repo_updater/v1.5.0-nhm.2/install.sh"
     [apr]="https://raw.githubusercontent.com/Dicklesworthstone/automated_plan_reviser_pro/main/install.sh"
     [ms]="https://raw.githubusercontent.com/Dicklesworthstone/meta_skill/main/scripts/install.sh"
