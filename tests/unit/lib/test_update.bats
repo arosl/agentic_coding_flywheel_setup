@@ -1924,7 +1924,7 @@ _setup_stack_agent_mail_gate_fixture() {
     [[ -f "$HOME/mcp-agent-mail-installer-ran" ]]
     [[ -f "$HOME/caam-ran" ]]
     grep -qF "Success: MCP Agent Mail" "$UPDATE_LOG_FILE"
-    ! grep -qF "[fail] MCP Agent Mail" "$UPDATE_LOG_FILE"
+    run ! grep -qF "[fail] MCP Agent Mail" "$UPDATE_LOG_FILE"
 }
 
 @test "update_stack runs CASS through target tmpdir fallback and continues on failure" {
@@ -14705,7 +14705,7 @@ setup_missing_bun_update_fixture() {
     [[ "$(grep -c 'Bun not installed' "$HOME/update.log")" == "1" ]]
     [[ "$(grep -c 'Codex CLI' "$HOME/update.log")" == "1" ]]
     grep -q '\[skip\] Codex CLI - not installed; Bun not installed either' "$HOME/update.log"
-    ! grep -q '\[fail\]' "$HOME/update.log"
+    run ! grep -q '\[fail\]' "$HOME/update.log"
 }
 
 @test "update_agents: missing Bun with Codex installed is one Codex failure line" {
@@ -16274,12 +16274,12 @@ esac'
     update_smoke_exit_status_is_fatal 126
     update_smoke_exit_status_is_fatal 127
     update_smoke_exit_status_is_fatal 139
-    ! update_smoke_exit_status_is_fatal 0
-    ! update_smoke_exit_status_is_fatal 1
-    ! update_smoke_exit_status_is_fatal 2
-    ! update_smoke_exit_status_is_fatal 64
-    ! update_smoke_exit_status_is_fatal 101
-    ! update_smoke_exit_status_is_fatal abc
+    run ! update_smoke_exit_status_is_fatal 0
+    run ! update_smoke_exit_status_is_fatal 1
+    run ! update_smoke_exit_status_is_fatal 2
+    run ! update_smoke_exit_status_is_fatal 64
+    run ! update_smoke_exit_status_is_fatal 101
+    run ! update_smoke_exit_status_is_fatal abc
 }
 
 @test "smoke output classifier: recognises common parser rejections and not tracebacks" {
@@ -16289,9 +16289,9 @@ esac'
     update_smoke_output_indicates_probe_rejected "error: unexpected argument '--version' found"
     update_smoke_output_indicates_probe_rejected "tool: unrecognized option '--version'"
     update_smoke_output_indicates_probe_rejected "Try 'tool --help' for more information."
-    ! update_smoke_output_indicates_probe_rejected "Traceback (most recent call last):"
-    ! update_smoke_output_indicates_probe_rejected "thread 'main' panicked at src/main.rs:1:1"
-    ! update_smoke_output_indicates_probe_rejected ""
+    run ! update_smoke_output_indicates_probe_rejected "Traceback (most recent call last):"
+    run ! update_smoke_output_indicates_probe_rejected "thread 'main' panicked at src/main.rs:1:1"
+    run ! update_smoke_output_indicates_probe_rejected ""
 }
 
 @test "verify-or-rollback: unsupported probe keeps the new binary and records no backoff" {
@@ -16311,7 +16311,7 @@ esac'
     [[ "$output" != *"ROLLED BACK"* ]]
     grep -q 'Usage: oddtool' "$bin"
     [[ -f "$bin.prev" ]]
-    ! update_rollback_state_lookup oddtool
+    run ! update_rollback_state_lookup oddtool
 }
 
 @test "verify-or-rollback: a broken binary is rolled back and put in backoff" {
@@ -16365,7 +16365,7 @@ esac'
     run update_verify_tool_or_rollback fsfs
     assert_success
     [[ "$output" != *"VERIFICATION"* ]]
-    ! update_rollback_state_lookup fsfs
+    run ! update_rollback_state_lookup fsfs
 }
 
 # ============================================================
