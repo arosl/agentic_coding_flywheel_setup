@@ -475,7 +475,7 @@ acfs_generated_install_shell_omz() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "shell.omz: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""

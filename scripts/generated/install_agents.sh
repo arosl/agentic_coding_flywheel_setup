@@ -393,7 +393,7 @@ acfs_generated_install_agents_claude() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "agents.claude: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -1260,7 +1260,7 @@ acfs_generated_install_agents_antigravity() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "agents.antigravity: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -1512,7 +1512,7 @@ acfs_generated_install_agents_opencode() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "agents.opencode: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -1839,7 +1839,7 @@ acfs_generated_install_agents_omp() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "agents.omp: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -2170,7 +2170,7 @@ acfs_generated_install_agents_grok() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "agents.grok: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""

@@ -393,7 +393,7 @@ acfs_generated_install_stack_mcp_agent_mail() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.mcp_agent_mail: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -914,7 +914,7 @@ acfs_generated_install_stack_nhm() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.nhm: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -1065,7 +1065,7 @@ acfs_generated_install_stack_meta_skill() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.meta_skill: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -1189,7 +1189,7 @@ acfs_generated_install_stack_automated_plan_reviser() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.automated_plan_reviser: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -1339,7 +1339,7 @@ acfs_generated_install_stack_jeffreysprompts() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.jeffreysprompts: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -1489,7 +1489,7 @@ acfs_generated_install_stack_process_triage() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.process_triage: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -1639,7 +1639,7 @@ acfs_generated_install_stack_ultimate_bug_scanner() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.ultimate_bug_scanner: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -1763,7 +1763,7 @@ acfs_generated_install_stack_beads_rust() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.beads_rust: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -1887,7 +1887,7 @@ acfs_generated_install_stack_beads_viewer() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.beads_viewer: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -2047,7 +2047,7 @@ acfs_generated_install_stack_cass() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.cass: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -2182,7 +2182,7 @@ acfs_generated_install_stack_cm() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.cm: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -2324,7 +2324,7 @@ acfs_generated_install_stack_caam() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.caam: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -2438,7 +2438,7 @@ acfs_generated_install_stack_slb() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.slb: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -2578,7 +2578,7 @@ acfs_generated_install_stack_dcg() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.dcg: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -2756,7 +2756,7 @@ acfs_generated_install_stack_ru() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.ru: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -2870,7 +2870,7 @@ acfs_generated_install_stack_brenner_bot() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.brenner_bot: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -3010,7 +3010,7 @@ acfs_generated_install_stack_rch() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.rch: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -3150,7 +3150,7 @@ acfs_generated_install_stack_srps() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.srps: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -3427,7 +3427,7 @@ acfs_generated_install_stack_frankensearch() {
                         fi
 
                         if [[ "$fsfs_can_run" == "true" ]]; then
-                            if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                            if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                                 log_error "stack.frankensearch: failed to create verified installer staging file"
                                 ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                                 verified_installer_file=""
@@ -3568,7 +3568,7 @@ acfs_generated_install_stack_storage_ballast_helper() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.storage_ballast_helper: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -3708,7 +3708,7 @@ acfs_generated_install_stack_cross_agent_session_resumer() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.cross_agent_session_resumer: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -3848,7 +3848,7 @@ acfs_generated_install_stack_doodlestein_self_releaser() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.doodlestein_self_releaser: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -3988,7 +3988,7 @@ acfs_generated_install_stack_agent_settings_backup() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.agent_settings_backup: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -4213,7 +4213,7 @@ INSTALL_STACK_PCR_PRE_INSTALL_CHECK
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.pcr: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -4397,7 +4397,7 @@ acfs_generated_install_stack_eidetic_engine_cli() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.eidetic_engine_cli: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -4537,7 +4537,7 @@ acfs_generated_install_stack_franken_markdown() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.franken_markdown: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -4677,7 +4677,7 @@ acfs_generated_install_stack_pi_agent_rust() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.pi_agent_rust: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -4817,7 +4817,7 @@ acfs_generated_install_stack_power_failure_resumer() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "stack.power_failure_resumer: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""

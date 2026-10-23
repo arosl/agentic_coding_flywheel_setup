@@ -812,8 +812,10 @@ function buildVerifiedInstallerFileCommand(module: Module): string {
   // interpreter. Any later separator would imply runner options and is unsafe.
   const scriptArgs = normalizeVerifiedInstallerScriptArgs(module.id, args);
 
-  // The file is created by acfs_security_mktemp, populated only after
-  // verification succeeds, and made read-only before this command runs.
+  // The file is created by acfs_security_system_mkstage, alone in a private
+  // directory so an installer that looks beside itself finds nothing planted
+  // (acfs-6vtk), populated only after verification succeeds, and made
+  // read-only before this command runs.
   // Executing it by pathname prevents a late producer/read failure from
   // feeding and executing only a prefix of the verified script.
   parts.push('"$verified_installer_file"');
@@ -1535,7 +1537,7 @@ function generateVerifiedInstallerSnippet(module: Module): string[] {
     ...verifiedInstallerChecksumArgLines(module, "        "),
     "",
     '        if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then',
-    '            if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then',
+    '            if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then',
     `                log_error "${escapeBash(module.id)}: failed to create verified installer staging file"`,
     '                ACFS_LAST_MODULE_FAILURE_REASON="environment setup"',
     '                verified_installer_file=""',
@@ -1679,7 +1681,7 @@ function generateVerifiedInstallerSnippet(module: Module): string[] {
     "            fi",
     "",
     '            if [[ "$fsfs_can_run" == "true" ]]; then',
-    '                if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then',
+    '                if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then',
     `                    log_error "${escapeBash(module.id)}: failed to create verified installer staging file"`,
     '                    ACFS_LAST_MODULE_FAILURE_REASON="environment setup"',
     '                    verified_installer_file=""',

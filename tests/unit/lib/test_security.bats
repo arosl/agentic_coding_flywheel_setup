@@ -934,7 +934,84 @@ use_head_refusing_first_write() {
     acfs_stage_verified_installer staged "https://example.invalid/install.sh" \
         "$(printf '%064d' 1)" "demo" || fail "staging failed"
 
-    [[ "$staged" == "$good"/acfs-verified-installer.* ]] || fail "staged at: $staged"
+    [[ "$staged" == "$good"/acfs-verified-installer.*/installer.sh ]] || fail "staged at: $staged"
     assert_equal "$(cat "$staged")" "echo verified installer"
     [[ ! -w "$staged" || "$(id -u)" == 0 ]] || fail "staged installer is writable"
+}
+
+# ============================================================
+# The staged installer is alone in a private directory (acfs-6vtk)
+# ============================================================
+
+@test "acfs_security_system_mkstage: the file is alone in a fresh 0755 directory owned by the caller" {
+    local tmp file stage_dir
+    tmp="$(create_temp_dir)"
+    ACFS_SECURITY_SYSTEM_TMP_DIRS=("$tmp")
+
+    file="$(acfs_security_system_mkstage)"
+
+    stage_dir="${file%/*}"
+    [[ "$file" == "$tmp"/acfs-verified-installer.*/installer.sh && -f "$file" && ! -s "$file" ]] || fail "got: $file"
+    assert_equal "$(stat -c '%a %u' "$stage_dir")" "755 $(id -u)"
+    assert_equal "$(ls -A "$stage_dir")" "installer.sh"
+}
+
+@test "acfs_security_system_mkstage: a temp dir that refuses the test write keeps no directory" {
+    local spent good file
+    spent="$(create_temp_dir)"
+    good="$(create_temp_dir)"
+    ACFS_SECURITY_SYSTEM_TMP_DIRS=("$spent" "$good")
+    use_head_refusing_first_write
+
+    file="$(acfs_security_system_mkstage)"
+
+    [[ "$file" == "$good"/acfs-verified-installer.*/installer.sh ]] || fail "got: $file"
+    [[ -z "$(ls -A "$spent")" ]] || fail "left in the refusing dir: $(ls -A "$spent")"
+}
+
+@test "acfs_security_system_mkstage: fails, leaving nothing, when no dir takes the test write" {
+    local full file rc=0
+    full="$(create_temp_dir)"
+    ACFS_SECURITY_SYSTEM_TMP_DIRS=("$full")
+
+    file="$(ulimit -f 64; acfs_security_system_mkstage 2>/dev/null)" || rc=$?
+
+    [[ "$rc" -ne 0 && -z "$file" ]] || fail "rc=$rc file=$file"
+    [[ -z "$(ls -A "$full")" ]] || fail "left behind: $(ls -A "$full")"
+}
+
+@test "_acfs_remove_temp_files: removes a staged file's directory, and no other directory" {
+    local tmp elsewhere file
+    tmp="$(create_temp_dir)"
+    elsewhere="$(create_temp_dir)"
+    ACFS_SECURITY_SYSTEM_TMP_DIRS=("$tmp")
+    file="$(acfs_security_system_mkstage)"
+    mkdir "$tmp/acfs-verified-installer.busy" "$elsewhere/acfs-verified-installer.other"
+    : > "$tmp/acfs-verified-installer.busy/installer.sh"
+    : > "$tmp/acfs-verified-installer.busy/kept"
+    : > "$elsewhere/acfs-verified-installer.other/installer.sh"
+
+    _acfs_remove_temp_files "$file" "$tmp/acfs-verified-installer.busy/installer.sh" \
+        "$elsewhere/acfs-verified-installer.other/installer.sh"
+
+    [[ ! -e "${file%/*}" ]] || fail "stage directory left: ${file%/*}"
+    [[ -f "$tmp/acfs-verified-installer.busy/kept" ]] || fail "a directory that holds a file was removed"
+    [[ -d "$elsewhere/acfs-verified-installer.other" ]] || fail "a directory outside the system temp dirs was removed"
+}
+
+@test "fetch_and_run_with_runner: the installer's own directory holds only the installer" {
+    local tmp out
+    tmp="$(create_temp_dir)"
+    ACFS_SECURITY_SYSTEM_TMP_DIRS=("$tmp")
+    # What another local account could leave in /tmp for rch's installer.
+    mkdir -p "$tmp/.claude/skills/rch"
+    printf 'planted\n' > "$tmp/.claude/skills/rch/SKILL.md"
+    # shellcheck disable=SC2016 # expanded by the staged installer
+    verify_checksum() { printf '%s\n' 'ls -A "$(dirname "${BASH_SOURCE[0]}")"'; }
+
+    out="$(fetch_and_run_with_runner bash "https://example.invalid/install.sh" "$(printf '%064d' 1)" "demo")" \
+        || fail "installer failed"
+
+    assert_equal "$out" "installer.sh"
+    assert_equal "$(ls -A "$tmp")" ".claude"
 }

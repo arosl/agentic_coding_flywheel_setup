@@ -158,6 +158,38 @@ acfs_security_system_mktemp() {
     return 1
 }
 
+# Staging for a verified installer that runs from a file (acfs-6vtk). An
+# installer finds its own directory through BASH_SOURCE, and several pinned
+# ones copy what they find there: rch, pi and dsr a skill, ubs a Claude Code
+# hook, fmd its bundled files. Staged directly in /tmp, that is whatever any
+# local account put in /tmp. So the installer is the only file in a fresh
+# directory, mode 0755 and owned by the caller, which no other account can
+# add to. Prints the path of the empty file installer.sh in that directory,
+# made in the first system temp directory that takes a test write of
+# PROBE_BYTES (default 1 MiB). _acfs_remove_temp_files removes both.
+ACFS_SECURITY_STAGE_FILE="installer.sh"
+acfs_security_system_mkstage() {
+    local probe_bytes="${1:-1048576}" dir="" stage_dir="" file="" head_bin="" chmod_bin=""
+
+    [[ "$probe_bytes" =~ ^[0-9]{1,9}$ ]] || return 1
+    chmod_bin="$(acfs_security_required_binary_path chmod 2>/dev/null)" || return 1
+    head_bin="$(acfs_security_required_binary_path head 2>/dev/null)" || head_bin=""
+    for dir in "${ACFS_SECURITY_SYSTEM_TMP_DIRS[@]}"; do
+        [[ -d "$dir" && -w "$dir" ]] || continue
+        stage_dir="$(acfs_security_mktemp -d "$dir/acfs-verified-installer.XXXXXX" 2>/dev/null)" || continue
+        [[ -n "$stage_dir" ]] || continue
+        file="$stage_dir/$ACFS_SECURITY_STAGE_FILE"
+        if "$chmod_bin" 0755 "$stage_dir" 2>/dev/null \
+            && { [[ -z "$head_bin" ]] || "$head_bin" -c "$probe_bytes" /dev/zero > "$file" 2>/dev/null; } \
+            && : > "$file"; then
+            printf '%s\n' "$file"
+            return 0
+        fi
+        _acfs_remove_temp_files "$file"
+    done
+    return 1
+}
+
 acfs_security_cat_file() {
     local cat_bin=""
     local file="${1:-}"
@@ -766,9 +798,14 @@ calculate_sha256() {
     printf '%s\n' "$hash"
 }
 
+# Removes each file. A file that acfs_security_system_mkstage staged also
+# takes its private directory with it; rmdir removes only an empty directory.
 _acfs_remove_temp_files() {
     local path
     local rm_bin=""
+    local rmdir_bin=""
+    local stage_dir=""
+    local tmp_dir=""
 
     if [[ "${ACFS_SECURITY_RETAIN_TEMP_FILES:-false}" == "true" ]]; then
         for path in "$@"; do
@@ -779,9 +816,19 @@ _acfs_remove_temp_files() {
 
     rm_bin="$(acfs_security_system_binary_path rm 2>/dev/null || true)"
     [[ -n "$rm_bin" ]] || return 0
+    rmdir_bin="$(acfs_security_system_binary_path rmdir 2>/dev/null || true)"
 
     for path in "$@"; do
         [[ -n "$path" ]] && "$rm_bin" -f -- "$path" 2>/dev/null || true
+        stage_dir="${path%/*}"
+        [[ -n "$rmdir_bin" && "${path##*/}" == "$ACFS_SECURITY_STAGE_FILE" \
+            && "${stage_dir##*/}" == acfs-verified-installer.* ]] || continue
+        for tmp_dir in "${ACFS_SECURITY_SYSTEM_TMP_DIRS[@]}"; do
+            if [[ "${stage_dir%/*}" == "${tmp_dir%/}" ]]; then
+                "$rmdir_bin" -- "$stage_dir" 2>/dev/null || true
+                break
+            fi
+        done
     done
 }
 
@@ -1951,7 +1998,9 @@ acfs_explain_github_rate_limit() {
 # The caller supplies the name of a variable that receives the staging path and
 # must remove that exact file with _acfs_remove_temp_files after execution. The
 # file lives in a trusted system temp directory rather than caller-controlled
-# TMPDIR so a privileged caller can safely hand it to the target user.
+# TMPDIR so a privileged caller can safely hand it to the target user, alone in
+# a private directory (acfs_security_system_mkstage), so an installer that
+# looks beside itself finds nothing else there.
 #
 # Arguments:
 #   $1 - Output variable name
@@ -1982,7 +2031,7 @@ acfs_stage_verified_installer() {
         return 1
     fi
 
-    staging_file="$(acfs_security_system_mktemp "acfs-verified-installer.XXXXXX")" || {
+    staging_file="$(acfs_security_system_mkstage)" || {
         log_error "Failed to create verified installer staging file for $name (no system temp dir took a test write: full or over a per-user quota?)"
         ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
         return 1

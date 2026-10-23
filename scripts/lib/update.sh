@@ -1899,6 +1899,8 @@ update_create_target_readable_temp_file() {
     local tmpdir_candidate=""
     local template=""
     local tmp_file=""
+    local stage_dir=""
+    local stage_uid=""
     local mktemp_bin=""
     local chmod_bin=""
     local rm_bin=""
@@ -1985,23 +1987,33 @@ update_create_target_readable_temp_file() {
         templates+=("$tmpdir_candidate/${prefix}.XXXXXX")
     done
 
+    # The installer is the only file in a fresh directory (acfs-6vtk). An
+    # installer finds its own directory through BASH_SOURCE, and rch's copies
+    # .claude/skills/rch from there, so directly in /tmp it took whatever any
+    # local account put there. mktemp -d makes the directory ours, and 0755
+    # lets the target user in while no one else can add to it.
     for template in "${templates[@]}"; do
-        tmp_file="$("$mktemp_bin" "$template" 2>/dev/null || true)"
-        [[ -n "$tmp_file" ]] || continue
-        if ! "$chmod_bin" 0755 "$tmp_file" 2>/dev/null; then
-            "$rm_bin" -f -- "$tmp_file" 2>/dev/null || true
+        stage_dir="$("$mktemp_bin" -d "$template" 2>/dev/null || true)"
+        [[ -n "$stage_dir" ]] || continue
+        tmp_file="$stage_dir/installer.sh"
+        stage_uid="$("$stat_bin" -c '%u' "$stage_dir" 2>/dev/null || "$stat_bin" -f '%u' "$stage_dir" 2>/dev/null || true)"
+        if [[ ! -d "$stage_dir" || -L "$stage_dir" || "$stage_uid" != "$EUID" ]] \
+            || ! "$chmod_bin" 0755 "$stage_dir" 2>/dev/null \
+            || ! { : > "$tmp_file"; } 2>/dev/null \
+            || ! "$chmod_bin" 0755 "$tmp_file" 2>/dev/null; then
+            update_remove_target_readable_temp_file "$tmp_file"
             continue
         fi
         file_uid="$("$stat_bin" -c '%u' "$tmp_file" 2>/dev/null || "$stat_bin" -f '%u' "$tmp_file" 2>/dev/null || true)"
         if [[ ! -f "$tmp_file" || -L "$tmp_file" || "$file_uid" != "$EUID" ]]; then
-            "$rm_bin" -f -- "$tmp_file" 2>/dev/null || true
+            update_remove_target_readable_temp_file "$tmp_file"
             continue
         fi
         # Once a per-user tmpfs quota on /tmp is spent (systemd 256+ usrquota)
         # mktemp still succeeds and only the data write fails, which broke
         # every verified installer on fmd. Test a write before choosing a dir.
         if [[ -n "$head_bin" ]] && ! "$head_bin" -c 1048576 /dev/zero > "$tmp_file" 2>/dev/null; then
-            "$rm_bin" -f -- "$tmp_file" 2>/dev/null || true
+            update_remove_target_readable_temp_file "$tmp_file"
             continue
         fi
         : > "$tmp_file"
@@ -2009,11 +2021,35 @@ update_create_target_readable_temp_file() {
             printf '%s\n' "$tmp_file"
             return 0
         fi
-        "$rm_bin" -f -- "$tmp_file" 2>/dev/null || true
+        update_remove_target_readable_temp_file "$tmp_file"
     done
 
     echo "Failed to create a target-readable temp file for $prefix" >&2
     return 1
+}
+
+# Removes a file update_create_target_readable_temp_file made, and the private
+# directory it sits in. rmdir removes only an empty directory.
+update_remove_target_readable_temp_file() {
+    local tmp_file="${1:-}"
+    local stage_dir=""
+    local rm_bin=""
+    local rmdir_bin=""
+
+    [[ -n "$tmp_file" ]] || return 0
+    rm_bin="$(update_system_binary_path rm 2>/dev/null || true)"
+    [[ -n "$rm_bin" ]] || return 0
+    "$rm_bin" -f -- "$tmp_file" 2>/dev/null || true
+
+    stage_dir="${tmp_file%/*}"
+    [[ "${tmp_file##*/}" == installer.sh && "${stage_dir##*/}" == acfs-*.* && ! -L "$stage_dir" ]] || return 0
+    case "${stage_dir%/*}" in
+        /tmp|/var/tmp) ;;
+        *) return 0 ;;
+    esac
+    rmdir_bin="$(update_system_binary_path rmdir 2>/dev/null || true)"
+    [[ -n "$rmdir_bin" ]] || return 0
+    "$rmdir_bin" -- "$stage_dir" 2>/dev/null || true
 }
 
 # Bounded command execution: detached stdin (so nothing blocks on input) plus a hard
@@ -5594,7 +5630,7 @@ update_run_verified_installer_with_env() {
         :
     else
         local verify_exit_code=$?
-        rm -f "$tmp_install" 2>/dev/null || true
+        update_remove_target_readable_temp_file "$tmp_install"
         if [[ "${ACFS_LAST_MODULE_FAILURE_REASON:-}" == "checksum" ]]; then
             return "$UPDATE_EXIT_CHECKSUM"
         fi
@@ -5605,7 +5641,7 @@ update_run_verified_installer_with_env() {
     local installer_chmod_bin=""
     installer_chmod_bin="$(update_system_binary_path chmod 2>/dev/null || true)"
     if [[ -z "$installer_chmod_bin" ]] || ! "$installer_chmod_bin" 0755 "$tmp_install"; then
-        rm -f "$tmp_install" 2>/dev/null || true
+        update_remove_target_readable_temp_file "$tmp_install"
         return 1
     fi
 
@@ -5615,7 +5651,7 @@ update_run_verified_installer_with_env() {
 
     local exit_code=0
     update_run_in_target_context "$bash_env_assignment" bash "$tmp_install" "$@" </dev/null || exit_code=$?
-    rm -f "$tmp_install" 2>/dev/null || true
+    update_remove_target_readable_temp_file "$tmp_install"
     # A verified upstream script may use any exit code. It cannot manufacture
     # the pre-execution checksum-refusal classification used by callers.
     [[ "$exit_code" == "$UPDATE_EXIT_CHECKSUM" ]] && exit_code=1
@@ -8434,7 +8470,7 @@ update_stack() {
                 local installer_chmod_bin=""
                 installer_chmod_bin="$(update_system_binary_path chmod 2>/dev/null || true)"
                 if [[ -z "$installer_chmod_bin" ]] || ! "$installer_chmod_bin" 0755 "$tmp_install"; then
-                    rm -f "$tmp_install" 2>/dev/null || true
+                    update_remove_target_readable_temp_file "$tmp_install"
                     tmp_install=""
                     update_finish_cmd_fail "MCP Agent Mail" "failed to make verified installer executable"
                 else
@@ -8455,7 +8491,7 @@ update_stack() {
                     fi
 
                     if [[ -n "$target_context_error" ]]; then
-                        rm -f "$tmp_install" 2>/dev/null || true
+                        update_remove_target_readable_temp_file "$tmp_install"
                         tmp_install=""
                         update_finish_cmd_fail "MCP Agent Mail" "$target_context_error"
                     elif update_run_logged_passthrough update_run_in_target_context $'AM_INSTALL_SKIP_MCP_SETUP=1\nAM_INSTALL_SKIP_REMOTE_HTTP_READINESS=1' bash "$tmp_install" --dest "$target_home/mcp_agent_mail" --yes; then
@@ -8487,7 +8523,7 @@ update_stack() {
                             log_to_file "Success: MCP Agent Mail"
                             ((SUCCESS_COUNT += 1))
                         else
-                            rm -f "$tmp_install" 2>/dev/null || true
+                            update_remove_target_readable_temp_file "$tmp_install"
                             tmp_install=""
                             update_finish_cmd_fail "MCP Agent Mail" "service setup/readiness failed"
                         fi
@@ -8496,9 +8532,9 @@ update_stack() {
                     fi
                 fi
 
-                [[ -n "$tmp_install" ]] && rm -f "$tmp_install" 2>/dev/null || true
+                update_remove_target_readable_temp_file "$tmp_install"
             else
-                rm -f "$tmp_install"
+                update_remove_target_readable_temp_file "$tmp_install"
                 log_item "fail" "MCP Agent Mail" "verification failed"
             fi
         fi

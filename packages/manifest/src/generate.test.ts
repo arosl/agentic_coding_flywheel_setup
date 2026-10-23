@@ -668,6 +668,17 @@ describe("Generated verified installer args", () => {
     expect(stackContent).toContain('_acfs_remove_temp_files "$verified_installer_file"');
   });
 
+  test("every generated verified installer is staged alone in a private directory, never as a file in /tmp (acfs-6vtk)", () => {
+    const installers = readdirSync(GENERATED_DIR).filter((name) => /^install_.+\.sh$/.test(name));
+    let staged = 0;
+    for (const name of installers) {
+      const content = readFileSync(resolve(GENERATED_DIR, name), "utf-8");
+      expect(content).not.toContain("/tmp/acfs-verified-installer.XXXXXX");
+      staged += content.split('verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)"').length - 1;
+    }
+    expect(staged).toBeGreaterThan(0);
+  });
+
   test("stack.nhm reads its archive pins from checksums.yaml and fails closed without them (acfs-9hkh.47)", () => {
     const stackContent = readFileSync(resolve(GENERATED_DIR, "install_stack.sh"), "utf-8");
     const start = stackContent.indexOf("acfs_generated_install_stack_nhm() {");
@@ -2317,7 +2328,7 @@ describe("stack.cass per-run installer TMPDIR cleanup", () => {
     "declare -A KNOWN_INSTALLERS=([cass]='https://example.invalid/cass.sh')",
     "get_checksum() { printf '%064d\\n' 0; }",
     'verify_checksum() { [[ "$SCENARIO" != "checksum" ]] || return 1; printf "#!/bin/bash\\n"; }',
-    'acfs_security_mktemp() { mktemp "$TARGET_HOME/staged.XXXXXX"; }',
+    'acfs_security_system_mkstage() { mktemp "$TARGET_HOME/staged.XXXXXX"; }',
     '_acfs_remove_temp_files() { rm -f -- "$@"; }',
     "run_as_target_runner() {",
     '  local tmp="${2#TMPDIR=}"',

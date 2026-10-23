@@ -393,7 +393,7 @@ acfs_generated_install_lang_bun() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "lang.bun: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -507,7 +507,7 @@ acfs_generated_install_lang_uv() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "lang.uv: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -621,7 +621,7 @@ acfs_generated_install_lang_rust() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "lang.rust: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""
@@ -785,7 +785,7 @@ acfs_generated_install_lang_nvm() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if ! verified_installer_file="$(acfs_security_mktemp "/tmp/acfs-verified-installer.XXXXXX" 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
+                        if ! verified_installer_file="$(acfs_security_system_mkstage 2>/dev/null)" || [[ -z "$verified_installer_file" ]]; then
                             log_error "lang.nvm: failed to create verified installer staging file"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
                             verified_installer_file=""

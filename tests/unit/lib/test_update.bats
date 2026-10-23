@@ -12846,6 +12846,64 @@ SECURITY
     [[ "$output" == /tmp/acfs-update-test_tool.* || "$output" == /var/tmp/acfs-update-test_tool.* ]]
 }
 
+# An installer finds its own directory through BASH_SOURCE, and rch's copies
+# .claude/skills/rch from there (acfs-6vtk).
+@test "update verified installer runs alone in a private directory, removed afterwards" {
+    local seen_file="$BATS_TEST_TMPDIR/verified-installer-dir"
+    local -a seen=()
+    declare -gA KNOWN_INSTALLERS=([test_tool]="https://example.test/install.sh")
+
+    update_require_security() { return 0; }
+    get_checksum() { printf '%s\n' "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"; }
+    verify_checksum() {
+        printf '%s\n' '#!/usr/bin/env bash'
+        printf '%s\n' 'exit 0'
+    }
+    update_run_in_target_context() {
+        case "${2:-}" in
+            test)
+                [[ "${3:-}" == "-r" && -r "${4:-}" ]]
+                return $?
+                ;;
+            bash)
+                local dir="${3%/*}"
+                { printf '%s\n' "$dir"; stat -c '%a %u' "$dir"; ls -A "$dir"; } > "$seen_file"
+                return 0
+                ;;
+        esac
+        return 1
+    }
+
+    run update_run_verified_installer_with_env "test_tool" "" "--flag"
+    assert_success
+
+    mapfile -t seen < "$seen_file"
+    [[ "${seen[0]}" == /tmp/acfs-update-test_tool.* || "${seen[0]}" == /var/tmp/acfs-update-test_tool.* ]] \
+        || fail "staged in: ${seen[0]}"
+    assert_equal "${seen[1]}" "755 $(id -u)"
+    assert_equal "${seen[2]}" "installer.sh"
+    assert_equal "${#seen[@]}" 3
+    [[ ! -e "${seen[0]}" ]] || fail "stage directory left: ${seen[0]}"
+}
+
+@test "update_remove_target_readable_temp_file removes only an empty stage directory in /tmp or /var/tmp" {
+    local busy="" elsewhere=""
+    busy="$(mktemp -d /tmp/acfs-bats-busy.XXXXXX)"
+    : > "$busy/installer.sh"
+    : > "$busy/kept"
+    elsewhere="$(create_temp_dir)/acfs-bats-elsewhere.ABC123"
+    mkdir "$elsewhere"
+    : > "$elsewhere/installer.sh"
+
+    update_remove_target_readable_temp_file "$busy/installer.sh"
+    update_remove_target_readable_temp_file "$elsewhere/installer.sh"
+
+    [[ -f "$busy/kept" && ! -e "$busy/installer.sh" ]] || fail "busy: $(ls -A "$busy")"
+    [[ -d "$elsewhere" && ! -e "$elsewhere/installer.sh" ]] || fail "elsewhere was removed or kept its file"
+    rm -f -- "$busy/kept"
+    rmdir -- "$busy"
+}
+
 @test "update special MCP Agent Mail installer uses target-readable temp helper" {
     local update="$PROJECT_ROOT/scripts/lib/update.sh"
 
@@ -17190,8 +17248,9 @@ _staging_head_refusing_first_write() {
 
     file="$(update_create_target_readable_temp_file "$prefix")"
 
-    [[ "$file" == /var/tmp/"$prefix".* && -f "$file" && ! -s "$file" ]] || fail "got: $file"
-    rm -f -- "$file"
+    [[ "$file" == /var/tmp/"$prefix".*/installer.sh && -f "$file" && ! -s "$file" ]] || fail "got: $file"
+    update_remove_target_readable_temp_file "$file"
+    [[ ! -e "${file%/*}" ]] || fail "stage directory left: ${file%/*}"
     [[ -z "$(compgen -G "/tmp/$prefix.*")" ]] || fail "probe file left in /tmp"
 }
 
