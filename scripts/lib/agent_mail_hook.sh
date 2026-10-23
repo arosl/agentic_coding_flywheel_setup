@@ -15,11 +15,12 @@
 # message unread isn't sent back on every turn.
 #
 # Who the agent is: AGENT_MAIL_AGENT, then AGENT_NAME (the variables `am`
-# reads), then the label of the agent's herdr tab, which is its Agent Mail
-# name. The tab comes from HERDR_TAB_ID, or, for a hook run outside the
-# pane (Codex's app-server daemon), from the herdr agent whose session is
-# the hook's session_id. The project is AGENT_MAIL_PROJECT, then the git
-# top level of the hook's cwd, then the cwd itself.
+# reads), then nhm's binding for the agent's herdr pane, then the label of
+# the pane's herdr tab, but only when the agent is alone in that tab. The
+# pane is HERDR_PANE_ID, or, for a hook run outside the pane (Codex's
+# app-server daemon), the pane of the herdr agent whose session is the
+# hook's session_id. The project is AGENT_MAIL_PROJECT, then the git top
+# level of the hook's cwd, then the cwd itself.
 #
 # Usage:
 #   agent_mail_hook.sh stop                         (the hook; JSON on stdin)
@@ -51,11 +52,19 @@ agent_mail_hook_note() {
     printf 'agent_mail_hook: %s\n' "$*" >&2
 }
 
-# The Agent Mail name of the agent whose turn ended, or nothing.
+# The Agent Mail name of the agent whose turn ended, or nothing. In order:
+# AGENT_MAIL_AGENT or AGENT_NAME; nhm's active binding for the agent's
+# pane (HERDR_PANE_ID, or for a hook run outside the pane, Codex's
+# app-server daemon, the pane of the herdr agent whose session is the
+# hook's session_id); then the label of the pane's tab, but only for an
+# agent alone in its tab. Several agents share a tab when nhm or a swarm
+# put them there, and the label names only one of them; the others would
+# read its inbox and write its state file (acfs-ja4l).
 agent_mail_hook_agent_name() {
     local session_id="${1:-}"
     local name="${AGENT_MAIL_AGENT:-${AGENT_NAME:-}}"
-    local tab_id="${HERDR_TAB_ID:-}"
+    local pane_id="${HERDR_PANE_ID:-}" tab_id="${HERDR_TAB_ID:-}"
+    local agents="" agents_read=false count=""
 
     # The name also names the state file, so it must be an Agent Mail name
     # wherever it comes from.
@@ -64,13 +73,35 @@ agent_mail_hook_agent_name() {
         printf '%s\n' "$name"
         return 0
     fi
+    if [[ -z "$pane_id" && -n "$session_id" ]] && command -v herdr >/dev/null 2>&1; then
+        agents="$(timeout 2 herdr agent list 2>/dev/null)" || agents=""
+        agents_read=true
+        pane_id="$(jq -r --arg s "$session_id" \
+            '[.result.agents[]? | select(.agent_session.value? == $s) | .pane_id] | first // empty' <<<"$agents" 2>/dev/null)"
+    fi
+    if [[ -n "$pane_id" ]] && command -v nhm >/dev/null 2>&1; then
+        name="$(timeout 1 nhm resolve "$pane_id" --json 2>/dev/null \
+            | jq -r '.result.binding? // {} | select(.status == "active") | .mail_name // empty' 2>/dev/null)"
+        if [[ -n "$name" ]]; then
+            [[ "$name" =~ $AGENT_MAIL_HOOK_NAME_PATTERN ]] || return 1
+            printf '%s\n' "$name"
+            return 0
+        fi
+    fi
+
+    # The tab's label, for an agent alone in its tab.
     command -v herdr >/dev/null 2>&1 || return 1
-    if [[ -z "$tab_id" && -n "$session_id" ]]; then
-        tab_id="$(timeout 2 herdr agent list 2>/dev/null | jq -r --arg s "$session_id" \
-            '[.result.agents[]? | select(.agent_session.value? == $s) | .tab_id] | first // empty' 2>/dev/null)"
+    if [[ "$agents_read" == false ]]; then
+        agents="$(timeout 2 herdr agent list 2>/dev/null)" || agents=""
+    fi
+    if [[ -z "$tab_id" && -n "$pane_id" ]]; then
+        tab_id="$(jq -r --arg p "$pane_id" \
+            '[.result.agents[]? | select(.pane_id == $p) | .tab_id] | first // empty' <<<"$agents" 2>/dev/null)"
     fi
     [[ -n "$tab_id" ]] || return 1
-    name="$(timeout 2 herdr tab get "$tab_id" 2>/dev/null | jq -r '.result.tab.label // empty' 2>/dev/null)"
+    count="$(jq -r --arg t "$tab_id" '[.result.agents[]? | select(.tab_id == $t)] | length' <<<"$agents" 2>/dev/null)"
+    [[ "$count" == 1 ]] || return 1
+    name="$(timeout 1 herdr tab get "$tab_id" 2>/dev/null | jq -r '.result.tab.label // empty' 2>/dev/null)"
     [[ "$name" =~ $AGENT_MAIL_HOOK_NAME_PATTERN ]] || return 1
     printf '%s\n' "$name"
 }
@@ -107,7 +138,8 @@ agent_mail_hook_stop() {
     [[ -n "$agent" ]] || return 0
     project="$(agent_mail_hook_project "$cwd")" || return 0
 
-    # 2 + 2 + 5 seconds at worst stays inside the registered 10 s timeout.
+    # 2 (agent list) + 1 (nhm) + 1 (tab get) + 5 seconds at worst stays
+    # inside the registered 10 s timeout.
     inbox="$(timeout 5 am check-inbox --agent "$agent" --project "$project" --rate-limit 0 --json 2>/dev/null)" || return 0
     [[ -n "$inbox" ]] || return 0
     unread="$(jq -r '.unread_count // 0 | floor' <<<"$inbox" 2>/dev/null)" || return 0

@@ -30,7 +30,10 @@ check() {
 
 # ------------------------------------------------------------
 # Stubs: am answers check-inbox from $STUB_DIR/inbox.json (or fails when
-# $STUB_DIR/am_fail exists); herdr answers tab get and agent list.
+# $STUB_DIR/am_fail exists); herdr answers tab get, and agent list from
+# $STUB_DIR/agents.json (default: one Codex agent alone in tab w1:t7);
+# nhm answers resolve <pane> from $STUB_DIR/binding_<pane>.json, or with
+# no binding.
 # ------------------------------------------------------------
 mkdir -p "$WORK/bin" "$WORK/repo" "$WORK/stub"
 cat >"$WORK/bin/am" <<'STUB'
@@ -49,12 +52,27 @@ case "$1 $2" in
         printf '{"id":"cli:tab:get","result":{"tab":{"label":"%s","tab_id":"%s"},"type":"tab_info"}}\n' "$label" "$3"
         ;;
     "agent list")
-        printf '{"id":"cli:agent:list","result":{"agents":[{"name":"icyknoll","tab_id":"w1:t7","agent_session":{"value":"sess-codex-7"}}]}}\n'
+        if [[ -f "$STUB_DIR/agents.json" ]]; then
+            cat "$STUB_DIR/agents.json"
+        else
+            printf '{"id":"cli:agent:list","result":{"agents":[{"name":"icyknoll","pane_id":"w1:p7","tab_id":"w1:t7","agent_session":{"value":"sess-codex-7"}}]}}\n'
+        fi
         ;;
     *) exit 2 ;;
 esac
 STUB
-chmod 0755 "$WORK/bin/am" "$WORK/bin/herdr"
+cat >"$WORK/bin/nhm" <<'STUB'
+#!/usr/bin/env bash
+printf 'nhm %s\n' "$*" >>"$STUB_DIR/calls"
+[[ "$1" == resolve && "$3" == --json ]] || exit 2
+if [[ -f "$STUB_DIR/binding_$2.json" ]]; then
+    printf '{"schema":"nhm.v1","command":"resolve","result":{"binding":%s}}\n' "$(cat "$STUB_DIR/binding_$2.json")"
+else
+    printf '{"schema":"nhm.v1","command":"resolve","result":null,"errors":["bindings: no such binding: %s"]}\n' "$2"
+    exit 1
+fi
+STUB
+chmod 0755 "$WORK/bin/am" "$WORK/bin/herdr" "$WORK/bin/nhm"
 git -C "$WORK/repo" init -q
 mkdir -p "$WORK/repo/sub"
 
@@ -92,6 +110,24 @@ run_stop() {
 reset_state() {
     rm -rf "${HOME:?}/.acfs" "${STUB_DIR:?}"/*
 }
+
+# agents <pane>:<tab>[:<session>]...: herdr's agent list.
+agents() {
+    local spec pane tab session list="" pane_w pane_p tab_w tab_t
+    for spec in "$@"; do
+        IFS=: read -r pane_w pane_p tab_w tab_t session <<<"$spec"
+        pane="$pane_w:$pane_p" tab="$tab_w:$tab_t"
+        list+="${list:+,}{\"pane_id\":\"$pane\",\"tab_id\":\"$tab\",\"agent_session\":{\"value\":\"${session:-none}\"}}"
+    done
+    printf '{"id":"cli:agent:list","result":{"agents":[%s]}}\n' "$list" >"$STUB_DIR/agents.json"
+}
+
+# binding <pane> <mail name> [status]: nhm's binding for that pane.
+binding() {
+    printf '{"mail_name":"%s","pane_id":"%s","status":"%s"}\n' "$2" "$1" "${3:-active}" >"$STUB_DIR/binding_$1.json"
+}
+
+state_files() { (cd "$HOME/.acfs/state/agent_mail_hook" 2>/dev/null && ls) | sed 's/\..*//' | sort | paste -sd' '; }
 
 echo "Stop hook"
 
@@ -142,8 +178,81 @@ check "no agent name: am not called" bash -c '! grep -q "^am " "$1"/calls 2>/dev
 reset_state
 inbox 1 50
 echo IcyKnoll >"$STUB_DIR/label_w1:t3"
+agents w1:p3:w1:t3
 out="$(event | HERDR_TAB_ID=w1:t3 run_stop)"
-check "name from the herdr tab label (HERDR_TAB_ID), one message in the singular" \
+check "name from the herdr tab label (HERDR_TAB_ID) of an agent alone in its tab, one message in the singular" \
+    test "$out" = '{"decision":"block","reason":"You have 1 unread Agent Mail message; read them before you stop."}'
+
+echo "Stop hook: several agents in one herdr tab (acfs-ja4l)"
+
+# Tab w1:t5 is labelled FuchsiaDune and holds three agents.
+shared_tab() {
+    echo FuchsiaDune >"$STUB_DIR/label_w1:t5"
+    agents w1:p1:w1:t5 w1:p2:w1:t5:sess-codex-2 w1:p9:w1:t5
+}
+
+reset_state
+inbox 1 50
+shared_tab
+binding w1:p2 IcyKnoll
+out="$(event | HERDR_PANE_ID=w1:p2 HERDR_TAB_ID=w1:t5 run_stop)"
+check "nhm's binding for the pane names the agent, not the tab's label" \
+    grep -qxF "am check-inbox --agent IcyKnoll --project $WORK/repo --rate-limit 0 --json" "$STUB_DIR/calls"
+check "it blocks for that agent's mail" \
+    test "$out" = '{"decision":"block","reason":"You have 1 unread Agent Mail message; read them before you stop."}'
+check "nhm is asked for the pane" grep -qxF "nhm resolve w1:p2 --json" "$STUB_DIR/calls"
+check "the tab isn't read" bash -c '! grep -q "^herdr tab get" "$1/calls"' _ "$STUB_DIR"
+
+reset_state
+inbox 1 50
+shared_tab
+binding w1:p1 FuchsiaDune
+binding w1:p2 IcyKnoll
+out1="$(event | HERDR_PANE_ID=w1:p1 HERDR_TAB_ID=w1:t5 run_stop)"
+out2="$(event | HERDR_PANE_ID=w1:p2 HERDR_TAB_ID=w1:t5 run_stop)"
+check "two agents in one tab: each reads its own inbox" \
+    bash -c 'grep -q -- "--agent FuchsiaDune " "$1/calls" && grep -q -- "--agent IcyKnoll " "$1/calls"' _ "$STUB_DIR"
+check "two agents in one tab: each is told about the same new mail once" \
+    test -n "$out1" -a -n "$out2"
+check "two agents in one tab: each writes only its own state file" test "$(state_files)" = "FuchsiaDune IcyKnoll"
+
+reset_state
+inbox 1 50
+shared_tab
+out="$(event | HERDR_PANE_ID=w1:p9 HERDR_TAB_ID=w1:t5 run_stop)"
+check "an unbound agent in a shared tab: silent" test -z "$out"
+check "an unbound agent in a shared tab: the tab owner's inbox isn't read" \
+    bash -c '! grep -q "^am " "$1/calls"' _ "$STUB_DIR"
+check "an unbound agent in a shared tab: no state file, the owner's least of all" test -z "$(state_files)"
+
+reset_state
+inbox 1 50
+shared_tab
+binding w1:p2 IcyKnoll retired
+out="$(event | HERDR_PANE_ID=w1:p2 HERDR_TAB_ID=w1:t5 run_stop)"
+check "a binding that isn't active isn't used, and the shared tab stays silent" test -z "$out"
+
+reset_state
+inbox 1 50
+shared_tab
+binding w1:p2 'not-a-name'
+out="$(event | HERDR_PANE_ID=w1:p2 run_stop)"
+check "a bound name that isn't an Agent Mail name: silent" test -z "$out"
+
+reset_state
+inbox 1 50
+shared_tab
+binding w1:p2 IcyKnoll
+out="$(event false sess-codex-2 | run_stop)"
+check "Codex daemon in a shared tab: the session's pane, then nhm's binding" \
+    grep -qxF "am check-inbox --agent IcyKnoll --project $WORK/repo --rate-limit 0 --json" "$STUB_DIR/calls"
+
+reset_state
+inbox 1 50
+echo IcyKnoll >"$STUB_DIR/label_w1:t3"
+agents w1:p3:w1:t3
+out="$(event | HERDR_PANE_ID=w1:p3 run_stop)"
+check "an agent nhm doesn't bind, alone in its tab, still gets the tab's label" \
     test "$out" = '{"decision":"block","reason":"You have 1 unread Agent Mail message; read them before you stop."}'
 
 reset_state
