@@ -5127,14 +5127,17 @@ test_doctor_entrypoint_dispatches_zsh_only_commands() {
     # These used to exist only in the interactive zsh `acfs` function, so bash,
     # /usr/local/bin/acfs and doctor's own "acfs notifications enable" hint
     # failed with "unknown option".
-    local cmd="" output="" failures=""
+    local cmd="" output="" failures="" help_out=""
     for cmd in "landing-plane:Usage: acfs landing-plane" "land:Usage: acfs landing-plane" \
         "provenance:Usage: acfs provenance" "notifications:ACFS Notifications" \
         "notify:ACFS Notifications" "dash:Usage: acfs dashboard"; do
         output="$(bash "$DOCTOR_SH" "${cmd%%:*}" --help 2>&1 | head -n 3)"
         [[ "$output" == *"${cmd#*:}"* ]] || failures+=" ${cmd%%:*}"
     done
-    if [[ -z "$failures" ]] && bash "$DOCTOR_SH" help 2>&1 | grep -q 'landing-plane'; then
+    # Capture first: under pipefail, grep -q exiting at its match let doctor's
+    # later writes die of SIGPIPE and fail the check (acfs-dbdp).
+    if [[ -z "$failures" ]] && help_out="$(bash "$DOCTOR_SH" help 2>&1)" \
+        && [[ "$help_out" == *landing-plane* ]]; then
         harness_pass "doctor entrypoint dispatches landing-plane, provenance, notifications and dash"
     else
         harness_fail "doctor entrypoint dispatches landing-plane, provenance, notifications and dash" "failed:$failures"
@@ -6440,6 +6443,69 @@ JSON
     cleanup_mock_env
 }
 
+test_continue_names_every_failed_phase() {
+    setup_installed_layout_env
+    setup_poisoned_acfs_home
+
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<'JSON'
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z",
+  "completed_phases": ["user_setup", "agents", "finalize"],
+  "failed_phase": "stack",
+  "failed_phases": ["languages", "stack"],
+  "install_status": "failed"
+}
+JSON
+
+    local output
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
+        bash "$TEST_INSTALLED_ACFS/scripts/lib/continue.sh" --status)
+
+    if [[ "$output" == *"Installation failed"* ]] && [[ "$output" == *"languages, stack"* ]]; then
+        harness_pass "continue names every failed phase"
+    else
+        harness_fail "continue names every failed phase" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_continue_failed_install_status_beats_completed_finalize() {
+    setup_installed_layout_env
+    setup_poisoned_acfs_home
+
+    # acfs-xro's shape: a required module failed, every phase completed.
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<'JSON'
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z",
+  "completed_phases": ["user_setup", "filesystem", "shell_setup", "cli_tools", "languages", "agents", "cloud_db", "stack", "finalize"],
+  "failed_phase": null,
+  "failed_phases": [],
+  "install_status": "failed"
+}
+JSON
+
+    local output
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
+        bash "$TEST_INSTALLED_ACFS/scripts/lib/continue.sh" --status)
+
+    if [[ "$output" == *"Installation failed"* ]] && [[ "$output" != *"Installation complete"* ]]; then
+        harness_pass "continue: a failed install_status beats a completed finalize"
+    else
+        harness_fail "continue: a failed install_status beats a completed finalize" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_continue_reports_installed_layout_log_locations() {
     setup_installed_layout_env
     setup_poisoned_acfs_home
@@ -6667,6 +6733,42 @@ test_info_uses_installed_layout_under_root_home() {
         harness_pass "info uses installed-layout state and lessons under root home"
     else
         harness_fail "info uses installed-layout state and lessons under root home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_info_reports_install_outcome() {
+    setup_installed_layout_env
+    setup_poisoned_acfs_home
+
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "started_at": "2026-03-09T08:00:00Z",
+  "completed_phases": ["user_setup", "agents", "finalize"],
+  "failed_phase": "stack",
+  "failed_phases": ["languages", "stack"],
+  "install_status": "failed"
+}
+EOF
+
+    local output="" terminal=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
+        bash "$TEST_INSTALLED_ACFS/scripts/lib/info.sh" --json)
+    terminal=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" NO_COLOR=1 \
+        bash "$TEST_INSTALLED_ACFS/scripts/lib/info.sh")
+
+    if printf '%s\n' "$output" | jq -e \
+        '.installation.status == "failed" and .installation.failed_phases == ["languages", "stack"]' \
+        >/dev/null 2>&1 && [[ "$terminal" == *"Install:   failed in languages, stack"* ]]; then
+        harness_pass "info reports the install's outcome and every failed phase"
+    else
+        harness_fail "info reports the install's outcome and every failed phase" "$output $terminal"
     fi
 
     cleanup_mock_env
@@ -11898,6 +12000,23 @@ test_status_editor_partial_and_failed_snapshots() {
     done
 }
 
+test_status_editor_reads_install_status() {
+    status_protocol_setup failed-install
+    printf '%s\n' '{"completed_phases":["user_setup","finalize"],"failed_phases":["languages","fixture-private-phase"],"install_status":"failed"}' > "$PROTOCOL_HOME/.acfs/state.json"
+    if status_protocol_run 2 failed-install --ide &&
+        jq -e '.install.status == "failed" and .install.failed_phases == ["languages"]' "$PROTOCOL_OUTPUT" >/dev/null &&
+        ! grep -Fq fixture-private "$PROTOCOL_OUTPUT"; then
+        harness_pass "editor: a failed install_status beats finalize, and failed_phases are allow-listed"
+    else harness_fail "editor: a failed install_status beats finalize, and failed_phases are allow-listed"; fi
+
+    status_protocol_setup resumed-install
+    printf '%s\n' '{"completed_phases":["user_setup","finalize"],"install_status":"in_progress"}' > "$PROTOCOL_HOME/.acfs/state.json"
+    if status_protocol_run 1 resumed-install --ide &&
+        jq -e '.install.status == "partial"' "$PROTOCOL_OUTPUT" >/dev/null; then
+        harness_pass "editor: an install in progress is partial despite an earlier finalize"
+    else harness_fail "editor: an install in progress is partial despite an earlier finalize"; fi
+}
+
 test_status_editor_missing_and_invalid_state() {
     local kind=""
     for kind in missing invalid; do
@@ -12066,6 +12185,7 @@ PY
 run_status_protocol_tests() {
     test_status_editor_complete_snapshot_and_no_mutation
     test_status_editor_partial_and_failed_snapshots
+    test_status_editor_reads_install_status
     test_status_editor_missing_and_invalid_state
     test_status_editor_active_phase_beats_prior_completion
     test_status_editor_live_counts_skip_unrelated_tools
@@ -13461,6 +13581,8 @@ main() {
     test_continue_ignores_generic_install_process_matches || true
     test_continue_failed_state_beats_runtime_probe || true
     test_continue_failed_state_prints_resume_hint || true
+    test_continue_names_every_failed_phase || true
+    test_continue_failed_install_status_beats_completed_finalize || true
     test_continue_reports_installed_layout_log_locations || true
     test_continue_live_log_hint_uses_installed_layout_log_dir || true
     test_continue_can_be_sourced_without_leaking_install_context || true
@@ -13507,6 +13629,7 @@ main() {
     test_runtime_helpers_fail_closed_when_current_home_unresolved || true
     test_runtime_helpers_fail_closed_on_invalid_passwd_home_for_target_user || true
     test_info_uses_installed_layout_under_root_home || true
+    test_info_reports_install_outcome || true
     test_info_uses_explicit_target_home_when_state_is_missing || true
     test_info_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved || true
     test_info_uses_system_state_target_home_when_getent_unavailable || true

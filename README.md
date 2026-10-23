@@ -4083,6 +4083,8 @@ Progress is tracked in `~/.acfs/state.json`:
   "failed_phase": null,
   "failed_step": null,
   "failed_error": null,
+  "failed_phases": [],
+  "install_status": "in_progress",
   "skipped_phases": [],
   "phase_timings": {
     "user_setup": 12,
@@ -4091,6 +4093,8 @@ Progress is tracked in `~/.acfs/state.json`:
   }
 }
 ```
+
+`failed_phases` lists every phase whose last run failed, in order, and `failed_phase` is its last entry. A phase leaves the list when it runs again. `install_status` describes the whole install: `in_progress` while a run is open, then `complete` or `failed` at its end. `failed` also covers a failed module or smoke test inside phases that completed.
 
 ### Phase State Transitions
 

@@ -238,6 +238,184 @@ EOF
     assert_output ""
 }
 
+@test "state: init records an install in progress with no failed phases" {
+    state_init
+
+    run jq -c '[.install_status, .failed_phases]' "$ACFS_STATE_FILE"
+    assert_output '["in_progress",[]]'
+}
+
+@test "state: two failed phases are both listed and install_status is failed" {
+    state_init
+    state_phase_start "languages"
+    state_phase_fail "languages" "Execution failed" "Phase 'Language Runtimes' failed with exit code 1"
+    state_phase_start "agents"
+    state_phase_complete "agents"
+    state_phase_start "stack"
+    state_phase_fail "stack" "Installing dcg" "dcg exited 1"
+
+    run jq -c '.failed_phases' "$ACFS_STATE_FILE"
+    assert_output '["languages","stack"]'
+    run state_get ".failed_phase"
+    assert_output "stack"
+
+    run state_install_finish true
+    assert_success
+    run state_get ".install_status"
+    assert_output "failed"
+}
+
+@test "state: a failed phase that fails again moves to the end, once" {
+    state_init
+    state_phase_start "languages"
+    state_phase_fail "languages" "step a" "first"
+    state_phase_start "stack"
+    state_phase_fail "stack" "step b" "second"
+    state_phase_fail "languages" "Execution failed" "third"
+
+    run jq -c '.failed_phases' "$ACFS_STATE_FILE"
+    assert_output '["stack","languages"]'
+}
+
+@test "state: fixing the newest failed phase hands failed_phase to the earlier one" {
+    state_init
+    state_phase_start "languages"
+    state_phase_fail "languages" "step a" "first"
+    state_phase_start "stack"
+    state_phase_fail "stack" "step b" "second"
+
+    # An --only-phase rerun of stack that succeeds.
+    state_phase_start "stack"
+    run jq -c '[.failed_phases, .failed_phase, .failed_step]' "$ACFS_STATE_FILE"
+    assert_output '[["languages"],"languages",null]'
+    state_phase_complete "stack"
+
+    run jq -c '[.failed_phases, .failed_phase, .failed_step]' "$ACFS_STATE_FILE"
+    assert_output '[["languages"],"languages",null]'
+}
+
+@test "state: a tolerated step failure in a later phase keeps the earlier failed phase" {
+    state_init
+    state_phase_start "languages"
+    state_phase_fail "languages" "Execution failed" "exit 1"
+    state_phase_start "stack"
+    state_phase_fail "stack" "Installing optional tool" "exit 1"
+    state_phase_complete "stack"
+
+    run jq -c '[.failed_phases, .failed_phase]' "$ACFS_STATE_FILE"
+    assert_output '[["languages"],"languages"]'
+}
+
+@test "state: a tolerated step failure in a phase that completes leaves no failed phase" {
+    state_init
+    state_phase_start "cli_tools"
+    state_phase_fail "cli_tools" "Installing optional tool" "exit 1"
+    state_phase_complete "cli_tools"
+
+    run jq -c '[.failed_phases, .failed_phase]' "$ACFS_STATE_FILE"
+    assert_output '[[],null]'
+}
+
+@test "state: a resumed run that fixes a failed phase clears it" {
+    local phase
+    state_init
+    for phase in "${ACFS_PHASE_IDS[@]}"; do
+        state_phase_start "$phase"
+        if [[ "$phase" == "languages" || "$phase" == "stack" ]]; then
+            state_phase_fail "$phase" "Execution failed" "exit 1"
+        else
+            state_phase_complete "$phase"
+        fi
+    done
+    state_install_finish true
+
+    # The resumed run: languages fails again, stack is fixed.
+    state_phase_start "languages"
+    run state_get ".install_status"
+    assert_output "in_progress"
+    state_phase_fail "languages" "Execution failed" "exit 1"
+    state_phase_start "stack"
+    state_phase_complete "stack"
+
+    run jq -c '[.failed_phases, .failed_phase]' "$ACFS_STATE_FILE"
+    assert_output '[["languages"],"languages"]'
+    state_install_finish true
+    run state_get ".install_status"
+    assert_output "failed"
+
+    # The next run fixes languages too.
+    state_phase_start "languages"
+    state_phase_complete "languages"
+    state_install_finish false
+
+    run jq -c '[.install_status, .failed_phases, .failed_phase]' "$ACFS_STATE_FILE"
+    assert_output '["complete",[],null]'
+}
+
+@test "state: install_finish says complete only when every phase completed or was skipped" {
+    local phase
+    state_init
+    for phase in "${ACFS_PHASE_IDS[@]}"; do
+        [[ "$phase" == "cloud_db" ]] && continue
+        state_phase_start "$phase"
+        state_phase_complete "$phase"
+    done
+
+    run state_install_finish false
+    assert_success
+    run state_get ".install_status"
+    assert_output "in_progress"
+
+    state_phase_skip "cloud_db"
+    state_install_finish false
+    run state_get ".install_status"
+    assert_output "complete"
+}
+
+@test "state: a clean run still fails while an earlier run's phase stays failed" {
+    local phase
+    state_init
+    for phase in "${ACFS_PHASE_IDS[@]}"; do
+        state_phase_start "$phase"
+        state_phase_complete "$phase"
+    done
+    state_phase_start "stack"
+    state_phase_fail "stack" "Execution failed" "exit 1"
+
+    # An --only run of another phase that succeeds leaves stack failed.
+    state_phase_start "cli_tools"
+    state_phase_complete "cli_tools"
+    state_install_finish false
+
+    run jq -c '[.install_status, .failed_phases]' "$ACFS_STATE_FILE"
+    assert_output '["failed",["stack"]]'
+}
+
+@test "state: a phase failure replaces a malformed failed_phases" {
+    state_init
+    state_update '.failed_phases = "stack"'
+
+    state_phase_start "stack"
+    state_phase_fail "stack" "Execution failed" "exit 1"
+
+    run jq -c '.failed_phases' "$ACFS_STATE_FILE"
+    assert_output '["stack"]'
+}
+
+@test "state: confirm_resume names every failed phase" {
+    state_init
+    state_phase_start "user_setup"
+    state_phase_complete "user_setup"
+    state_phase_start "languages"
+    state_phase_fail "languages" "Execution failed" "exit 1"
+    state_phase_start "stack"
+    state_phase_fail "stack" "Execution failed" "exit 1"
+
+    run confirm_resume
+    [ "$status" -eq 0 ]
+    assert_output --partial "Previous failures at: Language Runtimes, Agent Flywheel Stack"
+}
+
 @test "state: skip logic" {
     state_init
     

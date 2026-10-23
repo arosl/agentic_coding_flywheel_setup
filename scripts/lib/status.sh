@@ -1267,10 +1267,12 @@ _status_editor_json() {
         ($state.completed_phases | if type == "array" then map(phase) | map(select(. != null)) | unique else [] end) as $completed |
         ($state.provider // $state.vps_provider // null) as $provider_raw |
         ($provider_raw as $p | if ["hetzner","ovh","contabo","digitalocean","aws","gcp","azure","local","other"] | index($p) then $p else null end) as $provider |
+        ($state.failed_phases | if type == "array" then map(select(type == "string")) else [] end) as $failed_phases |
         (if $state_status != "ok" then $state_status
-         elif ($state.failed_phase != null and $state.failed_phase != "") then "failed"
+         elif $state.install_status == "failed" or ($failed_phases | length) > 0 or ($state.failed_phase != null and $state.failed_phase != "") then "failed"
          elif $state.current_phase != null then "partial"
-         elif ($completed | index("finalize")) != null then "complete"
+         elif $state.install_status == "complete" then "complete"
+         elif $state.install_status == null and ($completed | index("finalize")) != null then "complete"
          elif ($completed | length) > 0 then "partial"
          else "unknown" end) as $install_status |
         (if $live_status == "ok" and $live.server_ok != true then "warn" else $live_status end) as $sessions_status |
@@ -1280,7 +1282,7 @@ _status_editor_json() {
           schema_version: 1, kind: "acfs.editor_status", status: $status,
           generated_at: ($generated_at | stamp), read_only: true,
           freshness: {cache: "none", state_updated_at: (($state.last_updated // $state.updated_at // null) | stamp), sessions: $sessions_status},
-          install: {status: $install_status, mode: ($state.mode as $m | if ["vibe","safe"] | index($m) then $m else null end), completed_phases: $completed, current_phase: ($state.current_phase | phase), failed_phase: ($state.failed_phase | phase), tools_present: $tool_count},
+          install: {status: $install_status, mode: ($state.mode as $m | if ["vibe","safe"] | index($m) then $m else null end), completed_phases: $completed, current_phase: ($state.current_phase | phase), failed_phase: ($state.failed_phase | phase), failed_phases: ($failed_phases | map(phase) | map(select(. != null))), tools_present: $tool_count},
           provider: {name: $provider, source: "local_state", identifiers_omitted: true},
           sessions: {status: $sessions_status, herdr_available: (if ($live.available | type) == "boolean" then $live.available else null end), workspace_count: (if $live.server_ok == true then $live.workspace_count | count else null end), agent_count: (if $live.server_ok == true then $live.agent_count | count else null end)},
           collectors: {install: $state_status, tools: "ok", sessions: $live_status, provider: (if $provider == null then "unknown" else "ok" end)},

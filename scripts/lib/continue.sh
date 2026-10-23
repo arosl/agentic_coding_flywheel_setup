@@ -668,6 +668,11 @@ get_failed_phase() {
     fi
 }
 
+# Every phase whose last run failed, comma separated (failed_phase is the last).
+get_failed_phases() {
+    get_state_value '.failed_phases | if type == "array" then map(select(type == "string")) | join(", ") else empty end'
+}
+
 get_failed_step() {
     local step
     step=$(get_state_value '.failed_step // empty')
@@ -690,17 +695,27 @@ get_resume_hint() {
 
 # Get installation status
 get_install_status() {
-    local failed_phase current_phase finalize_completed
-    failed_phase=$(get_state_value '.failed_phase // empty')
-    if [[ -n "$failed_phase" ]] && [[ "$failed_phase" != "null" ]]; then
+    local install_status phase_failed current_phase finalize_completed
+    install_status=$(get_state_value '.install_status // empty')
+    phase_failed=$(get_state_value '(.failed_phases | type == "array" and length > 0) or ((.failed_phase // "") != "")')
+    if [[ "$install_status" == "failed" || "$phase_failed" == "true" ]]; then
         echo "failed"
         return 0
     fi
 
-    finalize_completed=$(get_state_value '(.completed_phases // []) | index("finalize") != null')
-    if [[ "$finalize_completed" == "true" ]]; then
+    if [[ "$install_status" == "complete" ]]; then
         echo "complete"
         return 0
+    fi
+
+    # A state.json written before install_status existed: a completed
+    # finalize phase marks a finished install.
+    if [[ -z "$install_status" ]]; then
+        finalize_completed=$(get_state_value '(.completed_phases // []) | index("finalize") != null')
+        if [[ "$finalize_completed" == "true" ]]; then
+            echo "complete"
+            return 0
+        fi
     fi
 
     current_phase=$(get_state_value '.current_phase.id? // .current_phase // empty')
@@ -881,11 +896,14 @@ show_status() {
     fi
 
     if [[ "$install_status" == "failed" ]]; then
-        local failed_phase failed_step
+        local failed_phase failed_phases failed_step
         failed_phase=$(get_failed_phase)
+        failed_phases=$(get_failed_phases)
         failed_step=$(get_failed_step)
 
-        if [[ -n "$failed_phase" ]]; then
+        if [[ "$failed_phases" == *,* ]]; then
+            echo -e "  ${_CONTINUE_BOLD}Failed:${_CONTINUE_NC} Phases: ${_CONTINUE_RED}$failed_phases${_CONTINUE_NC}"
+        elif [[ -n "$failed_phase" ]]; then
             echo -e "  ${_CONTINUE_BOLD}Failed:${_CONTINUE_NC} Phase: ${_CONTINUE_RED}$failed_phase${_CONTINUE_NC}"
         fi
         if [[ -n "$failed_step" ]]; then
@@ -1005,13 +1023,16 @@ main() {
             echo "  2. Run: onboard"
             echo "  3. Start coding with: cc, cod, or agy"
         elif [[ "$status" == "failed" ]]; then
-            local failed_phase failed_step resume_hint
+            local failed_phase failed_phases failed_step resume_hint
             failed_phase=$(get_failed_phase)
+            failed_phases=$(get_failed_phases)
             failed_step=$(get_failed_step)
             resume_hint=$(get_resume_hint)
 
             echo -e "${_CONTINUE_RED}${_CONTINUE_BOLD}Installation failed.${_CONTINUE_NC}"
-            if [[ -n "$failed_phase" ]]; then
+            if [[ "$failed_phases" == *,* ]]; then
+                echo "Failed phases: $failed_phases"
+            elif [[ -n "$failed_phase" ]]; then
                 echo "Failed phase: $failed_phase"
             fi
             if [[ -n "$failed_step" ]]; then

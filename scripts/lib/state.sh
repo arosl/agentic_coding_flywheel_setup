@@ -64,6 +64,9 @@ fi
 #   "failed_phase": null,                     # Phase where failure occurred (null if no failure)
 #   "failed_step": null,                      # Step where failure occurred (null if no failure)
 #   "failed_error": null,                     # Error message from failure (null if no failure)
+#   "failed_phases": ["languages", "stack"],  # Every phase whose last run failed, in order;
+#                                             #   failed_phase is the last of them
+#   "install_status": "failed",               # in_progress | complete | failed (the whole install)
 #   "skipped_tools": ["rch", "bv"],           # Tools user chose to skip
 #   "skipped_phases": ["postgres", "vault"],  # Phases user chose to skip
 #   "phase_durations": {                      # Timing data (seconds per phase)
@@ -504,6 +507,8 @@ state_init() {
                 completed_phases: [],
                 failed_phase: null,
                 failed_step: null,
+                failed_phases: [],
+                install_status: "in_progress",
                 skip_postgres: $skip_pg,
                 skip_vault: $skip_v,
                 skip_cloud: $skip_c,
@@ -529,6 +534,8 @@ state_init() {
   "completed_phases": [],
   "failed_phase": null,
   "failed_step": null,
+  "failed_phases": [],
+  "install_status": "in_progress",
   "skip_postgres": $skip_pg,
   "skip_vault": $skip_v,
   "skip_cloud": $skip_c,
@@ -549,6 +556,8 @@ EOF
 
     state_sync_path_if_enabled "$state_dir"
 
+    # This process has an install open until state_install_finish closes it.
+    ACFS_STATE_INSTALL_OPEN=true
     return 0
 }
 
@@ -1108,7 +1117,7 @@ confirm_resume() {
 
     # Extract all resume info in a single jq call (5→1 subprocess spawns)
     # Note: Uses ASCII Unit Separator (0x1f) as delimiter since bash strips null bytes
-    local completed_count=0 last_phase="" started_at="" failed_phase="" mode=""
+    local completed_count=0 last_phase="" started_at="" failed_phase="" mode="" failed_phases=""
     if command -v jq &>/dev/null; then
         local extracted
         extracted=$(echo "$state" | jq -r '
@@ -1117,10 +1126,11 @@ confirm_resume() {
                 (.completed_phases[-1] // "unknown"),
                 (.started_at // "unknown"),
                 (.failed_phase // ""),
-                (.mode // "unknown")
+                (.mode // "unknown"),
+                (.failed_phases | if type == "array" then map(select(type == "string" and . != "")) else [] end | join(","))
             ] | join("\u001f")
         ')
-        IFS=$'\x1f' read -r completed_count last_phase started_at failed_phase mode <<< "$extracted"
+        IFS=$'\x1f' read -r completed_count last_phase started_at failed_phase mode failed_phases <<< "$extracted"
     fi
 
     # Handle explicit CLI flags first (these override everything)
@@ -1139,7 +1149,7 @@ confirm_resume() {
     fi
 
     # If nothing completed and no failed phase recorded, there is no meaningful resume point.
-    if [[ "$force_resume_requested" != "true" ]] && [[ "$completed_count" -eq 0 ]] && [[ -z "$failed_phase" || "$failed_phase" == "null" ]]; then
+    if [[ "$force_resume_requested" != "true" ]] && [[ "$completed_count" -eq 0 ]] && [[ -z "$failed_phase" || "$failed_phase" == "null" ]] && [[ -z "$failed_phases" ]]; then
         return 1
     fi
 
@@ -1170,10 +1180,11 @@ confirm_resume() {
                     (.completed_phases[-1] // "unknown"),
                     (.started_at // "unknown"),
                     (.failed_phase // ""),
-                    (.mode // "unknown")
+                    (.mode // "unknown"),
+                    (.failed_phases | if type == "array" then map(select(type == "string" and . != "")) else [] end | join(","))
                 ] | join("\u001f")
             ')
-            IFS=$'\x1f' read -r completed_count last_phase started_at failed_phase mode <<< "$extracted"
+            IFS=$'\x1f' read -r completed_count last_phase started_at failed_phase mode failed_phases <<< "$extracted"
 
             last_phase_name="${ACFS_PHASE_NAMES[$last_phase]:-$last_phase}"
             if [[ "$completed_count" -eq 0 && -n "$failed_phase" && "$failed_phase" != "null" ]]; then
@@ -1205,9 +1216,19 @@ confirm_resume() {
     _confirm_resume_log_info "  Progress: $completed_count/$total_phases phases"
     _confirm_resume_log_info "  Last completed: $last_phase_name"
 
-    if [[ -n "$failed_phase" && "$failed_phase" != "null" ]]; then
-        local failed_name="${ACFS_PHASE_NAMES[$failed_phase]:-$failed_phase}"
-        _confirm_resume_log_warn "  Previous failure at: $failed_name"
+    local -a failed_ids=()
+    IFS=',' read -r -a failed_ids <<< "$failed_phases"
+    if [[ ${#failed_ids[@]} -eq 0 && -n "$failed_phase" && "$failed_phase" != "null" ]]; then
+        failed_ids=("$failed_phase")
+    fi
+    local failed_id="" failed_names=""
+    for failed_id in "${failed_ids[@]}"; do
+        failed_names+="${failed_names:+, }${ACFS_PHASE_NAMES[$failed_id]:-$failed_id}"
+    done
+    if [[ ${#failed_ids[@]} -gt 1 ]]; then
+        _confirm_resume_log_warn "  Previous failures at: $failed_names"
+    elif [[ ${#failed_ids[@]} -eq 1 ]]; then
+        _confirm_resume_log_warn "  Previous failure at: $failed_names"
     fi
 
     # Only prompt if --interactive was requested and we have a controlling TTY.
@@ -1881,8 +1902,13 @@ state_phase_start() {
             .current_phase = $phase |
             .current_step = $step |
             .phase_start_time = $start |
+            .install_status = "in_progress" |
+            # A phase that runs again leaves failed_phases (it rejoins the
+            # list if it fails again). failed_phase stays the last entry: an
+            # earlier failed phase, or null.
+            .failed_phases = (((.failed_phases // []) | if type == "array" then . else [] end) - [$phase]) |
             if (.failed_phase // "") == $phase then
-                .failed_phase = null |
+                .failed_phase = (.failed_phases[-1] // null) |
                 .failed_step = null |
                 .failed_error = null
             else
@@ -1894,8 +1920,10 @@ state_phase_start() {
             .current_phase = $phase |
             .current_step = null |
             .phase_start_time = $start |
+            .install_status = "in_progress" |
+            .failed_phases = (((.failed_phases // []) | if type == "array" then . else [] end) - [$phase]) |
             if (.failed_phase // "") == $phase then
-                .failed_phase = null |
+                .failed_phase = (.failed_phases[-1] // null) |
                 .failed_step = null |
                 .failed_error = null
             else
@@ -1907,6 +1935,7 @@ state_phase_start() {
     local save_result=0
     state_save "$new_state" || save_result=$?
     _state_release_lock
+    [[ $save_result -eq 0 ]] && ACFS_STATE_INSTALL_OPEN=true
     return $save_result
 }
 
@@ -1992,8 +2021,9 @@ state_phase_complete() {
         # clears failed_* for the phase being started, a completed phase would
         # otherwise carry a stale "Previous failure at:" forever and steer the
         # resume hint at the wrong phase.
+        .failed_phases = (((.failed_phases // []) | if type == "array" then . else [] end) - [$phase]) |
         (if (.failed_phase // "") == $phase then
-            .failed_phase = null | .failed_step = null | .failed_error = null
+            .failed_phase = (.failed_phases[-1] // null) | .failed_step = null | .failed_error = null
          else . end) |
         del(.phase_start_time)
     '); then
@@ -2039,6 +2069,9 @@ state_phase_fail() {
         .failed_phase = $phase |
         .failed_step = (if $preserve_detailed_failure then $state.failed_step else $step end) |
         .failed_error = (if $preserve_detailed_failure then ($state.failed_error // $err) else $err end) |
+        # failed_phases keeps every phase whose last run failed, in order;
+        # failed_phase, from upstream, is always its last entry.
+        .failed_phases = ((((.failed_phases // []) | if type == "array" then . else [] end) - [$phase]) + [$phase]) |
         .current_phase = null |
         .current_step = null
     '); then
@@ -2050,6 +2083,34 @@ state_phase_fail() {
     state_save "$new_state" || save_result=$?
     _state_release_lock
     return $save_result
+}
+
+# Record how a finished install run left the install as a whole.
+# failed: this run failed (a phase, a module or the smoke test) or a phase
+# from an earlier run is still in failed_phases. complete: every phase has
+# completed or was skipped. in_progress: phases remain, as after an --only run.
+# state_init and state_phase_start set ACFS_STATE_INSTALL_OPEN; this clears
+# it, so an EXIT trap can tell that a run it opened ended without a result.
+# Usage: state_install_finish <run_failed: true|false>
+state_install_finish() {
+    local run_failed="false"
+    [[ "${1:-}" == "true" ]] && run_failed="true"
+
+    if ! command -v jq &>/dev/null; then
+        return 1
+    fi
+
+    local phase_ids=""
+    printf -v phase_ids '%s ' "${ACFS_PHASE_IDS[@]}"
+    state_update_with_args '
+        def ids: if type == "array" then map(select(type == "string")) else [] end;
+        .install_status = (
+            if $run_failed or (.failed_phases | ids | length) > 0 then "failed"
+            elif ($phase_ids | split(" ") | map(select(. != ""))) - (.completed_phases | ids) - (.skipped_phases | ids) == [] then "complete"
+            else "in_progress" end
+        )
+    ' --argjson run_failed "$run_failed" --arg phase_ids "$phase_ids" || return 1
+    ACFS_STATE_INSTALL_OPEN=false
 }
 
 # Mark a phase as skipped
@@ -2738,18 +2799,24 @@ state_print_summary() {
         return 0
     fi
 
-    local version mode started completed current failed
+    local version mode started completed current failed install_status failed_list
     version=$(echo "$state" | jq -r '.version // "unknown"')
     mode=$(echo "$state" | jq -r '.mode // "unknown"')
     started=$(echo "$state" | jq -r '.started_at // "unknown"')
     completed=$(echo "$state" | jq -r '.completed_phases | length')
     current=$(echo "$state" | jq -r '.current_phase // "none"')
     failed=$(echo "$state" | jq -r '.failed_phase // "none"')
+    install_status=$(echo "$state" | jq -r '.install_status // "unknown"')
+    failed_list=$(echo "$state" | jq -r '.failed_phases | if type == "array" then map(select(type == "string")) else [] end | join(", ")')
 
     echo "=== ACFS Installation State ==="
     echo "Version: $version (mode: $mode)"
     echo "Started: $started"
+    echo "Install status: $install_status"
     echo "Completed phases: $completed/${#ACFS_PHASE_IDS[@]}"
+    if [[ -n "$failed_list" ]]; then
+        echo "Failed phases: $failed_list"
+    fi
 
     if [[ "$failed" != "none" && "$failed" != "null" ]]; then
         local failed_step failed_error

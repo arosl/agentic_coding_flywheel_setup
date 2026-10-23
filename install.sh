@@ -1469,18 +1469,22 @@ acfs_summary_emit() {
             [$completed[] | {id: ., duration_seconds: ($durations[.] // null)}]
         ' "$ACFS_STATE_FILE" 2>/dev/null) || phases_json="[]"
 
-        # Build failure object if present with precise resume hint (bd-31ps.9.1)
-        local failed_phase
+        # Build failure object if present with precise resume hint (bd-31ps.9.1).
+        # phase is the last failed phase; failed_phases names all of them.
+        local failed_phase failed_phases_json
+        failed_phases_json=$(jq -c '.failed_phases | if type == "array" then map(select(type == "string")) else [] end' "$ACFS_STATE_FILE" 2>/dev/null) || true
+        [[ -n "$failed_phases_json" ]] || failed_phases_json="[]"
         failed_phase=$(jq -r '.failed_phase // empty' "$ACFS_STATE_FILE" 2>/dev/null) || true
         if [[ -n "$failed_phase" ]]; then
             local resume_hint
             resume_hint=$(generate_resume_hint "$failed_phase" "")
             failure_json=$(jq -n \
                 --arg phase "$failed_phase" \
+                --argjson failed_phases "$failed_phases_json" \
                 --arg step "$(jq -r '.failed_step // empty' "$ACFS_STATE_FILE" 2>/dev/null)" \
                 --arg error "$(jq -r '.failed_error // empty' "$ACFS_STATE_FILE" 2>/dev/null)" \
                 --arg resume_hint "$resume_hint" \
-                '{phase: $phase, step: (if $step == "" then null else $step end), error: (if $error == "" then null else $error end), resume_hint: $resume_hint}')
+                '{phase: $phase, failed_phases: $failed_phases, step: (if $step == "" then null else $step end), error: (if $error == "" then null else $error end), resume_hint: $resume_hint}')
         fi
     fi
 
@@ -2161,6 +2165,12 @@ cleanup() {
         log_error "  2. If installed, run: acfs doctor (try as ${TARGET_USER:-ubuntu})"
         log_error "     (If you ran the installer as root: sudo -u ${TARGET_USER:-ubuntu} -i bash -lc 'acfs doctor')"
         log_error ""
+        # A run this process opened in state.json (state_init or a phase
+        # start) that ends here, by a signal or an error main did not catch,
+        # failed: install_status must not stay in_progress.
+        if [[ "${ACFS_STATE_INSTALL_OPEN:-false}" == "true" ]] && type -t state_install_finish &>/dev/null; then
+            state_install_finish true 2>/dev/null || true
+        fi
         # Print precise resume hint if available (bd-31ps.9.1)
         # Get failed phase from state if available
         local failed_phase=""
@@ -12625,6 +12635,14 @@ main() {
             fi
         else
             log_debug "Skipping post-install smoke test (--only/--only-phase mode)"
+        fi
+
+        # Record the install's overall outcome in state.json (install_status)
+        # before any summary, webhook or notification reads the state.
+        if type -t state_install_finish &>/dev/null; then
+            local run_failed=false
+            acfs_install_run_has_failures && run_failed=true
+            state_install_finish "$run_failed" || true
         fi
 
         # Decide terminal status before emitting any completion UI, success

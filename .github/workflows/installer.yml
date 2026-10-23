@@ -111,6 +111,9 @@ jobs:
       - name: Run installer fault-injection contract test
         run: bash tests/unit/test_installer_fault_contract.sh
 
+      - name: Run install outcome tests (state.json install_status and failed_phases)
+        run: HOME="$(mktemp -d)" bash tests/unit/test_install_state_status.sh
+
       - name: Run release doctor governance tests
         run: bash tests/unit/test_release_doctor.sh
 

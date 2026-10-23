@@ -1189,6 +1189,28 @@ info_get_completed_phases() {
     fi
 }
 
+# Get the install's outcome: "<status><TAB><failed phase,failed phase>".
+# status is complete, failed, in_progress or unknown. A state.json written
+# before install_status existed counts as complete once finalize completed.
+info_get_install_outcome() {
+    local state
+    local jq_bin=""
+    state=$(info_get_install_state)
+    jq_bin="$(info_system_binary_path jq 2>/dev/null || true)"
+    if [[ -z "$jq_bin" ]]; then
+        printf 'unknown\t\n'
+        return 0
+    fi
+    "$jq_bin" -r '
+        (.failed_phases | if type == "array" then map(select(type == "string")) else [] end) as $failed |
+        (if .install_status == "failed" or ($failed | length) > 0 or ((.failed_phase // "") | type == "string" and . != "") then "failed"
+         elif .install_status == "complete" or .install_status == "in_progress" then .install_status
+         elif .install_status == null and ((.completed_phases // []) | index("finalize")) != null then "complete"
+         else "unknown" end) as $status |
+        [$status, ($failed | map(select(test("^[a-z_]{1,40}$"))) | join(","))] | @tsv
+    ' <<< "$state" 2>/dev/null || printf 'unknown\t\n'
+}
+
 # Get total phases count
 info_get_total_phases() {
     echo "9"  # Fixed in ACFS
@@ -1751,9 +1773,10 @@ info_render_terminal() {
     os_version=$(info_get_os_version)
     os_codename=$(info_get_os_codename)
 
-    local install_date skipped_tools
+    local install_date skipped_tools install_status failed_phases
     install_date=$(info_get_install_date)
     skipped_tools=$(info_get_skipped_tools)
+    IFS=$'\t' read -r install_status failed_phases <<< "$(info_get_install_outcome)"
 
     local lessons_completed lessons_total next_lesson
     lessons_completed=$(info_get_lessons_completed)
@@ -1804,6 +1827,9 @@ info_render_terminal() {
     echo -e "  $agents_icon ${C_DIM}Agents:${C_RESET}    claude, codex, agy"
     echo -e "  $stack_icon ${C_DIM}Stack:${C_RESET}     herdr, bv, lazygit"
 
+    if [[ "$install_status" == "failed" ]]; then
+        echo -e "  ${C_BOLD}✗ Install:   failed${failed_phases:+ in ${failed_phases//,/, }}${C_RESET} ${C_DIM}(run 'acfs rescue')${C_RESET}"
+    fi
     if [[ -n "$skipped_tools" ]]; then
         echo -e "  ${C_GRAY}○ Skipped:   $skipped_tools${C_RESET}"
     fi
@@ -1891,6 +1917,13 @@ info_render_json() {
     install_date=$(info_get_install_date)
     local skipped_tools_json="[]"
     skipped_tools_json="$(info_get_skipped_tools_json)"
+    # The outcome's status is one word and its phases are [a-z_] ids, so
+    # neither needs escaping.
+    local install_status="" failed_phases="" failed_phases_json="[]"
+    IFS=$'\t' read -r install_status failed_phases <<< "$(info_get_install_outcome)"
+    if [[ -n "$failed_phases" ]]; then
+        failed_phases_json="[\"${failed_phases//,/\", \"}\"]"
+    fi
 
     local lessons_completed lessons_total next_lesson
     lessons_completed=$(info_get_lessons_completed)
@@ -1941,6 +1974,8 @@ info_render_json() {
   },
   "installation": {
     "date": "$install_date_json",
+    "status": "${install_status:-unknown}",
+    "failed_phases": $failed_phases_json,
     "skipped_tools": $skipped_tools_json
   },
   "onboard": {

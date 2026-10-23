@@ -133,6 +133,72 @@ JSON
     pass "failed_phase_uses_recorded_resume_hint"
 }
 
+test_failed_phases_are_all_named() {
+    local acfs_home state_file output status
+    acfs_home="$ARTIFACT_DIR/failed_phases/.acfs"
+    state_file="$acfs_home/state.json"
+    write_json "$state_file" <<'JSON'
+{
+  "schema_version": 3,
+  "version": "1.0",
+  "mode": "vibe",
+  "completed_phases": ["user_setup", "agents", "finalize"],
+  "failed_phase": "stack",
+  "failed_phases": ["languages", "stack"],
+  "install_status": "failed",
+  "failed_step": "Installing dcg"
+}
+JSON
+
+    output="$(run_rescue_json failed_phases --acfs-home "$acfs_home")"
+    status="$(cat "$ARTIFACT_DIR/failed_phases.exit")"
+
+    [[ "$status" -eq 2 ]] || return 1
+    jq -e '
+      .status == "fail" and
+      .install_status == "failed" and
+      .checkpoint.failed_phase == "stack" and
+      .checkpoint.failed_phases == ["languages", "stack"] and
+      (.evidence[] | select(. == "Failed phases recorded: languages, stack")) and
+      (.evidence[] | select(. == "Install status recorded: failed"))
+    ' <<<"$output" >/dev/null || return 1
+
+    pass "failed_phases_are_all_named"
+}
+
+test_failed_install_status_beats_completed_finalize() {
+    local acfs_home state_file output status
+    acfs_home="$ARTIFACT_DIR/failed_install/.acfs"
+    state_file="$acfs_home/state.json"
+    # acfs-xro's shape: a required module failed, every phase completed.
+    write_json "$state_file" <<'JSON'
+{
+  "schema_version": 3,
+  "version": "1.0",
+  "mode": "vibe",
+  "completed_phases": ["user_setup", "filesystem", "shell_setup", "cli_tools", "languages", "agents", "cloud_db", "stack", "finalize"],
+  "current_phase": null,
+  "failed_phase": null,
+  "failed_phases": [],
+  "install_status": "failed"
+}
+JSON
+
+    output="$(run_rescue_json failed_install --acfs-home "$acfs_home")"
+    status="$(cat "$ARTIFACT_DIR/failed_install.exit")"
+
+    [[ "$status" -eq 2 ]] || return 1
+    jq -e '
+      .status == "fail" and
+      .severity == "blocked" and
+      .install_status == "failed" and
+      .checkpoint.failed_phases == [] and
+      (.reason | test("recorded a failed install"))
+    ' <<<"$output" >/dev/null || return 1
+
+    pass "failed_install_status_beats_completed_finalize"
+}
+
 test_stale_checkpoint_points_to_continue_status() {
     local acfs_home state_file output status
     acfs_home="$ARTIFACT_DIR/stale/.acfs"
@@ -512,6 +578,8 @@ main() {
 
     run_test test_no_state_warns_with_status_command
     run_test test_failed_phase_uses_recorded_resume_hint
+    run_test test_failed_phases_are_all_named
+    run_test test_failed_install_status_beats_completed_finalize
     run_test test_stale_checkpoint_points_to_continue_status
     run_test test_malformed_checkpoint_fails_closed
     run_test test_future_checkpoint_schema_fails_closed

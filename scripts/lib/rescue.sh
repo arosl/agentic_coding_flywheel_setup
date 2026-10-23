@@ -38,6 +38,7 @@ RESCUE_CHECKPOINT_LAST_COMPLETED_PHASE=""
 RESCUE_CHECKPOINT_NEXT_PHASE=""
 RESCUE_CHECKPOINT_CURRENT_PHASE=""
 RESCUE_CHECKPOINT_FAILED_PHASE=""
+RESCUE_CHECKPOINT_FAILED_PHASES="[]"
 RESCUE_CHECKPOINT_AGE_SECONDS=""
 RESCUE_EVIDENCE=()
 RESCUE_NON_ACTIONS=(
@@ -507,9 +508,10 @@ rescue_state_snapshot() {
         select(
         (if has("schema_version") then (.schema_version | type == "number" and . == floor and . >= 1 and . <= 2147483647) else true end) and
         (.completed_phases | . == null or (type == "array" and all(.[]; type == "string"))) and
+        (.failed_phases | . == null or (type == "array" and all(.[]; type == "string"))) and
         (.current_phase | . == null or type == "string" or (type == "object" and (.id | type == "string"))) and
-        all([.failed_phase,.failed_step,.failed_error,.resume_hint,.current_step][]; . == null or type == "string")) |
-        {schema_version,completed_phases,current_phase,current_step,failed_phase,failed_step,resume_hint,
+        all([.failed_phase,.failed_step,.failed_error,.resume_hint,.current_step,.install_status][]; . == null or type == "string")) |
+        {schema_version,completed_phases,current_phase,current_step,failed_phase,failed_phases,failed_step,resume_hint,install_status,
             failed_error:(if (.failed_error // "") == "" then null else "recorded" end),
             last_updated:(.last_updated // .updated_at // .last_update)}
     ' -- "$1" 2>/dev/null
@@ -633,6 +635,8 @@ rescue_analyze_state() {
     local state_snapshot=""
     local schema_version=""
     local failed_phase=""
+    local failed_phases=""
+    local install_status=""
     local failed_step=""
     local failed_error=""
     local resume_hint=""
@@ -677,6 +681,8 @@ rescue_analyze_state() {
     RESCUE_STATE_STATUS="valid"
     schema_version="$(rescue_json_value "$state_snapshot" '.schema_version // empty | floor')"
     failed_phase="$(rescue_json_value "$state_snapshot" '.failed_phase // empty')"
+    failed_phases="$(rescue_json_value "$state_snapshot" '(.failed_phases // []) | join(", ")')"
+    install_status="$(rescue_json_value "$state_snapshot" '.install_status // empty')"
     failed_step="$(rescue_json_value "$state_snapshot" '.failed_step // empty')"
     failed_error="$(rescue_json_value "$state_snapshot" '.failed_error // empty')"
     resume_hint="$(rescue_json_value "$state_snapshot" '.resume_hint // empty')"
@@ -694,6 +700,8 @@ rescue_analyze_state() {
     RESCUE_CHECKPOINT_NEXT_PHASE="$next_phase"
     RESCUE_CHECKPOINT_CURRENT_PHASE="$current_phase"
     RESCUE_CHECKPOINT_FAILED_PHASE="$failed_phase"
+    RESCUE_CHECKPOINT_FAILED_PHASES="$(rescue_json_value "$state_snapshot" '.failed_phases // [] | tojson')"
+    [[ -n "$RESCUE_CHECKPOINT_FAILED_PHASES" ]] || RESCUE_CHECKPOINT_FAILED_PHASES="[]"
 
     rescue_add_evidence "State file is valid JSON: $state_file"
     if [[ -n "$schema_version" && "$schema_version" != "null" ]]; then
@@ -716,9 +724,23 @@ rescue_analyze_state() {
         return 0
     fi
 
-    if [[ -n "$failed_phase" && "$failed_phase" != "null" ]]; then
+    if [[ -n "$install_status" ]]; then
+        rescue_add_evidence "Install status recorded: $install_status"
+    fi
+
+    if [[ -n "$failed_phase" && "$failed_phase" != "null" ]] || [[ -n "$failed_phases" || "$install_status" == "failed" ]]; then
         RESCUE_INSTALL_STATUS="failed"
-        rescue_add_evidence "Failed phase recorded: $failed_phase"
+        local failure_kind="a failed phase"
+        if [[ -n "$failed_phase" && "$failed_phase" != "null" ]]; then
+            rescue_add_evidence "Failed phase recorded: $failed_phase"
+        fi
+        if [[ "$failed_phases" == *,* ]]; then
+            rescue_add_evidence "Failed phases recorded: $failed_phases"
+        elif [[ -z "$failed_phases" && ( -z "$failed_phase" || "$failed_phase" == "null" ) ]]; then
+            # install_status failed with no failed phase: a module or the
+            # post-install smoke test failed inside phases that completed.
+            failure_kind="a failed install"
+        fi
         if [[ -n "$failed_step" && "$failed_step" != "null" ]]; then
             rescue_add_evidence "Failed step recorded: $failed_step"
         fi
@@ -726,16 +748,23 @@ rescue_analyze_state() {
             rescue_add_evidence "Failure message recorded in state."
         fi
         if rescue_is_safe_next_command "$resume_hint"; then
-            rescue_set_decision "fail" "blocked" "The installer recorded a failed phase; resume with the persisted installer command after reviewing the evidence." "$resume_hint"
+            rescue_set_decision "fail" "blocked" "The installer recorded $failure_kind; resume with the persisted installer command after reviewing the evidence." "$resume_hint"
         else
-            rescue_set_decision "fail" "blocked" "The installer recorded a failed phase, but no safe resume command is available in state." "acfs support-bundle"
+            rescue_set_decision "fail" "blocked" "The installer recorded $failure_kind, but no safe resume command is available in state." "acfs support-bundle"
         fi
         return 0
     fi
 
-    if [[ "$completed_finalize" == "true" && ( -z "$current_phase" || "$current_phase" == "null" ) ]]; then
+    # Healthy: the install is marked complete, or, in a state.json written
+    # before install_status existed, the finalize phase completed.
+    if [[ ( "$install_status" == "complete" || ( -z "$install_status" && "$completed_finalize" == "true" ) ) \
+        && ( -z "$current_phase" || "$current_phase" == "null" ) ]]; then
         RESCUE_INSTALL_STATUS="healthy"
-        rescue_add_evidence "Finalize phase is marked complete."
+        if [[ "$install_status" == "complete" ]]; then
+            rescue_add_evidence "The install is marked complete."
+        else
+            rescue_add_evidence "Finalize phase is marked complete."
+        fi
         rescue_set_decision "pass" "healthy" "ACFS appears installed; continue with onboarding." "onboard"
         return 0
     fi
@@ -939,6 +968,7 @@ rescue_render_json() {
         --arg checkpoint_next_phase "$RESCUE_CHECKPOINT_NEXT_PHASE" \
         --arg checkpoint_current_phase "$RESCUE_CHECKPOINT_CURRENT_PHASE" \
         --arg checkpoint_failed_phase "$RESCUE_CHECKPOINT_FAILED_PHASE" \
+        --argjson checkpoint_failed_phases "$RESCUE_CHECKPOINT_FAILED_PHASES" \
         --arg checkpoint_age_seconds "$RESCUE_CHECKPOINT_AGE_SECONDS" \
         --arg support_command "acfs support-bundle" \
         --argjson support_available "$support_available_json" \
@@ -966,6 +996,7 @@ rescue_render_json() {
                 next_phase: (if $checkpoint_next_phase == "" then null else $checkpoint_next_phase end),
                 current_phase: (if $checkpoint_current_phase == "" then null else $checkpoint_current_phase end),
                 failed_phase: (if $checkpoint_failed_phase == "" then null else $checkpoint_failed_phase end),
+                failed_phases: $checkpoint_failed_phases,
                 age_seconds: (if $checkpoint_age_seconds == "" then null else ($checkpoint_age_seconds | tonumber? // null) end)
             },
             evidence: $evidence,

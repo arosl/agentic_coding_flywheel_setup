@@ -1316,6 +1316,8 @@ support_installer_progress_summary_json() {
                 skipped_phase_count: 0,
                 current_phase: null,
                 failed_phase: null,
+                failed_phases: [],
+                install_status: null,
                 failed_step_present: false,
                 failed_error_present: false
             }'
@@ -1330,6 +1332,8 @@ support_installer_progress_summary_json() {
                 skipped_phase_count: 0,
                 current_phase: null,
                 failed_phase: null,
+                failed_phases: [],
+                install_status: null,
                 failed_step_present: false,
                 failed_error_present: false
             }'
@@ -1347,6 +1351,8 @@ support_installer_progress_summary_json() {
         skipped_phase_count: ((.skipped_phases // []) | map(select(type == "string")) | length),
         current_phase: (.current_phase | safe_token),
         failed_phase: (.failed_phase | safe_token),
+        failed_phases: (.failed_phases | if type == "array" then map(safe_token) | map(select(. != null)) else [] end),
+        install_status: (.install_status | if . == "in_progress" or . == "complete" or . == "failed" then . else null end),
         failed_step_present: ((.failed_step // null) != null),
         failed_error_present: ((.failed_error // null) != null)
       }
@@ -1357,6 +1363,8 @@ support_installer_progress_summary_json() {
         skipped_phase_count: 0,
         current_phase: null,
         failed_phase: null,
+        failed_phases: [],
+        install_status: null,
         failed_step_present: false,
         failed_error_present: false
     }'
@@ -1399,6 +1407,8 @@ support_checkpoint_summary_json() {
                     current_phase: null,
                     current_step_present: false,
                     failed_phase: null,
+                    failed_phases: [],
+                    recorded_install_status: null,
                     failed_step_present: false,
                     failed_error_present: false,
                     resume_hint_available: false,
@@ -1441,6 +1451,8 @@ support_checkpoint_summary_json() {
                     current_phase: null,
                     current_step_present: false,
                     failed_phase: null,
+                    failed_phases: [],
+                    recorded_install_status: null,
                     failed_step_present: false,
                     failed_error_present: false,
                     resume_hint_available: false,
@@ -1494,6 +1506,13 @@ support_checkpoint_summary_json() {
           | ($completed[-1] // null) as $last_completed
           | (if ($state.current_phase | type) == "object" then ($state.current_phase.id // null) else $state.current_phase end | safe_token) as $current_phase
           | ($state.failed_phase | safe_token) as $failed_phase
+          | ($state.failed_phases | if type == "array" then map(select(type == "string")) else [] end) as $failed_phase_ids
+          | ($failed_phase_ids | map(safe_token) | map(select(. != null))) as $failed_phases
+          | ($state.install_status | if . == "in_progress" or . == "complete" or . == "failed" then . else null end) as $recorded_status
+          # A state.json written before install_status existed: a completed
+          # finalize phase marks a finished install.
+          | ($failed_phase != null or ($failed_phase_ids | length) > 0 or $recorded_status == "failed") as $failed
+          | ($recorded_status == "complete" or ($state.install_status == null and ($completed | index("finalize")) != null)) as $complete
           | ($state.last_updated // $state.updated_at // $state.last_update // null | numeric_epoch) as $updated_epoch
           | (if $now_epoch != null and $updated_epoch != null then ($now_epoch - $updated_epoch) else null end) as $age_seconds
           | (if ($state_schema | type) == "number" and $state_schema > $supported_schema then true else false end) as $future_schema
@@ -1502,8 +1521,8 @@ support_checkpoint_summary_json() {
               schema_version: 1,
               status: (
                 if $future_schema then "warn"
-                elif $failed_phase != null then "fail"
-                elif ($completed | index("finalize")) then "pass"
+                elif $failed then "fail"
+                elif $complete then "pass"
                 elif $stale then "warn"
                 elif $current_phase != null then "warn"
                 elif ($completed | length) > 0 then "warn"
@@ -1511,24 +1530,24 @@ support_checkpoint_summary_json() {
               ),
               severity: (
                 if $future_schema then "future_state"
-                elif $failed_phase != null then "blocked"
-                elif ($completed | index("finalize")) then "healthy"
+                elif $failed then "blocked"
+                elif $complete then "healthy"
                 elif $stale then "stale_checkpoint"
                 elif $current_phase != null then "install_running"
                 elif ($completed | length) > 0 then "interrupted"
                 else "needs_state" end
               ),
               install_status: (
-                if $failed_phase != null then "failed"
-                elif ($completed | index("finalize")) then "healthy"
+                if $failed then "failed"
+                elif $complete then "healthy"
                 elif $current_phase != null then "running"
                 elif ($completed | length) > 0 then "partial"
                 else "unknown" end
               ),
               next_action: (
                 if $future_schema then "acfs support-bundle"
-                elif $failed_phase != null then "acfs rescue --json"
-                elif ($completed | index("finalize")) then "onboard"
+                elif $failed then "acfs rescue --json"
+                elif $complete then "onboard"
                 elif $stale then "acfs continue --status"
                 elif $current_phase != null then "acfs continue"
                 elif ($completed | length) > 0 then "acfs rescue --json"
@@ -1550,6 +1569,8 @@ support_checkpoint_summary_json() {
                 current_phase: $current_phase,
                 current_step_present: (($state.current_step // null) != null),
                 failed_phase: $failed_phase,
+                failed_phases: $failed_phases,
+                recorded_install_status: $recorded_status,
                 failed_step_present: (($state.failed_step // null) != null),
                 failed_error_present: (($state.failed_error // null) != null),
                 resume_hint_available: (($state.resume_hint // null) != null),
@@ -1669,8 +1690,8 @@ JSON
              latest_event_at: ($milestones.latest_event_at // null)
            },
            stuck_hint: (
-             if ($installer.failed_phase // null) != null then
-               {source: "installer", status: "failed", phase_id: $installer.failed_phase, next_action: "acfs rescue --json or acfs support-bundle"}
+             if ($installer.failed_phase // null) != null or ($installer.install_status // null) == "failed" then
+               {source: "installer", status: "failed", phase_id: ($installer.failed_phase // null), next_action: "acfs rescue --json or acfs support-bundle"}
              elif ($milestones.latest_event // null) != null then
                {
                  source: $milestones.latest_event.source,
