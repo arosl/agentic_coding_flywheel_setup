@@ -145,6 +145,13 @@ STATE_KNOWN_NONSTATE=(
     .local/share/claude .local/share/frankensearch .local/share/mcp-agent-mail
     .local/share/nhm .local/share/pfr .local/share/rch .local/share/sbh
     .local/share/systemd .local/share/ubs .local/share/Trash .local/share/vitest
+    # nhm's instance (its bindings, owner record and transcripts) and
+    # herdr's plugin state belong to one herdr server, and a new
+    # machine's nhm enrolls its own; then locks, leases, editor and pager
+    # history, and install records
+    .local/state/nhm .local/state/herdr .local/state/claude .local/state/rch
+    .local/state/lazygit .local/state/lesshst .local/state/nvim
+    .local/state/opencode .local/state/pi-agent-rust
 )
 
 # --- Helpers ---------------------------------------------------------
@@ -1308,8 +1315,8 @@ state_cmd_repair() {
 
 # --- doctor ----------------------------------------------------------
 
-# Top-level home entries, and entries of .config and .local/share,
-# that no row covers and that are not toolchains or caches.
+# Top-level home entries, and entries of .config, .local/share and
+# .local/state, that no row covers and that are not toolchains or caches.
 state_unknown_entries() {
     [[ -d "$STATE_HOME" ]] || return 0
     local -A covered=()
@@ -1318,7 +1325,7 @@ state_unknown_entries() {
         IFS='|' read -r id class base path policy markers <<<"$row"
         [[ "$base" == "home" ]] && covered["$path"]=1
     done
-    for entry in "$STATE_HOME"/.[!.]* "$STATE_HOME"/.config/* "$STATE_HOME"/.local/share/*; do
+    for entry in "$STATE_HOME"/.[!.]* "$STATE_HOME"/.config/* "$STATE_HOME"/.local/share/* "$STATE_HOME"/.local/state/*; do
         [[ -e "$entry" || -L "$entry" ]] || continue
         rel="${entry#"$STATE_HOME"/}"
         [[ -n "${covered[$rel]:-}" ]] && continue

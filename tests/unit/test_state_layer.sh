@@ -543,14 +543,15 @@ echo "doctor"
 # coverage check must not list.
 chmod 0664 "$A/home/.codex/auth.json"
 mkdir -p "$A/home/.local/share/caam/vault" "$A/home/.config/nhm" "$A/home/.config/agent-mail/identity" \
-    "$A/home/.local/share/sbh/ballast" "$A/home/.local/share/claude/versions"
+    "$A/home/.local/share/sbh/ballast" "$A/home/.local/share/claude/versions" \
+    "$A/home/.local/state/nhm/inst-x" "$A/home/.local/state/newtool"
 chmod 0700 "$A/home/.local/share/caam"
 : >"$A/home/.zshrc.bak.1791688739"
 run "$A" doctor --json
 check "doctor passes umask-002 files below a 0700 row top" \
     bash -c 'jq -e ".[] | select(.id == \"state.modes\" and .status == \"pass\")" "$1" >/dev/null' _ "$OUT"
-check "doctor reports the unknown dot-directory, and no row or known path" \
-    bash -c 'jq -e ".[] | select(.id == \"state.unknown\" and .status == \"warn\" and (.details | contains(\".weirdtool\")) and (.details | test(\"caam|nhm|agent-mail|sbh|share/claude|zshrc\") | not))" "$1" >/dev/null' _ "$OUT"
+check "doctor reports the unknown dot-directory and .local/state entry, and no row or known path" \
+    bash -c 'jq -e ".[] | select(.id == \"state.unknown\" and .status == \"warn\" and (.details | contains(\".weirdtool\")) and (.details | contains(\".local/state/newtool\")) and (.details | test(\"caam|nhm|agent-mail|sbh|share/claude|zshrc\") | not))" "$1" >/dev/null' _ "$OUT"
 check "doctor passes the credentials when every one is on the home's filesystem" \
     bash -c 'jq -e ".[] | select(.id == \"state.credentials\" and .status == \"pass\")" "$1" >/dev/null' _ "$OUT"
 OFF_DEVICE="$A/home/.claude.json" run "$A" doctor --json
