@@ -1,9 +1,9 @@
 name: Incus provider (stub incus)
 
 # The fork's own workflow. It runs the Incus provider's fast tier, which
-# tests scripts/providers/incus.sh, its host setup and its Tailscale
-# sidecar against a stub incus, and the preflight of the real-Incus
-# harness (tests/vm) against a stub incus. acfs machine, the entry
+# tests scripts/providers/incus.sh, its host setup, its Tailscale sidecar
+# and its rch worker recipe against a stub incus, and the preflight of the
+# real-Incus harness (tests/vm) against a stub incus. acfs machine, the entry
 # command in front of the launcher, is scripts/lib/machine.sh, which
 # installer.yml tests. Upstream's installer.yml runs each tests/unit
 # script by name, so a new one needs its own job.
@@ -49,5 +49,7 @@ jobs:
         run: HOME="$(mktemp -d)" bash tests/unit/test_incus_host_setup.sh
       - name: Tailscale sidecar against a stub incus
         run: HOME="$(mktemp -d)" bash tests/unit/test_incus_tailscale.sh
+      - name: rch worker recipe against a stub incus
+        run: HOME="$(mktemp -d)" bash tests/unit/test_incus_rch_worker.sh
       - name: Real-Incus harness's preflight against a stub incus
         run: HOME="$(mktemp -d)" bash tests/unit/test_incus_harness_preflight.sh

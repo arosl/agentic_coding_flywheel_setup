@@ -76,6 +76,7 @@ Usage: scripts/providers/incus.sh [<remote>:]<name> --ssh-key FILE [--ssh-key FI
                                   [--acl NAME] [--root-size SIZE] [--state-size SIZE] [--data-size SIZE]
        scripts/providers/incus.sh host-setup --storage <path|pool> [...]
        scripts/providers/incus.sh tailscale [<remote>:]<name> [--auth-key-file FILE] [--port N]...
+       scripts/providers/incus.sh rch-worker [<remote>:]<name> --ipv4 ADDR --ssh-key FILE [...]
 
 Creates the unprivileged Incus system container <name>, installs ACFS in it
 from this checkout's committed HEAD, and prints the ssh_config entry and
@@ -101,7 +102,8 @@ an existing one keeps them. An existing VM is refused: the launcher makes
 containers only. Every run needs the file host-setup writes
 (~/.config/acfs/incus.env), which names the storage pool. `host-setup`
 prepares the Incus host once; `tailscale` adds a sidecar container that
-puts <name> on a tailnet (each has its own --help).
+puts <name> on a tailnet; `rch-worker` makes a container an rch build
+worker (each has its own --help).
 
 Re-running is safe: an unfinished install resumes, and an installed instance
 is left as it is. See scripts/providers/incus.md.
@@ -508,8 +510,9 @@ report_authorized_keys() {
 }
 
 main() {
-    # The subcommands live in their own files: host setup, and the Tailscale
-    # sidecar container that gives a machine a tailnet address.
+    # The subcommands live in their own files: host setup, the Tailscale
+    # sidecar container that gives a machine a tailnet address, and the rch
+    # build worker container.
     case "${1:-}" in
         host-setup)
             [[ -x "$SCRIPT_DIR/incus_host.sh" ]] || die "host-setup isn't in this checkout yet" 2
@@ -518,6 +521,10 @@ main() {
         tailscale)
             [[ -x "$SCRIPT_DIR/incus_tailscale.sh" ]] || die "tailscale isn't in this checkout yet" 2
             exec "$SCRIPT_DIR/incus_tailscale.sh" "${@:2}"
+            ;;
+        rch-worker)
+            [[ -x "$SCRIPT_DIR/incus_rch_worker.sh" ]] || die "rch-worker isn't in this checkout yet" 2
+            exec "$SCRIPT_DIR/incus_rch_worker.sh" "${@:2}"
             ;;
     esac
     parse_args "$@"

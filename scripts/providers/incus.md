@@ -224,9 +224,26 @@ This puts the machine on your tailnet without Tailscale in it. A small container
 - **Why a sidecar:** the node key stays out of the container where agents run with sudo. The machine's egress ACL stays closed to `100.64.0.0/10`. And the machine can be rebuilt while its tailnet name and node stay.
 - **No host devices:** `tailscaled` runs in userspace networking, so neither container needs `/dev/net/tun`.
 - **The auth key** goes in on stdin, into a file only root can read, and is removed once `tailscale up` returns. It is never in a command line or in the output. It is needed only until the sidecar is logged in: the node's state is on the sidecar's own volume, `acfs-ts-dev-state`, which survives a rebuild of the sidecar.
-- **The sidecar's NIC** carries `acfs-sidecar-egress`, which host setup creates. On a host set up before that ACL existed, re-run host setup first: it adds what is missing. The ACL allows the internet (the coordination server and DERP), DNS and DHCP on the bridge's gateway, and TCP to the instances on the bridge, which `tailscale serve` needs to reach the machine. It rejects every other private range, UDP to the other instances, and every other port on the gateway.
+- **The sidecar's NIC** carries `acfs-sidecar-egress`, which host setup creates. On a host set up before that ACL existed, re-run host setup first: it adds what is missing. The ACL allows the internet (the coordination server and DERP), DNS and DHCP on the bridge's gateway, and TCP to the instances on the bridge, which `tailscale serve` needs to reach the machine. It rejects every other private range, UDP to the other instances, and every other port on the gateway. So the sidecar can reach TCP on every instance on its bridge, not only its machine: an ACL on a bridged NIC can name only addresses, and the machine's address comes from DHCP.
 - **No lease, no long wait:** if the sidecar has no IPv4 address about a minute after it starts, the run stops and says to check the ACL on its NIC. It doesn't wait out cloud-init's ten minutes.
 - **Re-running** reuses the sidecar if it belongs to this machine, keeps its login and forwards, and refuses to change a different forward on a port. A sidecar whose NIC carries another ACL, or none, is warned about and left as it is; the warning gives the `incus config device set` command that moves it to `acfs-sidecar-egress`, with the default actions that keep its internet open. The machine itself is never changed.
+
+## rch build workers
+
+```bash
+scripts/providers/incus.sh rch-worker rch-w1 --ipv4 10.12.34.21 --ssh-key ~/dispatcher-rch.pub
+```
+
+This makes `rch-w1` a build worker for rch (remote_compilation_helper), so the agents' Rust builds run there instead of in their container. It prints three things for the dispatcher, the machine whose builds rch offloads (usually an ACFS container): a `workers.toml` block, a `known_hosts` line, and the commands to run there.
+
+- **What it is:** an unprivileged container from the same image, with the profile `acfs-swarm` and its own hard limits: `--cpus` (default 8) and `--memory` (default 16GiB, no swap). Its root disk on the pool (`--root-size`, default 100GiB) holds the projects rch mirrors and their build caches. It has sshd, rsync, a C toolchain, and Rust from rustup. Before rustup's installer runs, the container checks it against the sha256 in `checksums.yaml`; when the pin is out of date, cloud-init fails and the run says so. `/data/projects` and `/data/tmp` belong to `ubuntu`, the user rch logs in as.
+- **The dispatcher's part:** `rch workers setup rch-w1` deploys rch's worker binary and the projects' toolchains. Then run `rch workers benchmark rch-w1`, and set `total_slots` and `priority` from the measured score. The block's `total_slots` is only the CPU count.
+- **A fixed address** (`--ipv4`, a host address in the bridge's subnet), because an ACFS container reaches a worker only by address. Pass the same address to `host-setup --rch-worker ADDR`. On a host already set up, host setup then stops at `acfs-swarm-egress` and prints the rules it adds and the command that takes them. Run that command, then host setup again.
+- **The worker's own ACL** is `acfs-swarm-egress` (`--acl` changes it): the internet, for crates and toolchains, and of the private ranges only what that ACL allows the containers.
+- **The keys:** `--ssh-key` is the dispatcher's public key, which rch logs in with. `--identity-file` is the matching private key's path on the dispatcher, which goes into the block (default `~/.ssh/id_ed25519`).
+- **Fail instead of building locally:** that is the dispatcher's setting. With `RCH_REQUIRE_REMOTE=1` in the agents' environment, a build fails when no worker can take it, instead of running in the container. `role = "dispatcher"` under `[general]` in its `~/.config/rch/config.toml` makes `rch exec` strict by default.
+- **What stays in the container:** rch doesn't offload `bun run` or `bun build`, so those still run where the agents are.
+- **Re-running** reuses the worker if this script made it (`user.acfs.rch-worker`), starts it if it is stopped, and prints the block again. The options that apply only at creation are ignored then, with a warning. Any other instance by that name is refused untouched.
 
 ## The test project
 
@@ -287,15 +304,15 @@ scripts/providers/incus.sh far:dev --ssh-key laptop.pub --jump farhost
 
 On macOS, `acfs machine up <name>` (`scripts/lib/machine.sh up <name> --ssh-key …` from a checkout) runs the machine in Colima's Incus. This is tested only against stubs (`tests/unit/test_machine.sh`), from Colima's v0.10.3 source; the first run on a real Mac is acfs-ioo3.14.
 
-- **What it needs:** Colima 0.7.0 or newer and the Incus client (`brew install colima incus`), `jq`, `git`, and bash 4 or newer as `bash` on PATH (`brew install bash`; macOS ships 3.2). macOS 13 or newer, for Colima's VZ VM.
+- **What it needs:** Colima 0.7.0 or newer and the Incus client (`brew install colima incus`), `jq`, `git`, and bash 4.4 or newer as `bash` on PATH (`brew install bash`; macOS ships 3.2). macOS 13 or newer, for Colima's VZ VM.
 - **Its own profile:** it starts the Colima profile `acfs` with `--runtime incus --vm-type vz --mount-type virtiofs` and the Mac's own `--arch`. The VM gets 4 CPUs, 8 GiB memory and a 160 GiB disk, or what `--colima-cpus`, `--colima-memory` and `--colima-disk` give; they apply only when `up` creates the profile. Your default profile is never used. A profile `acfs` with another runtime is refused.
 - **Your Incus remote stays:** Colima adds the remote `colima-acfs`. It starts with `--activate=false`, so your default remote stays current; if Colima switches it anyway, `up` switches it back. Colima also adds a `docker` OCI remote when there is none.
 - **No share of your Mac:** with Colima 0.10.0 or newer the VM mounts nothing (`--mount none`). An older Colima mounts an empty directory under `~/.local/state/acfs/machine`. The machine's volumes are on Incus's pool in the VM.
-- **Host setup, once:** while the VM has no `incus.env`, `up` runs `host-setup --storage default` inside it, through `colima ssh`, on Colima's ZFS pool `default`, without `--test-project`. host-setup and `logging.sh` come from the checkout's committed HEAD. The VM's image has no `jq`, so `up` installs it there first. Then `up` copies the VM's `incus.env` to `~/.config/acfs/incus.env` on the Mac, where the launcher reads it. If that file names another pool, `up` stops: the launcher reads one file for every remote.
+- **Host setup, on every up:** `up` runs `host-setup --storage default` inside the VM, through `colima ssh`, on Colima's ZFS pool `default`, without `--test-project`. It is safe to re-run, so what a newer host-setup adds (an ACL, a rule) reaches a VM set up earlier. When it stops, the command it names runs in the VM: `colima ssh --profile acfs -- <command>`. host-setup and `logging.sh` come from the checkout's committed HEAD. The VM's image has no `jq`, so `up` installs it there first. Then `up` copies the VM's `incus.env` to `~/.config/acfs/incus.env` on the Mac, where the launcher reads it. If that file names another pool, `up` stops: the launcher reads one file for every remote.
 - **Attaching:** with Colima 0.10.0 or newer, `--network-address` gives the VM an address on the Mac, and Colima routes its bridge (192.168.100.0/24) through it. Colima asks for your password once to add that route. When the route goes through the VM, the SSH entry names the container's own address, for the Mac's `~/.ssh/config`. Otherwise `up` adds `--jump colima-acfs`, the VM's SSH host that `colima start` puts in `~/.ssh/config` (if it isn't there: `colima ssh-config --profile acfs >> ~/.ssh/config`). That is the case with a Colima older than 0.10.0, and when Colima skips the route because the subnet clashes with one of the Mac's networks. A `--jump` of your own is kept.
 - **Containers only:** `--vm` is refused. An Incus VM there would run inside Colima's own VM.
 - **Another remote:** a name with a remote, such as `far:dev`, doesn't start Colima.
-- **`acfs machine verify` on a Mac** needs `timeout`, which macOS lacks, and a bare name there doesn't mean `colima-acfs:<name>` yet (acfs-co48).
+- **`acfs machine verify <name>` on a Mac** checks the machine on `colima-acfs` when the name has no remote, and stops early when Colima's Incus doesn't answer. Its SSH check runs without `timeout(1)`, which macOS lacks, under ssh's own connect and keepalive limits; only the local checklist (`verify` without a name) needs `timeout`.
 
 ## Known limits
 
@@ -305,6 +322,6 @@ On macOS, `acfs machine up <name>` (`scripts/lib/machine.sh up <name> --ssh-key 
 ## Tests
 
 - `bash tests/unit/test_incus_provider_stub.sh`: the launcher's calls and output, against a stub `incus`.
-- `bash tests/unit/test_incus_host_setup.sh` and `bash tests/unit/test_incus_tailscale.sh`: host setup and the sidecar, against the same stub.
+- `bash tests/unit/test_incus_host_setup.sh`, `bash tests/unit/test_incus_tailscale.sh` and `bash tests/unit/test_incus_rch_worker.sh`: host setup, the sidecar and the rch worker, against the same stub.
 - `bash tests/unit/test_state_layer.sh`: `acfs state` against a fixture home and volume.
 - `tests/vm/test_incus_provider.sh [--vm] [<remote>:]<new-name>`: a real container through the launcher, or with `--vm` or a remote an instance the harness makes itself in the `acfs-tests` project, checked through the printed block, then measured. It's opt-in and runs a full ACFS install. Its last line is `RESULT: pass`, `RESULT: fail` or `RESULT: skip (<why>)`, and a skip exits 77: without Incus, without KVM (for a VM, probed on the server) or without `images:`. A container run needs host setup first, and a VM or remote run host setup with `--test-project`.
