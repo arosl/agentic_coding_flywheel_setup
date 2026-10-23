@@ -122,9 +122,10 @@ agents() {
     printf '{"id":"cli:agent:list","result":{"agents":[%s]}}\n' "$list" >"$STUB_DIR/agents.json"
 }
 
-# binding <pane> <mail name> [status]: nhm's binding for that pane.
+# binding <pane> <mail name> [status] [mail project]: nhm's binding for that pane.
 binding() {
-    printf '{"mail_name":"%s","pane_id":"%s","status":"%s"}\n' "$2" "$1" "${3:-active}" >"$STUB_DIR/binding_$1.json"
+    printf '{"mail_name":"%s","pane_id":"%s","status":"%s","mail_project_key":"%s"}\n' \
+        "$2" "$1" "${3:-active}" "${4:-}" >"$STUB_DIR/binding_$1.json"
 }
 
 state_files() { (cd "$HOME/.acfs/state/agent_mail_hook" 2>/dev/null && ls) | sed 's/\..*//' | sort | paste -sd' '; }
@@ -246,6 +247,41 @@ binding w1:p2 IcyKnoll
 out="$(event false sess-codex-2 | run_stop)"
 check "Codex daemon in a shared tab: the session's pane, then nhm's binding" \
     grep -qxF "am check-inbox --agent IcyKnoll --project $WORK/repo --rate-limit 0 --json" "$STUB_DIR/calls"
+
+reset_state
+inbox 1 50
+shared_tab
+binding w1:p1 FuchsiaDune
+binding w1:p2 IcyKnoll
+out="$(event false sess-codex-2 | HERDR_PANE_ID=w1:p1 HERDR_TAB_ID=w1:t5 run_stop)"
+check "an inherited HERDR_PANE_ID (a daemon started in another pane) loses to the session's pane" \
+    grep -qxF "am check-inbox --agent IcyKnoll --project $WORK/repo --rate-limit 0 --json" "$STUB_DIR/calls"
+check "and the other pane's agent is neither asked about nor given a state file" \
+    bash -c '! grep -q -- "--agent FuchsiaDune" "$1/calls" && [[ "$2" == IcyKnoll ]]' _ "$STUB_DIR" "$(state_files)"
+
+reset_state
+inbox 1 50
+shared_tab
+echo IcyKnoll >"$STUB_DIR/label_w1:t3"
+agents w1:p1:w1:t5 w1:p2:w1:t5 w1:p3:w1:t3:sess-3
+out="$(event false sess-3 | HERDR_PANE_ID=w1:p1 HERDR_TAB_ID=w1:t5 run_stop)"
+check "an inherited HERDR_TAB_ID loses to the session's tab, for an unbound agent alone in it" \
+    grep -qxF "am check-inbox --agent IcyKnoll --project $WORK/repo --rate-limit 0 --json" "$STUB_DIR/calls"
+
+reset_state
+inbox 1 50
+shared_tab
+binding w1:p2 IcyKnoll active /srv/bound
+out="$(event | HERDR_PANE_ID=w1:p2 run_stop)"
+check "the binding's project is the project checked, not the cwd's" \
+    grep -qxF "am check-inbox --agent IcyKnoll --project /srv/bound --rate-limit 0 --json" "$STUB_DIR/calls"
+reset_state
+inbox 1 50
+shared_tab
+binding w1:p2 IcyKnoll active /srv/bound
+out="$(event | HERDR_PANE_ID=w1:p2 AGENT_MAIL_PROJECT=/srv/env run_stop)"
+check "AGENT_MAIL_PROJECT still wins over the binding's project" \
+    grep -qxF "am check-inbox --agent IcyKnoll --project /srv/env --rate-limit 0 --json" "$STUB_DIR/calls"
 
 reset_state
 inbox 1 50
