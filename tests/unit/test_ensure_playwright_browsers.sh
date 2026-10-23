@@ -110,6 +110,14 @@ check "asks Playwright's dry run for the browsers named" \
     test "$(cat "$WEB/node_modules/.bin/calls")" = "install --dry-run chromium firefox"
 check "an installed browser is left as it is, nothing fetched" \
     bash -c '[[ "$1" -eq 0 && "$2" == *"chromium-1208 is installed"* && ! -e "$3" ]]' _ "$RC" "$OUT" "$ACFS_PLAYWRIGHT_MIRROR"
+RC=0
+OUT="$(cd "$CASE" && bash "$HELPER" --web web chromium 2>&1)" || RC=$?
+check "a relative --web works: the dry run runs from inside it" \
+    bash -c '[[ "$1" -eq 0 && "$2" == *"chromium-1208 is installed"* ]]' _ "$RC" "$OUT"
+RC=0
+OUT="$(cd "$CASE" && bash "$HELPER" --web nowhere chromium 2>&1)" || RC=$?
+check "a missing --web directory: exit 1, names it" \
+    bash -c '[[ "$1" -eq 1 && "$2" == *"no web directory at nowhere"* ]]' _ "$RC" "$OUT"
 
 fixture
 plan "$(CHROMIUM)" "file://$SRC/nowhere.zip"

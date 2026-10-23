@@ -57,6 +57,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 [[ ${#BROWSERS[@]} -gt 0 ]] || { usage >&2; exit 2; }
+# The dry run below runs the CLI from inside WEB_DIR, so a relative path
+# would no longer name it there.
+web_abs="$(cd "$WEB_DIR" 2>/dev/null && pwd)" || die "no web directory at $WEB_DIR"
+WEB_DIR="$web_abs"
 
 CLI="$WEB_DIR/node_modules/.bin/playwright"
 [[ -x "$CLI" ]] || die "no Playwright CLI at $CLI (run bun install --frozen-lockfile first)"
