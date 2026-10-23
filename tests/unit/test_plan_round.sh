@@ -9,7 +9,9 @@
 # Oracle host answers its /health check (and says why not otherwise), that
 # the review apr writes is waited for, moved aside and collected, and that
 # collect concatenates the round's reviews into the round_N.md apr
-# integrates from, never over a round_N.md it did not write.
+# integrates from, never over a round_N.md it did not write, and then has
+# apr backfill rebuild the metrics apr robot stats reads (a failed backfill
+# leaves the round collected; a missing bc is named).
 #
 # Usage: bash tests/unit/test_plan_round.sh
 # ============================================================
@@ -86,6 +88,15 @@ write_workflow() {
 write_workflow plan-v1.md
 cat >"$WORK/bin/apr" <<'EOF'
 #!/usr/bin/env bash
+if [[ "$1" == backfill ]]; then
+    printf '%s %s\n' "$PWD" "$*" >>"$FAKE_APR_SENT/backfill"
+    if [[ -n "${FAKE_APR_BACKFILL_FAIL:-}" ]]; then
+        echo "✗ No rounds found for workflow '$2'"
+        exit 1
+    fi
+    echo "✓ Backfilled"
+    exit 0
+fi
 [[ "$1" == run ]] || exit 9
 round="$2" mode="${3:-}"
 wf=".apr/workflows/$(awk '$1 == "default_workflow:" { print $2; exit }' .apr/config.yaml).yaml"
@@ -265,6 +276,21 @@ check "round_1.md carries collect's marker" first_line_is "$ROUNDS/round_1.md" "
 check "round_1.md names the codex reviewer" file_has "$ROUNDS/round_1.md" "## Reviewer: codex"
 check "round_1.md holds the codex review" file_has "$ROUNDS/round_1.md" "codex: tighten section 2"
 check "round_1.md holds the claude review" file_has "$ROUNDS/round_1.md" "claude: add a rollback"
+check "collect has apr backfill rebuild the workflow's metrics, in the plan directory" \
+    file_has "$FAKE_APR_SENT/backfill" "$PLAN backfill demo --force"
+check "collect says the metrics are rebuilt" out_has "metrics: apr backfill rebuilt demo's metrics"
+FAKE_APR_BACKFILL_FAIL=1 run_plan_round collect 1
+check "a failed backfill: collect still exits 0" rc_is 0
+check "a failed backfill: the round is still collected" out_has "collected 2 review(s)"
+check "a failed backfill: says so, with apr's reason" \
+    bash -c 'grep -qF "apr backfill demo --force failed (exit 1)" <<<"$1" && grep -qF "No rounds found" <<<"$1"' _ "$OUT"
+mkdir -p "$WORK/nobc"
+for tool in bash env awk head cat mv tail sed dirname basename; do
+    ln -sf "$(command -v "$tool")" "$WORK/nobc/$tool"
+done
+PATH="$WORK/bin:$WORK/nobc" run_plan_round collect 1
+check "without bc: collect still exits 0" rc_is 0
+check "without bc: says the convergence signals stay 0.0" out_has "bc is not installed"
 printf 'codex: one more\n' >"$ROUNDS/round_7.codex.md"
 printf 'gpt pro says: not moved yet\n' >"$ROUNDS/round_7.md"
 run_plan_round collect 7

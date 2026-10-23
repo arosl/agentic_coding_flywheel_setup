@@ -18,7 +18,10 @@
 #   collect N  concatenates the reviews saved so far, round_N.<reviewer>.md in
 #              the workflow's rounds directory, into round_N.md, the file
 #              `apr robot integrate N`, diff and stats read. It never writes
-#              over a round_N.md it did not write.
+#              over a round_N.md it did not write. Then `apr backfill --force`
+#              rebuilds the workflow's metrics from every round_N.md: apr
+#              records metrics only for the rounds it runs itself, so without
+#              it `apr robot stats` finds none for a collected round.
 #   oracle     says whether the Oracle host in $ORACLE_REMOTE_HOST (with
 #              $ORACLE_REMOTE_TOKEN, as `oracle serve` printed them) answers
 #              its /health check: exit 0 if it does, 1 with the reason if not.
@@ -49,7 +52,8 @@ start    Render round N's bundle to .apr/round_N.bundle.md for the reviewers,
          none, and start apr's own ChatGPT Pro review in the background if
          Oracle answers.
 collect  Concatenate the round's reviews (round_N.<reviewer>.md) into
-         round_N.md for `apr robot integrate N`.
+         round_N.md for `apr robot integrate N`, then rebuild apr's metrics
+         from every round_N.md for `apr robot stats`.
 oracle   Exit 0 if the Oracle host in $ORACLE_REMOTE_HOST answers, 1 if not.
 
 -C       The plan directory, which holds .apr (default: the current one).
@@ -239,7 +243,7 @@ plan_round_collected() {
 # in the foreground until Oracle has written the review: without it, apr
 # returns while Oracle runs on, and the move finds nothing.
 plan_round_gpt_pro() {
-    local round="$1" rounds_dir="$2" review="$2/round_$1.md" rc=0
+    local round="$1" workflow="$2" rounds_dir="$3" review="$3/round_$1.md" rc=0
     apr run "$round" --wait </dev/null || rc=$?
     if [[ "$rc" -ne 0 ]]; then
         echo "gpt-pro: apr run $round --wait failed (exit $rc); the round goes on without it"
@@ -248,11 +252,29 @@ plan_round_gpt_pro() {
     if [[ -f "$review" ]] && ! plan_round_collected "$review"; then
         mv -- "$review" "$rounds_dir/round_$round.gpt-pro.md"
     fi
-    plan_round_collect "$round" "$rounds_dir"
+    plan_round_collect "$round" "$workflow" "$rounds_dir"
+}
+
+# Rebuilds the workflow's metrics from every round_N.md. Without --force,
+# backfill refuses once metrics exist, so it would cover only the first
+# collected round. A failure costs only the convergence signal, so it is
+# reported and the collected round stands.
+plan_round_backfill() {
+    local workflow="$1" out rc=0
+    out="$(apr backfill "$workflow" --force </dev/null 2>&1)" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+        echo "metrics: apr backfill $workflow --force failed (exit $rc), so apr robot stats may not count this round:"
+        printf '%s\n' "$out" | tail -n 3 | sed 's/^/  /'
+        return 0
+    fi
+    echo "metrics: apr backfill rebuilt $workflow's metrics from every round_N.md, for apr robot stats"
+    if ! command -v bc >/dev/null 2>&1; then
+        echo "metrics: bc is not installed, so every convergence signal of apr robot stats stays 0.0; install bc"
+    fi
 }
 
 plan_round_collect() {
-    local round="$1" rounds_dir="$2" review reviewer collected="$2/round_$1.md"
+    local round="$1" workflow="$2" rounds_dir="$3" review reviewer collected="$3/round_$1.md"
     local -a reviews=()
     if [[ -f "$collected" ]] && ! plan_round_collected "$collected"; then
         plan_round_die "$PWD/$collected is not one collect wrote (its first line is not $PLAN_ROUND_MARKER), so collect leaves it: move it to round_$round.gpt-pro.md if it is ChatGPT Pro's review, or to round_$round.<reviewer>.md if another reviewer's, and collect again"
@@ -275,6 +297,7 @@ plan_round_collect() {
     } >"$collected.tmp"
     mv -- "$collected.tmp" "$collected"
     echo "collected ${#reviews[@]} review(s) into $PWD/$collected"
+    plan_round_backfill "$workflow"
     if [[ -f "$rounds_dir/round_$round.gpt-pro.log" && ! -f "$rounds_dir/round_$round.gpt-pro.md" ]]; then
         echo "gpt-pro: still running or failed (see round_$round.gpt-pro.log); not waited for"
     fi
@@ -311,8 +334,8 @@ plan_round_main() {
     rounds_dir="$(plan_round_rounds_dir "$workflow")"
     case "$command" in
         start) plan_round_start "$round" "$workflow" "$rounds_dir" ;;
-        collect) plan_round_collect "$round" "$rounds_dir" ;;
-        _gpt-pro) plan_round_gpt_pro "$round" "$rounds_dir" ;;
+        collect) plan_round_collect "$round" "$workflow" "$rounds_dir" ;;
+        _gpt-pro) plan_round_gpt_pro "$round" "$workflow" "$rounds_dir" ;;
     esac
 }
 
