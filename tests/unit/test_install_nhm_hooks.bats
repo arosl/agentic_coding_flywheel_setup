@@ -42,6 +42,7 @@ run_fn() {
         acfs_legacy_module_selected() { [[ "$1" == stack.nhm && "$SELECTED" == 1 ]]; }
         binary_installed() { [[ "$1" == claude ]]; }
         try_step() { shift; "$@"; }
+        try_step_optional() { shift; "$@"; }
         log_warn() { printf "WARN %s\n" "$1"; }
         log_detail() { printf "DETAIL %s\n" "$1"; }
         # shellcheck source=/dev/null
@@ -72,6 +73,7 @@ registered() {
         acfs_legacy_module_selected() { true; }
         binary_installed() { [[ "$1" == claude ]]; }
         try_step() { shift; "$@"; }
+        try_step_optional() { shift; "$@"; }
         log_warn() { printf "WARN %s\n" "$1"; }
         log_detail() { :; }
         source "$FN"

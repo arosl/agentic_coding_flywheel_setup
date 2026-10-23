@@ -165,8 +165,7 @@ _ACFS_STATE_FAILED_PHASES_DEF='
         [(.phase_steps | if type == "object" then . else {} end) | to_entries[]
             | select(.value | type == "object" and any(.[]; type == "object" and .required != false and .status == "failed"))
             | .key] as $from_steps
-        | (.failed_phase | if type == "string" and . != "" then [.] else [] end) as $last
-        | $from_steps + ($last - $from_steps);
+        | $from_steps + ((.failed_phase | if type == "string" and . != "" then [.] else [] end) - $from_steps);
 '
 
 # ============================================================

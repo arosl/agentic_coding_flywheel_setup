@@ -1219,6 +1219,7 @@ EOF
     mkdir -p "$ACFS_TAILSCALE_FIXTURE"
     tailscale() { [[ "$1" == version ]] && printf '1.0.0\n'; }
     _tailscale_has_systemd() { return 0; }
+    _tailscale_has_tun() { return 0; }
     _tailscale_get_sudo() { printf '\n'; }
     acfs_arch_pkg_install() { touch "$ACFS_TAILSCALE_FIXTURE/reinstalled"; return 1; }
     systemctl() {
@@ -1251,6 +1252,7 @@ EOF
     mkdir -p "$ACFS_TAILSCALE_FIXTURE"
     tailscale() { [[ "$1" == version ]] && printf '1.0.0\n'; }
     _tailscale_has_systemd() { return 0; }
+    _tailscale_has_tun() { return 0; }
     _tailscale_get_sudo() { printf 'tailscale_fixture_sudo\n'; }
     tailscale_fixture_sudo() {
         [[ "$ACFS_TAILSCALE_PRIVILEGE_ALLOWED" == true ]] || return 1
@@ -1277,12 +1279,66 @@ EOF
     source_lib tailscale
     tailscale() { [[ "$1" == version ]] && printf '1.0.0\n'; }
     _tailscale_has_systemd() { return 0; }
+    _tailscale_has_tun() { return 0; }
     _tailscale_get_sudo() { printf '\n'; }
     systemctl() { [[ "$1" == enable ]]; }
 
     run install_tailscale
     assert_failure
     assert_output --partial 'still not enabled and active'
+}
+
+# acfs-f2mc.11: an unprivileged Incus container has no /dev/net/tun, so
+# tailscaled can't start there; the service is enabled, never started.
+@test "install_tailscale: without /dev/net/tun the service is enabled, not started" {
+    source_lib tailscale
+    export ACFS_TAILSCALE_FIXTURE="$BATS_TEST_TMPDIR/tailscale"
+    mkdir -p "$ACFS_TAILSCALE_FIXTURE"
+    tailscale() { [[ "$1" == version ]] && printf '1.0.0\n'; }
+    _tailscale_has_systemd() { return 0; }
+    _tailscale_has_tun() { return 1; }
+    _tailscale_get_sudo() { printf '\n'; }
+    systemctl() {
+        printf '%s\n' "$*" >> "$ACFS_TAILSCALE_FIXTURE/systemctl-calls"
+        case "$1" in
+            is-enabled) test -f "$ACFS_TAILSCALE_FIXTURE/enabled" ;;
+            enable)
+                [[ "$*" == 'enable tailscaled' ]] || return 1
+                touch "$ACFS_TAILSCALE_FIXTURE/enabled"
+                ;;
+            *) return 1 ;;
+        esac
+    }
+
+    run install_tailscale
+    assert_success
+    [[ -f "$ACFS_TAILSCALE_FIXTURE/enabled" ]]
+    run grep -E 'is-active|--now|start' "$ACFS_TAILSCALE_FIXTURE/systemctl-calls"
+    assert_failure
+
+    # A rerun finds it enabled and changes nothing.
+    run install_tailscale
+    assert_success
+    run grep -c '^enable ' "$ACFS_TAILSCALE_FIXTURE/systemctl-calls"
+    assert_output 1
+}
+
+@test "install_tailscale: without /dev/net/tun a service that can't be enabled still fails" {
+    source_lib tailscale
+    tailscale() { [[ "$1" == version ]] && printf '1.0.0\n'; }
+    _tailscale_has_systemd() { return 0; }
+    _tailscale_has_tun() { return 1; }
+    _tailscale_get_sudo() { printf '\n'; }
+    systemctl() { return 1; }
+
+    run install_tailscale
+    assert_failure
+    assert_output --partial 'could not be enabled'
+}
+
+@test "install.sh: network.tailscale's verification asks is-active only where /dev/net/tun exists" {
+    run grep -F '&& { [[ ! -c /dev/net/tun ]] || systemctl is-active --quiet tailscaled; }' "$PROJECT_ROOT/install.sh"
+    assert_success
 }
 
 @test "install_tailscale: verifies the executable and preserves hosts without systemd" {

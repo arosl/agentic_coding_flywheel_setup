@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-10-23T15:42:20+00:00
+# checksums.yaml - Auto-generated 2026-10-23T15:59:19+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -67,7 +67,7 @@ installers:
     sha256: "f22f92d30d8afea5c54c63d2515b35df415c6174e4a804200339293fe7ef155c"
 
   dcg:
-    url: "https://raw.githubusercontent.com/arosl/destructive_command_guard/main/install.sh"
+    url: "https://raw.githubusercontent.com/arosl/destructive_command_guard/a17f5a739df931c66801165b389efd84f1bac7a4/install.sh"
     sha256: "a349e8f081c2414f9c14aee75897de78d7bdff0c2882d9fd79f81f54dec63a77"
 
   dsr:

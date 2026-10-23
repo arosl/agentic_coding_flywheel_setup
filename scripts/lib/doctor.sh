@@ -2332,7 +2332,7 @@ ACFS_APT_AUDIT_PY
         *) status="warn" ;;
     esac
     check "system.ubuntu_archive_suites" "Ubuntu archive suites" "$status" "$report" \
-        "Review Ubuntu source suites and recovery guidance: https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/blob/main/docs/operations/ubuntu-upgrade.md#mixed-ubuntu-archive-suites-463"
+        "Review Ubuntu source suites and recovery guidance: https://github.com/arosl/agentic_coding_flywheel_setup/blob/main/docs/operations/ubuntu-upgrade.md#mixed-ubuntu-archive-suites-463"
 }
 
 check_identity() {
@@ -4397,7 +4397,7 @@ _acfs_doctor_incus_remote() {
     else
         check "tools.incus.remote" "Incus remote" "warn" \
             "none: test instances can't be made from inside the container" \
-            "Add the host's Incus with the token host setup printed: incus remote add <name> <token>"
+            "incus remote generate-certificate, then the steps in an ACFS checkout's scripts/providers/incus.md, 'The test project': copy ~/.config/incus/client.crt to the host and trust it there, open its API on port 8443, and incus remote add host https://<gateway>:8443"
     fi
 }
 

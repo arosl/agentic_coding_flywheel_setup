@@ -31,6 +31,13 @@ _tailscale_has_systemd() {
     command -v systemctl &>/dev/null && [[ -d /run/systemd/system ]]
 }
 
+# tailscaled exits without /dev/net/tun, which an unprivileged Incus
+# container (the fork's default target) doesn't have; its tailnet comes from
+# the instance's Tailscale sidecar (incus_tailscale.sh).
+_tailscale_has_tun() {
+    [[ -c /dev/net/tun ]]
+}
+
 # A working client binary does not prove that the daemon was enabled or
 # started. Retry interrupted/failed service setup without reinstalling the
 # package, and require the actual resulting service state before success.
@@ -38,6 +45,23 @@ _tailscale_ensure_service() {
     local sudo_cmd="${1:-}"
     if ! _tailscale_has_systemd; then
         log_detail "  Skipping systemd service setup (no systemd)"
+        return 0
+    fi
+
+    # Without the TUN device, enabled is the state there is to require.
+    if ! _tailscale_has_tun; then
+        if ! systemctl is-enabled --quiet tailscaled; then
+            log_detail "  Enabling tailscaled service (no /dev/net/tun, so not starting it)..."
+            if ! $sudo_cmd systemctl enable tailscaled >/dev/null 2>&1; then
+                log_error "Tailscale is installed but its service could not be enabled"
+                return 1
+            fi
+        fi
+        if ! systemctl is-enabled --quiet tailscaled; then
+            log_error "Tailscale service is still not enabled"
+            return 1
+        fi
+        log_detail "  No /dev/net/tun here: tailscaled is enabled, not started"
         return 0
     fi
 

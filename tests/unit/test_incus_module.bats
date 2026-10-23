@@ -69,6 +69,7 @@ run_incus_block() {
         TARGET_USER=alice
         SUDO=""
         try_step() { shift; "$@"; }
+        try_step_optional() { shift; "$@"; }
         command_exists() { [[ "$1" == systemctl ]]; }
         getent() { [[ "$1 $2" == "group incus-admin" ]]; }
         # Called with 2>/dev/null, which is not part of "$*".

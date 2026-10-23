@@ -282,6 +282,20 @@ EOF
     assert_output '["stack"]'
 }
 
+# The readers can't source state.sh, so each carries its own copy of the
+# definition; whitespace aside, every copy must be state.sh's.
+@test "state: every reader's def failed_phases is state.sh's" {
+    local lib defs
+    defs="$(for lib in state continue info status rescue support; do
+        awk '/def failed_phases:/ { on = 1; buf = "" }
+            on { buf = buf " " $0 }
+            on && /- \$from_steps\);/ { gsub(/[ \t]+/, " ", buf); print buf; on = 0 }' \
+            "$PROJECT_ROOT/scripts/lib/$lib.sh"
+    done)"
+    [[ "$(grep -c . <<< "$defs")" -eq 7 ]] || fail "expected 7 definitions, found: $defs"
+    [[ "$(sort -u <<< "$defs" | grep -c .)" -eq 1 ]] || fail "the definitions differ: $defs"
+}
+
 @test "state: install_finish records failed for a failed run, and for required work left unresolved" {
     local phase
     state_init

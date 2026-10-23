@@ -10495,7 +10495,8 @@ EOF
     run grep -F 'local explicit_user_home_for_repair=""' "$installer"
     assert_success
 
-    run grep -F 'useradd -m -d "$TARGET_HOME" -s /bin/bash "$TARGET_USER"' "$installer"
+    # The account's shell is the one /etc/shells approves (upstream's #473).
+    run grep -F 'useradd -m -d "$TARGET_HOME" -s "$initial_shell" "$TARGET_USER"' "$installer"
     assert_success
 
     run grep -F "LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32 || true" "$installer"
@@ -11002,16 +11003,19 @@ EOF
     run grep -F 'if ! binary_installed "zsh"; then' "$installer"
     assert_success
 
-    run grep -F 'if ! binary_installed "go"; then' "$installer"
+    # Go's install check verifies the module live, as the target (#474).
+    run grep -F 'if ! acfs_should_skip_module "lang.go"; then' "$installer"
     assert_success
 
-    run grep -F 'if binary_installed "uv"; then' "$installer"
+    # Since upstream's #474, uv, atuin and zoxide (like Go above) skip only
+    # after acfs_should_skip_module verifies the module live, as the target.
+    run grep -F 'if acfs_should_skip_module "lang.uv"; then' "$installer"
     assert_success
 
-    run grep -F 'if [[ -d "$TARGET_HOME/.atuin" ]] || binary_installed "atuin"; then' "$installer"
+    run grep -F 'if acfs_should_skip_module "tools.atuin"; then' "$installer"
     assert_success
 
-    run grep -F 'if binary_installed "zoxide"; then' "$installer"
+    run grep -F 'if acfs_should_skip_module "tools.zoxide"; then' "$installer"
     assert_success
 
     run grep -F 'if binary_installed "gum"; then' "$installer"
@@ -11023,10 +11027,11 @@ EOF
     run grep -F 'if ! binary_installed "lazygit"; then' "$installer"
     assert_success
 
-    run grep -F 'elif psql_bin="$(binary_path psql 2>/dev/null || true)" && [[ -n "$psql_bin" ]]; then' "$installer"
+    # PostgreSQL and Vault: the module's own verification, not a PATH lookup (#474).
+    run grep -F 'if should_run_module "db.postgres18" && acfs_module_is_installed "db.postgres18"; then' "$installer"
     assert_success
 
-    run grep -F 'elif vault_bin="$(binary_path vault 2>/dev/null || true)" && [[ -n "$vault_bin" ]]; then' "$installer"
+    run grep -F 'elif acfs_should_skip_module "tools.vault"; then' "$installer"
     assert_success
 
     run grep -F 'binary_installed "go" || { missing_lang+=("go"); missing_lang_modules+=(lang.go); }' "$installer"
@@ -11035,10 +11040,11 @@ EOF
     run grep -F 'gh_bin="$(binary_path gh 2>/dev/null || true)"' "$installer"
     assert_success
 
-    run grep -F 'psql_bin="$(binary_path psql 2>/dev/null || true)"' "$installer"
+    # The smoke test's psql comes from the system path, its vault check is target-aware.
+    run grep -F 'psql_bin="$(acfs_early_system_binary_path psql 2>/dev/null || true)"' "$installer"
     assert_success
 
-    run grep -F 'vault_bin="$(binary_path vault 2>/dev/null || true)"' "$installer"
+    run grep -F 'elif binary_installed "vault"; then' "$installer"
     assert_success
 
     run grep -F 'export PATH="${ACFS_BIN_DIR:-$HOME/.local/bin}:$HOME/.local/bin:$HOME/.acfs/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$HOME/go/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin"' "$installer"
@@ -11138,7 +11144,7 @@ EOF
 
 @test "install.sh: DCG hook installer passes target paths as argv/env data" {
     local installer="$PROJECT_ROOT/install.sh"
-    local try_step_line="try_step \"Installing DCG hook\" \\"
+    local try_step_line="try_step_optional \"Installing DCG hook\" \\"
     local env_line="env \"TARGET_USER=\$TARGET_USER\" \"TARGET_HOME=\$TARGET_HOME\" \\"
 
     run grep -F "$try_step_line" "$installer"

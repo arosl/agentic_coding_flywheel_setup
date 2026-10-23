@@ -38,10 +38,23 @@ teardown() {
     common_teardown
 }
 
+# ensure_user now checks the account useradd made (#473): the approved shell
+# from /etc/shells, the same entry from NSS and /etc/passwd. useradd is a spy
+# here, so the account those checks read is stubbed; the checks themselves are
+# test_login_shell_safety.py's.
+_stub_created_account_checks() {
+    user_select_initial_login_shell() { printf '%s\n' /bin/bash; }
+    user_login_passwd_entry() { printf '%s\n' "testuser:x:1001:1001::/home/testuser:/bin/bash"; }
+    user_local_passwd_entry() { printf '%s\n' "testuser:x:1001:1001::/home/testuser:/bin/bash"; }
+    user_shell_is_approved() { return 0; }
+    user_shell_executable_by_account() { return 0; }
+}
+
 @test "ensure_user: creates user if missing" {
     # Mock id to fail (user missing)
     stub_command "id" "" 1
-    
+    _stub_created_account_checks
+
     # Spy on useradd
     spy_command "useradd"
     
@@ -73,6 +86,7 @@ teardown() {
 
 @test "ensure_user: password generator failure warns without aborting setup" {
     stub_command "id" "" 1
+    _stub_created_account_checks
     spy_command "useradd"
 
     _generate_random_password() {
@@ -446,7 +460,10 @@ EOF
     assert_output "$current_home"
 }
 
-@test "set_default_shell: external handoff uses passwd home over stale TARGET_HOME" {
+# An account outside /etc/passwd (its shell is the identity provider's) is
+# refused since upstream's 2e2c3a99 (#473): ACFS writes no .bashrc handoff for
+# it. Upstream's two cases here still expect the earlier handoff.
+@test "set_default_shell: an externally managed account is refused, with no handoff in either home" {
     local managed_user="acfs-managed-user"
     local stale_home
     local resolved_home
@@ -467,13 +484,14 @@ EOF
     user_run_as_account() { shift; "$@"; }
 
     run set_default_shell /bin/bash
-    assert_success
+    assert_failure
+    assert_output --partial "Shell for $managed_user is externally managed"
 
-    grep -q 'ACFS externally-managed shell handoff' "$resolved_home/.bashrc"
+    [[ ! -f "$resolved_home/.bashrc" ]]
     [[ ! -f "$stale_home/.bashrc" ]]
 }
 
-@test "set_default_shell: external handoff ignores marker-only comments" {
+@test "set_default_shell: a refused external account leaves its .bashrc as it was" {
     local managed_user="acfs-managed-user"
     local stale_home
     local resolved_home
@@ -495,11 +513,16 @@ EOF
     user_select_login_shell() { printf '/bin/bash\n'; }
     user_shell_is_approved() { [[ "$1" == /bin/bash ]]; }
     user_run_as_account() { shift; "$@"; }
+    local before
+    before="$(cat "$resolved_home/.bashrc")"
 
     run set_default_shell /bin/bash
-    assert_success
+    assert_failure
+    assert_output --partial "Shell for $managed_user is externally managed"
 
-    grep -Fq 'exec "$(command -v zsh)" -l' "$resolved_home/.bashrc"
+    [[ "$(cat "$resolved_home/.bashrc")" == "$before" ]]
+    run grep -Fq 'exec "$(command -v zsh)" -l' "$resolved_home/.bashrc"
+    assert_failure
     [[ ! -f "$stale_home/.bashrc" ]]
 }
 

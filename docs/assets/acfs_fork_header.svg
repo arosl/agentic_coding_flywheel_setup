@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="acfs-title acfs-desc">
+  <title id="acfs-title">Agentic Coding Flywheel Setup, the arosl fork</title>
+  <desc id="acfs-desc">One command, install.sh, sets up an Ubuntu 24.04 or 26.04 VPS or an unprivileged Incus container. Claude Code, Codex and agy run in herdr panes that nhm starts and wakes. They coordinate through Agent Mail, br and bv, are guarded by dcg and ubs, and remember through cass and cm.</desc>
+  <defs>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif; }
+      .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+      .card { fill: #151e2c; stroke: #2a3950; stroke-width: 1; }
+      .inner { fill: #101826; stroke: #2a3950; stroke-width: 1; }
+      .step { fill: #38bdf8; font-size: 12px; font-weight: 700; letter-spacing: 1.5px; }
+      .text { fill: #e5e7eb; }
+      .muted { fill: #9aa4b2; }
+      .faint { fill: #64748b; }
+      .flow { stroke: #38bdf8; stroke-width: 2; fill: none; }
+      .bar { fill: #243246; }
+    </style>
+    <marker id="acfs-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#38bdf8"/>
+    </marker>
+  </defs>
+
+  <!-- The panel: its own background, so it reads on light and dark pages. -->
+  <rect x="0.5" y="0.5" width="1199" height="419" rx="18" fill="#0f1623" stroke="#263247"/>
+
+  <!-- Header -->
+  <text x="48" y="50" class="mono" font-size="13" fill="#38bdf8" letter-spacing="0.5">ACFS · the arosl fork</text>
+  <text x="48" y="84" class="sans text" font-size="30" font-weight="700">Agentic Coding Flywheel Setup</text>
+  <text x="48" y="112" class="sans muted" font-size="16">One command turns a fresh Ubuntu VPS or an Incus container into a machine where coding agents work as a swarm.</text>
+  <line x1="48" y1="134" x2="1152" y2="134" stroke="#223047"/>
+
+  <!-- 1 Install (x 48-262) -->
+  <rect x="48" y="158" width="214" height="200" rx="12" class="card"/>
+  <text x="68" y="186" class="sans step">1  INSTALL</text>
+  <text x="68" y="226" class="mono text" font-size="20" font-weight="600">install.sh</text>
+  <circle cx="72" cy="256" r="3" fill="#38bdf8"/>
+  <text x="84" y="261" class="sans muted" font-size="13">one line, any fresh host</text>
+  <circle cx="72" cy="282" r="3" fill="#38bdf8"/>
+  <text x="84" y="287" class="sans muted" font-size="13">idempotent, resumable</text>
+  <circle cx="72" cy="308" r="3" fill="#38bdf8"/>
+  <text x="84" y="313" class="sans muted" font-size="13">checksum-verified</text>
+  <text x="68" y="342" class="mono faint" font-size="12">--mode vibe | safe</text>
+
+  <line x1="268" y1="258" x2="296" y2="258" class="flow" marker-end="url(#acfs-arrow)"/>
+
+  <!-- 2 Target (x 302-522) -->
+  <rect x="302" y="158" width="220" height="200" rx="12" class="card"/>
+  <text x="322" y="186" class="sans step">2  TARGET</text>
+  <rect x="322" y="200" width="180" height="58" rx="8" class="inner"/>
+  <text x="336" y="225" class="sans text" font-size="15" font-weight="600">Ubuntu VPS</text>
+  <text x="336" y="245" class="mono muted" font-size="12">24.04 · 26.04 LTS</text>
+  <text x="412" y="279" class="sans faint" font-size="12" text-anchor="middle">or</text>
+  <rect x="322" y="288" width="180" height="58" rx="8" class="inner"/>
+  <text x="336" y="313" class="sans text" font-size="15" font-weight="600">Incus container</text>
+  <text x="336" y="333" class="sans muted" font-size="12">unprivileged, own state</text>
+
+  <line x1="528" y1="258" x2="556" y2="258" class="flow" marker-end="url(#acfs-arrow)"/>
+
+  <!-- 3 Run (x 562-846): agents in herdr panes, driven by nhm -->
+  <rect x="562" y="158" width="284" height="200" rx="12" class="card"/>
+  <text x="582" y="186" class="sans step">3  RUN</text>
+  <rect x="582" y="198" width="244" height="122" rx="8" fill="#0b111b" stroke="#2a3950"/>
+  <path d="M582,206 a8,8 0 0 1 8,-8 h228 a8,8 0 0 1 8,8 v16 h-244 z" fill="#162133"/>
+  <text x="594" y="215" class="mono muted" font-size="11">herdr · workspace</text>
+  <line x1="663" y1="222" x2="663" y2="320" stroke="#2a3950"/>
+  <line x1="745" y1="222" x2="745" y2="320" stroke="#2a3950"/>
+  <text x="592" y="244" class="mono text" font-size="13" font-weight="600">claude</text>
+  <circle cx="596" cy="261" r="3.5" fill="#34d399"/>
+  <text x="604" y="265" class="sans" font-size="11" fill="#34d399">working</text>
+  <rect x="592" y="278" width="58" height="4" rx="2" class="bar"/>
+  <rect x="592" y="290" width="42" height="4" rx="2" class="bar"/>
+  <rect x="592" y="302" width="50" height="4" rx="2" class="bar"/>
+  <text x="673" y="244" class="mono text" font-size="13" font-weight="600">codex</text>
+  <circle cx="677" cy="261" r="3.5" fill="#34d399"/>
+  <text x="685" y="265" class="sans" font-size="11" fill="#34d399">working</text>
+  <rect x="673" y="278" width="48" height="4" rx="2" class="bar"/>
+  <rect x="673" y="290" width="60" height="4" rx="2" class="bar"/>
+  <rect x="673" y="302" width="38" height="4" rx="2" class="bar"/>
+  <text x="755" y="244" class="mono text" font-size="13" font-weight="600">agy</text>
+  <circle cx="759" cy="261" r="3.5" fill="#9aa4b2"/>
+  <text x="767" y="265" class="sans muted" font-size="11">idle</text>
+  <rect x="755" y="278" width="54" height="4" rx="2" class="bar"/>
+  <rect x="755" y="290" width="34" height="4" rx="2" class="bar"/>
+  <text x="582" y="342" class="sans muted" font-size="13"><tspan class="mono text" font-weight="600">nhm</tspan> starts and wakes the agents</text>
+
+  <!-- Into the three shared layers -->
+  <line x1="852" y1="258" x2="872" y2="258" stroke="#38bdf8" stroke-width="2"/>
+  <line x1="872" y1="188" x2="872" y2="328" stroke="#38bdf8" stroke-width="2"/>
+  <line x1="872" y1="188" x2="888" y2="188" class="flow" marker-end="url(#acfs-arrow)"/>
+  <line x1="872" y1="258" x2="888" y2="258" class="flow" marker-end="url(#acfs-arrow)"/>
+  <line x1="872" y1="328" x2="888" y2="328" class="flow" marker-end="url(#acfs-arrow)"/>
+
+  <!-- Coordinate, guard, remember (x 894-1152) -->
+  <rect x="894" y="158" width="258" height="60" rx="10" class="card"/>
+  <text x="914" y="181" class="sans step">COORDINATE</text>
+  <text x="914" y="204" class="mono text" font-size="14" font-weight="600">Agent Mail · br · bv</text>
+  <text x="1136" y="181" class="sans faint" font-size="12" text-anchor="end">mail and tasks</text>
+
+  <rect x="894" y="228" width="258" height="60" rx="10" class="card"/>
+  <text x="914" y="251" class="sans step">GUARD</text>
+  <text x="914" y="274" class="mono text" font-size="14" font-weight="600">dcg · ubs</text>
+  <text x="1136" y="251" class="sans faint" font-size="12" text-anchor="end">commands, bugs</text>
+
+  <rect x="894" y="298" width="258" height="60" rx="10" class="card"/>
+  <text x="914" y="321" class="sans step">REMEMBER</text>
+  <text x="914" y="344" class="mono text" font-size="14" font-weight="600">cass · cm</text>
+  <text x="1136" y="321" class="sans faint" font-size="12" text-anchor="end">sessions, rules</text>
+
+  <!-- Footer -->
+  <text x="48" y="394" class="sans faint" font-size="13">One manifest, acfs.manifest.yaml, drives the installer, the doctor and the docs.</text>
+  <text x="1152" y="394" class="sans faint" font-size="13" text-anchor="end">Ubuntu 24.04 · 26.04 · Arch</text>
+</svg>

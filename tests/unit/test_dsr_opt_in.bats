@@ -32,7 +32,7 @@ run_dsr_block() {
         acfs_resolve_selection >/dev/null 2>&1 || { echo "selection failed"; exit 3; }
 
         binary_installed() { return 1; }
-        try_step() { shift; "$@"; }
+        acfs_try_module_step() { shift 2; "$@"; }
         acfs_run_verified_upstream_script_as_target() { printf "%s\n" "$1" >> "$calls"; }
         acfs_optional_module_install_failed() { :; }
 
