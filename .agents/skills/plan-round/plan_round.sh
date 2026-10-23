@@ -5,13 +5,20 @@
 # A plan keeps an apr workflow beside it (<plan-dir>/.apr). Each round:
 #   start N    renders apr's round-N prompt, with the brief and the plan
 #              inlined, to .apr/round_N.bundle.md: the prompt the round's
-#              reviewers get. If an Oracle host answers (oracle, below), it
-#              also starts `apr run N` in the background: a ChatGPT Pro review
-#              that lands as round_N.gpt-pro.md once it finishes. Nothing ever
+#              reviewers get. Oracle attaches each document after the prompt,
+#              as "### File: <name>", and leaves the "<contents of ... will be
+#              included by oracle>" slots of apr's default prompt empty, so
+#              the prompt must name each file itself: a workflow without a
+#              template of its own gets one written that names this round's
+#              documents, and a template that misses one is refused. If an
+#              Oracle host answers (oracle, below), start also runs
+#              `apr run N --wait` in the background: a ChatGPT Pro review that
+#              lands as round_N.gpt-pro.md once it finishes. The agent never
 #              waits on it.
 #   collect N  concatenates the reviews saved so far, round_N.<reviewer>.md in
 #              the workflow's rounds directory, into round_N.md, the file
-#              `apr robot integrate N`, diff and stats read.
+#              `apr robot integrate N`, diff and stats read. It never writes
+#              over a round_N.md it did not write.
 #   oracle     says whether the Oracle host in $ORACLE_REMOTE_HOST (with
 #              $ORACLE_REMOTE_TOKEN, as `oracle serve` printed them) answers
 #              its /health check: exit 0 if it does, 1 with the reason if not.
@@ -25,6 +32,11 @@ set -euo pipefail
 PLAN_ROUND_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 # The first line of a file collect writes; a round_N.md without it is apr's.
 PLAN_ROUND_MARKER="<!-- collected by plan_round.sh -->"
+# The line that starts the template start writes into a workflow. Everything
+# from it to the end of the file is start's, and start rewrites it.
+PLAN_ROUND_TEMPLATE_MARKER="# plan_round.sh's template: start rewrites it each round, from this line to the end of the file."
+# What apr's default prompt holds where Oracle was once meant to fill in a file.
+PLAN_ROUND_EMPTY_SLOT="will be included by oracle>"
 
 plan_round_usage() {
     cat <<'EOF'
@@ -33,8 +45,9 @@ Usage: plan_round.sh [-C <plan-dir>] start <N>
        plan_round.sh oracle
 
 start    Render round N's bundle to .apr/round_N.bundle.md for the reviewers,
-         and start apr's own ChatGPT Pro review in the background if Oracle
-         answers.
+         writing the workflow a template that names each document if it has
+         none, and start apr's own ChatGPT Pro review in the background if
+         Oracle answers.
 collect  Concatenate the round's reviews (round_N.<reviewer>.md) into
          round_N.md for `apr robot integrate N`.
 oracle   Exit 0 if the Oracle host in $ORACLE_REMOTE_HOST answers, 1 if not.
@@ -85,15 +98,127 @@ plan_round_rounds_dir() {
     printf '%s\n' "${dir:-.apr/rounds/$workflow}"
 }
 
+# apr's render of round N, from its [SYSTEM] line on: Oracle prints a banner
+# before the bundle.
+plan_round_render() {
+    local round="$1" rendered
+    rendered="$(apr run "$round" --render </dev/null)" || plan_round_die "apr run $round --render failed"
+    if ! grep -qx '\[SYSTEM\]' <<<"$rendered" || ! grep -qx '\[USER\]' <<<"$rendered"; then
+        plan_round_die "apr's render has no [SYSTEM] and [USER] lines; not a bundle"
+    fi
+    sed -n '/^\[SYSTEM\]$/,$p' <<<"$rendered"
+}
+
+# The files a bundle attaches, in order: Oracle's "### File: <name>"
+# headings. A document's own lines carry a line-number prefix in the bundle,
+# so such a heading is always Oracle's.
+plan_round_attached_files() {
+    sed -n 's/^### File: //p' <<<"$1"
+}
+
+# Prints what keeps a bundle's prompt (its [USER] text, up to the first
+# attached file) from naming each attached file, and returns 1. Returns 0 if
+# the prompt names them all.
+plan_round_unnamed() {
+    local bundle="$1" prompt file
+    prompt="$(awk '/^### File: / { exit } seen { print } /^\[USER\]$/ { seen = 1 }' <<<"$bundle")"
+    if grep -qF -- "$PLAN_ROUND_EMPTY_SLOT" <<<"$prompt"; then
+        echo "keeps apr's empty \"<contents of ... $PLAN_ROUND_EMPTY_SLOT\" slots"
+        return 1
+    fi
+    while IFS= read -r file; do
+        if ! grep -qwF -- "$file" <<<"$prompt"; then
+            echo "does not name $file"
+            return 1
+        fi
+    done < <(plan_round_attached_files "$bundle")
+}
+
+# Whether the workflow has a template that start did not write.
+plan_round_has_hand_template() {
+    awk -v marker="$PLAN_ROUND_TEMPLATE_MARKER" '
+        $0 == marker { exit }
+        /^template(_with_impl)?:/ { found = 1 }
+        END { exit !found }' "$1"
+}
+
+# Prints the workflow with start's template for this round in place of the
+# one start wrote before: apr's own revision prompt, naming the README, the
+# implementation (when the round attaches one) and the spec as the bundle
+# attaches them, in apr's order.
+plan_round_with_template() {
+    local workflow_file="$1" bundle="$2" readme spec impl=""
+    local -a files=()
+    mapfile -t files < <(plan_round_attached_files "$bundle")
+    case "${#files[@]}" in
+        2) readme="${files[0]}" spec="${files[1]}" ;;
+        3) readme="${files[0]}" impl="${files[1]}" spec="${files[2]}" ;;
+        *) plan_round_die "apr's render attaches ${#files[@]} file(s); expected the README, maybe an implementation, and the spec" ;;
+    esac
+    {
+        awk -v marker="$PLAN_ROUND_TEMPLATE_MARKER" '$0 == marker { exit } { print }' "$workflow_file"
+        printf '%s\n' \
+            "$PLAN_ROUND_TEMPLATE_MARKER" \
+            "# It names each document Oracle attaches after the prompt (as \"### File:" \
+            "# <name>\"). To write your own template, delete these lines and add one" \
+            "# that names each attached file." \
+            "template: |"
+        {
+            printf '%s\n' \
+                "This plan's documents are attached after this prompt, each under a" \
+                '"### File: <name>" heading.' \
+                "" \
+                "First, read the README, \`$readme\`." \
+                "" \
+                "---"
+            if [[ -n "$impl" ]]; then
+                printf '%s\n' \
+                    "" \
+                    "And \`$impl\` is a document detailing the implementation; you should" \
+                    "also keep the implementation in mind as you think about the" \
+                    "specification, since ultimately the specification needs to be" \
+                    "translated into code eventually!" \
+                    "" \
+                    "---"
+            fi
+            printf '%s\n' \
+                "" \
+                "NOW: Carefully review this entire plan, \`$spec\`, for me and come up" \
+                "with your best revisions in terms of better architecture, new features," \
+                "changed features, etc. to make it better, more robust/reliable, more" \
+                "performant, more compelling/useful, etc." \
+                "" \
+                "For each proposed change, give me your detailed analysis and" \
+                "rationale/justification for why it would make the project better along" \
+                "with the git-diff style change versus the original plan, \`$spec\`."
+        } | sed 's/^./  &/'
+    }
+}
+
 plan_round_start() {
     local round="$1" workflow="$2" rounds_dir="$3"
-    local bundle=".apr/round_$round.bundle.md" rendered
-    rendered="$(apr run "$round" --render </dev/null)" || plan_round_die "apr run $round --render failed"
-    # Oracle prints a banner before the bundle, which starts at [SYSTEM].
-    if ! grep -qx '\[SYSTEM\]' <<<"$rendered"; then
-        plan_round_die "apr's render has no [SYSTEM] line; not a bundle"
+    local bundle=".apr/round_$round.bundle.md" workflow_file=".apr/workflows/$workflow.yaml" rendered problem
+    rendered="$(plan_round_render "$round")"
+    if plan_round_has_hand_template "$workflow_file"; then
+        if ! problem="$(plan_round_unnamed "$rendered")"; then
+            plan_round_die "the template in $PWD/$workflow_file $problem; name each attached file in it (Oracle adds each after the prompt as \"### File: <name>\"), or delete it, and start writes one that does"
+        fi
+    else
+        # Rewritten every round, not only when it misses a file: a round that
+        # attaches no implementation must not be told about one.
+        plan_round_with_template "$workflow_file" "$rendered" >"$workflow_file.tmp"
+        if cmp -s -- "$workflow_file.tmp" "$workflow_file"; then
+            rm -f -- "$workflow_file.tmp"
+        else
+            mv -- "$workflow_file.tmp" "$workflow_file"
+            echo "template: $PWD/$workflow_file now names this round's documents"
+            rendered="$(plan_round_render "$round")"
+        fi
+        if ! problem="$(plan_round_unnamed "$rendered")"; then
+            plan_round_die "the prompt apr renders from start's template $problem"
+        fi
     fi
-    sed -n '/^\[SYSTEM\]$/,$p' <<<"$rendered" >"$bundle"
+    printf '%s\n' "$rendered" >"$bundle"
     mkdir -p "$rounds_dir"
     echo "bundle: $PWD/$bundle"
     echo "reviews: each reviewer writes $PWD/$rounds_dir/round_$round.<reviewer>.md"
@@ -104,20 +229,34 @@ plan_round_start() {
     fi
 }
 
+# Whether a round_N.md is one collect wrote; apr's review has no marker.
+plan_round_collected() {
+    [[ "$(head -n 1 -- "$1")" == "$PLAN_ROUND_MARKER" ]]
+}
+
 # apr writes its review to round_N.md itself, so it is moved aside to
-# round_N.gpt-pro.md, and the round collected again with it.
+# round_N.gpt-pro.md, and the round collected again with it. --wait keeps apr
+# in the foreground until Oracle has written the review: without it, apr
+# returns while Oracle runs on, and the move finds nothing.
 plan_round_gpt_pro() {
-    local round="$1" rounds_dir="$2"
-    apr run "$round" </dev/null
-    if [[ -f "$rounds_dir/round_$round.md" ]] && [[ "$(head -n 1 "$rounds_dir/round_$round.md")" != "$PLAN_ROUND_MARKER" ]]; then
-        mv -- "$rounds_dir/round_$round.md" "$rounds_dir/round_$round.gpt-pro.md"
+    local round="$1" rounds_dir="$2" review="$2/round_$1.md" rc=0
+    apr run "$round" --wait </dev/null || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+        echo "gpt-pro: apr run $round --wait failed (exit $rc); the round goes on without it"
+        return "$rc"
+    fi
+    if [[ -f "$review" ]] && ! plan_round_collected "$review"; then
+        mv -- "$review" "$rounds_dir/round_$round.gpt-pro.md"
     fi
     plan_round_collect "$round" "$rounds_dir"
 }
 
 plan_round_collect() {
-    local round="$1" rounds_dir="$2" review reviewer
+    local round="$1" rounds_dir="$2" review reviewer collected="$2/round_$1.md"
     local -a reviews=()
+    if [[ -f "$collected" ]] && ! plan_round_collected "$collected"; then
+        plan_round_die "$PWD/$collected is not one collect wrote (its first line is not $PLAN_ROUND_MARKER), so collect leaves it: move it to round_$round.gpt-pro.md if it is ChatGPT Pro's review, or to round_$round.<reviewer>.md if another reviewer's, and collect again"
+    fi
     for review in "$rounds_dir/round_$round".*.md; do
         [[ -f "$review" ]] && reviews+=("$review")
     done
@@ -133,9 +272,9 @@ plan_round_collect() {
             printf '\n## Reviewer: %s\n\n' "$reviewer"
             cat -- "$review"
         done
-    } >"$rounds_dir/round_$round.md.tmp"
-    mv -- "$rounds_dir/round_$round.md.tmp" "$rounds_dir/round_$round.md"
-    echo "collected ${#reviews[@]} review(s) into $PWD/$rounds_dir/round_$round.md"
+    } >"$collected.tmp"
+    mv -- "$collected.tmp" "$collected"
+    echo "collected ${#reviews[@]} review(s) into $PWD/$collected"
     if [[ -f "$rounds_dir/round_$round.gpt-pro.log" && ! -f "$rounds_dir/round_$round.gpt-pro.md" ]]; then
         echo "gpt-pro: still running or failed (see round_$round.gpt-pro.log); not waited for"
     fi
