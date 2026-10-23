@@ -2182,6 +2182,30 @@ acfs_generated_install_utils_mdwb() {
     log_step "Installing utils.mdwb"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: pre-install check: [ \"\$(uname -m)\" != aarch64 ] && [ \"\$(uname -m)\" != arm64 ] (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_UTILS_MDWB_PRE_INSTALL_CHECK'
+[ "$(uname -m)" != aarch64 ] && [ "$(uname -m)" != arm64 ]
+INSTALL_UTILS_MDWB_PRE_INSTALL_CHECK
+        then
+            log_warn "utils.mdwb: Skipping MDWB - Chrome for Testing has no linux-arm64 build, which mdwb's capture browser needs"
+            # Optional-module failures are warnings on a default install, but a
+            # module the user explicitly named with --only had exactly one job:
+            # propagate the failure instead of reporting phase success (#373).
+            if declare -f acfs_module_explicitly_selected >/dev/null 2>&1 \
+                && acfs_module_explicitly_selected "utils.mdwb"; then
+              log_error "utils.mdwb: explicitly requested via --only; treating optional-module failure as fatal"
+              return 1
+            fi
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "utils.mdwb" "Skipping MDWB - Chrome for Testing has no linux-arm64 build, which mdwb's capture browser needs"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "utils.mdwb"
+            fi
+            return 0
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
         log_info "dry-run: verified installer: utils.mdwb"
     else
         if ! {
@@ -2224,7 +2248,7 @@ acfs_generated_install_utils_mdwb() {
                         elif ! "$verified_installer_chmod_bin" 0444 "$verified_installer_file"; then
                             log_error "utils.mdwb: failed to make verified installer staging file read-only"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
-                        elif run_as_target_runner 'bash' "$verified_installer_file"; then
+                        elif run_as_target_runner 'env' 'PATH='"$TARGET_HOME"'/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin' 'bash' "$verified_installer_file"; then
                             install_success=true
                         else
                             log_error "utils.mdwb: verified installer execution failed"

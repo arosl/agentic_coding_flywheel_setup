@@ -81,7 +81,7 @@ run_stack_phase() {
 
     declare -gA ACFS_MODULE_FUNC=()
     local module func
-    for module in tools.herdr stack.nhm stack.caam stack.ru; do
+    for module in tools.herdr stack.nhm stack.caam stack.ru utils.mdwb; do
         func="acfs_generated_install_${module//./_}"
         ACFS_MODULE_FUNC[$module]="$func"
         eval "$func() {
@@ -125,6 +125,55 @@ run_stack_phase() {
     [[ "$output" != *"module=stack.caam"* ]]
     [[ "$output" != *"module=stack.ru"* ]]
     [[ "$output" == *"module=stack.nhm"* ]]
+}
+
+# acfs-2qhv: mdwb's generated installer skips aarch64 (its pre_install_check)
+# and runs with ~/.local/bin first on PATH, so it keeps lang.uv's uv. The
+# hand-written runner has neither, so install.sh must use the generated one.
+@test "the generated mdwb installer skips aarch64 and puts ~/.local/bin first on PATH" {
+    local body
+    body="$(awk '/^acfs_generated_install_utils_mdwb\(\) \{$/,/^}$/' "$PROJECT_ROOT/scripts/generated/install_tools.sh")"
+    [[ -n "$body" ]]
+    [[ "$body" == *'[ "$(uname -m)" != aarch64 ] && [ "$(uname -m)" != arm64 ]'* ]]
+    [[ "$body" == *"Chrome for Testing has no linux-arm64 build"* ]]
+    [[ "$body" == *"'PATH='\"\$TARGET_HOME\"'/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin'"* ]]
+}
+
+@test "install.sh runs mdwb's installer only through its generated installer" {
+    run grep -nE 'acfs_run_verified_upstream_script_as_target(_with_env)? "mdwb"' "$PROJECT_ROOT/install.sh"
+    [[ "$status" -eq 1 ]]
+    grep -q 'acfs_legacy_run_manifest_module "utils.mdwb"' "$PROJECT_ROOT/install.sh"
+}
+
+@test "acfs update skips mdwb on aarch64 and arm64, with the reason, and runs it elsewhere" {
+    local block arch
+    block="$(awk '/^    # MDWB \(Markdown Web Browser\)/,/^    esac$/' "$PROJECT_ROOT/scripts/lib/update.sh")"
+    [[ -n "$block" ]]
+    for arch in aarch64 arm64; do
+        run env ARCH="$arch" bash -c 'uname() { printf "%s\n" "$ARCH"; }
+            log_item() { printf "%s|%s|%s\n" "$@"; }
+            run_cmd() { printf "run %s\n" "$*"; }
+            eval "$1"' _ "$block"
+        [[ "$status" -eq 0 ]]
+        [[ "$output" == "skip|MDWB|Chrome for Testing has no linux-arm64 build"* ]]
+        [[ "$output" != *"run "* ]]
+    done
+    run env ARCH=x86_64 bash -c 'uname() { printf "%s\n" "$ARCH"; }
+        log_item() { printf "%s|%s|%s\n" "$@"; }
+        run_cmd() { printf "run %s\n" "$*"; }
+        eval "$1"' _ "$block"
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == "run MDWB update_run_verified_installer mdwb --yes" ]]
+}
+
+@test "install_stack_phase installs mdwb through its generated installer, and skips it when installed" {
+    run run_stack_phase
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"module=utils.mdwb"* ]]
+    INSTALLED="utils.mdwb"
+    run run_stack_phase
+    [[ "$status" -eq 0 ]]
+    [[ "$output" != *"module=utils.mdwb"* ]]
 }
 
 @test "a failed caam install fails the stack phase and names stack.caam with its reason" {

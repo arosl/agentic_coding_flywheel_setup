@@ -8516,8 +8516,18 @@ update_stack() {
         run_cmd "RANO" update_run_verified_installer_with_target_tmpdir rano
     fi
 
-    # MDWB (Markdown Web Browser) - always install/update
-    run_cmd "MDWB" update_run_verified_installer mdwb --yes
+    # MDWB (Markdown Web Browser) - always install/update, except on aarch64:
+    # Chrome for Testing has no linux-arm64 build, which mdwb's installer
+    # requires, so it would fail every update there (acfs-2qhv). Its target
+    # PATH already has ~/.local/bin first, so it keeps lang.uv's uv.
+    case "$(uname -m 2>/dev/null)" in
+        aarch64|arm64)
+            log_item "skip" "MDWB" "Chrome for Testing has no linux-arm64 build, which mdwb's capture browser needs"
+            ;;
+        *)
+            run_cmd "MDWB" update_run_verified_installer mdwb --yes
+            ;;
+    esac
 
     # S2P (Source to Prompt TUI) - always install/update
     run_cmd "S2P" update_run_verified_installer s2p -- --skip-cass

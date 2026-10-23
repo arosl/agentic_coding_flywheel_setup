@@ -5094,6 +5094,11 @@ _acfs_clean_runner_env_allowed() {
         "GROK_BIN_DIR=$user_home/.local/bin")
             return 0
             ;;
+        "PATH=$user_home/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+            # utils.mdwb: the user's own bin first, so its installer finds
+            # lang.uv's uv instead of installing an older one (acfs-2qhv).
+            return 0
+            ;;
         TMPDIR=*)
             value="${assignment#TMPDIR=}"
             for component in \
@@ -10773,12 +10778,14 @@ UNIT_EOF
         acfs_try_module_step "stack.jeffreysprompts" "Installing JFP" acfs_run_verified_upstream_script_as_target "jfp" "bash" || acfs_optional_module_install_failed "jfp" "JFP"
     fi
 
-    # Markdown Web Browser (mdwb)
-    if binary_installed "mdwb"; then
+    # Markdown Web Browser (mdwb): through its generated installer, which
+    # skips aarch64 (Chrome for Testing has no linux-arm64 build) and runs
+    # with ~/.local/bin first on PATH, so it keeps lang.uv's uv. The
+    # hand-written runner has neither (acfs-2qhv).
+    if acfs_should_skip_module "utils.mdwb"; then
         log_detail "MDWB already installed"
     else
-        log_detail "Installing MDWB"
-        acfs_try_module_step "utils.mdwb" "Installing MDWB" acfs_run_verified_upstream_script_as_target "mdwb" "bash" || acfs_optional_module_install_failed "mdwb" "MDWB"
+        acfs_legacy_run_manifest_module "utils.mdwb" || log_warn "MDWB installation failed (see summary)"
     fi
 
     # Meta Skill (ms)

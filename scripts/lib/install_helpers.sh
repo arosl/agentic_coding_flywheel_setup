@@ -1007,6 +1007,11 @@ _acfs_clean_runner_env_allowed() {
             "GROK_BIN_DIR=$user_home/.local/bin")
                 return 0
                 ;;
+            "PATH=$user_home/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+                # utils.mdwb: the user's own bin first, so its installer finds
+                # lang.uv's uv instead of installing an older one (acfs-2qhv).
+                return 0
+                ;;
         TMPDIR=*)
             value="${assignment#TMPDIR=}"
             for component in \

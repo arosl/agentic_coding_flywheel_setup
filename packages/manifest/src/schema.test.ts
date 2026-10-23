@@ -504,6 +504,7 @@ describe("ModuleSchema", () => {
       { tool: "ru", entry: "RU_VERSION=1.5.0" },
       { tool: "s2p", entry: "RU_NON_INTERACTIVE=1" },
       { tool: "grok", entry: "GROK_BIN_DIR=$TARGET_HOME/.local/bin" },
+      { tool: "mdwb", entry: "PATH=$TARGET_HOME/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin" },
       { tool: "cass", entry: "TMPDIR=$TARGET_HOME/.cache/acfs/installer-tmp/cass.XXXXXX" },
       { tool: "rano", entry: "TMPDIR=$TARGET_HOME/.cache/acfs/installer-tmp/rano.XXXXXX" },
     ];
@@ -567,6 +568,9 @@ describe("ModuleSchema", () => {
       { tool: "rano", env: ["TMPDIR=/tmp/rano.XXXXXX"] },
       { tool: "grok", env: ["GROK_BIN_DIR=$TARGET_HOME/.grok/bin"] },
       { tool: "grok", env: ["RU_NON_INTERACTIVE=1"] },
+      { tool: "mdwb", env: ["PATH=/usr/sbin:/usr/bin:/sbin:/bin:$TARGET_HOME/.local/bin"] },
+      { tool: "mdwb", env: ["PATH=/tmp/evil:/usr/bin:/bin"] },
+      { tool: "grok", env: ["PATH=$TARGET_HOME/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin"] },
       { tool: "s2p", env: ["RU_VERSION=1.5.0-nhm.1"] },
       { tool: "s2p", env: ["RU_INSTALLER_NO_SELF_REFRESH=1"] },
       { tool: "mcp_agent_mail", env: ["ATUIN_NO_MODIFY_PATH=1"] },
