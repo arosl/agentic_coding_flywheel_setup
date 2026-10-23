@@ -21,6 +21,26 @@ permissions:
   contents: read
 
 jobs:
+  # ShellCheck reads the bats shebang. Its SC2314 finds a `! cmd` that can't
+  # fail a test under bats' set -e; use `run ! cmd` (acfs-r8vv).
+  shellcheck:
+    name: ShellCheck (bats)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install ShellCheck
+        uses: ./.github/actions/setup-shellcheck
+
+      - name: Run ShellCheck on every tracked *.bats
+        shell: bash
+        run: |
+          mapfile -t files < <(git ls-files '*.bats')
+          shellcheck "${files[@]}"
+
   bats:
     runs-on: ubuntu-latest
     timeout-minutes: 30

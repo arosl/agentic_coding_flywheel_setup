@@ -11,9 +11,9 @@
 # Steps, in order (each one runs even when an earlier one failed):
 #   manifest    generate:validate, generate --diff, bun test
 #   policy      policy_lint.sh, lint_rch_offload_policy.sh
-#   lint (step "shellcheck"): ShellCheck over every tracked *.sh,
-#               then CI's installer.yml jobs (the scripts its
-#               ShellCheck job runs)
+#   lint (step "shellcheck"): ShellCheck over every tracked *.sh, and
+#               every tracked *.bats as unit-bats.yml does, then CI's
+#               installer.yml jobs (the scripts its ShellCheck job runs)
 #   ci          run_ci_workflows_locally.sh (--since REF when given)
 #   web         apps/web type-check, lint, build, then Playwright
 #               under the host-wide browser lock, after a missing
@@ -296,6 +296,7 @@ step_shellcheck() {
         return 0
     fi
     run_cmd "shellcheck: tracked *.sh" "$ROOT" bash -c 'git ls-files -z "*.sh" | xargs -0 shellcheck' || true
+    run_cmd "shellcheck: tracked *.bats" "$ROOT" bash -c 'git ls-files -z "*.bats" | xargs -0 shellcheck' || true
     if ci_runs_installer_yml; then
         echo "run_gate: [shellcheck] installer.yml's jobs run in the ci step" >&2
         return 0
