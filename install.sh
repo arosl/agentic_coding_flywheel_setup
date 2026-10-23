@@ -5070,6 +5070,17 @@ _acfs_clean_runner_env_allowed() {
         ATUIN_NO_MODIFY_PATH=1|AM_INSTALL_SKIP_MCP_SETUP=1|AM_INSTALL_SKIP_REMOTE_HTTP_READINESS=1|RU_NON_INTERACTIVE=1)
             return 0
             ;;
+        RU_INSTALLER_NO_SELF_REFRESH=1)
+            # stack.ru: without it, ru's installer read from stdin fetches
+            # main's install.sh, unverified (acfs-tqh9).
+            return 0
+            ;;
+        RU_VERSION=*)
+            # stack.ru's pinned release, such as 1.5.0-nhm.2: never a path or
+            # a shell word.
+            [[ "${assignment#RU_VERSION=}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9]+(\.[A-Za-z0-9]+)*)?$ ]]
+            return $?
+            ;;
         "GROK_BIN_DIR=$user_home/.local/bin")
             return 0
             ;;

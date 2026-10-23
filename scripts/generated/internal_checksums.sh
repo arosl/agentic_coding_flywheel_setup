@@ -10,7 +10,7 @@
 ACFS_INTERNAL_CHECKSUMS_SCHEMA=1
 
 declare -gA ACFS_INTERNAL_CHECKSUMS=(
-  [install.sh]="c7345632e5ecf4892ac0bd04840600f57aadee4e0259b4cfbcd3fde668d100db"
+  [install.sh]="0b8868aaf858776643f625a2b3be75e0f5fbb68a5a7976310ed8548da4cce213"
   [checksums.yaml]="d5260670daaa90e2b7f381bb056ffd8c012039dff60fd8d2e6b1b5e07c7ae07c"
   [scripts/preflight.sh]="f8b5829f2be4cbe08b6d33316fa07fe1b5a951b570819e38a1cb6ffe283d5902"
   [scripts/lib/security.sh]="f3898f523aaeb44673ff41d710a7645a0eaf538b947ee986e58b672915514c90"
@@ -29,7 +29,7 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/lib/autofix_version_managers.sh]="e235b7bfb95115f00bf7a4e3398be504c576d1fbe97a64c64a988294d62d621e"
   [scripts/lib/ubuntu_upgrade.sh]="f60b1a6d477443e61374b067512747bec9e363bf372e9d8297cfa6e5a7d6633e"
   [scripts/lib/upgrade_resume.sh]="62ad5e0a597c399838a80530968b851c4f48fd1f64678bf52a4db1cf65f8460e"
-  [scripts/lib/install_helpers.sh]="47899dfa53b2cbda7761bfe985f5a97bd34ec40bdec9935cbbf24fe03f93e3f1"
+  [scripts/lib/install_helpers.sh]="cbb8debb8da12f51cb774b72af272140c6097a4bf71d70e53b27ef6a46be3448"
   [scripts/lib/logging.sh]="890d8e6e44332bede591e462b277a903ae8d8679adebd8cc4fc76face078f6be"
   [scripts/lib/output.sh]="95c83ae9c67fbd9364f1d69a6430ca8df7ebd1bd2cfa0fe9339afdead74e96eb"
   [scripts/lib/gum_ui.sh]="1616f7f6fdd730802da196a661a2e5f576e480e4e96d745ce12ea5b64f9559b5"
