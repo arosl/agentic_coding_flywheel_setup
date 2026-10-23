@@ -7892,6 +7892,20 @@ normalize_user() {
 # ============================================================
 # Phase 2: Filesystem setup
 # ============================================================
+
+# Seeds the workspace AGENTS.md (DEST) from the template only when DEST is
+# absent, as base.filesystem does: an existing file may hold the user's own
+# rules, and README promises it is never overwritten (acfs-zp8w). The target
+# user owns the workspace, so the copy runs as that user, and root never
+# writes through a link there, dangling or not.
+acfs_seed_workspace_agents_md() {
+    local template="$1"
+    local dest="$2"
+
+    [[ -e "$dest" || -L "$dest" ]] && return 0
+    run_as_target cp "$template" "$dest"
+}
+
 setup_filesystem() {
     set_phase "filesystem" "Filesystem Setup"
     log_step "2/9" "Setting up filesystem..."
@@ -7926,11 +7940,6 @@ setup_filesystem() {
     # Ensure workspace directories are owned by target user (avoid over-broad recursive chown).
     try_step "Setting /data ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" /data /data/projects /data/cache || true
 
-    # Install AGENTS.md template to /data/projects for agent guidance
-    log_detail "Installing AGENTS.md template"
-    try_step_optional "Installing AGENTS.md" install_asset "acfs/AGENTS.md" "/data/projects/AGENTS.md" || true
-    try_step_optional "Setting AGENTS.md ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "/data/projects/AGENTS.md" || true
-
     # CRITICAL: Fix home directory ownership FIRST, before any run_as_target calls
     # Some cloud images (e.g., Hetzner) have /home/ubuntu owned by root after user creation
     # If we don't fix this first, all run_as_target mkdir calls below will fail
@@ -7956,6 +7965,7 @@ setup_filesystem() {
     # AGENTS.md template, which only the generated installer wrote (acfs-qe94).
     try_step "Installing AGENTS.md template (~/.acfs/docs)" install_asset "acfs/AGENTS.md" "$ACFS_HOME/docs/AGENTS.workspace.md" || return 1
     try_step_optional "Setting AGENTS.md template ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/docs/AGENTS.workspace.md" || true
+    try_step_optional "Seeding /data/projects/AGENTS.md" acfs_seed_workspace_agents_md "$ACFS_HOME/docs/AGENTS.workspace.md" /data/projects/AGENTS.md || true
 
     # Install essential ACFS scripts early so `acfs doctor` works even after early failures.
     # This is critical for debugging failed installs - users need `acfs doctor` to work

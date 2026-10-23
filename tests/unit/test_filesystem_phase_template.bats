@@ -5,14 +5,15 @@
 # base.filesystem's verify after it. That verify requires the ACFS-owned
 # copy of the workspace AGENTS.md template, so the phase must write every
 # file the verify tests for. acfs-qe94: it wrote /data/projects/AGENTS.md
-# only, and every fresh install failed phase 2.
+# only, and every fresh install failed phase 2. acfs-zp8w: it overwrote
+# /data/projects/AGENTS.md on every run; it now seeds it only when absent.
 
 setup() {
     PROJECT_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
 }
 
-# Runs install.sh's setup_filesystem with stubs, and prints each
-# install_asset destination it asks for.
+# Runs install.sh's setup_filesystem with stubs, and prints, in order, each
+# install_asset destination and each workspace AGENTS.md seed it asks for.
 run_filesystem_phase() {
     eval "$(sed -n '/^setup_filesystem() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
     [[ "$(type -t setup_filesystem)" == "function" ]]
@@ -33,7 +34,8 @@ run_filesystem_phase() {
     acfs_chown_tree() { :; }
     acfs_ensure_primary_bin_dir() { :; }
     user_container_tmp_policy() { :; }
-    install_asset() { printf '%s\n' "$2" >> "$ASSETS"; }
+    install_asset() { printf 'asset=%s\n' "$2" >> "$ASSETS"; }
+    acfs_seed_workspace_agents_md() { printf 'seed=%s <- %s\n' "$2" "$1" >> "$ASSETS"; }
 
     SUDO=fake_sudo
     TARGET_USER=ubuntu
@@ -46,7 +48,23 @@ run_filesystem_phase() {
     local rc=0
     setup_filesystem || rc=$?
     printf 'rc=%s\n' "$rc"
-    sed 's/^/asset=/' "$ASSETS"
+    cat "$ASSETS"
+}
+
+# Loads install.sh's acfs_seed_workspace_agents_md, with a run_as_target
+# that logs the command and runs it as is.
+load_seed_helper() {
+    eval "$(sed -n '/^acfs_seed_workspace_agents_md() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
+    [[ "$(type -t acfs_seed_workspace_agents_md)" == "function" ]]
+
+    RUN_AS_TARGET_LOG="$BATS_TEST_TMPDIR/run_as_target"
+    : > "$RUN_AS_TARGET_LOG"
+    run_as_target() { printf '%s\n' "$*" >> "$RUN_AS_TARGET_LOG"; "$@"; }
+
+    TEMPLATE="$BATS_TEST_TMPDIR/AGENTS.workspace.md"
+    WORKSPACE="$BATS_TEST_TMPDIR/projects"
+    printf 'template\n' > "$TEMPLATE"
+    mkdir -p "$WORKSPACE"
 }
 
 # Each "$target_home/..." file that base.filesystem's verify tests with
@@ -80,8 +98,47 @@ verified_files() {
     [[ -z "$missing" ]]
 }
 
-@test "install.sh's filesystem phase still installs /data/projects/AGENTS.md" {
+@test "install.sh's filesystem phase seeds /data/projects/AGENTS.md from the ~/.acfs/docs copy, never installing over it" {
+    local template="$BATS_TEST_TMPDIR/home/.acfs/docs/AGENTS.workspace.md"
     run run_filesystem_phase
     [[ "$status" -eq 0 ]]
-    [[ "$output" == *"asset=/data/projects/AGENTS.md"* ]]
+    [[ "$output" == *"rc=0"* ]]
+    [[ "$output" == *"asset=$template"*"seed=/data/projects/AGENTS.md <- $template"* ]]
+    [[ "$output" != *"asset=/data/projects/AGENTS.md"* ]]
+}
+
+@test "the seed writes an absent workspace AGENTS.md, as the target user" {
+    load_seed_helper
+    run acfs_seed_workspace_agents_md "$TEMPLATE" "$WORKSPACE/AGENTS.md"
+    [[ "$status" -eq 0 ]]
+    [[ "$(cat "$WORKSPACE/AGENTS.md")" == "template" ]]
+    [[ "$(cat "$RUN_AS_TARGET_LOG")" == "cp $TEMPLATE $WORKSPACE/AGENTS.md" ]]
+}
+
+@test "the seed keeps an existing workspace AGENTS.md" {
+    load_seed_helper
+    printf 'my rules\n' > "$WORKSPACE/AGENTS.md"
+    run acfs_seed_workspace_agents_md "$TEMPLATE" "$WORKSPACE/AGENTS.md"
+    [[ "$status" -eq 0 ]]
+    [[ "$(cat "$WORKSPACE/AGENTS.md")" == "my rules" ]]
+    [[ ! -s "$RUN_AS_TARGET_LOG" ]]
+}
+
+@test "the seed never writes through a link at the workspace AGENTS.md" {
+    load_seed_helper
+    printf 'not yours\n' > "$BATS_TEST_TMPDIR/elsewhere"
+    ln -s "$BATS_TEST_TMPDIR/elsewhere" "$WORKSPACE/AGENTS.md"
+    run acfs_seed_workspace_agents_md "$TEMPLATE" "$WORKSPACE/AGENTS.md"
+    [[ "$status" -eq 0 ]]
+    [[ "$(cat "$BATS_TEST_TMPDIR/elsewhere")" == "not yours" ]]
+    [[ ! -s "$RUN_AS_TARGET_LOG" ]]
+}
+
+@test "the seed never writes through a dangling link at the workspace AGENTS.md" {
+    load_seed_helper
+    ln -s "$BATS_TEST_TMPDIR/missing" "$WORKSPACE/AGENTS.md"
+    run acfs_seed_workspace_agents_md "$TEMPLATE" "$WORKSPACE/AGENTS.md"
+    [[ "$status" -eq 0 ]]
+    [[ ! -e "$BATS_TEST_TMPDIR/missing" ]]
+    [[ ! -s "$RUN_AS_TARGET_LOG" ]]
 }
