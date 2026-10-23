@@ -23,3 +23,7 @@ The operator's ruling that all ntm becomes herdr reverses the earlier rule that 
 ## [2026-10-13] Upstream's nightly update health page arrives with the upstream sync
 
 The upstream sync to `a39b2a1b` adds upstream's `docs/operations/nightly-update-health.md`, unchanged. It says how `acfs status` reports the nightly updater's last execution result, what its warnings mean, and how to retry by hand (acfs-f2mc.1).
+
+## [2026-10-23] Upstream's ee page arrives with the upstream sync
+
+The upstream sync to `2d7f95a9` adds upstream's `docs/tools/ee.md`, unchanged. It says how to use ee, the Eidetic Engine, which ACFS installs with `stack.eidetic_engine_cli` (acfs-f2mc.11).

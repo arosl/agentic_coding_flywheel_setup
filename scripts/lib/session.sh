@@ -654,7 +654,7 @@ list_sessions() {
                     log_error "--days requires a numeric value"
                     return 1
                 fi
-                if [[ ! "$2" =~ ^[0-9]+$ ]] || [[ "$2" == "0" ]]; then
+                if [[ ! "$2" =~ ^[0-9]+$ ]] || [[ ! "$2" =~ [1-9] ]]; then
                     log_error "--days requires a positive integer"
                     return 1
                 fi
@@ -674,7 +674,7 @@ list_sessions() {
                     log_error "--limit requires a numeric value"
                     return 1
                 fi
-                if [[ ! "$2" =~ ^[0-9]+$ ]] || [[ "$2" == "0" ]]; then
+                if [[ ! "$2" =~ ^[0-9]+$ ]] || [[ ! "$2" =~ [1-9] ]]; then
                     log_error "--limit requires a positive integer"
                     return 1
                 fi
@@ -682,7 +682,8 @@ list_sessions() {
                 shift 2
                 ;;
             *)
-                shift
+                log_error "Unknown session list argument: $1"
+                return 1
                 ;;
         esac
     done
@@ -698,72 +699,210 @@ list_sessions() {
         return 1
     fi
 
-    # Build CASS search command
-    local cass_args=("search" "*" "--limit" "$limit" "--days" "$days")
+    check_session_deps || return 1
+
+    # Freeze the window once. Re-evaluating --days on each page can change the
+    # cursor's filter fingerprint and lose sessions at the moving boundary.
+    local window now_iso since until page_limit
+    now_iso=$(session_now_iso) || return 1
+    if ! window=$(acfs_session_jq -ecn --arg now "$now_iso" --arg days "$days" --arg limit "$limit" '
+        ($limit | tonumber) as $limit |
+        if $limit > 10000 then error("--limit must not exceed 10000 sessions") else . end |
+        ($now | fromdateiso8601) as $end |
+        {since: (($end - ($days | tonumber) * 86400) | todateiso8601),
+         until: $now, page_limit: ([1000, ([100, $limit] | max)] | min)}
+    '); then
+        log_error "Unable to construct session search window or limit"
+        return 1
+    fi
+    since=$(acfs_session_jq -r '.since' <<< "$window") || return 1
+    until=$(acfs_session_jq -r '.until' <<< "$window") || return 1
+    page_limit=$(acfs_session_jq -r '.page_limit' <<< "$window") || return 1
+
+    # Fetch metadata rather than full transcripts. CASS limits message hits;
+    # ACFS limits distinct sessions, so those two limits must be independent.
+    # A provider store can contain multiple canonical conversations. Retain
+    # all three coordinates required by CASS canonical transcript reads.
+    local cass_args=("search" "*" "--limit" "$page_limit" "--since" "$since" "--until" "$until"
+        "--json" "--robot-meta" "--fields" "source_path,source_id,conversation_id,agent,workspace,created_at,title")
 
     if [[ -n "$agent" ]]; then
         cass_args+=("--agent" "$agent")
     fi
 
-    if [[ "$output_json" == "true" ]]; then
-        # JSON output: aggregate by session with stats
-        cass "${cass_args[@]}" --json --aggregate agent,workspace 2>/dev/null | jq '
-            {
-                sessions: (.aggregations // []) | map({
-                    agent: .agent,
-                    workspace: .workspace,
-                    count: .count
-                }),
-                total: .count,
-                query_info: {
-                    limit: .limit,
-                    offset: .offset
-                }
-            }
-        ' 2>/dev/null || echo '{"error": "Failed to query CASS"}'
-    else
-        # Human-readable output
-        echo ""
-        echo "Recent Sessions (last ${days} days):"
-        echo ""
-
-        # Get stats by agent
-        local stats
-        stats=$(cass stats --json 2>/dev/null)
-
-        if [[ -n "$stats" ]]; then
-            echo "$stats" | jq -r '
-                "  By Agent:",
-                (.by_agent[] | "    \(.agent): \(.count) sessions"),
-                "",
-                "  Top Workspaces:",
-                (.top_workspaces[:5][] | "    \(.workspace): \(.count) sessions")
-            ' 2>/dev/null
-
-            echo ""
-            echo "  Date Range: $(echo "$stats" | jq -r '.date_range.oldest[:10]') to $(echo "$stats" | jq -r '.date_range.newest[:10]')"
-            echo "  Total Conversations: $(echo "$stats" | jq -r '.conversations')"
-            echo "  Total Messages: $(echo "$stats" | jq -r '.messages')"
+    local response listing cursor="" pages=0 done_listing=false
+    local state='{"sessions":[],"seen":{},"path_kinds":{},"cursors":{},"hits_scanned":0}'
+    local cursor_args=()
+    while [[ "$done_listing" != true ]]; do
+        # A broken backend must not turn a discovery command into an endless
+        # scan. Reaching this safety bound is an error, never a partial success.
+        if [[ "$pages" -ge 1000 ]]; then
+            log_error "Session discovery exceeded 1000 CASS pages; narrow --days or --agent"
+            return 1
         fi
+        # Capture status separately: a pipeline would hide CASS failures behind jq.
+        if ! response=$(cass "${cass_args[@]}" "${cursor_args[@]}"); then
+            log_error "Failed to query CASS"
+            return 1
+        fi
+        pages=$((pages + 1))
+        # Feed accumulated metadata through stdin, not argv (large result sets
+        # otherwise hit the OS argument-size limit). Validate every page before
+        # publishing anything, including pages after a successful first one.
+        if ! state=$(acfs_session_jq -ecs --arg limit "$limit" '
+            def optional_false: . == null or . == false;
+            # jq builds using IEEE-754 numbers cannot safely distinguish IDs
+            # beyond 2^53-1. Refuse them instead of merging rounded identities.
+            def canonical_id:
+                type == "number" and . >= 1 and . <= 9007199254740991 and . == floor;
+            if length != 2 then error("expected one CASS response") else . end |
+            .[0] as $state | .[1] |
+            if type != "object" or has("error") or (.hits | type) != "array"
+            then error("invalid CASS search response") else . end |
+            if (._meta | type) != "object" or (._meta | has("next_cursor") | not)
+            then error("missing CASS pagination metadata") else . end |
+            if ((.budget == null or (.budget | type) == "object") and
+                (.budget.timed_out | optional_false) and
+                (._meta.timed_out | optional_false) and
+                (._meta.partial_results | optional_false)) | not
+            then error("incomplete CASS search response") else . end |
+            if (._meta.next_cursor == null or
+                (._meta.next_cursor | type == "string" and length > 0)) | not
+            then error("invalid CASS pagination cursor") else . end |
+            if all(.hits[];
+                type == "object" and
+                (.source_path | type == "string" and test("\\S")) and
+                (.agent | type == "string" and test("\\S")) and
+                (.workspace | type == "string") and
+                (.source_id == null or (.source_id | type == "string" and length > 0)) and
+                (.conversation_id == null or (.conversation_id | canonical_id)) and
+                (.title == null or (.title | type == "string")) and
+                (.created_at == null or (.created_at | type == "number"))) | not
+            then error("invalid CASS search hit") else . end |
+            . as $page |
+            reduce .hits[] as $hit ($state;
+                ($hit.source_id // "local") as $source |
+                (if $hit.conversation_id == null then "source_path" else "canonical" end) as $kind |
+                ([$source, $hit.agent, $hit.source_path] | tojson) as $path_key |
+                (if $kind == "canonical" then [$kind, $source, $hit.conversation_id]
+                 else [$kind, $source, $hit.agent, $hit.source_path] end | tojson) as $key |
+                if .path_kinds[$path_key] != null and .path_kinds[$path_key] != $kind
+                then error("ambiguous CASS session identity: mixed canonical and path-only hits")
+                elif (.seen | has($key)) then
+                    .sessions[.seen[$key]] as $existing |
+                    if $existing.source_path != $hit.source_path or
+                       $existing.agent != $hit.agent or $existing.workspace != $hit.workspace
+                    then error("conflicting CASS session identity metadata") else . end
+                elif (.sessions | length) >= ($limit | tonumber)
+                then . else
+                    .path_kinds[$path_key] = $kind |
+                    .seen[$key] = (.sessions | length) |
+                    .sessions += [{source_path: $hit.source_path,
+                        source_id: $source, conversation_id: $hit.conversation_id,
+                        identity_kind: $kind, agent: $hit.agent,
+                        workspace: $hit.workspace, created_at: $hit.created_at,
+                        title: ($hit.title // "")}]
+                end) |
+            .hits_scanned += ($page.hits | length) |
+            .next_cursor = $page._meta.next_cursor |
+            .done = ((.sessions | length) >= ($limit | tonumber) or .next_cursor == null) |
+            if .done then .
+            elif .cursors[.next_cursor] == true then error("CASS pagination cursor cycle")
+            else .cursors[.next_cursor] = true end
+        ' <<< "$state"$'\n'"$response"); then
+            log_error "Invalid or incomplete JSON search results from CASS"
+            return 1
+        fi
+        done_listing=$(acfs_session_jq -r '.done' <<< "$state") || return 1
+        if [[ "$done_listing" != true ]]; then
+            cursor=$(acfs_session_jq -r '.next_cursor' <<< "$state") || return 1
+            cursor_args=("--cursor" "$cursor")
+        fi
+    done
 
-        echo ""
-        echo "Use: cass search \"<query>\" to find specific sessions"
-        echo "Use: cass export <session-path> --format json to export"
+    if ! listing=$(acfs_session_jq -e --arg days "$days" --arg limit "$limit" --arg agent "$agent" \
+        --arg since "$since" --arg until "$until" --argjson pages "$pages" '
+        {sessions: .sessions, total: (.sessions | length),
+         by_agent: (.sessions | group_by(.agent) | map({agent: .[0].agent, count: length})),
+         by_workspace: (.sessions | group_by(.workspace) | map({workspace: .[0].workspace, count: length})),
+         query_info: {days: ($days | tonumber), agent: $agent,
+                      limit: ($limit | tonumber), limit_unit: "sessions", offset: 0,
+                      since: $since, until: $until, pages: $pages,
+                      hits_scanned: .hits_scanned, exhausted: (.next_cursor == null)}}
+    ' <<< "$state"); then
+        log_error "Failed to assemble session listing"
+        return 1
+    fi
+
+    if [[ "$output_json" == "true" ]]; then
+        printf '%s\n' "$listing"
+    else
+        acfs_session_jq -r '
+            "Recent Sessions (last \(.query_info.days) days):",
+            (if .total == 0 then "  No matching sessions found." else
+                (.sessions[] | "  \(.agent | @json) | \(.workspace | @json) | \(.source_path | @json) | source=\(.source_id | @json) | conversation=\(.conversation_id // "unavailable")"),
+                "", "  By Agent (listed sessions):",
+                (.by_agent[] | "    \(.agent | @json): \(.count) sessions"),
+                "  Workspaces (listed sessions):",
+                (.by_workspace[] | "    \(.workspace | @json): \(.count) sessions")
+             end),
+            "  Listed Sessions: \(.total)",
+            "  Limit: \(.query_info.limit) distinct sessions; scanned \(.query_info.hits_scanned) matching hits across \(.query_info.pages) pages.",
+            "Canonical CASS reads require source_path, source_id and conversation_id together.",
+            "For path-only entries, verify the source before exporting a provider file."
+        ' <<< "$listing"
     fi
 }
 
-# Get session details for a specific workspace
-# Usage: get_workspace_sessions <workspace_path> [--limit N]
+# Get canonical session details for a specific workspace.
+# Usage: get_workspace_sessions <workspace_path> [limit]
 get_workspace_sessions() {
-    local workspace="$1"
+    local workspace="${1:-}"
     local limit="${2:-10}"
+    local response=""
 
+    if [[ -z "$workspace" ]]; then
+        log_error "Workspace path required"
+        return 1
+    fi
+    if [[ ! "$limit" =~ ^[0-9]+$ ]] || [[ ! "$limit" =~ [1-9] ]] || [[ "$limit" -gt 10000 ]]; then
+        log_error "Workspace session limit must be an integer from 1 to 10000"
+        return 1
+    fi
+    if [[ $# -gt 2 ]]; then
+        log_error "Unexpected workspace session argument: ${3}"
+        return 1
+    fi
     if ! check_cass_installed; then
         log_error "CASS not installed"
         return 1
     fi
+    check_session_deps || return 1
 
-    cass search "*" --workspace "$workspace" --limit "$limit" --json 2>/dev/null
+    # CASS has a first-class session enumeration surface. Do not approximate
+    # workspace sessions with wildcard message hits: one conversation can have
+    # many messages, and provider stores may contain multiple conversations.
+    if ! response=$(cass sessions --workspace "$workspace" --limit "$limit" --json); then
+        log_error "Failed to list CASS sessions for workspace: $workspace"
+        return 1
+    fi
+    if ! acfs_session_jq -es '
+        if length != 1 then false else .[0] |
+        type == "object" and (has("error") | not) and
+        (.sessions | type == "array") and
+        all(.sessions[];
+            type == "object" and
+            (.path | type == "string" and test("\\S")) and
+            (.agent | type == "string" and test("\\S")) and
+            (.workspace == null or (.workspace | type == "string")) and
+            (.source_id == null or (.source_id | type == "string" and length > 0)))
+        end
+    ' <<< "$response" >/dev/null; then
+        log_error "Invalid JSON session results from CASS"
+        return 1
+    fi
+
+    printf '%s\n' "$response"
 }
 
 # ============================================================
@@ -909,21 +1048,35 @@ export_session() {
     return "$status"
 }
 
-# Find and export the most recent session in a workspace
-# Usage: export_recent_session [workspace] [--format json|markdown]
+# Find and export the most recent session in a workspace.
+# Usage: export_recent_session [workspace] [json|markdown]
 export_recent_session() {
     local workspace="${1:-$(pwd)}"
     local format="${2:-json}"
+    local response="" recent_session=""
 
-    if ! check_cass_installed; then
-        log_error "CASS not installed"
+    if [[ $# -gt 2 ]]; then
+        log_error "Unexpected recent-session export argument: ${3}"
         return 1
     fi
+    case "$format" in
+        json|markdown) ;;
+        *)
+            log_error "Unsupported export format: $format (expected json or markdown)"
+            return 1
+            ;;
+    esac
 
-    # Find the most recent session file in the workspace
-    local recent_session
-    recent_session=$(cass search "*" --workspace "$workspace" --limit 1 --json 2>/dev/null | jq -r '.hits[0].source_path // empty')
-
+    # Use CASS's native session ordering, not the first wildcard message hit.
+    # A high-scoring message is not necessarily the most recent conversation.
+    response=$(get_workspace_sessions "$workspace" 1) || return 1
+    if ! recent_session=$(acfs_session_jq -er '
+        if (.sessions | length) == 0 then empty
+        else .sessions[0].path end
+    ' <<< "$response"); then
+        log_error "No sessions found for workspace: $workspace"
+        return 1
+    fi
     if [[ -z "$recent_session" ]]; then
         log_error "No sessions found for workspace: $workspace"
         return 1
@@ -932,7 +1085,64 @@ export_recent_session() {
     export_session "$recent_session" --format "$format"
 }
 
-# Convert CASS export JSON to our schema format
+# Shared text projection for CASS exports and native Codex conversion. Keep
+# provider parsing in one place so importing and resuming preserve the same
+# conversational messages. Tool payloads and reasoning are not dialogue.
+acfs_session_transcript_jq_defs() {
+    cat <<'JQ'
+def transcript_text:
+    if . == null then ""
+    elif type == "string" then .
+    elif type == "array" then
+        map(if type == "string" then .
+            elif type != "object" then error("invalid transcript content block")
+            elif (.type == null or .type == "text" or .type == "input_text" or .type == "output_text") then
+                if (.text | type) == "string" then .text else error("invalid transcript text") end
+            else "" end) | join("")
+    else error("invalid transcript content") end;
+
+def transcript_timestamp:
+    if . == null then "" elif type == "string" then .
+    else error("invalid transcript timestamp") end;
+
+def single_session_id:
+    unique | if length == 1 and (.[0] | type == "string" and test("\\S")) then .[0]
+    else error("expected exactly one source session ID") end;
+
+def codex_session_id:
+    [.[] | select(.type == "session_meta") | .payload.id] | single_session_id;
+
+def codex_messages:
+    reduce .[] as $entry ({messages: [], mirror: null};
+        if $entry.type == "event_msg" and
+           ($entry.payload.type == "task_started" or $entry.payload.type == "task_complete" or
+            $entry.payload.type == "turn_started" or $entry.payload.type == "turn_complete") then
+            .mirror = null
+        else
+            (if $entry.type == "event_msg" and
+                ($entry.payload.type == "user_message" or $entry.payload.type == "agent_message") then
+                {role: (if $entry.payload.type == "user_message" then "user" else "assistant" end),
+                 content: ($entry.payload.message | transcript_text),
+                 timestamp: ($entry.timestamp | transcript_timestamp), encoding: "event"}
+             elif $entry.type == "response_item" and
+                  ($entry.payload.type == null or $entry.payload.type == "message") and
+                  ($entry.payload.role == "user" or $entry.payload.role == "assistant") then
+                {role: $entry.payload.role, content: ($entry.payload.content | transcript_text),
+                 timestamp: ($entry.timestamp | transcript_timestamp), encoding: "response"}
+             else null end) as $message |
+            if $message == null or $message.content == "" then .
+            # Pair adjacent event/response representations, never globally
+            # unique() message text: genuine repeated turns must survive.
+            elif .mirror != null and .mirror.encoding != $message.encoding and
+                 .mirror.role == $message.role and .mirror.content == $message.content then
+                .mirror = null
+            else .messages += [($message | del(.encoding))] | .mirror = $message end
+        end) | .messages;
+JQ
+}
+
+# Convert a single supported CASS export to our schema format. The caller must
+# sanitize this projection before publishing it (import_session does so).
 # Usage: convert_to_acfs_schema <cass.json | raw_json>
 # Returns: ACFS-schema JSON to stdout
 convert_to_acfs_schema() {
@@ -942,135 +1152,76 @@ convert_to_acfs_schema() {
         return 1
     fi
 
-    # Normalize agent hint (best-effort). CASS exports don't reliably include
-    # an "agent type" field, so callers can pass a hint (e.g., inferred from path).
+    check_session_deps || return 1
     case "$agent_hint" in
-        claude-code|codex|gemini) ;;
-        "") agent_hint="" ;;
-        *) agent_hint="unknown" ;;
+        claude_code) agent_hint="claude-code" ;;
+        ""|unknown|claude-code|codex) ;;
+        *) log_error "Unsupported CASS export agent hint: $agent_hint"; return 1 ;;
     esac
 
-    local filter
+    local defs filter
+    defs=$(acfs_session_transcript_jq_defs) || return 1
     filter="$(
         cat <<'JQ'
-        def is_claude_export:
-          any(.[]?; (.type == "user" or .type == "assistant") and (.sessionId? | type) == "string");
-
-        def is_codex_export:
-          any(.[]?; .type == "event_msg" and ((.payload.type? // "") == "user_message" or (.payload.type? // "") == "agent_message"));
-
-        def content_to_text:
-          if type == "string" then .
-          elif type == "array" then
-            (
-              [
-                .[]? |
-                if type == "string" then .
-                elif type == "object" then
-                  # Only include user-visible text blocks; exclude "thinking" / tool blocks.
-                  if ((.type? // "") == "text" or (.type? // "") == "input_text" or (.type? // "") == "output_text" or (.type? // "") == "") and (.text? | type) == "string" then .text
-                  else "" end
-                else "" end
-              ] | join("")
-            )
-          else "" end;
-
-        def messages:
-          if is_claude_export then
-            [
-              .[] |
-              select(.type == "user" or .type == "assistant") |
-	              {
-	                role: (.message.role // .type // "unknown"),
-	                content: (.message.content | content_to_text),
-	                timestamp: (.timestamp // ""),
-	                sessionId: (.sessionId? // ""),
-	                model: (.message.model? // "")
-	              }
-	            ]
-          elif is_codex_export then
-            [
-              .[] |
-              select(.type == "event_msg") |
-              select((.payload.type? // "") == "user_message" or (.payload.type? // "") == "agent_message") |
-              {
-                role: (if (.payload.type? // "") == "user_message" then "user" else "assistant" end),
-                content: (.payload.message? // "" | tostring),
-                timestamp: (.timestamp // "")
-              }
-            ]
-          else
-            []
-          end;
-
+        if length != 1 then error("expected one CASS export document") else .[0] end |
+        if type != "array" then error("expected a CASS record array")
+        elif all(.[]; type == "object") | not then error("invalid CASS record") else . end |
+        any(.[]; .type == "user" or .type == "assistant") as $claude |
+        any(.[]; .type == "session_meta" or .type == "event_msg" or .type == "response_item") as $codex |
+        if $claude == $codex then error("unrecognized or mixed CASS export formats") else . end |
+        (if $claude then "claude-code" else "codex" end) as $agent |
+        if $agent_hint != "" and $agent_hint != "unknown" and $agent_hint != $agent
+        then error("CASS export agent hint conflicts with its records") else . end |
+        (if $claude then
+            [.[] | select(.type == "user" or .type == "assistant") | .sessionId] | single_session_id
+         else codex_session_id end) as $id |
+        (if $claude then
+            [.[] | select(.type == "user" or .type == "assistant") |
+             if .message.role != null and .message.role != .type
+             then error("conflicting Claude message role") else . end |
+             {role: .type, content: (.message.content | transcript_text),
+              timestamp: (.timestamp | transcript_timestamp)} | select(.content != "")]
+         else codex_messages end) as $messages |
+        if ($messages | length) == 0 then error("source session has no conversational messages") else . end |
+        (if $claude then [.[] | .message.model?]
+         else [.[] | select(.type == "turn_context") | .payload.model?] end |
+         map(select(type == "string" and length > 0)) | .[0] // "unknown") as $model |
         {
             schema_version: 1,
             exported_at: (now | todateiso8601),
-            session_id: (
-              if is_claude_export then
-                messages as $msgs |
-                ([$msgs[] | .sessionId? | select(type == "string" and length > 0)] | .[0] // "unknown")
-              elif is_codex_export then
-                ([.[] | select(.type == "session_meta") | .payload.id? | select(type == "string" and length > 0)] | .[0] // "unknown")
-              else
-                "unknown"
-              end
-            ),
-            agent: (if ($agent_hint | length) > 0 then $agent_hint else "unknown" end),
-            model: (
-              if is_claude_export then
-                (
-	                  [
-	                    messages[] |
-	                    select(.role == "assistant") |
-	                    (.model? // "") |
-	                    select(type == "string" and length > 0)
-	                  ] | .[0] // "unknown"
-	                )
-              elif is_codex_export then
-                ([.[] | select(.type == "turn_context") | .payload.model? | select(type == "string" and length > 0)] | .[0] // "unknown")
-              else
-                "unknown"
-              end
-            ),
+            session_id: $id,
+            agent: $agent,
+            model: $model,
             summary: "Exported session",
             duration_minutes: 0,
             stats: {
-                turns: (messages | length),
+                turns: ($messages | length),
                 files_created: 0,
                 files_modified: 0,
                 commands_run: 0
             },
             outcomes: [],
             key_prompts: [],
-            sanitized_transcript: [
-                messages[] |
-                {
-                    role: (.role // "unknown"),
-                    content: (.content // ""),
-                    timestamp: (.timestamp // "")
-                }
-                | select(.content | type == "string")
-                | select((.content | length) > 0)
-            ]
+            sanitized_transcript: $messages
         }
 JQ
     )"
+    filter="$defs"$'\n'"$filter"
 
     # Prefer raw JSON when the argument clearly looks like JSON.
     if [[ "$input" == "{"* || "$input" == "["* ]]; then
-        jq --arg agent_hint "$agent_hint" "$filter" 2>/dev/null <<<"$input"
+        acfs_session_jq -es --arg agent_hint "$agent_hint" "$filter" <<<"$input"
         return $?
     fi
 
     # Prefer a readable path (regular file or FIFO like /dev/fd/*).
     if [[ -r "$input" ]]; then
-        jq --arg agent_hint "$agent_hint" "$filter" "$input" 2>/dev/null
+        acfs_session_jq -es --arg agent_hint "$agent_hint" "$filter" -- "$input"
         return $?
     fi
 
     # Fall back to treating the input as raw JSON.
-    jq --arg agent_hint "$agent_hint" "$filter" 2>/dev/null <<<"$input"
+    acfs_session_jq -es --arg agent_hint "$agent_hint" "$filter" <<<"$input"
 }
 
 # ============================================================
@@ -1376,49 +1527,16 @@ parse_native_claude_to_canonical() {
 parse_native_codex_to_canonical() {
     local input_file="$1"
     local workspace_hint="$2"
-    jq -s --arg workspace_hint "$workspace_hint" '
-        def flatten_content:
-            if . == null then ""
-            elif type == "string" then .
-            elif type == "array" then
-                ([ .[]? |
-                    if . == null then ""
-                    elif type == "string" then .
-                    elif type == "object" then (.text? // .content? // .message? // "")
-                    else "" end
-                 ] | join(""))
-            elif type == "object" then (.text? // .content? // .message? // "")
-            else "" end;
-
+    local defs
+    defs=$(acfs_session_transcript_jq_defs) || return 1
+    acfs_session_jq -es --arg workspace_hint "$workspace_hint" "$defs"'
+        if all(.[]; type == "object") | not then error("invalid Codex record") else . end |
         {
             workspace: (([ .[] | select(.type == "session_meta") | .payload.cwd? | select(type == "string" and length > 0) ] | .[0]) // ($workspace_hint // "/tmp")),
-            source_session_id: (([ .[] | select(.type == "session_meta") | .payload.id? | select(type == "string" and length > 0) ] | .[0]) // "unknown"),
-            messages: [
-                .[] |
-                if (.type == "event_msg" and ((.payload.type? // "") == "user_message")) then
-                    {
-                        role: "user",
-                        content: ((.payload.message? // "") | tostring),
-                        timestamp: (.timestamp? // "")
-                    }
-                elif (.type == "event_msg" and ((.payload.type? // "") == "agent_reasoning")) then
-                    {
-                        role: "assistant",
-                        content: ((.payload.text? // "") | tostring),
-                        timestamp: (.timestamp? // "")
-                    }
-                elif (.type == "response_item") then
-                    {
-                        role: (if ((.payload.role? // "assistant") | ascii_downcase) == "user" then "user" else "assistant" end),
-                        content: ((.payload.content? // "") | flatten_content),
-                        timestamp: (.timestamp? // "")
-                    }
-                else empty end |
-                select(.content | type == "string") |
-                select((.content | length) > 0)
-            ]
+            source_session_id: codex_session_id,
+            messages: codex_messages
         }
-    ' "$input_file"
+    ' -- "$input_file"
 }
 
 parse_native_gemini_to_canonical() {
@@ -2323,7 +2441,7 @@ generate_session_id() {
 
 # Import a session file for local viewing/reference
 # Usage: import_session <file> [--dry-run]
-import_session() {
+import_session() (
     local file=""
     local dry_run=false
     local sessions_dir=""
@@ -2331,8 +2449,22 @@ import_session() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --dry-run) dry_run=true; shift ;;
-            -*) log_warn "Unknown option: $1"; shift ;;
-            *) file="$1"; shift ;;
+            --)
+                shift
+                if [[ -n "$file" || $# != 1 ]]; then
+                    log_error "Exactly one session file is required"
+                    return 1
+                fi
+                file="$1"; shift
+                ;;
+            -*) log_error "Unknown session import option: $1"; return 1 ;;
+            *)
+                if [[ -n "$file" ]]; then
+                    log_error "Exactly one session file is required"
+                    return 1
+                fi
+                file="$1"; shift
+                ;;
         esac
     done
 
@@ -2347,81 +2479,65 @@ import_session() {
         return 1
     fi
 
-    if ! jq -e . "$file" >/dev/null 2>&1; then
+    check_session_deps || return 1
+
+    # Parse the caller's file once into a private snapshot. All validation,
+    # summaries and persistence use that snapshot, not a second read of a file
+    # which may have changed. This subshell owns its EXIT trap; caller traps and
+    # umask are unaffected, including when the library is used without set -e.
+    local tmp_source="" tmp_normalized="" tmp_publish=""
+    umask 077
+    trap 'acfs_session_remove_temp_files "$tmp_source" "$tmp_normalized" "$tmp_publish"' EXIT
+    tmp_source=$(mktemp "${TMPDIR:-/tmp}/acfs_session_import.XXXXXX") || return 1
+    tmp_normalized=$(mktemp "${TMPDIR:-/tmp}/acfs_session_normalized.XXXXXX") || return 1
+    if ! acfs_session_jq -es '
+        if length == 1 then .[0] else error("expected one session export document") end
+    ' -- "$file" > "$tmp_source"; then
         log_error "Invalid JSON: $file"
         return 1
     fi
 
-    # Detect format
-    local is_cass=false is_acfs=false
-    if jq -e 'type == "array"' "$file" >/dev/null 2>&1; then
-        # CASS exports can begin with snapshot/event records before conversation messages.
-        # Detect by scanning entries rather than assuming .[0] is a message record.
-        jq -e 'any(.[]?; (.type == "user" or .type == "assistant") and (.sessionId? | type) == "string")' "$file" >/dev/null 2>&1 && is_cass=true
-        jq -e 'any(.[]?; .type == "event_msg" and ((.payload.type? // "") == "user_message" or (.payload.type? // "") == "agent_message"))' "$file" >/dev/null 2>&1 && is_cass=true
-    fi
-    jq -e 'type == "object" and .schema_version' "$file" >/dev/null 2>&1 && is_acfs=true
-
-    # Extract metadata
-    local session_id agent turn_count first_ts last_ts
-    if [[ "$is_cass" == "true" ]]; then
-        session_id=$(jq -r '
-            if any(.[]?; .type == "user" or .type == "assistant") then
-                ([.[] | select(.type == "user" or .type == "assistant") | .sessionId] | map(select(type == "string" and length > 0)) | .[0]) // "unknown"
-            else
-                ([.[] | select(.type == "session_meta") | .payload.id?] | map(select(type == "string" and length > 0)) | .[0]) // "unknown")
-            end
-        ' "$file")
-        agent="$(infer_agent_from_cass_export "$file")"
-        turn_count=$(jq '
-            if any(.[]?; .type == "user" or .type == "assistant") then
-                ([.[] | select(.type == "user" or .type == "assistant")] | length)
-            else
-                ([.[] | select(.type == "event_msg" and ((.payload.type? // "") == "user_message" or (.payload.type? // "") == "agent_message"))] | length)
-            end
-        ' "$file")
-        first_ts=$(jq -r '
-            if any(.[]?; .type == "user" or .type == "assistant") then
-                ([.[] | select(.type == "user" or .type == "assistant") | .timestamp] | map(select(type == "string")) | .[0]) // ""
-            else
-                ([.[] | select(.type == "event_msg" and ((.payload.type? // "") == "user_message" or (.payload.type? // "") == "agent_message")) | .timestamp] | map(select(type == "string")) | .[0]) // ""
-            end
-        ' "$file")
-        last_ts=$(jq -r '
-            if any(.[]?; .type == "user" or .type == "assistant") then
-                ([.[] | select(.type == "user" or .type == "assistant") | .timestamp] | map(select(type == "string")) | .[-1]) // ""
-            else
-                ([.[] | select(.type == "event_msg" and ((.payload.type? // "") == "user_message" or (.payload.type? // "") == "agent_message")) | .timestamp] | map(select(type == "string")) | .[-1]) // ""
-            end
-        ' "$file")
-    elif [[ "$is_acfs" == "true" ]]; then
-        if ! validate_session_export "$file"; then
+    if acfs_session_jq -e 'type == "array"' "$tmp_source" >/dev/null; then
+        if ! convert_to_acfs_schema "$tmp_source" > "$tmp_normalized"; then
+            log_error "Failed to convert CASS export to ACFS schema"
             return 1
         fi
-        session_id=$(jq -r '.session_id // "unknown"' "$file")
-        agent=$(jq -r '.agent // "unknown"' "$file")
-        turn_count=$(jq '.stats.turns // 0' "$file")
-        first_ts=$(jq -r '.exported_at // ""' "$file")
-        last_ts="$first_ts"
-        local ver; ver=$(jq -r '.schema_version' "$file")
-        [[ "$ver" != "1" ]] && log_warn "Schema version $ver may not be compatible"
+    elif acfs_session_jq -e 'type == "object" and has("schema_version")' "$tmp_source" >/dev/null; then
+        cp -- "$tmp_source" "$tmp_normalized" || return 1
     else
         log_error "Unrecognized session format"; return 1
     fi
 
-    if ! acfs_session_validate_id "$session_id" "Imported source session ID"; then
+    validate_session_export "$tmp_normalized" || return 1
+    if ! acfs_session_jq -e '
+        (.sanitized_transcript | type == "array") and
+        all(.sanitized_transcript[];
+            type == "object" and (.role == "user" or .role == "assistant") and
+            (.content | type == "string") and
+            (.timestamp == null or (.timestamp | type == "string")))
+    ' "$tmp_normalized" >/dev/null; then
+        log_error "Invalid session transcript"
         return 1
     fi
+    # Dry runs must exercise the same normalization and secret-removal path.
+    if ! sanitize_session_export "$tmp_normalized"; then
+        log_error "Sanitization failed; refusing to import unsanitized session"
+        return 1
+    fi
+    validate_session_export "$tmp_normalized" || return 1
 
-    echo ""
-    echo "Session Summary:"
-    echo "  Session ID: $session_id"
-    echo "  Agent: $agent"
-    echo "  Messages: $turn_count"
-    echo "  Time: ${first_ts%T*} to ${last_ts%T*}"
+    local summary
+    summary=$(acfs_session_jq -r '
+        "Session Summary:",
+        "  Session ID: \(.session_id | @json)",
+        "  Agent: \(.agent | @json)",
+        "  Messages: \(.sanitized_transcript | length)",
+        "  Time: \((.sanitized_transcript[0].timestamp // .exported_at // "unknown") | @json) to \((.sanitized_transcript[-1].timestamp // .exported_at // "unknown") | @json)"
+    ' "$tmp_normalized") || return 1
 
     if [[ "$dry_run" == "true" ]]; then
-        echo ""; echo "(Dry run - nothing imported)"; return 0
+        printf '\n%s\n\n(Dry run - nothing imported)\n' "$summary"
+        return $?
     fi
 
     sessions_dir="$(acfs_session_storage_dir)" || return 1
@@ -2441,62 +2557,16 @@ import_session() {
     dest="$(acfs_session_child_path "$sessions_dir" "${local_id}.json")" || return 1
     acfs_session_require_new_destination "$sessions_dir" "$dest" || return 1
 
-    if [[ "$is_cass" == "true" ]]; then
-        local tmp_dest
-        tmp_dest=$(mktemp "${sessions_dir}/.${local_id}.XXXXXX.tmp" 2>/dev/null) || {
-            log_error "Failed to create temp file for import in: $sessions_dir"
-            return 1
-        }
-
-        if ! convert_to_acfs_schema "$file" "$agent" > "$tmp_dest"; then
-            acfs_session_remove_temp_files "$tmp_dest"
-            log_error "Failed to convert CASS export to ACFS schema"
-            return 1
-        fi
-
-        # Always sanitize imported output before persisting.
-        if ! sanitize_session_export "$tmp_dest"; then
-            acfs_session_remove_temp_files "$tmp_dest"
-            log_error "Sanitization failed; refusing to import unsanitized session"
-            return 1
-        fi
-
-        if ! acfs_session_publish_new_file "$tmp_dest" "$sessions_dir" "$dest"; then
-            acfs_session_remove_temp_files "$tmp_dest"
-            log_error "Failed to write imported session: $dest"
-            return 1
-        fi
-    else
-        local tmp_dest
-        tmp_dest=$(mktemp "${sessions_dir}/.${local_id}.XXXXXX.tmp" 2>/dev/null) || {
-            log_error "Failed to create temp file for import in: $sessions_dir"
-            return 1
-        }
-
-        if ! cp -- "$file" "$tmp_dest"; then
-            acfs_session_remove_temp_files "$tmp_dest"
-            log_error "Failed to copy session export into staging file"
-            return 1
-        fi
-
-        # Always sanitize imported output before persisting.
-        if ! sanitize_session_export "$tmp_dest"; then
-            acfs_session_remove_temp_files "$tmp_dest"
-            log_error "Sanitization failed; refusing to import unsanitized session"
-            return 1
-        fi
-
-        if ! acfs_session_publish_new_file "$tmp_dest" "$sessions_dir" "$dest"; then
-            acfs_session_remove_temp_files "$tmp_dest"
-            log_error "Failed to write imported session: $dest"
-            return 1
-        fi
+    # Stage on the destination filesystem for an atomic, no-clobber publish.
+    tmp_publish=$(mktemp "${sessions_dir}/.${local_id}.XXXXXX.tmp") || return 1
+    if ! cp -- "$tmp_normalized" "$tmp_publish" ||
+       ! acfs_session_publish_new_file "$tmp_publish" "$sessions_dir" "$dest"; then
+        log_error "Failed to write imported session: $dest"
+        return 1
     fi
 
-    echo ""
-    echo "Imported as: $local_id"
-    echo "View with: show_session $local_id"
-}
+    printf '\n%s\n\nImported as: %s\nView with: show_session %s\n' "$summary" "$local_id" "$local_id"
+)
 
 # Show an imported session
 # Usage: show_session <id> [--format json|markdown|summary]

@@ -20,6 +20,9 @@ import unittest
 from unittest import mock
 import warnings
 import zipfile
+from email.message import Message
+from email.policy import HTTP
+from urllib.response import addinfourl
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/claude-code-web-setup.sh"
@@ -43,10 +46,85 @@ def remove_tree(path):
     shutil.rmtree(path, ignore_errors=True)
 
 
+def parse_json_report(text):
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as error:
+        raise AssertionError(f'Malformed setup/publisher report: {text!r}') from error
+
+
+def validate_header_value(value):
+    if '\r' in value or '\n' in value:
+        raise ValueError('HTTP header values must not contain CR or LF')
+    return value
+
+
 class MirrorPublisher(unittest.TestCase):
     def setUp(self):
         self.stage = Path(tempfile.mkdtemp(prefix="acfs-publisher-test-"))
         self.addCleanup(remove_tree, self.stage)
+        self.redirect_responses = []
+
+    def redirect_response(self, request, responses, calls):
+        # Exercise urllib's real redirect/error processors, replacing only
+        # network transports. No public request or TLS-success claim here.
+        url = request.full_url
+        calls.append(url)
+        self.assertIn(url, responses, "Unexpected network request")
+        self.assertEqual(request.get_header('User-agent'),
+                         'acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)')
+        self.assertEqual(request.timeout, 120)
+        code, location, body = responses[url]
+        # HTTP policy rejects embedded line breaks rather than permitting
+        # a fixture to construct an invalid/injected response header.
+        headers = Message(policy=HTTP)
+        if location is not None:
+            headers['Location'] = validate_header_value(location)
+        response = addinfourl(io.BytesIO(body), headers, url, code)
+        response.msg = 'Controlled response'
+        self.redirect_responses.append(response)
+        return response
+
+    def test_fetch_rejects_plaintext_hop_even_when_chain_ends_in_https(self):
+        origin = 'https://release.invalid/start'
+        secure = 'https://release.invalid/next'
+        plain = 'http://mirror.invalid/plaintext'
+        final = 'https://cdn.invalid/archive'
+        for code in (301, 302, 303, 307, 308):
+            with self.subTest(code=code):
+                calls = []
+                responses = {origin: (code, secure, b''), secure: (code, plain, b''),
+                             plain: (code, final, b''), final: (200, None, b'release fixture bytes')}
+                def transport(handler, request, responses=responses, calls=calls):
+                    return self.redirect_response(request, responses, calls)
+
+                with mock.patch.object(publisher.urllib.request, '_opener', None), \
+                        mock.patch.object(publisher.urllib.request.HTTPSHandler, 'https_open', transport), \
+                        mock.patch.object(publisher.urllib.request.HTTPHandler, 'http_open', transport):
+                    with self.assertRaisesRegex(ValueError, 'HTTPS required'):
+                        publisher.fetch(origin)
+                self.assertEqual(calls, [origin, secure], 'Reject the downgrade before sending plaintext')
+                self.assertTrue(all(response.closed for response in self.redirect_responses))
+
+    def test_fetch_preserves_secure_absolute_relative_and_scheme_relative_redirects(self):
+        origin = 'https://release.invalid/start'
+        for code in (301, 302, 303, 307, 308):
+            for location, final in (('https://cdn.invalid/archive', 'https://cdn.invalid/archive'),
+                                    ('/archive', 'https://release.invalid/archive'),
+                                    ('//cdn.invalid/archive', 'https://cdn.invalid/archive')):
+                with self.subTest(code=code, location=location):
+                    calls = []
+                    payload = b'release fixture bytes'
+                    responses = {origin: (code, location, b''), final: (200, None, payload)}
+                    def transport(handler, request, responses=responses, calls=calls):
+                        return self.redirect_response(request, responses, calls)
+
+                    with mock.patch.object(publisher.urllib.request, '_opener', None), \
+                            mock.patch.object(publisher.urllib.request.HTTPSHandler, 'https_open', transport), \
+                            mock.patch.object(publisher.urllib.request.HTTPHandler, 'http_open', transport):
+                        self.assertEqual(publisher.fetch(origin), payload)
+                    self.assertEqual(calls, [origin, final])
+                    self.assertTrue(all(response.closed for response in self.redirect_responses))
 
     def tar(self, names):
         out = io.BytesIO()
@@ -117,6 +195,17 @@ class MirrorPublisher(unittest.TestCase):
         packed = (self.stage / entry["file"]).read_bytes()
         self.assertEqual(publisher.digest(packed), entry["sha256"])
         self.assertEqual(publisher.archive_files(packed, entry["file"]), {"bin/bv": b"bin"})
+
+    def test_latest_release_metadata_rejects_non_objects_and_malformed_json(self):
+        for response in ("", "<html>upstream failed</html>", "[]", "null", "42"):
+            with self.subTest(response=response):
+                with mock.patch.object(publisher, "run", return_value=response) as run, \
+                        mock.patch.object(publisher, "fetch") as fetch, \
+                        self.assertRaisesRegex(ValueError, "release metadata"):
+                    publisher.prepare("bv", self.stage)
+                self.assertEqual(run.call_count, 1)
+                fetch.assert_not_called()
+        self.assertEqual(list(self.stage.iterdir()), [])
 
     def test_jfp_packages_baseline_when_both_cpu_assets_exist(self):
         work = self.stage / "jfp/v1.0.3"
@@ -233,7 +322,7 @@ class MirrorPublisher(unittest.TestCase):
             publisher.publish_jsm_fallback(entry, self.stage)
         args = run.call_args_list[1].args
         self.assertEqual(args[:5], ("gh", "api", f"repos/{publisher.FALLBACK_REPO}/releases", "--method", "POST"))
-        body = json.loads(Path(args[6]).read_text())
+        body = parse_json_report(Path(args[6]).read_text())
         self.assertEqual(body["tag_name"], publisher.FALLBACK_TAG)
         self.assertEqual(body["target_commitish"], "main")
         self.assertEqual(body["make_latest"], "false")
@@ -295,7 +384,7 @@ class MirrorPublisher(unittest.TestCase):
         with mock.patch.object(publisher.subprocess, "check_output", return_value="{}") as command:
             publisher.run("gh", "api", "repos/example/tool/releases/latest")
         self.assertEqual(command.call_args.args[0][-2:],
-                         ("--header", "User-Agent: OpenAI File Downloader, XaiImageApiFetch/1.0"))
+                         ("--header", "User-Agent: acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)"))
 
     def test_jsm_public_fallback_rejects_staging_and_remote_digest_mismatch(self):
         data, entry, release = self.jsm_fallback()
@@ -320,6 +409,42 @@ class MirrorPublisher(unittest.TestCase):
             publisher.publish_jsm_fallback(entry, self.stage)
         self.assertEqual(entry["source"]["url"], "https://vendor.invalid/jsm.tar.gz")
         self.assertNotIn("upstream_url", entry["source"])
+
+    def test_public_fallback_malformed_error_retains_original_command(self):
+        _, entry, _ = self.jsm_fallback()
+        for response in ("not JSON", "[]", "null", '{"status":"403"}', ""):
+            failure = subprocess.CalledProcessError(1, ["gh", "api"], output=response)
+            with self.subTest(response=response):
+                with mock.patch.object(publisher, "run", side_effect=failure) as run, \
+                        mock.patch.object(publisher, "fetch") as fetch, \
+                        self.assertRaises(subprocess.CalledProcessError) as caught:
+                    publisher.publish_jsm_fallback(entry, self.stage)
+                self.assertIs(caught.exception, failure)
+                self.assertEqual(run.call_count, 1, "Malformed error must never create a release")
+                fetch.assert_not_called()
+                self.assertEqual(entry["source"]["url"], "https://vendor.invalid/jsm.tar.gz")
+                self.assertNotIn("upstream_url", entry["source"])
+
+    def test_public_fallback_rechecks_metadata_after_creation_and_upload(self):
+        data, entry, release = self.jsm_fallback()
+        missing = subprocess.CalledProcessError(1, ["gh", "api"], output='{"status":"404"}')
+        for phase in ("create", "upload"):
+            for index, response in enumerate(("not JSON", "[]")):
+                stage = self.stage / f"{phase}-{index}"
+                work = stage / "jsm/v1.2.3"
+                work.mkdir(parents=True)
+                (work / entry["source"]["asset"]).write_bytes(data)
+                replies = ([missing, "created", response] if phase == "create" else
+                           [json.dumps({**release, "assets": []}), "uploaded", response])
+                with self.subTest(phase=phase, response=response):
+                    with mock.patch.object(publisher, "run", side_effect=replies) as run, \
+                            mock.patch.object(publisher, "fetch") as fetch, \
+                            self.assertRaisesRegex(ValueError, "GitHub release metadata"):
+                        publisher.publish_jsm_fallback(entry, stage)
+                    self.assertEqual(run.call_count, 3)
+                    fetch.assert_not_called()
+                    self.assertEqual(entry["source"]["url"], "https://vendor.invalid/jsm.tar.gz")
+                    self.assertNotIn("upstream_url", entry["source"])
 
     def test_jsm_public_fallback_rejects_collisions_and_nonpublic_releases(self):
         data, entry, release = self.jsm_fallback()
@@ -346,19 +471,19 @@ class MirrorPublisher(unittest.TestCase):
         with mock.patch.object(publisher, "run", return_value=json.dumps(release)) as run, \
                 mock.patch.object(publisher, "fetch", return_value=data):
             publisher.publish_jsm_fallback(entry, self.stage)
-            original = json.loads(json.dumps(entry))
+            original = parse_json_report(json.dumps(entry))
             publisher.publish_jsm_fallback(entry, self.stage)
         self.assertEqual(entry, original)
         self.assertEqual(run.call_count, 2)
 
     def test_partial_refresh_keeps_all_unselected_tools(self):
-        current = json.loads((ROOT / 'cloud-mirror.json').read_text())
+        current = parse_json_report((ROOT / 'cloud-mirror.json').read_text())
         replacement = {'version': 'updated', 'sha256': 'a' * 64}
         output = self.stage / 'candidate.json'
         argv = ['publisher', '--stage', str(self.stage), '--output', str(output), '--tools', 'bv']
         with mock.patch('sys.argv', argv), mock.patch.object(publisher, 'prepare', return_value=('bv', replacement)):
             publisher.main()
-        candidate = json.loads(output.read_text())
+        candidate = parse_json_report(output.read_text())
         self.assertEqual(set(candidate['tools']), set(current['tools']))
         self.assertEqual(candidate['tools']['bv'], replacement)
         self.assertEqual(candidate['tools']['br'], current['tools']['br'])
@@ -421,7 +546,15 @@ if url not in mapping:
 if url.endswith('/hang'): time.sleep(60)
 pathlib.Path(args[args.index('-o')+1]).write_bytes(pathlib.Path(mapping[url]).read_bytes())
 ''')
-        timeout = shutil.which("timeout") or shutil.which("gtimeout")
+        timeout = None
+        for name in ('timeout', 'gtimeout'):
+            candidate = shutil.which(name)
+            if candidate:
+                version = subprocess.run([candidate, '--version'], capture_output=True,
+                                         text=True, timeout=5)
+                if version.returncode == 0 and 'GNU coreutils' in version.stdout:
+                    timeout = candidate
+                    break
         if not timeout:
             self.fail("GNU timeout is required to test the actual process deadline")
         (self.bin / "timeout").symlink_to(timeout)
@@ -474,14 +607,82 @@ pathlib.Path(args[args.index('-o')+1]).write_bytes(pathlib.Path(mapping[url]).re
         self.assertTrue((self.home / ".local/bin/br").is_file())
         self.assertNotIn("github.com/", (self.root / "requests").read_text())
 
+    def test_tool_selection_never_expands_checkout_filenames(self):
+        self.bundle('br')
+        self.bundle('ubs')
+        self.bundle('ast-grep')
+        checkout = self.root / 'checkout'
+        checkout.mkdir()
+        for name in ('br', 'ubs', 'ast-grep'):
+            (checkout / name).write_text('Existing project file.\n')
+        for selection in ('b?', '[bu]*', '*'):
+            with self.subTest(selection=selection):
+                before = (self.root / 'requests').read_text().splitlines() if (self.root / 'requests').exists() else []
+                output = self.run_setup(selection, cwd=checkout, ACFS_CLOUD_AGENT='generic')
+                self.assertIn("Unknown tool '" + selection + "'", output)
+                requests = (self.root / 'requests').read_text().splitlines()[len(before):]
+                self.assertEqual(requests, [MANIFEST_URL])
+                self.assertEqual(list((self.home / '.local/bin').iterdir()), [])
+                self.assertNotIn('Including ast-grep', output)
+        output = self.run_setup('br\t*\n br', cwd=checkout, ACFS_CLOUD_AGENT='generic')
+        self.assertIn("Unknown tool '*'", output)
+        self.assertIn('br 1.2.3 (verified prebuilt)', output)
+        requests = (self.root / 'requests').read_text().splitlines()
+        self.assertEqual(requests.count('https://mirror.invalid/v1/br/v1/bundle.tar.gz'), 1)
+        self.assertFalse((self.home / '.local/bin/ubs').exists())
+        self.assertFalse((self.home / '.local/bin/ast-grep').exists())
+        for name in ('br', 'ubs', 'ast-grep'):
+            self.assertEqual((checkout / name).read_text(), 'Existing project file.\n')
+
+    def test_multiline_tool_selection_keeps_later_tools_and_dependencies(self):
+        for tool in ('br', 'ubs', 'ast-grep'):
+            self.bundle(tool)
+        self.run_setup('br\nubs\tbr', ACFS_CLOUD_AGENT='generic')
+        requests = (self.root / 'requests').read_text().splitlines()
+        for tool in ('br', 'ubs', 'ast-grep'):
+            self.assertTrue((self.home / '.local/bin' / tool).is_file())
+            self.assertEqual(requests.count('https://mirror.invalid/v1/' + tool + '/v1/bundle.tar.gz'), 1)
+        guide = (self.home / '.acfs/cloud/AGENTS.md').read_text()
+        result, _ = self.run_generated_rerun(guide)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for tool in ('br', 'ubs', 'ast-grep'):
+            self.assertIn(tool + ' 1.2.3 (already installed)', result.stderr)
+        self.assertEqual((self.home / '.acfs/cloud/AGENTS.md').read_text(), guide)
+
+    def test_ubs_subset_installs_ast_grep_once_and_exposes_it_to_later_tasks(self):
+        self.bundle('ubs')
+        self.bundle('ast-grep')
+        for tools in ('ubs', 'ubs ast-grep', 'ast-grep\tubs'):
+            with self.subTest(tools=tools):
+                before = (self.root / 'requests').read_text().splitlines() if (self.root / 'requests').exists() else []
+                self.run_setup(tools, ACFS_CLOUD_AGENT='generic', ACFS_CLOUD_REINSTALL='1')
+                requests = (self.root / 'requests').read_text().splitlines()[len(before):]
+                self.assertEqual(requests.count('https://mirror.invalid/v1/ast-grep/v1/bundle.tar.gz'), 1)
+                guide = (self.home / '.acfs/cloud/AGENTS.md').read_text()
+                self.assertIn('`ast-grep`: structural code search used by UBS', guide)
+                if tools == 'ubs':
+                    self.assertIn('ACFS_CLOUD_TOOLS=ubs\\ ast-grep', guide)
+                probe = self.probe_from_guide('ast-grep')
+                self.assertEqual(probe.returncode, 0, probe.stderr)
+                self.assertEqual(probe.stdout.strip(), 'ast-grep 1.2.3')
+
+    def test_ubs_subset_reports_blocked_ast_grep_dependency(self):
+        self.bundle('ubs')
+        output = self.run_setup('ubs')
+        self.assertIn('ubs 1.2.3 (verified prebuilt)', output)
+        guide = (self.home / '.claude/CLAUDE.md').read_text()
+        self.assertIn('Not installed at setup time:', guide)
+        self.assertIn('- `ast-grep`:', guide)
+        self.assertFalse((self.home / '.local/bin/ast-grep').exists())
+
     def test_download_requests_disable_curl_config_and_request_identity_bytes(self):
         self.bundle()
         self.run_setup()
-        requests = [json.loads(line) for line in (self.root / 'request-args').read_text().splitlines()]
+        requests = [parse_json_report(line) for line in (self.root / 'request-args').read_text().splitlines()]
         self.assertEqual(len(requests), 2)
         for args in requests:
             self.assertEqual(args[0], '-q')
-            self.assertEqual(args[args.index('-A') + 1], 'OpenAI File Downloader, XaiImageApiFetch/1.0')
+            self.assertEqual(args[args.index('-A') + 1], 'acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)')
             self.assertEqual(args[args.index('-H') + 1], 'Accept-Encoding: identity')
             self.assertEqual(args[args.index('--proto') + 1], '=https')
             self.assertEqual(args[args.index('--proto-redir') + 1], '=https')
@@ -516,6 +717,7 @@ else:
 
     def test_generated_rerun_preserves_mode_root_and_hardened_fetch(self):
         self.bundle('ubs')
+        self.bundle('ast-grep')
         writable = self.root / 'writable root with spaces'
         options = dict(ACFS_CLOUD_AGENT='generic', ACFS_CLOUD_ROOT=str(writable), ACFS_CLOUD_TIMEOUT='7')
         self.run_setup('ubs', **options)
@@ -526,7 +728,7 @@ else:
         self.assertNotIn('exit 0 means clean', content)
         result, args = self.run_generated_rerun(content)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('ACFS cloud setup: ubs\n', result.stderr.replace('\033[0m', ''))
+        self.assertIn('ACFS cloud setup: ubs ast-grep\n', result.stderr.replace('\033[0m', ''))
         self.assertIn('whole tool job timeout: 7s', result.stderr)
         self.assertIn('ubs 1.2.3 (already installed)', result.stderr)
         self.assertEqual(args[0], '-q')
@@ -534,7 +736,7 @@ else:
         self.assertEqual(args[args.index('--proto-redir') + 1], '=https')
         self.assertEqual(args[args.index('--connect-timeout') + 1], '5')
         self.assertEqual(args[args.index('--max-time') + 1], '20')
-        self.assertEqual(args[args.index('-A') + 1], 'OpenAI File Downloader, XaiImageApiFetch/1.0')
+        self.assertEqual(args[args.index('-A') + 1], 'acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)')
         self.assertEqual(args[args.index('-H') + 1], 'Accept-Encoding: identity')
         self.assertEqual(guide.read_text(), content)
         self.assertFalse((self.home / '.claude/CLAUDE.md').exists())
@@ -627,6 +829,30 @@ else:
         guide = (writable / '.acfs/cloud/AGENTS.md').read_text()
         self.assertIn(str(writable / '.acfs/cloud/setup.log'), guide)
         self.assertIn('generic\\ tools/.local/bin', guide)
+        self.assertFalse((self.home / '.claude').exists())
+        self.assertFalse((self.home / '.codex').exists())
+
+    def test_bundled_ubs_guide_quotes_its_cache_without_changing_provider_homes(self):
+        member = tarfile.TarInfo('share/ubs/modules/data.json')
+        member.size = 2
+        self.bundle('ubs', extra=(member, b'{}'))
+        writable = self.root / "tools ' quoted ` ticks $ dollars$(touch ubs-injected)"
+        self.run_setup('ubs', ACFS_CLOUD_AGENT='generic', ACFS_CLOUD_ROOT=str(writable))
+        guide = (writable / '.acfs/cloud/AGENTS.md').read_text()
+        commands = re.findall(r'  ```bash\n  (ubs --module-dir=[^\n]+)\n  ```', guide)
+        self.assertEqual(len(commands), 1, guide)
+        # This receiver tests the authored command's argv and quoting only;
+        # the real public scanner is exercised separately in Linux validation.
+        self.command('ubs', '#!/bin/sh\nprintf "%s\\0" "$@"\n')
+        script = self.root / 'ubs-cache-guide.sh'
+        script.write_text(commands[0], encoding='utf-8')
+        result = subprocess.run(['bash', str(script)], cwd=self.root, env=self.env,
+                                capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.split(b'\0'), [
+            ('--module-dir=' + str(writable / '.local/share/ubs/modules')).encode(),
+            b'path/to/changed-file', b''])
+        self.assertFalse((self.root / 'ubs-injected').exists())
         self.assertFalse((self.home / '.claude').exists())
         self.assertFalse((self.home / '.codex').exists())
 
@@ -1227,7 +1453,7 @@ exec(compile(source, '<setup-python>', 'exec'))
         metadata = config.stat()
         before = config.read_bytes()
         self.run_setup('am')
-        migrated = json.loads(config.read_text())
+        migrated = parse_json_report(config.read_text())
         self.assertEqual(migrated['preferences'], original['preferences'])
         self.assertEqual(migrated['mcpServers']['another-server'], original['mcpServers']['another-server'])
         self.assertEqual(migrated['mcpServers']['mcp-agent-mail']['env'], {'KEEP': 'value'})
@@ -1261,7 +1487,7 @@ exec(compile(source, '<setup-python>', 'exec'))
         config.write_text(json.dumps({'mcpServers': {'mcp-agent-mail': {
             'command': str(self.home / '.local/bin/mcp-agent-mail'), 'args': []}}}))
         self.run_setup('am', CLAUDE_CONFIG_DIR=str(directory))
-        self.assertEqual(json.loads(config.read_text())['mcpServers']['mcp-agent-mail']['args'], ['serve-stdio'])
+        self.assertEqual(parse_json_report(config.read_text())['mcpServers']['mcp-agent-mail']['args'], ['serve-stdio'])
         self.assertTrue(guide.read_text().startswith('Custom instructions.\n'))
         self.assertIn('`am` / `mcp-agent-mail`', guide.read_text())
         self.assertFalse((self.home / '.claude').exists())
@@ -1341,6 +1567,48 @@ exec(compile(source, '<setup-python>', 'exec'))
         self.assertFalse((self.root / 'jfp-injected').exists())
         self.assertEqual(list(self.home.iterdir()), [])
 
+    def test_custom_root_guide_scopes_jsm_state_and_preserves_existing_paths(self):
+        binary = b'''#!/bin/sh
+if [ "$1" = --version ]; then
+    echo 'jsm 1.2.3'
+else
+    printf '%s\\0%s\\0%s\\0%s\\0%s\\0' "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "${JSM_PROFILE_ROOT-}" "$HOME"
+fi
+'''
+        self.bundle('jsm', content=binary)
+        self.home.chmod(0o555)
+        writable = self.root / "jsm tools ' quoted ` ticks $ dollars$(touch jsm-injected)"
+        self.run_setup('jsm', ACFS_CLOUD_AGENT='codex', ACFS_CLOUD_ROOT=str(writable))
+        guide = (writable / '.codex/AGENTS.md').read_text()
+        blocks = re.findall(r'```bash\n(.*?)\n```', guide, re.S)
+        commands = [block for block in blocks if block.startswith('XDG_CONFIG_HOME=')]
+        self.assertEqual(len(commands), 1, 'Guide must explain writable JSM state without global XDG exports')
+        self.assertIn('skill installation targets', guide)
+        self.assertIn('JSM_PROFILE_ROOT', guide)
+        path_commands = [block for block in blocks if block.startswith('export PATH=')]
+        self.assertEqual(len(path_commands), 1)
+        script = self.root / 'jsm-state-guide.sh'
+        with script.open('x') as output:
+            output.write(path_commands[0] + '\n' + commands[0] + '\n')
+            output.write('printf "%s\\0%s\\0%s\\0%s\\0%s\\0" "${XDG_CONFIG_HOME-}" "${XDG_DATA_HOME-}" "${XDG_CACHE_HOME-}" "${JSM_PROFILE_ROOT-}" "$HOME"')
+        cases = [('', '', '', ''), (str(self.root / 'existing config'), '', '', ''),
+                 ('', str(self.root / 'existing data'), '', ''), ('', '', str(self.root / 'existing cache'), ''),
+                 ('', '', '', str(self.root / 'existing profile')),
+                 tuple(str(self.root / ('existing ' + name)) for name in ('config', 'data', 'cache', 'profile'))]
+        for config, data, cache, profile in cases:
+            with self.subTest(config=config, data=data, cache=cache, profile=profile):
+                result = subprocess.run(['bash', str(script)], cwd=self.root,
+                                        env={**self.env, 'XDG_CONFIG_HOME': config, 'XDG_DATA_HOME': data,
+                                             'XDG_CACHE_HOME': cache, 'JSM_PROFILE_ROOT': profile},
+                                        capture_output=True, timeout=5, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = [config or str(writable / '.config'), data or str(writable / '.local/share'),
+                            cache or str(writable / '.cache'), profile, str(self.home),
+                            config, data, cache, profile, str(self.home)]
+                self.assertEqual(result.stdout.split(b'\0'), [value.encode() for value in expected] + [b''])
+        self.assertFalse((self.root / 'jsm-injected').exists())
+        self.assertEqual(list(self.home.iterdir()), [])
+
     def test_custom_root_guide_selects_writable_search_and_memory_state(self):
         self.bundle()
         self.home.chmod(0o555)
@@ -1373,6 +1641,47 @@ exec(compile(source, '<setup-python>', 'exec'))
         self.assertFalse((self.root / 'state-injected').exists())
         self.assertEqual(list(self.home.iterdir()), [])
         self.assertEqual((runtime / 'config.toml').read_text(), 'Keep provider config.\n')
+
+    def test_custom_root_guide_scopes_agent_mail_storage_to_its_command(self):
+        binary = b'''#!/bin/sh
+if [ "$1" = --version ]; then
+    echo 'am 1.2.3'
+else
+    printf '%s\\0%s\\0%s\\0%s\\0' "$STORAGE_ROOT" "${DATABASE_URL-}" "${XDG_DATA_HOME-}" "$HOME"
+fi
+'''
+        self.bundle('am', content=binary)
+        self.home.chmod(0o555)
+        writable = self.root / "mail tools ' quoted ` ticks $ dollars$(touch mail-injected)"
+        self.run_setup('am', ACFS_CLOUD_AGENT='codex', ACFS_CLOUD_ROOT=str(writable))
+        guide = (writable / '.codex/AGENTS.md').read_text()
+        blocks = re.findall(r'```bash\n(.*?)\n```', guide, re.S)
+        commands = [block for block in blocks if block.startswith('STORAGE_ROOT=')]
+        self.assertEqual(len(commands), 1, 'Guide must explain writable Agent Mail without global exports')
+        self.assertIn('reuse its existing configuration', guide)
+        path_commands = [block for block in blocks if block.startswith('export PATH=')]
+        self.assertEqual(len(path_commands), 1)
+        script = self.root / 'mail-state-guide.sh'
+        with script.open('x') as output:
+            output.write(path_commands[0] + '\n')
+            output.write(commands[0] + '\n')
+            output.write('printf "%s\\0%s\\0%s\\0%s\\0" "${STORAGE_ROOT-}" "${DATABASE_URL-}" "${XDG_DATA_HOME-}" "$HOME"')
+        cases = [('', '', ''), (str(self.root / 'existing mail'), '', ''),
+                 ('', str(self.root / 'existing XDG'), ''),
+                 ('', '', 'sqlite:///existing-mail.db'),
+                 (str(self.root / 'existing mail'), str(self.root / 'existing XDG'), 'sqlite:///existing-mail.db')]
+        for storage, xdg, database in cases:
+            with self.subTest(storage=storage, xdg=xdg, database=database):
+                result = subprocess.run(['bash', str(script)], cwd=self.root,
+                                        env={**self.env, 'STORAGE_ROOT': storage, 'XDG_DATA_HOME': xdg, 'DATABASE_URL': database},
+                                        capture_output=True, timeout=5, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = storage or str(Path(xdg or str(writable / '.local/share')) / 'mcp-agent-mail/git_mailbox_repo')
+                self.assertEqual(result.stdout.split(b'\0'), [
+                    expected.encode(), database.encode(), xdg.encode(), str(self.home).encode(),
+                    storage.encode(), database.encode(), xdg.encode(), str(self.home).encode(), b''])
+        self.assertFalse((self.root / 'mail-injected').exists())
+        self.assertEqual(list(self.home.iterdir()), [])
 
     def test_codex_repository_skill_loads_writable_guide_and_is_idempotent(self):
         self.bundle()

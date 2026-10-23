@@ -85,6 +85,7 @@ If you keep those three sentences in your head, the rest of the document gets mu
 | **Compaction** | Context compression inside a long-running agent session | This is why re-reading `AGENTS.md` is mandatory |
 | **Fungible agents** | Generalist agents that can replace one another | This makes crashes and amnesia survivable |
 | **[CASS](https://github.com/Dicklesworthstone/coding_agent_session_search) / [CM](https://github.com/Dicklesworthstone/cass_memory_system)** | Session history and procedural memory | This is how the workflow learns from itself over time |
+| **[ee](https://github.com/Dicklesworthstone/eidetic_engine_cli)** | Optional per-project memory that you record explicitly | Holds the project lessons you choose to keep (decisions, failures, commands), next to cm |
 | **[`rch`](https://github.com/Dicklesworthstone/remote_compilation_helper)** | The offloading layer for heavy builds/tests | This prevents local CPU contention from degrading the swarm |
 
 ### One Complete Flywheel Run
@@ -320,7 +321,7 @@ The installer is idempotent (safe to re-run), checkpointed (resumes on failure),
 alias cc='NODE_OPTIONS="--max-old-space-size=32768" claude --dangerously-skip-permissions'
 alias cod='codex --dangerously-bypass-approvals-and-sandbox --search -m gpt-6-astra -c model_reasoning_effort=xhigh -c model_reasoning_summary_format=experimental'
 # Antigravity CLI (successor to the retired Gemini CLI), model-pinned + auto-approve
-agy() { command agy --model "Gemini 3.8 Flash (High)" --dangerously-skip-permissions "$@"; }
+agy() { command agy --model "Gemini 4 Argon (High)" --dangerously-skip-permissions "$@"; }
 # Gemini CLI — LEGACY (retired 2026-06-18; kept only to read old ~/.gemini/tmp history)
 alias gmi='gemini --yolo'
 ```
@@ -1005,7 +1006,7 @@ Those guides also help explain why WezTerm is so convenient for this work. They 
 Why the ratio `--cc=2 --cod=1 --agy=1`?
 - **2 Claude** -- Great for architecture and complex reasoning; the workhorse
 - **1 Codex** -- Fast iteration and testing; complementary strengths
-- **1 Antigravity** -- Different perspective (Gemini 3.8 Flash); good for docs and review duty
+- **1 Antigravity** -- Different perspective (Gemini 4 Argon); good for docs and review duty
 
 For larger projects, scale up proportionally. The skills codify a **weighted allocation formula** based on bead backlog:
 
@@ -1885,6 +1886,8 @@ Each session makes the next one better. This is easy to say abstractly, so here'
 **Between sessions, CM (CASS Memory) distills patterns.** Running `cm reflect` processes recent sessions and extracts procedural rules like "always run `cargo check` after modifying Cargo.toml" or "the `--robot-triage` flag is more useful than `--robot-next` for projects with 50+ beads." These rules have confidence scores that decay without reinforcement (90-day half-life) and amplify with repetition.
 
 **Session N+1 starts with those patterns loaded.** Running `cm context "Building an API"` at the start of a session retrieves relevant procedural memory, so the agent begins with knowledge distilled from every previous session that touched similar work.
+
+**ee, if you use it, keeps the lessons you record on purpose.** `cm reflect` extracts rules from sessions after the fact. ee (installed by default, optional) is where an agent writes down a project decision, a failure and its cause, or a command that works, at the moment it learns it (`ee remember`), and `ee pack "<task>"` brings those back next to `cm context` before the next task. It does not replace the cm steps. Record each lesson in one of the two tools, not both; see the [ee guide](../tools/ee.md) for how to split them.
 
 **Simultaneously, UBS patterns grow.** If agents repeatedly encounter a certain class of bug, that pattern gets added to UBS's rule set. The next scan catches it mechanically.
 
@@ -2807,13 +2810,28 @@ Rules have a **90-day confidence half-life** (decays without feedback) and a **4
 
 ```bash
 cm context "Building an API" --json   # Get relevant memories for a task
-cm recall "authentication patterns"   # Search past sessions
+cass search "authentication patterns" --robot   # Search past sessions (cass)
 cm reflect                            # Update procedural memory from recent sessions
 cm mark b-8f3a2c --helpful            # Reinforce a useful rule
 cm mark b-xyz789 --harmful --reason "Caused regression"  # Flag a bad rule
 ```
 
 **Where:** At the start of a session, to give agents context from past work. The `cm context` command is the single most important pre-task ritual.
+
+---
+
+### [ee](https://github.com/Dicklesworthstone/eidetic_engine_cli): Project Memory You Record Explicitly
+
+ee is optional (ACFS installs it by default). It keeps a store per project, `<project>/.ee/ee.db`, created once with `ee init`, plus an optional user-global lane for rules that hold in every project. Lessons get in when an agent or a human records them, or through curation proposals that someone reviews and applies, and every revision is audited.
+
+```bash
+ee pack "Building an API" --workspace . --max-tokens 4000 --format markdown  # Task context, with why each item was chosen
+ee remember --workspace . --level procedural --kind rule "<lesson and its reason>"  # Record a durable lesson
+ee outcome <memory-id> --workspace . --signal helpful --reason "<what it changed>"  # Feedback
+ee memory revise <memory-id> --workspace . --content "<corrected text>"  # Fix a memory; history is kept
+```
+
+**Where:** Next to `cm context`, after claiming a bead and before writing code; `ee remember` when you learn something durable, before `br close`. It complements the cm steps rather than replacing them: record each lesson in one tool. The [ee guide](../tools/ee.md) covers what is worth remembering, project versus global memory, and what to run after upgrading ee.
 
 ---
 

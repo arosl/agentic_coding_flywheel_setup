@@ -6,13 +6,14 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="398056bd5ca3aefcfd43586b1f99e004b695b40ec4e5e3717fee4b44b2eeefa7"
+ACFS_MANIFEST_SHA256="51f415e374a6c1c8246e452b9c85f0df6cbf20a9a295c7b7d567f280675b398b"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
   "users.ubuntu"
   "base.filesystem"
   "shell.zsh"
+  "shell.login"
   "shell.omz"
   "cli.modern"
   "tools.lazygit"
@@ -108,6 +109,7 @@ declare -gA ACFS_MODULE_PHASE=(
   ['users.ubuntu']="2"
   ['base.filesystem']="3"
   ['shell.zsh']="4"
+  ['shell.login']="4"
   ['shell.omz']="4"
   ['cli.modern']="5"
   ['tools.lazygit']="5"
@@ -187,7 +189,8 @@ declare -gA ACFS_MODULE_DEPS=(
   ['users.ubuntu']=""
   ['base.filesystem']="users.ubuntu"
   ['shell.zsh']="base.system,base.filesystem"
-  ['shell.omz']="shell.zsh,users.ubuntu"
+  ['shell.login']="shell.zsh,users.ubuntu"
+  ['shell.omz']="shell.login,users.ubuntu"
   ['cli.modern']="base.system"
   ['tools.lazygit']="base.system"
   ['tools.docker']="base.system"
@@ -265,6 +268,7 @@ declare -gA ACFS_MODULE_FUNC=(
   ['base.system']="acfs_generated_install_base_system"
   ['base.filesystem']="acfs_generated_install_base_filesystem"
   ['shell.zsh']="acfs_generated_install_shell_zsh"
+  ['shell.login']="acfs_generated_install_shell_login"
   ['shell.omz']="acfs_generated_install_shell_omz"
   ['cli.modern']="acfs_generated_install_cli_modern"
   ['tools.lazygit']="acfs_generated_install_tools_lazygit"
@@ -344,6 +348,7 @@ declare -gA ACFS_MODULE_GENERATED=(
   ['users.ubuntu']="0"
   ['base.filesystem']="1"
   ['shell.zsh']="1"
+  ['shell.login']="1"
   ['shell.omz']="1"
   ['cli.modern']="1"
   ['tools.lazygit']="1"
@@ -423,6 +428,7 @@ declare -gA ACFS_MODULE_CATEGORY=(
   ['users.ubuntu']="users"
   ['base.filesystem']="filesystem"
   ['shell.zsh']="shell"
+  ['shell.login']="shell"
   ['shell.omz']="shell"
   ['cli.modern']="cli"
   ['tools.lazygit']="tools"
@@ -502,6 +508,7 @@ declare -gA ACFS_MODULE_TAGS=(
   ['users.ubuntu']="orchestration,critical"
   ['base.filesystem']="critical"
   ['shell.zsh']="critical,shell-ux"
+  ['shell.login']="critical,shell-ux"
   ['shell.omz']="critical,shell-ux"
   ['cli.modern']="recommended,cli-modern"
   ['tools.lazygit']="recommended,cli-modern"
@@ -581,6 +588,7 @@ declare -gA ACFS_MODULE_DEFAULT=(
   ['users.ubuntu']="1"
   ['base.filesystem']="1"
   ['shell.zsh']="1"
+  ['shell.login']="1"
   ['shell.omz']="1"
   ['cli.modern']="1"
   ['tools.lazygit']="1"
@@ -660,6 +668,7 @@ declare -gA ACFS_MODULE_DESC=(
   ['users.ubuntu']="Ensure target user + passwordless sudo + ssh keys"
   ['base.filesystem']="Create workspace and ACFS directories"
   ['shell.zsh']="Zsh shell package"
+  ['shell.login']="Validated and recoverable login-shell configuration"
   ['shell.omz']="Oh My Zsh + Powerlevel10k + plugins + ACFS config"
   ['cli.modern']="Modern CLI tools referenced by the zshrc intent"
   ['tools.lazygit']="Lazygit (apt or binary fallback)"
@@ -738,7 +747,13 @@ declare -gA ACFS_MODULE_INSTALLED_CHECK=(
   ['base.system']='command -v curl && command -v git && command -v jq'
   ['base.filesystem']='test -d /data/projects && test -d ~/.acfs'
   ['shell.zsh']='command -v zsh'
-  ['shell.omz']='test -d ~/.oh-my-zsh && test -f ~/.acfs/zsh/acfs.zshrc'
+  ['shell.login']='source "${ACFS_LIB_DIR:-$HOME/.acfs/scripts/lib}/user.sh" &&
+  user_login_shell_configured
+'
+  ['shell.omz']='test -d ~/.oh-my-zsh && test -f ~/.acfs/zsh/acfs.zshrc &&
+  source "${ACFS_LIB_DIR:-$HOME/.acfs/scripts/lib}/user.sh" &&
+  user_login_shell_configured
+'
   ['cli.modern']='command -v rg && command -v fzf'
   ['tools.lazygit']='command -v lazygit'
   ['tools.docker']='command -v docker && docker compose version'
@@ -866,6 +881,7 @@ declare -gA ACFS_MODULE_INSTALLED_CHECK_RUN_AS=(
   ['base.system']="current"
   ['base.filesystem']="target_user"
   ['shell.zsh']="current"
+  ['shell.login']="current"
   ['shell.omz']="target_user"
   ['cli.modern']="current"
   ['tools.lazygit']="current"
@@ -937,6 +953,654 @@ declare -gA ACFS_MODULE_INSTALLED_CHECK_RUN_AS=(
   ['acfs.nightly']="target_user"
 )
 
+declare -gA ACFS_MODULE_VERIFY_COUNT=(
+  ['base.system']="4"
+  ['users.ubuntu']="2"
+  ['base.filesystem']="2"
+  ['shell.zsh']="1"
+  ['shell.login']="1"
+  ['shell.omz']="4"
+  ['cli.modern']="14"
+  ['tools.lazygit']="1"
+  ['tools.docker']="2"
+  ['tools.lazydocker']="1"
+  ['tools.incus']="1"
+  ['network.tailscale']="2"
+  ['network.ssh_keepalive']="2"
+  ['lang.bun']="1"
+  ['lang.uv']="1"
+  ['lang.rust']="2"
+  ['lang.go']="1"
+  ['lang.nvm']="1"
+  ['tools.atuin']="1"
+  ['tools.zoxide']="1"
+  ['tools.ast_grep']="1"
+  ['agents.claude']="1"
+  ['agents.codex']="1"
+  ['agents.gemini']="1"
+  ['agents.antigravity']="1"
+  ['agents.opencode']="1"
+  ['agents.omp']="1"
+  ['agents.grok']="1"
+  ['tools.vault']="1"
+  ['db.postgres18']="1"
+  ['cloud.wrangler']="1"
+  ['cloud.supabase']="1"
+  ['cloud.vercel']="1"
+  ['tools.herdr']="1"
+  ['stack.mcp_agent_mail']="2"
+  ['stack.nhm']="2"
+  ['stack.meta_skill']="1"
+  ['stack.automated_plan_reviser']="1"
+  ['stack.jeffreysprompts']="1"
+  ['stack.process_triage']="1"
+  ['stack.ultimate_bug_scanner']="1"
+  ['stack.beads_rust']="1"
+  ['stack.beads_viewer']="1"
+  ['stack.cass']="1"
+  ['stack.cm']="1"
+  ['stack.caam']="1"
+  ['stack.slb']="1"
+  ['stack.dcg']="2"
+  ['stack.ru']="1"
+  ['stack.brenner_bot']="1"
+  ['stack.rch']="1"
+  ['stack.srps']="2"
+  ['stack.frankensearch']="1"
+  ['stack.storage_ballast_helper']="1"
+  ['stack.cross_agent_session_resumer']="1"
+  ['stack.doodlestein_self_releaser']="1"
+  ['stack.agent_settings_backup']="1"
+  ['stack.pcr']="1"
+  ['stack.eidetic_engine_cli']="1"
+  ['stack.franken_markdown']="1"
+  ['stack.pi_agent_rust']="1"
+  ['stack.power_failure_resumer']="1"
+  ['utils.giil']="1"
+  ['utils.csctf']="1"
+  ['utils.xf']="1"
+  ['utils.toon_rust']="1"
+  ['utils.rano']="1"
+  ['utils.mdwb']="1"
+  ['utils.s2p']="1"
+  ['utils.rust_proxy']="1"
+  ['utils.aadc']="1"
+  ['utils.caut']="1"
+  ['acfs.workspace']="2"
+  ['acfs.onboard']="1"
+  ['acfs.update']="1"
+  ['acfs.nightly']="1"
+  ['acfs.doctor']="1"
+)
+
+# Verification commands are serialized shell source; quoted tildes expand when
+# the command is interpreted in its child shell, not while loading this index.
+# shellcheck disable=SC2088
+declare -gA ACFS_MODULE_VERIFY_COMMAND=(
+  ['base.system.0']='curl --version'
+  ['base.system.1']='git --version'
+  ['base.system.2']='jq --version'
+  ['base.system.3']='gpg --version'
+  ['users.ubuntu.0']='id "${TARGET_USER:-ubuntu}"'
+  ['users.ubuntu.1']='[[ "${MODE:-vibe}" != "vibe" ]] || runuser -u "${TARGET_USER:-ubuntu}" -- sudo -n true'
+  ['base.filesystem.0']='test -d /data/projects'
+  ['base.filesystem.1']='# Generated helper functions used by this child shell.
+acfs_generated_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+    case "$name" in
+        .|..)
+            return 1
+            ;;
+        *[!A-Za-z0-9._+-]*)
+            return 1
+            ;;
+    esac
+
+    for candidate in \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
+    do
+        [[ -x "$candidate" ]] || continue
+        printf '\''%s\n'\'' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+acfs_generated_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(acfs_generated_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(acfs_generated_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '\''%s\n'\'' "$current_user"
+}
+
+acfs_generated_getent_passwd_entry() {
+    local user="${1-}"
+    local getent_bin=""
+    local passwd_entry=""
+    local passwd_line=""
+    local printed_any=false
+
+    getent_bin="$(acfs_generated_system_binary_path getent 2>/dev/null || true)"
+    if [[ -z "$user" ]]; then
+        if [[ -n "$getent_bin" ]]; then
+            while IFS= read -r passwd_line; do
+                printf '\''%s\n'\'' "$passwd_line"
+                printed_any=true
+            done < <("$getent_bin" passwd 2>/dev/null || true)
+            if [[ "$printed_any" == true ]]; then
+                return 0
+            fi
+        fi
+
+        [[ -r /etc/passwd ]] || return 1
+        while IFS= read -r passwd_line; do
+            printf '\''%s\n'\'' "$passwd_line"
+        done < /etc/passwd
+        return 0
+    fi
+
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            [[ "${passwd_line%%:*}" == "$user" ]] || continue
+            passwd_entry="$passwd_line"
+            break
+        done < /etc/passwd
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    printf '\''%s\n'\'' "$passwd_entry"
+}
+
+acfs_generated_passwd_home_from_entry() {
+    local passwd_entry="${1:-}"
+    local passwd_home=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
+    if [[ -n "$passwd_home" ]] && [[ "$passwd_home" == /* ]] && [[ "$passwd_home" != "/" ]]; then
+        printf '\''%s\n'\'' "${passwd_home%/}"
+        return 0
+    fi
+
+    return 1
+}
+
+acfs_generated_target_user_exists() {
+    local user="${1:-}"
+    local id_bin=""
+
+    [[ -n "$user" ]] || return 1
+    id_bin="$(acfs_generated_system_binary_path id 2>/dev/null || true)"
+    [[ -n "$id_bin" ]] || return 1
+    "$id_bin" "$user" >/dev/null 2>&1
+}
+
+acfs_generated_default_home_for_new_user() {
+    local user="${1:-}"
+
+    [[ -n "$user" ]] || return 1
+    [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]] || return 1
+
+    if [[ "$user" == "root" ]]; then
+        printf '\''/root\n'\''
+        return 0
+    fi
+
+    printf '\''/home/%s\n'\'' "$user"
+}
+
+# Resolve TARGET_HOME using generated helper functions. Doctor
+# injects these helpers for manifest checks that reference
+# acfs_generated_* functions, so this stays consistent with
+# installer target-home resolution and avoids inherited HOME leaks.
+explicit_target_home="${TARGET_HOME:-}"
+if [[ -n "$explicit_target_home" ]]; then
+  explicit_target_home="${explicit_target_home%/}"
+fi
+target_home=""
+if [[ "${TARGET_USER:-ubuntu}" == "root" ]]; then
+  target_home="/root"
+else
+  _acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"
+  if [[ -n "$_acfs_passwd_entry" ]]; then
+    target_home="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
+  else
+    current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
+    current_home="${HOME:-}"
+    if [[ -n "$current_home" ]]; then
+      current_home="${current_home%/}"
+    fi
+    if [[ -n "$current_user" ]] && [[ "$current_user" == "${TARGET_USER:-ubuntu}" ]] && [[ -n "$current_home" ]] && [[ "$current_home" == /* ]] && [[ "$current_home" != "/" ]] && { [[ -z "$explicit_target_home" ]] || [[ "$current_home" == "$explicit_target_home" ]]; }; then
+      target_home="$current_home"
+    fi
+    unset current_user current_home
+  fi
+  unset _acfs_passwd_entry
+fi
+unset explicit_target_home
+if [[ -z "$target_home" ]] || [[ "$target_home" == "/" ]] || [[ "$target_home" != /* ]]; then
+  echo "ERROR: Unable to resolve TARGET_HOME for '\''${TARGET_USER:-ubuntu}'\''; export TARGET_HOME explicitly (got: '\''${target_home:-<empty>}'\'')" >&2
+  exit 1
+fi
+test -d "$target_home/.acfs"
+test -f "$target_home/.acfs/docs/AGENTS.workspace.md"'
+  ['shell.zsh.0']='zsh --version'
+  ['shell.login.0']='source "${ACFS_LIB_DIR:-$HOME/.acfs/scripts/lib}/user.sh"
+user_login_shell_configured'
+  ['shell.omz.0']='test -d ~/.oh-my-zsh'
+  ['shell.omz.1']='test -f ~/.acfs/zsh/acfs.zshrc'
+  ['shell.omz.2']='test -f ~/.p10k.zsh'
+  ['shell.omz.3']='source "${ACFS_LIB_DIR:-$HOME/.acfs/scripts/lib}/user.sh"
+user_login_shell_configured'
+  ['cli.modern.0']='rg --version'
+  ['cli.modern.1']='fzf --version'
+  ['cli.modern.2']='direnv version'
+  ['cli.modern.3']='jq --version'
+  ['cli.modern.4']='gh --version'
+  ['cli.modern.5']='git-lfs version'
+  ['cli.modern.6']='rsync --version'
+  ['cli.modern.7']='strace --version'
+  ['cli.modern.8']='minisign -v'
+  ['cli.modern.9']='age --version'
+  ['cli.modern.10']='command -v bc'
+  ['cli.modern.11']='command -v lsof'
+  ['cli.modern.12']='command -v dig'
+  ['cli.modern.13']='command -v nc'
+  ['tools.lazygit.0']='lazygit --version'
+  ['tools.docker.0']='docker --version'
+  ['tools.docker.1']='docker compose version'
+  ['tools.lazydocker.0']='lazydocker --version'
+  ['tools.incus.0']='incus --version'
+  ['network.tailscale.0']='tailscale version'
+  ['network.tailscale.1']='systemctl is-enabled tailscaled'
+  ['network.ssh_keepalive.0']='grep -E '\''^ClientAliveInterval[[:space:]]+60'\'' /etc/ssh/sshd_config'
+  ['network.ssh_keepalive.1']='grep -E '\''^ClientAliveCountMax[[:space:]]+3'\'' /etc/ssh/sshd_config'
+  ['lang.bun.0']='~/.bun/bin/bun --version'
+  ['lang.uv.0']='command -v uv >/dev/null 2>&1 && uv --version'
+  ['lang.rust.0']='~/.cargo/bin/cargo --version'
+  ['lang.rust.1']='~/.cargo/bin/rustup show | grep -q nightly'
+  ['lang.go.0']='go version'
+  ['lang.nvm.0']='export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+node --version'
+  ['tools.atuin.0']='~/.atuin/bin/atuin --version'
+  ['tools.zoxide.0']='command -v zoxide'
+  ['tools.ast_grep.0']='sg --version'
+  ['agents.claude.0']='target_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}"
+"$target_bin/claude" --version || "$target_bin/claude" --help'
+  ['agents.codex.0']='target_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}"
+"$target_bin/codex" --version || "$target_bin/codex" --help'
+  ['agents.gemini.0']='target_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}"
+"$target_bin/gemini" --version || "$target_bin/gemini" --help'
+  ['agents.antigravity.0']='# acfs-summary: verify agy-locked launchers and pinned settings
+target_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}"
+test -x "$target_bin/agy"
+test -x "$target_bin/agy-locked"
+test -x "$target_bin/agy-real"
+test -x "$target_bin/gmi"
+/usr/bin/python3 - <<'\''PY'\''
+import json
+import pathlib
+import sys
+
+settings_path = pathlib.Path.home() / ".gemini" / "antigravity-cli" / "settings.json"
+hooks_path = pathlib.Path.home() / ".gemini" / "config" / "hooks.json"
+hook_path = pathlib.Path.home() / ".gemini" / "config" / "hooks" / "dcg-antigravity-hook.py"
+try:
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"invalid or missing Antigravity settings/hooks: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+
+expected = {
+    "model": "Gemini 4 Argon (High)",
+    "toolPermission": "always-proceed",
+    "artifactReviewPolicy": "always-proceed",
+    "enableTelemetry": False,
+    "enableTerminalSandbox": False,
+    "allowNonWorkspaceAccess": True,
+    "notifications": False,
+    "showTips": False,
+    "showFeedbackSurvey": False,
+    "useG1Credits": False,
+    "verbosity": "high",
+    "runningLightSpeed": "medium",
+    "colorScheme": "terminal",
+    "editor": "auto",
+    "altScreenMode": "never",
+}
+for key, value in expected.items():
+    if settings.get(key) != value:
+        print(f"Antigravity setting {key} is {settings.get(key)!r}, expected {value!r}", file=sys.stderr)
+        raise SystemExit(1)
+if not hook_path.is_file():
+    print(f"Antigravity dcg hook is missing: {hook_path}", file=sys.stderr)
+    raise SystemExit(1)
+dcg_group = hooks.get("dcg")
+pre_tool_use = dcg_group.get("PreToolUse", []) if isinstance(dcg_group, dict) else []
+if not isinstance(pre_tool_use, list):
+    pre_tool_use = []
+hook_registered = any(
+    isinstance(entry, dict)
+    and entry.get("matcher") == "run_command"
+    and any(
+        isinstance(hook, dict)
+        and hook.get("type") == "command"
+        and hook.get("command") == str(hook_path)
+        and hook.get("timeout") == 6
+        for hook in entry.get("hooks", [])
+    )
+    for entry in pre_tool_use
+)
+if not isinstance(dcg_group, dict) or dcg_group.get("enabled") is not True or not hook_registered:
+    print(f"Antigravity dcg hook is not enabled and registered in {hooks_path}", file=sys.stderr)
+    raise SystemExit(1)
+PY'
+  ['agents.opencode.0']='opencode --version || opencode --help'
+  ['agents.omp.0']='omp --version || omp --help'
+  ['agents.grok.0']='grok --version || grok --help'
+  ['tools.vault.0']='vault --version'
+  ['db.postgres18.0']='for package in postgresql-18 postgresql-client-18; do
+  package_status=$(dpkg-query -W -f='\''${db:Status-Status}'\'' "$package" 2>/dev/null) || exit 1
+  test "$package_status" = installed || exit 1
+done
+/usr/lib/postgresql/18/bin/postgres --version | grep -E '\''^postgres \(PostgreSQL\) 18\.'\'' || exit 1
+/usr/lib/postgresql/18/bin/psql --version | grep -E '\''^psql \(PostgreSQL\) 18\.'\'''
+  ['cloud.wrangler.0']='wrangler --version'
+  ['cloud.supabase.0']='supabase --version'
+  ['cloud.vercel.0']='vercel --version'
+  ['tools.herdr.0']='herdr --version'
+  ['stack.mcp_agent_mail.0']='command -v am'
+  ['stack.mcp_agent_mail.1']='agent_mail_service_curl() {
+  local curl_bin=""
+  local candidate=""
+
+  for candidate in /usr/bin/curl /bin/curl /usr/local/bin/curl /usr/local/sbin/curl /usr/sbin/curl /sbin/curl; do
+    [[ -x "$candidate" ]] || continue
+    curl_bin="$candidate"
+    break
+  done
+
+  [[ -n "$curl_bin" ]] || return 127
+  "$curl_bin" "$@"
+}
+
+agent_mail_readiness_ready() {
+  local readiness_body=""
+  local readiness_url=""
+
+  for readiness_url in \
+    http://127.0.0.1:8765/health/readiness \
+    http://127.0.0.1:8765/health
+  do
+    readiness_body="$(agent_mail_service_curl -fsS --max-time 10 "$readiness_url" 2>/dev/null)" || continue
+    if printf '\''%s\n'\'' "$readiness_body" | grep -Eq '\''"status"[[:space:]]*:[[:space:]]*"ready"([[:space:]]*[,}])'\''; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+runtime_dir="/run/user/$(id -u)"
+if [[ -d "$runtime_dir" ]]; then
+  export XDG_RUNTIME_DIR="$runtime_dir"
+  export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus"
+fi
+if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+  systemctl --user is-active --quiet agent-mail.service >/dev/null 2>&1 || exit 1
+fi
+agent_mail_service_curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null
+agent_mail_readiness_ready'
+  ['stack.nhm.0']='"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" version'
+  ['stack.nhm.1']='test -x "${NHM_BIN_DIR:-$HOME/.local/bin}/nhm-hook"'
+  ['stack.meta_skill.0']='ms --version'
+  ['stack.automated_plan_reviser.0']='apr --help'
+  ['stack.jeffreysprompts.0']='jfp --version'
+  ['stack.process_triage.0']='pt --help'
+  ['stack.ultimate_bug_scanner.0']='ubs --help'
+  ['stack.beads_rust.0']='br --version'
+  ['stack.beads_viewer.0']='bv --help || bv --version'
+  ['stack.cass.0']='cass --help || cass --version'
+  ['stack.cm.0']='cm --version'
+  ['stack.caam.0']='caam status || caam --help'
+  ['stack.slb.0']='export PATH="$HOME/go/bin:$PATH" && slb >/dev/null 2>&1 || slb --help >/dev/null 2>&1'
+  ['stack.dcg.0']='dcg --version'
+  ['stack.dcg.1']='claude_settings_has_command_hook() {
+  local settings_file="${1:-}"
+  local command_pattern="${2:-}"
+  local jq_bin=""
+
+  [[ -n "$settings_file" && -n "$command_pattern" ]] || return 1
+  [[ -f "$settings_file" ]] || return 1
+  for jq_bin in /usr/bin/jq /bin/jq /usr/local/bin/jq /usr/local/sbin/jq /usr/sbin/jq /sbin/jq; do
+    [[ -x "$jq_bin" ]] && break
+  done
+  [[ -x "$jq_bin" ]] || return 1
+
+  "$jq_bin" -e --arg pattern "$command_pattern" '\''
+    def command_hook_matches:
+      type == "object"
+      and ((.type? // "command") == "command")
+      and ((.command? // "") | strings | test($pattern));
+    def event_entry_matches:
+      if type == "object" and (.hooks? | type) == "array" then
+        any(.hooks[]?; command_hook_matches)
+      else
+        command_hook_matches
+      end;
+    def hook_event_entries:
+      if (.hooks? | type) == "object" then
+        .hooks | to_entries[]? | .value | arrays | .[]?
+      elif (.hooks? | type) == "array" then
+        .hooks[]?
+      else
+        empty
+      end;
+    any(hook_event_entries; event_entry_matches)
+  '\'' "$settings_file" >/dev/null 2>&1
+}
+
+settings="$HOME/.claude/settings.json"
+alt_settings="$HOME/.config/claude/settings.json"
+dcg_command_pattern='\''(^|[[:space:]/])dcg([[:space:]]|$)'\''
+
+claude_settings_has_command_hook "$settings" "$dcg_command_pattern" ||
+  claude_settings_has_command_hook "$alt_settings" "$dcg_command_pattern"'
+  ['stack.ru.0']='ru --version'
+  ['stack.brenner_bot.0']='brenner --version || brenner --help'
+  ['stack.rch.0']='rch --version || rch --help'
+  ['stack.srps.0']='command -v sysmoni'
+  ['stack.srps.1']='systemctl is-active ananicy-cpp'
+  ['stack.frankensearch.0']='fsfs version || fsfs --help'
+  ['stack.storage_ballast_helper.0']='command -v sbh'
+  ['stack.cross_agent_session_resumer.0']='casr providers || casr --help'
+  ['stack.doodlestein_self_releaser.0']='dsr --version || dsr --help'
+  ['stack.agent_settings_backup.0']='asb version || asb help'
+  ['stack.pcr.0']='claude_settings_has_command_hook() {
+  local settings_file="${1:-}"
+  local command_pattern="${2:-}"
+  local jq_bin=""
+
+  [[ -n "$settings_file" && -n "$command_pattern" ]] || return 1
+  [[ -f "$settings_file" ]] || return 1
+  for jq_bin in /usr/bin/jq /bin/jq /usr/local/bin/jq /usr/local/sbin/jq /usr/sbin/jq /sbin/jq; do
+    [[ -x "$jq_bin" ]] && break
+  done
+  [[ -x "$jq_bin" ]] || return 1
+
+  "$jq_bin" -e --arg pattern "$command_pattern" '\''
+    def command_hook_matches:
+      type == "object"
+      and ((.type? // "command") == "command")
+      and ((.command? // "") | strings | test($pattern));
+    def event_entry_matches:
+      if type == "object" and (.hooks? | type) == "array" then
+        any(.hooks[]?; command_hook_matches)
+      else
+        command_hook_matches
+      end;
+    def hook_event_entries:
+      if (.hooks? | type) == "object" then
+        .hooks | to_entries[]? | .value | arrays | .[]?
+      elif (.hooks? | type) == "array" then
+        .hooks[]?
+      else
+        empty
+      end;
+    any(hook_event_entries; event_entry_matches)
+  '\'' "$settings_file" >/dev/null 2>&1
+}
+
+target_home="${TARGET_HOME:-$HOME}"
+hook_script="$target_home/.local/bin/claude-post-compact-reminder"
+settings="$target_home/.claude/settings.json"
+alt_settings="$target_home/.config/claude/settings.json"
+pcr_command_pattern='\''(^|[[:space:]/])claude-post-compact-reminder([[:space:]]|$)'\''
+
+test -x "$hook_script" || exit 1
+
+claude_settings_has_command_hook "$settings" "$pcr_command_pattern" ||
+  claude_settings_has_command_hook "$alt_settings" "$pcr_command_pattern"'
+  ['stack.eidetic_engine_cli.0']='ee --version || ee --help'
+  ['stack.franken_markdown.0']='fmd --version || fmd --help'
+  ['stack.pi_agent_rust.0']='pi --version || pi --help'
+  ['stack.power_failure_resumer.0']='command -v pfr'
+  ['utils.giil.0']='giil --help || giil --version'
+  ['utils.csctf.0']='csctf --help || csctf --version'
+  ['utils.xf.0']='xf --help || xf --version'
+  ['utils.toon_rust.0']='toon --help || toon --version'
+  ['utils.rano.0']='rano --help || rano --version'
+  ['utils.mdwb.0']='mdwb --help || mdwb --version'
+  ['utils.s2p.0']='s2p --help'
+  ['utils.rust_proxy.0']='rust_proxy --help || rust_proxy --version'
+  ['utils.aadc.0']='aadc --help || aadc --version'
+  ['utils.caut.0']='caut --help || caut --version'
+  ['acfs.workspace.0']='test -d /data/projects/my_first_project'
+  ['acfs.workspace.1']='acfs_has_active_agents_alias() {
+  local file="${1:-}"
+  [[ -f "$file" ]] || return 1
+
+  awk '\''
+      /^[[:space:]]*#/ { next }
+      /^[[:space:]]*alias[[:space:]]+agents=/ { found=1; exit }
+      END { exit(found ? 0 : 1) }
+  '\'' "$file" 2>/dev/null
+}
+
+acfs_has_active_agents_alias ~/.zshrc.local || acfs_has_active_agents_alias ~/.zshrc'
+  ['acfs.onboard.0']='onboard --help || command -v onboard'
+  ['acfs.update.0']='acfs-update --help || command -v acfs-update'
+  ['acfs.nightly.0']='systemctl --user is-enabled acfs-nightly-update.timer'
+  ['acfs.doctor.0']='acfs doctor --help || command -v acfs'
+)
+
+declare -gA ACFS_MODULE_VERIFY_RUN_AS=(
+  ['base.system']="root"
+  ['users.ubuntu']="root"
+  ['base.filesystem']="root"
+  ['shell.zsh']="root"
+  ['shell.login']="current"
+  ['shell.omz']="target_user"
+  ['cli.modern']="root"
+  ['tools.lazygit']="root"
+  ['tools.docker']="root"
+  ['tools.lazydocker']="root"
+  ['tools.incus']="root"
+  ['network.tailscale']="root"
+  ['network.ssh_keepalive']="root"
+  ['lang.bun']="target_user"
+  ['lang.uv']="target_user"
+  ['lang.rust']="target_user"
+  ['lang.go']="root"
+  ['lang.nvm']="target_user"
+  ['tools.atuin']="target_user"
+  ['tools.zoxide']="target_user"
+  ['tools.ast_grep']="target_user"
+  ['agents.claude']="target_user"
+  ['agents.codex']="target_user"
+  ['agents.gemini']="target_user"
+  ['agents.antigravity']="target_user"
+  ['agents.opencode']="target_user"
+  ['agents.omp']="target_user"
+  ['agents.grok']="target_user"
+  ['tools.vault']="root"
+  ['db.postgres18']="root"
+  ['cloud.wrangler']="target_user"
+  ['cloud.supabase']="target_user"
+  ['cloud.vercel']="target_user"
+  ['tools.herdr']="target_user"
+  ['stack.mcp_agent_mail']="target_user"
+  ['stack.nhm']="target_user"
+  ['stack.meta_skill']="target_user"
+  ['stack.automated_plan_reviser']="target_user"
+  ['stack.jeffreysprompts']="target_user"
+  ['stack.process_triage']="target_user"
+  ['stack.ultimate_bug_scanner']="target_user"
+  ['stack.beads_rust']="target_user"
+  ['stack.beads_viewer']="target_user"
+  ['stack.cass']="target_user"
+  ['stack.cm']="target_user"
+  ['stack.caam']="target_user"
+  ['stack.slb']="target_user"
+  ['stack.dcg']="target_user"
+  ['stack.ru']="target_user"
+  ['stack.brenner_bot']="target_user"
+  ['stack.rch']="target_user"
+  ['stack.srps']="target_user"
+  ['stack.frankensearch']="target_user"
+  ['stack.storage_ballast_helper']="target_user"
+  ['stack.cross_agent_session_resumer']="target_user"
+  ['stack.doodlestein_self_releaser']="target_user"
+  ['stack.agent_settings_backup']="target_user"
+  ['stack.pcr']="target_user"
+  ['stack.eidetic_engine_cli']="target_user"
+  ['stack.franken_markdown']="target_user"
+  ['stack.pi_agent_rust']="target_user"
+  ['stack.power_failure_resumer']="target_user"
+  ['utils.giil']="target_user"
+  ['utils.csctf']="target_user"
+  ['utils.xf']="target_user"
+  ['utils.toon_rust']="target_user"
+  ['utils.rano']="target_user"
+  ['utils.mdwb']="target_user"
+  ['utils.s2p']="target_user"
+  ['utils.rust_proxy']="target_user"
+  ['utils.aadc']="target_user"
+  ['utils.caut']="target_user"
+  ['acfs.workspace']="target_user"
+  ['acfs.onboard']="target_user"
+  ['acfs.update']="target_user"
+  ['acfs.nightly']="target_user"
+  ['acfs.doctor']="target_user"
+)
+
 declare -gA ACFS_MODULE_PLUGIN_PACKAGE=(
 )
 
@@ -951,6 +1615,7 @@ declare -gA ACFS_MODULE_OPTIONAL=(
   ['users.ubuntu']="0"
   ['base.filesystem']="0"
   ['shell.zsh']="0"
+  ['shell.login']="0"
   ['shell.omz']="0"
   ['cli.modern']="0"
   ['tools.lazygit']="0"

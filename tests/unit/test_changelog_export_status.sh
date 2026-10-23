@@ -5658,6 +5658,39 @@ test_status_can_be_sourced_without_running_main() {
 
     cleanup_mock_env
 }
+test_status_resolves_the_bin_dir_once_per_run() {
+    # Each of the 23 tool lookups re-read the state file's bin_dir (~20 ms
+    # apiece, most of a ~0.9 s run). The lookups now share one resolution,
+    # and a sourcing caller is left without a cached value afterwards.
+    setup_mock_env
+    # status resolves no bin dir for a target user that does not exist, as
+    # the mock's "tester" doesn't on most hosts, so this state names none:
+    # the current user.
+    printf '%s\n' '{"mode":"vibe","started_at":"2026-03-09T08:00:00Z","last_updated":"2026-03-10T12:34:56Z"}' > "$TEST_ACFS/state.json"
+
+    local calls_file="$TEST_HOME/bin-dir-calls" output=""
+    output=$(HOME="$TEST_HOME" ACFS_HOME="$TEST_ACFS" TEST_STATUS_SCRIPT="$STATUS_SH" CALLS_FILE="$calls_file" \
+        bash -c '
+            source "$TEST_STATUS_SCRIPT"
+            eval "$(declare -f _status_preferred_bin_dir | sed "1s/_status_preferred_bin_dir/_real_preferred_bin_dir/")"
+            _status_preferred_bin_dir() { echo x >> "$CALLS_FILE"; _real_preferred_bin_dir "$@"; }
+            status_main --json >/dev/null 2>&1 || true
+            printf "cache=[%s|%s]\n" "$_STATUS_BIN_DIR_CACHE_HOME" "$_STATUS_BIN_DIR_CACHE"
+        ' 2>/dev/null)
+
+    # One call primes the tool-lookup cache; the other is the one-time PATH
+    # setup in _status_prepare_context. Without the cache it was 25.
+    local calls=0
+    [[ -f "$calls_file" ]] && calls="$(wc -l < "$calls_file" | tr -d ' ')"
+    if [[ "$calls" -ge 1 && "$calls" -le 2 && "$output" == "cache=[|]" ]]; then
+        harness_pass "status resolves the bin dir once per run and clears it after"
+    else
+        harness_fail "status resolves the bin dir once per run and clears it after" "calls=$calls output=$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_status_ignores_relative_home_state_trap() {
     setup_system_state_target_home_only_env
     setup_relative_home_trap
@@ -6454,8 +6487,11 @@ test_continue_names_every_failed_phase() {
   "started_at": "2026-03-09T08:00:00Z",
   "last_updated": "2026-03-10T12:34:56Z",
   "completed_phases": ["user_setup", "agents", "finalize"],
-  "failed_phase": "stack",
-  "failed_phases": ["languages", "stack"],
+  "phase_steps": {
+    "languages": {"Execution failed": {"status": "failed", "required": true}},
+    "stack": {"Installing dcg": {"status": "failed", "required": true}}
+  },
+  "failed_phase": "languages",
   "install_status": "failed"
 }
 JSON
@@ -6487,7 +6523,6 @@ test_continue_failed_install_status_beats_completed_finalize() {
   "last_updated": "2026-03-10T12:34:56Z",
   "completed_phases": ["user_setup", "filesystem", "shell_setup", "cli_tools", "languages", "agents", "cloud_db", "stack", "finalize"],
   "failed_phase": null,
-  "failed_phases": [],
   "install_status": "failed"
 }
 JSON
@@ -6749,8 +6784,11 @@ test_info_reports_install_outcome() {
   "target_home": "$TEST_TARGET_HOME",
   "started_at": "2026-03-09T08:00:00Z",
   "completed_phases": ["user_setup", "agents", "finalize"],
-  "failed_phase": "stack",
-  "failed_phases": ["languages", "stack"],
+  "phase_steps": {
+    "languages": {"Execution failed": {"status": "failed", "required": true}},
+    "stack": {"Installing dcg": {"status": "failed", "required": true}}
+  },
+  "failed_phase": "languages",
   "install_status": "failed"
 }
 EOF
@@ -10718,7 +10756,6 @@ EOF
 test_doctor_deep_optional_probes_use_target_home_under_root_home() {
     setup_installed_layout_env
 
-    mkdir -p "$TEST_TARGET_HOME/.asb"
     cat > "$TEST_TARGET_HOME/.local/bin/asb" <<EOF
 #!/usr/bin/env bash
 if [[ "\${HOME:-}" != "$TEST_TARGET_HOME" ]]; then
@@ -12002,7 +12039,7 @@ test_status_editor_partial_and_failed_snapshots() {
 
 test_status_editor_reads_install_status() {
     status_protocol_setup failed-install
-    printf '%s\n' '{"completed_phases":["user_setup","finalize"],"failed_phases":["languages","fixture-private-phase"],"install_status":"failed"}' > "$PROTOCOL_HOME/.acfs/state.json"
+    printf '%s\n' '{"completed_phases":["user_setup","finalize"],"phase_steps":{"languages":{"a":{"status":"failed","required":true}},"fixture-private-phase":{"b":{"status":"failed","required":true}}},"install_status":"failed"}' > "$PROTOCOL_HOME/.acfs/state.json"
     if status_protocol_run 2 failed-install --ide &&
         jq -e '.install.status == "failed" and .install.failed_phases == ["languages"]' "$PROTOCOL_OUTPUT" >/dev/null &&
         ! grep -Fq fixture-private "$PROTOCOL_OUTPUT"; then
@@ -13545,6 +13582,7 @@ main() {
     test_status_plain_output_avoids_ansi_when_not_tty || true
     test_status_reports_last_updated_timestamp || true
     test_status_last_update_tracks_completed_update_runs || true
+    test_status_resolves_the_bin_dir_once_per_run || true
     test_status_errors_on_malformed_state_json || true
     test_status_uses_installed_layout_under_root_home || true
     test_status_uses_explicit_target_home_when_state_is_missing || true

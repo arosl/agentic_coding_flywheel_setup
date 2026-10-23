@@ -96,6 +96,7 @@ Start here, pick the one page whose line matches your question, and open only th
 - [`tools/README.md`](tools/README.md): which tools have pages in `docs/tools/`.
 - [`tools/beads_rust.md`](tools/beads_rust.md): how to use `br`, the issue tracker.
 - [`tools/brenner_bot.md`](tools/brenner_bot.md): how to use `brenner`, the research session manager.
+- [`tools/ee.md`](tools/ee.md): how to use `ee`, the Eidetic Engine, durable local memory for coding agents.
 - [`tools/meta_skill.md`](tools/meta_skill.md): how to use `ms`, the local knowledge base with semantic search.
 - [`tools/rch.md`](tools/rch.md): how to use `rch`, the remote compilation helper.
 - [`tools/utilities.md`](tools/utilities.md): the optional utility tools ACFS installs.

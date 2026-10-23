@@ -1002,6 +1002,34 @@ is_expected_acfs_origin_url() {
 # Logging Infrastructure
 # ============================================================
 
+# The Version line names the git checkout ACFS_REPO_ROOT, but fleet nightlies
+# run the deployed copy under ~/.acfs with --no-self-update, which only a
+# self-updating run refreshes. On 2026-10-13 logs said v0.10.0+c86c2073 while
+# eight hosts ran that morning's update.sh and a 10-04 stack.sh. When this run
+# executes code outside the checkout, say whether it matches the named commit.
+update_runtime_provenance_line() {
+    local runtime_root="" cmp_bin="" git_bin="" matches=""
+
+    runtime_root="$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd)" || return 1
+    [[ -n "$runtime_root" && -n "${ACFS_REPO_ROOT:-}" && "$runtime_root" != "$ACFS_REPO_ROOT" ]] || return 1
+    [[ -f "$SCRIPT_DIR/update.sh" ]] || return 1
+    cmp_bin="$(update_system_binary_path cmp 2>/dev/null || true)"
+    git_bin="$(update_system_binary_path git 2>/dev/null || true)"
+    if [[ -n "$cmp_bin" && -n "$git_bin" && -d "$ACFS_REPO_ROOT/.git" ]] &&
+        "$git_bin" -C "$ACFS_REPO_ROOT" cat-file -e HEAD:scripts/lib/update.sh 2>/dev/null; then
+        if "$git_bin" -C "$ACFS_REPO_ROOT" show HEAD:scripts/lib/update.sh 2>/dev/null | "$cmp_bin" -s - "$SCRIPT_DIR/update.sh"; then
+            matches=yes
+        else
+            matches=no
+        fi
+    fi
+    case "$matches" in
+        yes) printf 'Runtime: %s (deployed copy; update.sh matches that commit)\n' "$runtime_root" ;;
+        no) printf 'Runtime: %s (deployed copy; update.sh differs from that commit, so this run uses other code: a self-updating acfs update deploys it)\n' "$runtime_root" ;;
+        *) printf 'Runtime: %s (deployed copy; not compared with the checkout)\n' "$runtime_root" ;;
+    esac
+}
+
 init_logging() {
     UPDATE_LOG_PATH=""
     if update_is_read_only_mode; then
@@ -1024,6 +1052,7 @@ init_logging() {
         echo "Started: $(date -Iseconds)"
         echo "User: $(update_current_user 2>/dev/null || true)"
         echo "Version: $ACFS_VERSION_DISPLAY"
+        update_runtime_provenance_line 2>/dev/null || true
         echo "==============================================="
         echo ""
     } >> "$UPDATE_LOG_FILE"
@@ -1603,7 +1632,13 @@ _acfs_atuin_agent_context() {
         return 0
     fi
 
-    parent_comm="$(ps -o comm= -p "${PPID:-0}" 2>/dev/null || true)"
+    # Linux: read the parent name directly. `ps -p` still walks every /proc entry,
+    # which cost ~0.8 s per typed command on a 2,600-process host (trj, 2026-10-14).
+    if [[ -r "/proc/${PPID:-0}/comm" ]]; then
+        IFS= read -r parent_comm < "/proc/${PPID:-0}/comm" || parent_comm=""
+    else
+        parent_comm="$(ps -o comm= -p "${PPID:-0}" 2>/dev/null || true)"
+    fi
     case "$parent_comm" in
         claude|codex|cod|cc|agy|antigravity|agy-locked|gmi|gemini|bun|node) return 0 ;;
         *) return 1 ;;
@@ -3601,6 +3636,7 @@ sync_acfs_deployed() {
         # repo-relative-path : deployed-relative-path
         "packages/onboard/onboard.sh:onboard/onboard.sh"
         "scripts/lib/doctor.sh:scripts/lib/doctor.sh"
+        "scripts/lib/user.sh:scripts/lib/user.sh"
         "scripts/lib/doctor.sh:bin/acfs"
         "scripts/lib/acfs-services.sh:scripts/lib/acfs-services.sh"
         "scripts/acfs-update:bin/acfs-update"
@@ -5170,9 +5206,10 @@ update_tool_smoke_check() {
 
 # State file recording post-install verification failures per tool, so the
 # nightly backs off instead of retry-looping a broken release. Plain text,
-# one `tool count last_failure_epoch [installer_sha256]` line per tool; the
-# sha is the pinned installer that failed (absent in lines written before
-# pins were tracked).
+# one `tool count last_failure_epoch [installer_sha256 [release_tag]]` line
+# per tool: the pinned installer that failed and the upstream release that was
+# latest at the time (`-` for an unknown sha before a tag; both absent in
+# lines written before they were tracked).
 update_rollback_state_file() {
     local state_home="${XDG_STATE_HOME:-}"
     if [[ -z "$state_home" ]]; then
@@ -5189,7 +5226,22 @@ update_rollback_state_lookup() {
     local state_file=""
     state_file="$(update_rollback_state_file 2>/dev/null || true)"
     [[ -n "$state_file" && -f "$state_file" ]] || return 1
-    awk -v tool="$tool" '$1 == tool { print $2, $3, $4; found = 1 } END { exit found ? 0 : 1 }' "$state_file"
+    awk -v tool="$tool" '$1 == tool { print $2, $3, $4, $5; found = 1 } END { exit found ? 0 : 1 }' "$state_file"
+}
+
+# Latest release tag of the GitHub repo a tool's pinned installer lives in
+# (raw.githubusercontent.com/OWNER/REPO/...), read from the releases/latest
+# redirect: no API token, no rate limit. Fails for any other installer, a repo
+# without a release, and network errors.
+update_tool_latest_release_tag() {
+    local tool="${1:-}" url="" effective=""
+    declare -p KNOWN_INSTALLERS >/dev/null 2>&1 || return 1
+    url="${KNOWN_INSTALLERS[$tool]:-}"
+    [[ "$url" =~ ^https://raw\.githubusercontent\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/ ]] || return 1
+    effective="$(update_curl --connect-timeout 5 --max-time 15 -o /dev/null -w '%{url_effective}' \
+        "https://github.com/${BASH_REMATCH[1]}/releases/latest" 2>/dev/null)" || return 1
+    [[ "$effective" =~ ^https://github\.com/[^/]+/[^/]+/releases/tag/([A-Za-z0-9._+-]{1,64})$ ]] || return 1
+    printf '%s\n' "${BASH_REMATCH[1]}"
 }
 
 _update_rollback_state_rewrite() {
@@ -5224,14 +5276,18 @@ _update_rollback_state_rewrite() {
 update_rollback_state_record_failure() {
     local tool="${1:-}"
     local installer_sha="${2:-}"
+    local release_tag="${3:-}"
     [[ -n "$tool" ]] || return 1
     [[ "$installer_sha" =~ ^[[:xdigit:]]{64}$ ]] || installer_sha=""
+    [[ "$release_tag" =~ ^[A-Za-z0-9._+-]{1,64}$ ]] || release_tag=""
+    # The tag is the fifth field, so an unknown sha needs a placeholder.
+    [[ -z "$release_tag" || -n "$installer_sha" ]] || installer_sha="-"
     local count=0
     local entry=""
     entry="$(update_rollback_state_lookup "$tool" 2>/dev/null || true)"
     [[ -n "$entry" ]] && count="${entry%% *}"
     [[ "$count" =~ ^[0-9]+$ ]] || count=0
-    _update_rollback_state_rewrite "$tool" "$tool $((count + 1)) $(date +%s)${installer_sha:+ $installer_sha}"
+    _update_rollback_state_rewrite "$tool" "$tool $((count + 1)) $(date +%s)${installer_sha:+ $installer_sha}${release_tag:+ $release_tag}"
 }
 
 update_rollback_state_clear() {
@@ -5248,6 +5304,10 @@ update_rollback_state_clear() {
 # reaches the host the next run instead of up to a week later (csctf on the
 # non-AVX2 yto stayed broken in backoff after its fixed installer was pinned,
 # 2026-10-13). A failure recorded without a pin counts as a different pin.
+# Most fixes ship as a new release behind an unchanged installer, so a latest
+# release tag that differs from the one recorded at the failure lifts the
+# backoff too (xf v0.4.3 fixed ts2's glibc failure, but ts2 stayed backed off
+# another six days). An unknown tag on either side lifts nothing.
 update_tool_rollback_backoff_details() {
     local tool="${1:-}"
     local current_sha="${2:-}"
@@ -5255,10 +5315,10 @@ update_tool_rollback_backoff_details() {
     [[ -n "$tool" ]] || return 1
     [[ "${FORCE_MODE:-false}" == "true" ]] && return 1
 
-    local entry="" count=0 last_epoch=0 failed_sha=""
+    local entry="" count=0 last_epoch=0 failed_sha="" failed_tag="" current_tag=""
     entry="$(update_rollback_state_lookup "$tool" 2>/dev/null || true)"
     [[ -n "$entry" ]] || return 1
-    read -r count last_epoch failed_sha <<<"$entry"
+    read -r count last_epoch failed_sha failed_tag <<<"$entry"
     [[ "$count" =~ ^[0-9]+$ && "$last_epoch" =~ ^[0-9]+$ ]] || return 1
     ((count > 0)) || return 1
 
@@ -5275,6 +5335,14 @@ update_tool_rollback_backoff_details() {
     # A broken clock fails open: better to retry the update than to wedge.
     [[ "$now_epoch" =~ ^[0-9]+$ ]] || return 1
     ((now_epoch < retry_epoch)) || return 1
+
+    if [[ -n "$failed_tag" ]]; then
+        current_tag="$(update_tool_latest_release_tag "$tool" 2>/dev/null || true)"
+        if [[ -n "$current_tag" && "$current_tag" != "$failed_tag" ]]; then
+            log_to_file "Rollback backoff lifted for $tool: a new release was published since the last failed verification ($failed_tag -> $current_tag)"
+            return 1
+        fi
+    fi
 
     local retry_display=""
     retry_display="$(date -d "@$retry_epoch" +%F 2>/dev/null || date -r "$retry_epoch" +%F 2>/dev/null || echo "later")"
@@ -5364,7 +5432,8 @@ update_verify_tool_or_rollback() {
         log_to_file "No previous $tool binary retained for rollback"
     fi
 
-    update_rollback_state_record_failure "$tool" "$installer_sha" || true
+    update_rollback_state_record_failure "$tool" "$installer_sha" \
+        "$(update_tool_latest_release_tag "$tool" 2>/dev/null || true)" || true
     return 1
 }
 

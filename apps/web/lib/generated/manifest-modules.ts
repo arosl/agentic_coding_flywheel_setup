@@ -41,7 +41,7 @@ export interface ManifestProvenanceMetadata {
 
 export const manifestProvenance = {
   acfsVersion: "0.10.0",
-  manifestSha256: "398056bd5ca3aefcfd43586b1f99e004b695b40ec4e5e3717fee4b44b2eeefa7",
+  manifestSha256: "51f415e374a6c1c8246e452b9c85f0df6cbf20a9a295c7b7d567f280675b398b",
   checksumsYamlSha256: "02674a870547498bbf30bc918b825c4f7ccf69d8c9fd030fcdef6d0e93ff3ca6",
 } as const satisfies ManifestProvenanceMetadata;
 
@@ -102,12 +102,28 @@ export const manifestModules: ManifestModuleMetadata[] = [
     optional: false,
   },
   {
+    id: "shell.login",
+    description: "Validated and recoverable login-shell configuration",
+    category: "shell",
+    phase: 4,
+    dependencies: [
+      "shell.zsh",
+      "users.ubuntu",
+    ],
+    tags: [
+      "critical",
+      "shell-ux",
+    ],
+    enabledByDefault: true,
+    optional: false,
+  },
+  {
     id: "shell.omz",
     description: "Oh My Zsh + Powerlevel10k + plugins + ACFS config",
     category: "shell",
     phase: 4,
     dependencies: [
-      "shell.zsh",
+      "shell.login",
       "users.ubuntu",
     ],
     tags: [

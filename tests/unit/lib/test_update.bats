@@ -25,6 +25,11 @@ setup() {
     # fork's default owner is covered by tests/unit/test_fork_source.sh.
     ACFS_REPO_OWNER="Dicklesworthstone"
 
+    # update.sh looks for a .git checkout and falls back to
+    # /data/projects/agentic_coding_flywheel_setup, so an exported test tree
+    # (no .git) on a fleet host ran against that host's checkout instead.
+    ACFS_REPO_ROOT="$PROJECT_ROOT"
+
     # Mock date
     stub_command "date" "2025-01-01"
 }
@@ -3603,6 +3608,49 @@ EOF
     assert_success
 }
 
+@test "Atuin guard wrappers read the parent name from /proc, not a ps scan" {
+    # `ps -p` walks every /proc entry: ~0.8 s per typed command on a busy host.
+    local f
+    for f in acfs.manifest.yaml install.sh scripts/generated/install_tools.sh scripts/lib/update.sh; do
+        run grep -F 'IFS= read -r parent_comm < "/proc/${PPID:-0}/comm"' "$PROJECT_ROOT/$f"
+        assert_success
+    done
+}
+
+@test "update_write_atuin_guard_wrapper: history hooks run for a shell parent, skip for an agent parent" {
+    local bin_dir="$HOME/bin" real="$HOME/real-atuin" wrapper="$HOME/bin/atuin"
+    mkdir -p "$bin_dir"
+    printf '#!/usr/bin/env bash\necho "REAL $*"\n' > "$real"
+    chmod +x "$real"
+
+    update_write_atuin_guard_wrapper "$wrapper" "$real"
+    [[ -x "$wrapper" ]]
+
+    local clean_env=(env -u CODEX_CI -u CODEX_THREAD_ID -u CLAUDE_PROJECT_DIR -u AGENT_NAME)
+
+    # Parent is a plain shell: the history hook reaches the real binary.
+    run bash -c '"$@"; true' _ "${clean_env[@]}" "$wrapper" history start -- ls
+    assert_success
+    assert_output "REAL history start -- ls"
+
+    # Agent env var: skipped without touching the real binary.
+    run env CLAUDE_PROJECT_DIR=/x "$wrapper" history end -- ls
+    assert_success
+    assert_output ""
+
+    # Parent process named like an agent (Linux comm comes from the exec'd name).
+    [[ -r /proc/self/comm ]] || skip "parent-name detection by comm is Linux-only"
+    ln -s "$(command -v bash)" "$bin_dir/claude"
+    run "$bin_dir/claude" -c '"$@"; true' _ "${clean_env[@]}" "$wrapper" history start -- ls
+    assert_success
+    assert_output ""
+
+    # Non-history commands always pass through.
+    run "$bin_dir/claude" -c '"$@"; true' _ "${clean_env[@]}" "$wrapper" search foo
+    assert_success
+    assert_output "REAL search foo"
+}
+
 @test "sync_acfs_zsh_loader: removes duplicate local override sourcing" {
     cat > "$HOME/.zshrc" <<'EOF'
 # ACFS loader
@@ -4132,7 +4180,10 @@ EOF
     run grep -F 'acfs_zshrc_is_managed_loader() {' "$generated"
     assert_success
 
-    run grep -F 'acfs_external_shell_handoff_configured() {' "$generated"
+    run grep -F 'source "${ACFS_LIB_DIR:-$HOME/.acfs/scripts/lib}/user.sh"' "$generated"
+    assert_success
+
+    run grep -F 'set_default_shell' "$generated"
     assert_success
 
     run grep -F "grep -q 'ACFS externally-managed shell handoff' ~/.bashrc" "$generated"
@@ -11030,10 +11081,10 @@ EOF
     run grep -F 'current_user="$(acfs_early_resolve_current_user 2>/dev/null || true)"' "$installer"
     assert_success
 
-    run grep -F 'current_shell_entry="$(acfs_early_getent_passwd_entry "$TARGET_USER" 2>/dev/null || true)"' "$installer"
+    run grep -F 'try_step "Setting zsh as default shell" set_default_shell || return 1' "$installer"
     assert_success
 
-    run grep -F '$SUDO "$chsh_path" -s "$zsh_path" "$TARGET_USER"' "$installer"
+    run grep -F 'user_login_shell_configured "$TARGET_USER"' "$installer"
     assert_success
 
     run grep -F '_ACFS_DETECTED_USER="${SUDO_USER:-$(whoami)}"' "$installer"
@@ -11289,6 +11340,54 @@ EOF
 
     run _smoke_binary_exists "current-shell-only-tool"
     assert_success
+}
+
+@test "smoke_test.sh: shell check delegates approval to shared account policy" {
+    local smoke="$PROJECT_ROOT/scripts/lib/smoke_test.sh"
+    eval "$(sed -n '/^_smoke_login_shell_configured() (/ ,/^)/p' "$smoke")"
+    eval "$(sed -n '/^_check_shell() {$/,/^}$/p' "$smoke")"
+    _SMOKE_TARGET_USER="policy-target"
+    user_login_shell_configured() { [[ "$1" == policy-target ]]; }
+    _smoke_pass() { printf 'PASS: %s\n' "$1"; }
+    _smoke_fail() { printf 'FAIL: %s\n' "$1"; }
+
+    run _check_shell
+    assert_success
+    assert_output --partial "PASS: Shell: verified login-shell configuration"
+}
+
+@test "smoke_test.sh: unapproved zsh-like path is a critical failure" {
+    local smoke="$PROJECT_ROOT/scripts/lib/smoke_test.sh"
+    eval "$(sed -n '/^_check_shell() {$/,/^}$/p' "$smoke")"
+    _SMOKE_TARGET_USER="policy-target"
+    _smoke_login_shell_configured() { return 1; }
+    _smoke_getent_passwd_entry() { printf 'policy-target:x:1000:1000::/home/policy-target:/usr/sbin/zsh\n'; }
+    _smoke_passwd_shell_from_entry() { printf '/usr/sbin/zsh\n'; }
+    _smoke_is_externally_managed_user() { return 1; }
+    _smoke_pass() { printf 'PASS: %s\n' "$1"; }
+    _smoke_fail() { printf 'FAIL: %s\n' "$1"; }
+
+    run _check_shell
+    assert_failure
+    assert_output --partial "FAIL: Shell: login configuration is not verified (/usr/sbin/zsh)"
+    refute_output --partial "PASS:"
+}
+
+@test "smoke_test.sh: unverified externally managed shell is a critical failure" {
+    local smoke="$PROJECT_ROOT/scripts/lib/smoke_test.sh"
+    eval "$(sed -n '/^_check_shell() {$/,/^}$/p' "$smoke")"
+    _SMOKE_TARGET_USER="policy-target"
+    _smoke_login_shell_configured() { return 1; }
+    _smoke_getent_passwd_entry() { printf 'policy-target:x:1000:1000::/home/policy-target:/bin/fish\n'; }
+    _smoke_passwd_shell_from_entry() { printf '/bin/fish\n'; }
+    _smoke_is_externally_managed_user() { return 0; }
+    _smoke_pass() { printf 'PASS: %s\n' "$1"; }
+    _smoke_fail() { printf 'FAIL: %s\n' "$1"; }
+
+    run _check_shell
+    assert_failure
+    assert_output --partial "FAIL: Shell: externally managed login configuration is not verified"
+    refute_output --partial "PASS:"
 }
 
 @test "cheatsheet.sh: prepend_user_paths prefers ACFS bin and skips missing dirs" {
@@ -15575,6 +15674,103 @@ _backoff_installer_fixture() {
     assert_success
 }
 
+@test "rollback backoff: a new upstream release lifts it; the same, an unknown or an unrecorded release keeps it" {
+    _backoff_installer_fixture
+    local state_file="$HOME/.local/state/acfs/update-rollback.state"
+    update_tool_latest_release_tag() {
+        echo asked >> "$HOME/tag-lookups"
+        [[ -n "$BACKOFF_LATEST_TAG" ]] && printf '%s\n' "$BACKOFF_LATEST_TAG"
+    }
+    printf 'xf 6 %s %s v0.4.2\n' "$(/bin/date +%s)" "$BACKOFF_OLD_SHA" > "$state_file"
+
+    BACKOFF_LATEST_TAG=v0.4.2
+    run update_tool_rollback_backoff_details xf "$BACKOFF_OLD_SHA"
+    assert_success
+    BACKOFF_LATEST_TAG=v0.4.3
+    run update_tool_rollback_backoff_details xf "$BACKOFF_OLD_SHA"
+    assert_failure
+    # A lookup that fails (offline, rate limited) lifts nothing.
+    BACKOFF_LATEST_TAG=""
+    run update_tool_rollback_backoff_details xf "$BACKOFF_OLD_SHA"
+    assert_success
+    [[ "$(wc -l < "$HOME/tag-lookups")" -eq 3 ]]
+
+    # No recorded release, or a backoff that already ran out: upstream is not asked.
+    BACKOFF_LATEST_TAG=v9.9.9
+    printf 'xf 6 %s %s\n' "$(/bin/date +%s)" "$BACKOFF_OLD_SHA" > "$state_file"
+    run update_tool_rollback_backoff_details xf "$BACKOFF_OLD_SHA"
+    assert_success
+    printf 'xf 1 %s %s v0.4.2\n' "$(( $(/bin/date +%s) - 10 * 86400 ))" "$BACKOFF_OLD_SHA" > "$state_file"
+    run update_tool_rollback_backoff_details xf "$BACKOFF_OLD_SHA"
+    assert_failure
+    [[ "$(wc -l < "$HOME/tag-lookups")" -eq 3 ]]
+}
+
+@test "rollback backoff: a tool fixed by a new release behind an unchanged installer is retried" {
+    # xf v0.4.3 fixed ts2's glibc failure with a byte-identical install.sh,
+    # so the pin never changed and ts2 stayed backed off.
+    _backoff_installer_fixture
+    BACKOFF_PINNED_SHA="$BACKOFF_OLD_SHA"
+    update_tool_latest_release_tag() { printf 'v0.4.3\n'; }
+    printf 'br 6 %s %s v0.4.2\n' "$(/bin/date +%s)" "$BACKOFF_OLD_SHA" > "$HOME/.local/state/acfs/update-rollback.state"
+
+    run update_run_verified_installer_with_env br ""
+    [[ "$status" -ne 94 ]]
+    refute_output --partial "SKIPPED (rollback backoff)"
+    assert_output --partial "VERIFY br $BACKOFF_OLD_SHA"
+}
+
+@test "rollback: a failed verification records the release that was latest" {
+    _backoff_installer_fixture
+    local state_file="$HOME/.local/state/acfs/update-rollback.state"
+
+    update_rollback_state_record_failure xf "$BACKOFF_OLD_SHA" v0.4.2
+    run grep -E "^xf 1 [0-9]+ $BACKOFF_OLD_SHA v0\.4\.2\$" "$state_file"
+    assert_success
+    # The tag is the fifth field, so an unknown pin gets a placeholder...
+    update_rollback_state_record_failure rano "" v0.2.0
+    run grep -E '^rano 1 [0-9]+ - v0\.2\.0$' "$state_file"
+    assert_success
+    # ...which still counts as a different pin once one is known.
+    run update_tool_rollback_backoff_details rano "$BACKOFF_NEW_SHA"
+    assert_failure
+    # Anything that is not a plain tag is not stored.
+    update_rollback_state_record_failure ntm "$BACKOFF_OLD_SHA" 'v1 x;y'
+    run grep -E "^ntm 1 [0-9]+ $BACKOFF_OLD_SHA\$" "$state_file"
+    assert_success
+}
+
+@test "rollback: the release tag comes from the installer repo's releases/latest redirect" {
+    declare -gA KNOWN_INSTALLERS=(
+        [xf]="https://raw.githubusercontent.com/Dicklesworthstone/xf/main/install.sh"
+        [claude]="https://claude.ai/install.sh"
+        [norel]="https://raw.githubusercontent.com/someone/norel/main/install.sh"
+        [odd]="https://raw.githubusercontent.com/someone/odd/main/install.sh"
+        [down]="https://raw.githubusercontent.com/someone/down/main/install.sh"
+    )
+    update_curl() {
+        case "${*: -1}" in
+            https://github.com/Dicklesworthstone/xf/releases/latest)
+                printf 'https://github.com/Dicklesworthstone/xf/releases/tag/v0.4.3' ;;
+            https://github.com/someone/norel/releases/latest)
+                printf 'https://github.com/someone/norel/releases' ;;
+            https://github.com/someone/odd/releases/latest)
+                printf 'https://github.com/someone/odd/releases/tag/v1%%20x' ;;
+            *) return 22 ;;
+        esac
+    }
+
+    run update_tool_latest_release_tag xf
+    assert_success
+    assert_output "v0.4.3"
+    # Not a GitHub raw installer, no release yet, an odd tag, a failed request.
+    for tool in claude norel odd down; do
+        run update_tool_latest_release_tag "$tool"
+        assert_failure
+        assert_output ""
+    done
+}
+
 # ============================================================
 # ast-grep's sg launcher installed as ~/.local/bin/ast-grep (acfs-zbrk)
 # ============================================================
@@ -15925,6 +16121,23 @@ esac'
     grep -q 'echo old' "$bin"
     [[ ! -f "$bin.prev" ]]
     update_rollback_state_lookup brokentool
+}
+
+@test "verify-or-rollback: the backoff entry names the pin and the release that failed" {
+    # The setup() for this file stubs `date`; the entry needs a real epoch.
+    date() { /bin/date "$@"; }
+    export XDG_STATE_HOME="$HOME/.local/state"
+    mkdir -p "$HOME/bin"
+    local bin="$HOME/bin/brokentool" sha=""
+    sha="$(printf 'c%.0s' {1..64})"
+    write_smoke_fake_binary "$bin" 'echo "Traceback (most recent call last):" >&2; exit 1'
+    update_tool_binary_path() { printf '%s\n' "$HOME/bin/brokentool"; }
+    update_tool_latest_release_tag() { [[ "$1" == brokentool ]] && printf 'v1.2.3\n'; }
+
+    run update_verify_tool_or_rollback brokentool "$sha"
+    assert_failure
+    run grep -E "^brokentool 1 [0-9]+ $sha v1\.2\.3\$" "$XDG_STATE_HOME/acfs/update-rollback.state"
+    assert_success
 }
 
 @test "verify-or-rollback: a healthy fsfs-style install clears a previous backoff" {
@@ -16779,4 +16992,67 @@ _staging_head_refusing_first_write() {
 
     [[ "$rc" -ne 0 && -z "$out" ]] || fail "rc=$rc out=$out"
     [[ -z "$(compgen -G "/tmp/$prefix.*")$(compgen -G "/var/tmp/$prefix.*")" ]] || fail "probe file left behind"
+}
+
+# The Version header names the git checkout; fleet nightlies run the deployed
+# ~/.acfs copy, so the header also says whether that copy matches.
+_provenance_fixture() {
+    PROV_REPO="$(create_temp_dir)/checkout"
+    PROV_DEPLOYED="$(create_temp_dir)/acfs"
+    mkdir -p "$PROV_REPO/scripts/lib" "$PROV_DEPLOYED/scripts/lib"
+    printf '#!/usr/bin/env bash\necho current\n' > "$PROV_REPO/scripts/lib/update.sh"
+    git -C "$PROV_REPO" init -q
+    git -C "$PROV_REPO" add scripts/lib/update.sh
+    git -C "$PROV_REPO" -c user.name=t -c user.email=t@example.invalid commit -q -m init
+    ACFS_REPO_ROOT="$PROV_REPO"
+}
+
+@test "update log runtime line: a deployed copy matching the checkout commit says so" {
+    _provenance_fixture
+    cp "$PROV_REPO/scripts/lib/update.sh" "$PROV_DEPLOYED/scripts/lib/update.sh"
+    SCRIPT_DIR="$PROV_DEPLOYED/scripts/lib"
+
+    run update_runtime_provenance_line
+    assert_success
+    assert_output "Runtime: $PROV_DEPLOYED (deployed copy; update.sh matches that commit)"
+}
+
+@test "update log runtime line: a stale deployed copy is called out" {
+    _provenance_fixture
+    printf '#!/usr/bin/env bash\necho older\n' > "$PROV_DEPLOYED/scripts/lib/update.sh"
+    SCRIPT_DIR="$PROV_DEPLOYED/scripts/lib"
+
+    run update_runtime_provenance_line
+    assert_success
+    assert_output --partial "update.sh differs from that commit"
+    assert_output --partial "a self-updating acfs update deploys it"
+
+    # A working-tree edit does not count: the Version line names HEAD.
+    cp "$PROV_DEPLOYED/scripts/lib/update.sh" "$PROV_REPO/scripts/lib/update.sh"
+    run update_runtime_provenance_line
+    assert_output --partial "differs from that commit"
+}
+
+@test "update log runtime line: running from the checkout itself adds no line" {
+    _provenance_fixture
+    SCRIPT_DIR="$PROV_REPO/scripts/lib"
+
+    run update_runtime_provenance_line
+    assert_failure
+    assert_output ""
+}
+
+@test "update log runtime line: init_logging writes it under Version" {
+    _provenance_fixture
+    printf '#!/usr/bin/env bash\necho older\n' > "$PROV_DEPLOYED/scripts/lib/update.sh"
+    SCRIPT_DIR="$PROV_DEPLOYED/scripts/lib"
+    UPDATE_LOG_DIR="$(create_temp_dir)"
+    ACFS_VERSION_DISPLAY="v0.10.0+abc1234"
+    update_is_read_only_mode() { return 1; }
+
+    init_logging
+
+    run grep -A1 '^Version: v0.10.0+abc1234$' "$UPDATE_LOG_FILE"
+    assert_success
+    assert_output --partial "Runtime: $PROV_DEPLOYED (deployed copy; update.sh differs from that commit"
 }

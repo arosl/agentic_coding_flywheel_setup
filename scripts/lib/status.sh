@@ -406,7 +406,11 @@ _status_binary_path() {
     fi
 
     if [[ -n "$base_home" ]]; then
-        primary_bin_dir="$(_status_preferred_bin_dir "$base_home" 2>/dev/null || true)"
+        if [[ -n "$_STATUS_BIN_DIR_CACHE_HOME" && "$base_home" == "$_STATUS_BIN_DIR_CACHE_HOME" ]]; then
+            primary_bin_dir="$_STATUS_BIN_DIR_CACHE"
+        else
+            primary_bin_dir="$(_status_preferred_bin_dir "$base_home" 2>/dev/null || true)"
+        fi
         [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$base_home/.local/bin"
 
         for candidate in \
@@ -437,6 +441,34 @@ _status_binary_path() {
     done
 
     return 1
+}
+
+# _status_binary_path re-resolved the state file and re-read its bin_dir for
+# every tool (23 command substitutions, ~20 ms each: most of a ~0.9 s status
+# run on Linux hosts). status_main resolves it once for the home the lookups
+# will use; the subshells inherit the cache, and it is cleared on return so a
+# sourcing caller never sees a value from an earlier state.
+_STATUS_BIN_DIR_CACHE_HOME=""
+_STATUS_BIN_DIR_CACHE=""
+
+_status_prime_bin_dir_cache() {
+    local base_home="" current_user=""
+
+    _STATUS_BIN_DIR_CACHE_HOME=""
+    _STATUS_BIN_DIR_CACHE=""
+    if [[ -n "${TARGET_HOME:-}" ]]; then
+        base_home="${TARGET_HOME%/}"
+    elif [[ -n "${TARGET_USER:-}" ]]; then
+        current_user="$(_status_resolve_current_user 2>/dev/null || true)"
+        if [[ -n "$current_user" ]] && [[ "${TARGET_USER:-}" == "$current_user" ]]; then
+            base_home="${_STATUS_CURRENT_HOME:-}"
+        fi
+    else
+        base_home="${_STATUS_CURRENT_HOME:-}"
+    fi
+    [[ -n "$base_home" ]] || return 0
+    _STATUS_BIN_DIR_CACHE="$(_status_preferred_bin_dir "$base_home" 2>/dev/null || true)"
+    _STATUS_BIN_DIR_CACHE_HOME="$base_home"
 }
 
 _status_binary_exists() {
@@ -1264,10 +1296,17 @@ _status_editor_json() {
         def phase: . as $v | if ["base_deps","user_setup","filesystem","shell_setup","cli_tools","languages","agents","cloud_db","stack","finalize"] | index($v) then $v else null end;
         def count: if type == "number" and . >= 0 and floor == . then . else null end;
         def stamp: if type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|[+-][0-9]{2}:[0-9]{2})$") then . else null end;
+        # Every phase with a required step that failed and has not recovered,
+        # then failed_phase (state.sh: _ACFS_STATE_FAILED_PHASES_DEF).
+        def failed_phases:
+            [(.phase_steps | if type == "object" then . else {} end) | to_entries[]
+                | select(.value | type == "object" and any(.[]; type == "object" and .required != false and .status == "failed"))
+                | .key] as $from_steps
+            | $from_steps + ((.failed_phase | if type == "string" and . != "" then [.] else [] end) - $from_steps);
         ($state.completed_phases | if type == "array" then map(phase) | map(select(. != null)) | unique else [] end) as $completed |
         ($state.provider // $state.vps_provider // null) as $provider_raw |
         ($provider_raw as $p | if ["hetzner","ovh","contabo","digitalocean","aws","gcp","azure","local","other"] | index($p) then $p else null end) as $provider |
-        ($state.failed_phases | if type == "array" then map(select(type == "string")) else [] end) as $failed_phases |
+        ($state | failed_phases) as $failed_phases |
         (if $state_status != "ok" then $state_status
          elif $state.install_status == "failed" or ($failed_phases | length) > 0 or ($state.failed_phase != null and $state.failed_phase != "") then "failed"
          elif $state.current_phase != null then "partial"
@@ -1330,6 +1369,14 @@ _status_read_nightly_health() {
 }
 
 status_main() {
+    local rc=0
+    _status_main_body "$@" || rc=$?
+    _STATUS_BIN_DIR_CACHE_HOME=""
+    _STATUS_BIN_DIR_CACHE=""
+    return "$rc"
+}
+
+_status_main_body() {
     local parse_status=0
     local _state_file=""
     local -a _warnings=()
@@ -1389,6 +1436,7 @@ status_main() {
         _errors+=("state file invalid JSON")
     fi
 
+    _status_prime_bin_dir_cache
     for cmd in "${_CORE_TOOLS[@]}"; do
         if _status_binary_exists "$cmd"; then
             _tool_count=$((_tool_count + 1))

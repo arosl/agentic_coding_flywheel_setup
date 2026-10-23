@@ -95,6 +95,152 @@ teardown() {
     assert_output --partial "positive integer"
 }
 
+# Controlled search backend: fixed clock, historical data, and real filtering.
+# Reject stats/aggregation calls so neither output mode can silently use them.
+mock_session_search() {
+    check_cass_installed() { return 0; }
+    session_now_iso() { printf '%s\n' '2026-10-15T12:00:00Z'; }
+    cass() {
+        [[ "$1" == search && "$2" == '*' ]] || return 91
+        shift 2
+        local since="" until="" limit=0 agent=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --since) since=$2; shift 2 ;;
+                --until) until=$2; shift 2 ;;
+                --limit) limit=$2; shift 2 ;;
+                --agent) agent=$2; shift 2 ;;
+                --fields) shift 2 ;;
+                --json|--robot-meta) shift ;;
+                *) return 92 ;;
+            esac
+        done
+        jq -n --arg since "$since" --arg until "$until" --argjson limit "$limit" --arg agent "$agent" '
+            ("2026-10-15T12:00:00Z" | fromdateiso8601) as $clock |
+            [{source_path:"/recent/a",agent:"codex",workspace:"/project/a",age:0},
+             {source_path:"/recent/b",agent:"claude_code",workspace:"/project/b",age:0},
+             {source_path:"/recent/c",agent:"codex",workspace:"/project/a",age:0},
+             {source_path:"/recent/d",agent:"codex",workspace:"/project/d",age:0},
+             {source_path:"/historical",agent:"codex",workspace:"/old",age:2}] |
+            map(select(($clock - .age*86400) >= ($since|fromdateiso8601) and
+                ($clock - .age*86400) <= ($until|fromdateiso8601) and
+                ($agent == "" or .agent == $agent))) |
+            {hits: .[:$limit], _meta:{next_cursor:null}}'
+    }
+}
+
+@test "list_sessions: one day and three session limit share exact text and JSON results" {
+    mock_session_search
+    local listing text
+    listing=$(list_sessions --days 1 --limit 3 --json)
+    text=$(list_sessions --days 1 --limit 3)
+    [[ $(jq '.total' <<< "$listing") == 3 ]]
+    [[ $(jq '.by_agent | map(.count) | add' <<< "$listing") == 3 ]]
+    [[ $(jq '.by_workspace | map(.count) | add' <<< "$listing") == 3 ]]
+    [[ "$text" == *"Listed Sessions: 3"* ]]
+    [[ "$text" != *"/historical"* && "$text" != *"/recent/d"* ]]
+    local path
+    while IFS= read -r path; do
+        [[ "$text" == *"$path"* ]]
+    done < <(jq -r '.sessions[].source_path' <<< "$listing")
+    [[ $(list_sessions --days 3 --limit 10 --json | jq '.total') == 5 ]]
+}
+
+@test "list_sessions: agent filtering is identical in both modes" {
+    mock_session_search
+    local listing text
+    listing=$(list_sessions --days 1 --limit 3 --agent claude_code --json)
+    text=$(list_sessions --days 1 --limit 3 --agent claude_code)
+    [[ $(jq '.total' <<< "$listing") == 1 ]]
+    [[ $(jq -r '.sessions[0].agent' <<< "$listing") == claude_code ]]
+    [[ "$text" == *"/recent/b"* && "$text" != *"codex"* ]]
+}
+
+@test "list_sessions: empty results succeed without inventing counts" {
+    mock_session_search
+    run list_sessions --agent absent --json
+    assert_success
+    [[ $(jq '.total' <<< "$output") == 0 ]]
+    [[ $(jq '.sessions, .by_agent, .by_workspace | length' <<< "$output") == $'0\n0\n0' ]]
+    run list_sessions --agent absent
+    assert_success
+    assert_output --partial "No matching sessions"
+}
+
+@test "list_sessions: rejects missing values zeros unknown flags and positionals" {
+    cass() { echo 'should never run'; return 99; }
+    local option value
+    for option in --days --limit --agent; do
+        run list_sessions "$option"
+        assert_failure
+        [[ "$output" != *'should never run'* ]]
+    done
+    for option in --days --limit; do
+        for value in 0 00 -1 1.5 nope; do
+            run list_sessions "$option" "$value"
+            assert_failure
+            [[ "$output" != *'should never run'* ]]
+        done
+    done
+    for option in --bogus unexpected; do
+        run list_sessions "$option"
+        assert_failure
+    done
+}
+
+@test "list_sessions: unavailable CASS fails in both modes" {
+    check_cass_installed() { return 1; }
+    run list_sessions
+    assert_failure
+    run list_sessions --json
+    assert_failure
+}
+
+@test "list_sessions: failed CASS cannot be masked by valid JSON" {
+    check_cass_installed() { return 0; }
+    cass() { echo '{"hits":[]}'; return 42; }
+    run list_sessions
+    assert_failure
+    [[ "$output" != *"Recent Sessions"* ]]
+    run list_sessions --json
+    assert_failure
+    [[ "$output" != *'"sessions"'* ]]
+}
+
+@test "list_sessions: malformed empty and incompatible JSON fail in both modes" {
+    check_cass_installed() { return 0; }
+    cass() { printf '%s' "$response"; }
+    local response
+    for response in '' broken null '{}' '{"hits":{}}' '{"hits":[{}]}' '{"hits":[],"error":"failed"}' '{"hits":[],"budget":{"timed_out":true}}' '{"hits":[]} {"hits":[]}'; do
+        run list_sessions
+        assert_failure
+        [[ "$output" != *"Recent Sessions"* ]]
+        run list_sessions --json
+        assert_failure
+        [[ "$output" != *'"sessions"'* ]]
+    done
+}
+
+@test "list_sessions: repeated message hits count once per source session" {
+    check_cass_installed() { return 0; }
+    cass() {
+        echo '{"hits":[{"source_path":"/a","agent":"codex","workspace":"/p"},{"source_path":"/a","agent":"codex","workspace":"/p"},{"source_path":"/a","source_id":"remote","agent":"codex","workspace":"/p"}],"_meta":{"next_cursor":null}}'
+    }
+    run list_sessions --json
+    assert_success
+    [[ $(jq '.total' <<< "$output") == 2 ]]
+}
+
+@test "list_sessions: paginated discovery shell regressions" {
+    run bash "$PROJECT_ROOT/scripts/tests/test_session_listing.sh"
+    assert_success
+}
+
+@test "import_session: complete recovery pipeline shell regressions" {
+    run bash "$PROJECT_ROOT/scripts/tests/test_session_import.sh"
+    assert_success
+}
+
 @test "session library: sources under set -u without HOME" {
     run env -i PATH="/usr/bin:/bin" bash -c 'set -euo pipefail; source "$1"; printf "<%s>\n" "${ACFS_SESSIONS_DIR:-}"' _ "$PROJECT_ROOT/scripts/lib/session.sh"
     assert_success

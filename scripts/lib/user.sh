@@ -277,12 +277,34 @@ _generate_random_password() {
 # Creates user if missing, adds to required groups
 ensure_user() {
     local target="$TARGET_USER"
+    local initial_shell=""
+    local created_entry=""
+    local local_entry=""
 
     user_require_valid_target_user "$target"
 
     if ! id "$target" &>/dev/null; then
-        log_detail "Creating user: $target"
-        $SUDO useradd -m -s /bin/bash -G sudo "$target"
+        if ! initial_shell="$(user_select_initial_login_shell bash)"; then
+            log_error "No executable bash path is approved by a readable, safe /etc/shells; refusing to create $target"
+            return 1
+        fi
+
+        log_detail "Creating user: $target with approved login shell $initial_shell"
+        if ! $SUDO useradd -m -s "$initial_shell" -G sudo "$target"; then
+            log_error "Failed to create user $target"
+            return 1
+        fi
+
+        created_entry="$(user_login_passwd_entry "$target" 2>/dev/null || true)"
+        local_entry="$(user_local_passwd_entry "$target" 2>/dev/null || true)"
+        if [[ -z "$created_entry" || -z "$local_entry" ]] ||
+           ! user_login_accounts_match "$created_entry" "$local_entry" ||
+           [[ "${created_entry##*:}" != "$initial_shell" ]] ||
+           ! user_shell_is_approved "$initial_shell" ||
+           ! user_shell_executable_by_account "$initial_shell" "$target"; then
+            log_error "Created account $target did not retain the approved login shell $initial_shell; refusing to configure credentials or privileges"
+            return 1
+        fi
 
         # Generate random password (user will use SSH key)
         local passwd
@@ -586,95 +608,426 @@ migrate_ssh_keys() {
     log_success "SSH keys migrated to $target"
 }
 
-# Set default shell for target user
+# Login shells are authentication policy, not just executable paths. In
+# particular, pam_shells compares the passwd shell literally with /etc/shells;
+# resolving a usrmerge symlink does not make an unlisted spelling acceptable.
+user_local_passwd_entry() {
+    local target="${1:-${TARGET_USER:-}}"
+    local entry=""
+
+    [[ -r /etc/passwd ]] || return 2
+    while IFS= read -r entry || [[ -n "$entry" ]]; do
+        [[ "${entry%%:*}" == "$target" ]] || continue
+        printf '%s\n' "$entry"
+        return 0
+    done < /etc/passwd
+    return 1
+}
+
+# Unlike the general bootstrap lookup, do not hide an NSS lookup failure by
+# falling back to a local record: verification must observe effective state.
+user_login_passwd_entry() {
+    local target="${1:-${TARGET_USER:-}}"
+    local getent_bin="" entry="" name="" uid="" gid="" account_home="" shell=""
+
+    user_valid_target_name "$target" || return 1
+    getent_bin="$(user_system_binary_path getent 2>/dev/null || true)"
+    [[ -n "$getent_bin" ]] || return 1
+    entry="$("$getent_bin" passwd "$target")" || return 1
+    [[ "$entry" != *$'\n'* && "${entry//[^:]/}" == '::::::' ]] || return 1
+    IFS=: read -r name _ uid gid _ account_home shell <<< "$entry"
+    [[ "$name" == "$target" && "$uid" =~ ^[0-9]+$ && "$gid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$account_home" == /* && "$account_home" != / && "$shell" == /* ]] || return 1
+    [[ "$entry" != *$'\r'* ]] || return 1
+    printf '%s\n' "$entry"
+}
+
+user_login_accounts_match() {
+    local effective="${1:-}" local_entry="${2:-}"
+    local e_name="" e_uid="" e_gid="" e_home="" e_shell=""
+    local l_name="" l_uid="" l_gid="" l_home="" l_shell=""
+
+    [[ "${local_entry//[^:]/}" == '::::::' && "$local_entry" != *$'\n'* ]] || return 1
+    IFS=: read -r e_name _ e_uid e_gid _ e_home e_shell <<< "$effective"
+    IFS=: read -r l_name _ l_uid l_gid _ l_home l_shell <<< "$local_entry"
+    [[ "$e_name" == "$l_name" && "$e_uid" == "$l_uid" && "$e_gid" == "$l_gid" &&
+       "$e_home" == "$l_home" && "$e_shell" == "$l_shell" ]]
+}
+
+# Before ACFS grants groups, changes ownership, or sets credentials, prove that
+# NSS and /etc/passwd describe the same local account at the expected home.
+# expected_shell is optional and is used immediately after ACFS creates a user.
+user_verify_local_account_identity() {
+    local target="${1:-${TARGET_USER:-}}"
+    local expected_home="${2:-${TARGET_HOME:-}}"
+    local expected_shell="${3:-}"
+    local effective="" local_entry="" account_home="" account_shell=""
+
+    user_valid_target_name "$target" || return 1
+    [[ "$expected_home" == /* && "$expected_home" != / ]] || return 1
+    expected_home="${expected_home%/}"
+
+    effective="$(user_login_passwd_entry "$target")" || return 1
+    local_entry="$(user_local_passwd_entry "$target")" || return 1
+    user_login_accounts_match "$effective" "$local_entry" || return 1
+
+    IFS=: read -r _ _ _ _ _ account_home account_shell <<< "$effective"
+    [[ "${account_home%/}" == "$expected_home" ]] || return 1
+    [[ "$account_shell" == /* ]] || return 1
+    if [[ -n "$expected_shell" ]]; then
+        [[ "$account_shell" == "$expected_shell" ]] || return 1
+    fi
+}
+
+user_shells_file_is_safe() {
+    local stat_bin="" mode=""
+
+    # Match pam_shells' file checks, including its refusal of world-writable
+    # policy files. stat -L follows a legitimate /etc/shells symlink as PAM does.
+    [[ -f /etc/shells && -r /etc/shells ]] || return 1
+    stat_bin="$(user_system_binary_path stat)" || return 1
+    mode="$("$stat_bin" -Lc '%a' -- /etc/shells 2>/dev/null)" || return 1
+    [[ "$mode" =~ ^[0-7]{1,4}$ ]] || return 1
+    (( (8#$mode & 2) == 0 ))
+}
+
+user_shell_is_approved() {
+    local shell="${1:-}" grep_bin=""
+
+    [[ "$shell" == /* && "$shell" != *$'\n'* && "$shell" != *$'\r'* && "$shell" != *:* ]] || return 1
+    [[ -f "$shell" && -x "$shell" ]] || return 1
+    user_shells_file_is_safe || return 1
+    grep_bin="$(user_system_binary_path grep)" || return 1
+    # -a avoids grep's binary-file shortcut. Do not trim whitespace, comments,
+    # CRLFs, or canonicalize aliases: only an exact policy entry is sufficient.
+    "$grep_bin" -aFxq -- "$shell" /etc/shells
+}
+
+# Account creation itself must obey the same literal /etc/shells policy as
+# later chsh operations. This avoids creating a user with an executable
+# usrmerge alias that PAM will reject because the spelling is not approved.
+user_select_initial_login_shell() {
+    local name="${1:-bash}" candidate=""
+
+    case "$name" in
+        bash|zsh) ;;
+        *) return 1 ;;
+    esac
+    user_shells_file_is_safe || return 1
+
+    for candidate in "/usr/bin/$name" "/bin/$name" "/usr/local/bin/$name" "/usr/local/sbin/$name" "/usr/sbin/$name" "/sbin/$name"; do
+        [[ "${candidate##*/}" == "$name" ]] || continue
+        if user_shell_is_approved "$candidate"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    while IFS= read -r candidate || [[ -n "$candidate" ]]; do
+        [[ "${candidate##*/}" == "$name" ]] || continue
+        if user_shell_is_approved "$candidate"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done < /etc/shells
+    return 1
+}
+
+user_select_login_shell() {
+    local preferred="${1:-}" target="${2:-${TARGET_USER:-}}" candidate=""
+
+    user_shells_file_is_safe || return 1
+    # Keep PATH out of login-shell selection. Prefer distro bin spellings,
+    # then accept other zsh installations explicitly approved by the host.
+    for candidate in "$preferred" /usr/bin/zsh /bin/zsh /usr/local/bin/zsh /usr/sbin/zsh /sbin/zsh; do
+        [[ "${candidate##*/}" == zsh ]] || continue
+        if user_shell_is_approved "$candidate" && user_shell_executable_by_account "$candidate" "$target"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    while IFS= read -r candidate || [[ -n "$candidate" ]]; do
+        [[ "${candidate##*/}" == zsh ]] || continue
+        if user_shell_is_approved "$candidate" && user_shell_executable_by_account "$candidate" "$target"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done < /etc/shells
+    return 1
+}
+
+# Home-directory writes must run as the account owner, even when the legacy
+# installer is root. A symlink swap in that user's home must not gain privilege.
+user_run_as_account() {
+    local target="$1" current_user="" runner=""
+    shift
+
+    current_user="$(user_resolve_current_user 2>/dev/null || true)"
+    if [[ "$current_user" == "$target" ]]; then
+        "$@"
+    elif [[ "$EUID" -eq 0 ]]; then
+        runner="$(user_system_binary_path runuser)" || return 1
+        "$runner" -u "$target" -- "$@"
+    else
+        runner="$(user_system_binary_path sudo)" || return 1
+        "$runner" -n -u "$target" -- "$@"
+    fi
+}
+
+user_shell_executable_by_account() {
+    local shell="$1" target="$2" current_user="" bash_bin=""
+
+    [[ -f "$shell" && -x "$shell" ]] || return 1
+    current_user="$(user_resolve_current_user 2>/dev/null || true)"
+    if [[ "$current_user" == "$target" ]]; then
+        return 0
+    fi
+    bash_bin="$(user_system_binary_path bash)" || return 1
+    user_run_as_account "$target" "$bash_bin" -c '[[ -f "$1" && -x "$1" ]]' _ "$shell"
+}
+
+user_preserve_login_shell() {
+    local target="$1" target_home="$2" original="$3" bash_bin=""
+    bash_bin="$(user_system_binary_path bash)" || return 1
+    user_run_as_account "$target" "$bash_bin" -c '
+        set -euo pipefail
+        umask 077
+        backup="$1/.shell.pre-acfs"
+        if [[ -e "$backup" || -L "$backup" ]]; then
+            [[ -f "$backup" && ! -L "$backup" && -r "$backup" && -s "$backup" ]] || exit 1
+            saved="$(< "$backup")"
+            [[ "$saved" == /* && "$saved" != *[[:cntrl:]:]* ]]
+        else
+            set -o noclobber
+            printf "%s\n" "$2" > "$backup"
+        fi
+    ' _ "$target_home" "$original"
+}
+
 user_external_shell_handoff_configured() {
     local target_home="${1:-}"
-    local bashrc_path=""
+    local bashrc_path="" bash_bin="" line="" state=0 found=false
+    local guard='if [[ $- == *i* ]] && [[ -t 0 ]] && command -v zsh >/dev/null 2>&1 && [[ -z "${ACFS_ZSH_HANDOFF_ACTIVE:-}" ]]; then'
 
     [[ -n "$target_home" ]] || return 1
     bashrc_path="$target_home/.bashrc"
-    [[ -f "$bashrc_path" ]] || return 1
+    [[ -f "$bashrc_path" && ! -L "$bashrc_path" && -r "$bashrc_path" ]] || return 1
+    bash_bin="$(user_system_binary_path bash)" || return 1
+    "$bash_bin" --noprofile --norc -n -- "$bashrc_path" 2>/dev/null || return 1
 
-    awk '
-        $0 == "# ACFS externally-managed shell handoff" { marker=1; next }
-        marker && $0 ~ /^[[:space:]]*#/ { next }
-        marker && index($0, "command -v zsh") && index($0, "ACFS_ZSH_HANDOFF_ACTIVE") { found=1; exit }
-        marker && $0 !~ /^[[:space:]]*$/ { marker=0 }
-        END { exit(found ? 0 : 1) }
-    ' "$bashrc_path" 2>/dev/null
+    # Verify the complete block, including exec and fi. A partial block that
+    # only sets the recursion guard would suppress a later working handoff.
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line#"${line%%[![:blank:]]*}"}"
+        line="${line%"${line##*[![:blank:]]}"}"
+        case "$line" in
+            '# ACFS externally-managed shell handoff')
+                [[ "$state" -lt 2 ]] && state=1
+                continue
+                ;;
+            ''|\#*) continue ;;
+        esac
+        case "$state" in
+            0|1)
+                if [[ "$state" -eq 1 && "$line" == "$guard" ]]; then
+                    state=2
+                elif [[ "$line" == *ACFS_ZSH_HANDOFF_ACTIVE* ]]; then
+                    return 1
+                else
+                    state=0
+                fi
+                ;;
+            2)
+                [[ "$line" == 'export ACFS_ZSH_HANDOFF_ACTIVE=1' ]] || return 1
+                state=3
+                ;;
+            3)
+                [[ "$line" == 'exec "$(command -v zsh)" -l' ]] || return 1
+                state=4
+                ;;
+            4)
+                [[ "$line" == 'fi' ]] || return 1
+                state=0
+                found=true
+                ;;
+        esac
+    done < "$bashrc_path"
+    [[ "$found" == true && "$state" -lt 2 ]]
 }
 
 user_append_external_shell_handoff() {
     local target_home="${1:-}"
-    local bashrc_path=""
+    local bashrc_path="" bash_bin="" line=""
     bashrc_path="${target_home}/.bashrc"
 
-    [[ -n "$target_home" ]] || return 1
-
-    if [[ -f "$bashrc_path" ]] && [[ -s "$bashrc_path" ]]; then
-        local last_char=""
-        last_char=$(tail -c 1 "$bashrc_path" | od -An -t u1 | tr -d ' ' 2>/dev/null || true)
-        if [[ "$last_char" != "10" ]]; then
-            printf '\n' >> "$bashrc_path"
-        fi
-    fi
-
-    cat >> "$bashrc_path" << 'EOF'
-# ACFS externally-managed shell handoff
-if [[ $- == *i* ]] && [[ -t 0 ]] && command -v zsh >/dev/null 2>&1 && [[ -z "${ACFS_ZSH_HANDOFF_ACTIVE:-}" ]]; then
-    export ACFS_ZSH_HANDOFF_ACTIVE=1
-    exec "$(command -v zsh)" -l
-fi
-EOF
-}
-
-set_default_shell() {
-    local shell="$1"
-    local target="$TARGET_USER"
-    local target_home="${TARGET_HOME:-}"
-    local passwd_entry=""
-    local local_entry=""
-
-    user_require_valid_target_user "$target"
-
-    if [[ -z "$shell" ]]; then
-        shell=$(command -v zsh)
-    fi
-
-    if [[ ! -x "$shell" ]]; then
-        log_warn "Shell $shell not found or not executable"
-        return 1
-    fi
-
-    passwd_entry="$(user_getent_passwd_entry "$target" 2>/dev/null || true)"
-    # Track the match with an explicit flag: inferring "not found" from the
-    # loop variable being empty breaks when /etc/passwd lacks a trailing
-    # newline (the final read leaves the last line in the variable), and the
-    # `|| [[ -n ... ]]` guard still processes that unterminated last line.
-    local user_in_local_passwd=false
-    if [[ -r /etc/passwd ]]; then
-        while IFS= read -r local_entry || [[ -n "$local_entry" ]]; do
-            [[ "${local_entry%%:*}" == "$target" ]] || continue
-            user_in_local_passwd=true
-            break
-        done < /etc/passwd
-    fi
-
-    if [[ -n "$passwd_entry" ]]; then
-        target_home="$(user_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
-    fi
-
-    if [[ -n "$passwd_entry" ]] && [[ "$user_in_local_passwd" == "false" ]]; then
-        log_warn "Shell for $target is managed outside /etc/passwd; installing a bash-to-zsh handoff instead of using chsh"
-        if [[ -n "$target_home" ]] && ! user_external_shell_handoff_configured "$target_home"; then
-            user_append_external_shell_handoff "$target_home" || return 1
-            $SUDO chown "$target:$target" "$target_home/.bashrc" 2>/dev/null || true
-        fi
+    [[ "$target_home" == /* && "$target_home" != / ]] || return 1
+    [[ ! -L "$bashrc_path" ]] || return 1
+    [[ ! -e "$bashrc_path" || -f "$bashrc_path" ]] || return 1
+    if user_external_shell_handoff_configured "$target_home"; then
         return 0
     fi
 
-    log_detail "Setting default shell to $shell for $target"
-    $SUDO chsh -s "$shell" "$target"
+    if [[ -e "$bashrc_path" ]]; then
+        [[ -r "$bashrc_path" ]] || return 1
+        bash_bin="$(user_system_binary_path bash)" || return 1
+        "$bash_bin" --noprofile --norc -n -- "$bashrc_path" || return 1
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            line="${line#"${line%%[![:blank:]]*}"}"
+            case "$line" in
+                ''|\#*) continue ;;
+                *ACFS_ZSH_HANDOFF_ACTIVE*) return 1 ;;
+            esac
+        done < "$bashrc_path"
+    fi
+
+    # Always separate the block from an unterminated final line. Use builtins
+    # so writing the handoff does not resolve utilities from the user's PATH.
+    (
+        umask 077
+        printf '%s\n' '' \
+            '# ACFS externally-managed shell handoff' \
+            'if [[ $- == *i* ]] && [[ -t 0 ]] && command -v zsh >/dev/null 2>&1 && [[ -z "${ACFS_ZSH_HANDOFF_ACTIVE:-}" ]]; then' \
+            '    export ACFS_ZSH_HANDOFF_ACTIVE=1' \
+            '    exec "$(command -v zsh)" -l' \
+            'fi' >> "$bashrc_path"
+    ) || return 1
+    user_external_shell_handoff_configured "$target_home"
+}
+
+user_login_shell_configured() {
+    local target="${1:-${TARGET_USER:-}}" entry="" local_entry="" local_status=0
+    local shell=""
+
+    entry="$(user_login_passwd_entry "$target")" || return 1
+    IFS=: read -r _ _ _ _ _ _ shell <<< "$entry"
+    user_shell_is_approved "$shell" || return 1
+    user_shell_executable_by_account "$shell" "$target" || return 1
+    local_entry="$(user_local_passwd_entry "$target")" || local_status=$?
+    if [[ "$local_status" -eq 0 ]]; then
+        user_login_accounts_match "$entry" "$local_entry" || return 1
+        [[ "${shell##*/}" == zsh ]]
+    elif [[ "$local_status" -eq 1 ]]; then
+        # Provider/NSS-managed identities are configured only when the
+        # provider itself reports an approved zsh authentication shell.
+        [[ "${shell##*/}" == zsh ]]
+    else
+        return 1
+    fi
+}
+
+set_default_shell() {
+    local preferred="${1:-}" target="${TARGET_USER:-}" target_home=""
+    local before="" local_before="" local_status=0 original="" shell=""
+    local chsh_bin="" sudo_bin="" bash_bin="" current_user=""
+    local after="" local_after="" chsh_status=0 rollback_status=0
+    local -a change_command=()
+
+    user_require_valid_target_user "$target"
+    if ! before="$(user_login_passwd_entry "$target")"; then
+        log_error "Cannot read a reliable login-shell record for $target; refusing to change it"
+        return 1
+    fi
+    IFS=: read -r _ _ _ _ _ target_home original <<< "$before"
+    local_before="$(user_local_passwd_entry "$target")" || local_status=$?
+    if [[ "$local_status" -gt 1 ]]; then
+        log_error "Cannot read /etc/passwd; refusing to change the shell for $target"
+        return 1
+    fi
+    if [[ "$local_status" -eq 0 ]] && ! user_login_accounts_match "$before" "$local_before"; then
+        log_error "Local and NSS account records disagree for $target; refusing a local shell change"
+        return 1
+    fi
+
+    # $SHELL belongs to the invoking session and can be stale. Re-check the
+    # actual account even on reruns and when its current path ends in /zsh.
+    if user_login_shell_configured "$target"; then
+        log_detail "Login-shell configuration already verified for $target"
+        return 0
+    fi
+    if ! shell="$(user_select_login_shell "$preferred")"; then
+        log_error "No executable zsh is approved by a readable, safe /etc/shells; refusing to change $target's login shell"
+        return 1
+    fi
+    bash_bin="$(user_system_binary_path bash)" || return 1
+    if ! user_run_as_account "$target" "$bash_bin" -c '[[ -f "$1" && -x "$1" ]]' _ "$shell"; then
+        log_error "Approved shell $shell is not executable by $target; refusing to change its login shell"
+        return 1
+    fi
+
+    if [[ "$local_status" -eq 1 ]]; then
+        log_error "Shell for $target is externally managed. ACFS will not treat a .bashrc handoff as a login-shell change; ask the identity provider administrator to set an approved zsh path from /etc/shells"
+        return 1
+    fi
+
+    chsh_bin="$(user_system_binary_path chsh)" || {
+        log_error "Cannot locate chsh; refusing to report a successful shell change for $target"
+        return 1
+    }
+    if [[ "$EUID" -eq 0 ]]; then
+        change_command=("$chsh_bin")
+    else
+        sudo_bin="$(user_system_binary_path sudo 2>/dev/null || true)"
+        current_user="$(user_resolve_current_user 2>/dev/null || true)"
+        if [[ -n "$sudo_bin" ]] && "$sudo_bin" -n true 2>/dev/null; then
+            change_command=("$sudo_bin" -n "$chsh_bin")
+        elif [[ "$current_user" == "$target" && -t 0 ]]; then
+            change_command=("$chsh_bin")
+        else
+            log_error "Cannot change the login shell for $target without privilege or an interactive terminal. Run: chsh -s $shell"
+            return 1
+        fi
+    fi
+
+    if ! user_preserve_login_shell "$target" "$target_home" "$original"; then
+        log_error "Cannot safely preserve the original shell in $target_home/.shell.pre-acfs; refusing the shell change"
+        return 1
+    fi
+    # Re-read immediately before mutation so stale NSS/local state cannot
+    # change the account for which the recovery record was captured.
+    after="$(user_login_passwd_entry "$target")" || return 1
+    local_after="$(user_local_passwd_entry "$target")" || return 1
+    if [[ "$after" != "$before" || "$local_after" != "$local_before" ]] ||
+       ! user_shell_is_approved "$shell" || ! user_shell_executable_by_account "$shell" "$target"; then
+        log_error "Account or approved-shell policy changed during setup; refusing to change $target's shell"
+        return 1
+    fi
+    log_detail "Setting login shell to $shell for $target (original preserved in $target_home/.shell.pre-acfs)"
+    "${change_command[@]}" -s "$shell" "$target" || chsh_status=$?
+
+    # chsh can warn and return success, fail after writing, or do nothing.
+    # Verify both NSS and the local account, and re-check authentication policy.
+    after="$(user_login_passwd_entry "$target" 2>/dev/null || true)"
+    local_after="$(user_local_passwd_entry "$target" 2>/dev/null || true)"
+    if [[ -n "$after" && "$after" == "${before%:*}:$shell" ]] &&
+       [[ "$local_after" == "${local_before%:*}:$shell" ]] &&
+       user_shell_is_approved "$shell" && user_shell_executable_by_account "$shell" "$target"; then
+        if [[ "$chsh_status" -eq 0 ]]; then
+            log_success "Verified approved login shell $shell for $target"
+            return 0
+        fi
+        log_error "chsh exited $chsh_status despite applying the approved shell for $target; attempting to restore the original account state"
+    fi
+
+    log_error "Login-shell change for $target failed verification (chsh exit $chsh_status)"
+    # Restore only an approved original, and only while the same local identity
+    # remains present. Never turn a repaired usrmerge alias back into a known
+    # invalid login shell or overwrite a different account's state.
+    if [[ -n "$after" && "${after%:*}" == "${before%:*}" &&
+          -n "$local_after" && "${local_after%:*}" == "${local_before%:*}" &&
+          "${local_after##*:}" != "$original" ]] &&
+       user_shell_is_approved "$original" && user_shell_executable_by_account "$original" "$target"; then
+        "${change_command[@]}" -s "$original" "$target" || rollback_status=$?
+        after="$(user_login_passwd_entry "$target" 2>/dev/null || true)"
+        local_after="$(user_local_passwd_entry "$target" 2>/dev/null || true)"
+        if [[ "$after" == "$before" && "$local_after" == "$local_before" ]] &&
+           user_shell_is_approved "$original" && user_shell_executable_by_account "$original" "$target"; then
+            log_warn "Restored and verified the original login shell for $target"
+        else
+            log_error "Could not verify restoration for $target (chsh exit $rollback_status); keep this session open and repair the account from another administrator session"
+        fi
+    fi
+    log_error "Original shell: $original; recovery record: $target_home/.shell.pre-acfs. Keep this session open until the account's shell is repaired and verified against /etc/shells"
+    return 1
 }
 
 # ------------------------------------------------------------

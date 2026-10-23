@@ -87,7 +87,7 @@ describe("cloud agent page data", () => {
   });
 
   test("dedicated cloud share images render nonempty PNGs at each platform size", async () => {
-    for (const [variant, height] of [["opengraph", 630], ["twitter", 600]] as const) {
+    await Promise.all(([["opengraph", 630], ["twitter", 600]] as const).map(async ([variant, height]) => {
       const response = createSocialImage(getStaticRouteSocialData("/cloud-agents"), variant);
       expect(response.status).toBe(200);
       const bytes = Buffer.from(await response.arrayBuffer());
@@ -95,7 +95,7 @@ describe("cloud agent page data", () => {
       expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
       expect(bytes.readUInt32BE(16)).toBe(1200);
       expect(bytes.readUInt32BE(20)).toBe(height);
-    }
+    }));
   });
 
   test("custom-root task instructions connect writable search and memory state", () => {
@@ -110,6 +110,30 @@ describe("cloud agent page data", () => {
       expect(getCloudAgentSetupInstructions(provider)).toContain("CASS_DATA_DIR");
     }
     expect(script).toContain('if [[ -z "${XDG_DATA_HOME:-}" ]]; then');
+  });
+
+  test("Agent Mail task guidance connects command-scoped writable storage", () => {
+    const instruction = "Before using Agent Mail with a read-only HOME, follow the guide's command-scoped STORAGE_ROOT recipe; reuse existing configuration and preserve DATABASE_URL.";
+    for (const text of [CODEX_CLOUD_START_SKILL, GENERIC_CLOUD_TASK_INSTRUCTIONS]) {
+      expect(text).toContain(instruction);
+      expect(readme).toContain(text);
+    }
+    for (const provider of ["codex", "amp", "devin", "grok", "generic"]) {
+      expect(getCloudAgentSetupInstructions(provider)).toContain(instruction);
+    }
+    expect(script).toContain(instruction);
+  });
+
+  test("JSM task guidance connects writable state without redirecting the provider home", () => {
+    const instruction = "Before using JSM with a read-only HOME, follow the guide's command-scoped XDG recipe; reuse existing configuration and check skill installation targets separately.";
+    for (const text of [CODEX_CLOUD_START_SKILL, GENERIC_CLOUD_TASK_INSTRUCTIONS]) {
+      expect(text).toContain(instruction);
+      expect(readme).toContain(text);
+    }
+    for (const provider of ["codex", "amp", "devin", "grok", "generic"]) {
+      expect(getCloudAgentSetupInstructions(provider)).toContain(instruction);
+    }
+    expect(script).toContain(instruction);
   });
 
   test("MS task guidance connects project initialization, indexing and robot search", () => {
@@ -240,11 +264,26 @@ describe("cloud agent page data", () => {
     expect(Object.values(mirror.tools).flatMap((tool) => tool.bins).sort()).toEqual([...CLOUD_EXECUTABLES].sort());
   });
 
+  test("first-session checks exercise existing trackers and preserve the Codex shell path", () => {
+    for (const [id, stepId] of [
+      ["claude", "start-and-check"], ["codex", "publish"], ["amp", "fresh-orb"],
+      ["devin", "verify"], ["generic", "verify"],
+    ]) {
+      const check = CLOUD_WALKTHROUGHS[id].steps.find((step) => step.id === stepId)?.paste?.text;
+      if (!check) throw new Error(`Missing first-session check for ${id}`);
+      expect(check).toContain("If the repository already has a .beads tracker");
+      expect(check).toContain("br ready --json and bv --robot-triage");
+      expect(getCloudAgentSetupInstructions(id)).toContain(check);
+    }
+    const codex = CLOUD_WALKTHROUGHS.codex.steps.find((step) => step.id === "publish")?.paste?.text;
+    expect(codex).toContain("Prepend <repo>/.acfs-cloud/.local/bin to PATH, preserving its existing entries");
+  });
+
   test("subset recipes keep each agent's own mode and stay valid bash", () => {
     for (const agent of CLOUD_AGENTS) {
       const recipe = cloudSubsetRecipe(agent.id);
-      expect(recipe).toContain('| ACFS_CLOUD_TOOLS="br bv am ubs" ');
-      expect(recipe.replace(' ACFS_CLOUD_TOOLS="br bv am ubs"', "")).toBe(agent.script ?? GENERIC_CLOUD_SETUP_SCRIPT);
+      expect(recipe).toContain('| ACFS_CLOUD_TOOLS="br bv am ubs ast-grep" ');
+      expect(recipe.replace(' ACFS_CLOUD_TOOLS="br bv am ubs ast-grep"', "")).toBe(agent.script ?? GENERIC_CLOUD_SETUP_SCRIPT);
       const result = spawnSync("bash", ["-n"], { input: recipe, encoding: "utf8" });
       expect(result.status).toBe(0);
     }
@@ -326,6 +365,74 @@ describe("cloud agent page data", () => {
     expect(readFileSync(exclude, "utf8")).toContain("/.acfs-cloud/\n/.agents/skills/acfs-cloud-tools/\n");
   });
 
+  test("successful setup recipes preserve the caller's shell options and variables", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "acfs-caller-shell-")));
+    const bin = join(workspace, "bin");
+    const template = join(workspace, "empty-template");
+    mkdirSync(bin);
+    mkdirSync(template);
+    const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
+    env.GIT_CONFIG_NOSYSTEM = "1";
+    env.GIT_CONFIG_GLOBAL = "/dev/null";
+    env.GIT_TEMPLATE_DIR = template;
+    env.PATH = `${bin}:${process.env.PATH}`;
+    writeFileSync(join(bin, "curl"), "#!/bin/sh\nprintf '%s\\n' ':'\n", { mode: 0o755 });
+    for (const agent of CLOUD_AGENTS.filter((entry) => ["claude", "codex", "generic"].includes(entry.id))) {
+      for (const [kind, recipe] of [["full", agent.script!], ["subset", cloudSubsetRecipe(agent.id)]]) {
+        for (const pipefail of [false, true]) {
+          const repo = join(workspace, `${agent.id}-${kind}-${pipefail} with spaces`);
+          mkdirSync(repo);
+          expect(spawnSync("git", ["init", "--quiet", repo], { env, encoding: "utf8" }).status).toBe(0);
+          const source = `set ${pipefail ? "-" : "+"}o pipefail
+acfs_cloud_root='keep root'
+acfs_cloud_setup='keep setup'
+acfs_cloud_exclude='keep exclusions'
+${recipe}
+printf '%s\\0' "$acfs_cloud_root" "$acfs_cloud_setup" "$acfs_cloud_exclude"
+if [[ -o pipefail ]]; then printf on; else printf off; fi
+`;
+          const result = spawnSync("bash", ["-c", source], { cwd: repo, env, encoding: "utf8" });
+          expect(result.status).toBe(0);
+          expect(result.stdout.split("\0")).toEqual(["keep root", "keep setup", "keep exclusions", pipefail ? "on" : "off"]);
+          expect(result.stderr).toBe("");
+        }
+      }
+    }
+  });
+
+  test("Codex exclusions start on a new line when existing rules lack a trailing newline", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "acfs-codex-exclude-")));
+    const repo = join(workspace, "repository with spaces");
+    const bin = join(workspace, "bin");
+    const template = join(workspace, "empty-template");
+    mkdirSync(repo);
+    mkdirSync(bin);
+    mkdirSync(template);
+    const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
+    env.GIT_CONFIG_NOSYSTEM = "1";
+    env.GIT_CONFIG_GLOBAL = "/dev/null";
+    env.GIT_TEMPLATE_DIR = template;
+    env.PATH = `${bin}:${process.env.PATH}`;
+    expect(spawnSync("git", ["init", "--quiet", repo], { env, encoding: "utf8" }).status).toBe(0);
+    const exclude = join(repo, ".git/info/exclude");
+    mkdirSync(dirname(exclude), { recursive: true });
+    const original = "# Keep my exclusions\nkeep-local";
+    writeFileSync(exclude, original);
+    writeFileSync(join(bin, "curl"), `#!/bin/sh
+cat <<'BOOTSTRAP'
+mkdir -p "$ACFS_CLOUD_ROOT/runtime" "$ACFS_CLOUD_SKILL_DIR"
+printf local > "$ACFS_CLOUD_ROOT/runtime/sentinel"
+printf local > "$ACFS_CLOUD_SKILL_DIR/SKILL.md"
+BOOTSTRAP
+`, { mode: 0o755 });
+    const result = spawnSync("bash", ["-c", CODEX_CLOUD_SETUP_SCRIPT], { cwd: repo, env, encoding: "utf8" });
+    expect(result.status).toBe(0);
+    const ignored = ["keep-local", ".acfs-cloud/runtime/sentinel", ".agents/skills/acfs-cloud-tools/SKILL.md"].map((path) =>
+      spawnSync("git", ["check-ignore", "--no-index", "--quiet", path], { cwd: repo, env, encoding: "utf8" }).status);
+    expect(ignored).toEqual([0, 0, 0]);
+    expect(readFileSync(exclude, "utf8")).toStartWith(original + "\n");
+  });
+
   test("failed bootstrap downloads never execute partial content in full and subset recipes", () => {
     const workspace = realpathSync(mkdtempSync(join(tmpdir(), "acfs-failed-bootstrap-")));
     const bin = join(workspace, "bin");
@@ -352,7 +459,7 @@ exit 22
           const exclude = join(repo, ".git/info/exclude");
           mkdirSync(dirname(exclude), { recursive: true });
           writeFileSync(exclude, "# Keep my exclusions\n");
-          const source = agent.id === "claude" ? `${recipe}\nprintf continued > existing-setup-ran\n` : recipe;
+          const source = `${recipe}\nprintf continued > existing-setup-ran\n`;
           const result = spawnSync("bash", ["-c", source], { cwd: repo, env, encoding: "utf8" });
           const label = `${agent.id}-${kind}-${partial ? "partial" : "missing"}`;
           if (existsSync(join(repo, "partial-bootstrap-ran"))) failures.push(`${label}: failed download bytes executed`);
@@ -361,6 +468,7 @@ exit 22
             failures.push(`${label}: unexpected exit ${result.status}`);
           }
           if (agent.id === "claude" && !existsSync(join(repo, "existing-setup-ran"))) failures.push(`${label}: following setup command skipped`);
+          if (agent.id !== "claude" && existsSync(join(repo, "existing-setup-ran"))) failures.push(`${label}: failed required setup continued`);
           if (readFileSync(exclude, "utf8") !== "# Keep my exclusions\n") failures.push(`${label}: exclusions changed`);
         }
       }
@@ -383,6 +491,7 @@ exit 22
 printf '%s\\0' "$@" > "$ACFS_TEST_CURL_ARGS"
 cat <<'BOOTSTRAP'
 printf '%s' "\${ACFS_CLOUD_AGENT:-claude}" > bootstrap-mode
+printf '%s' "\${ACFS_CLOUD_TOOLS:-}" > bootstrap-tools
 BOOTSTRAP
 `, { mode: 0o755 });
     for (const agent of CLOUD_AGENTS.filter((entry) => entry.script)) {
@@ -399,11 +508,13 @@ BOOTSTRAP
         expect(result.stderr).toBe("");
         expect(readFileSync(argsPath, "utf8").split("\0").slice(0, -1)).toEqual([
           "-q", "-fsSL", "--proto", "=https", "--proto-redir", "=https", "--connect-timeout", "5", "--max-time", "20",
-          "-A", "OpenAI File Downloader, XaiImageApiFetch/1.0", "-H", "Accept-Encoding: identity",
+          "-A", "acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)", "-H", "Accept-Encoding: identity",
           CLAUDE_CODE_WEB_SCRIPT_URL,
         ]);
         expect(readFileSync(join(repo, "bootstrap-mode"), "utf8"))
           .toBe(agent.id === "claude" ? "claude" : agent.id === "codex" ? "codex" : "generic");
+        expect(readFileSync(join(repo, "bootstrap-tools"), "utf8"))
+          .toBe(kind === "subset" ? "br bv am ubs ast-grep" : "");
       }
     }
   });

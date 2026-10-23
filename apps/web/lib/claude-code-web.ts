@@ -17,7 +17,7 @@ export const CLAUDE_CODE_WEB_SCRIPT_SOURCE_URL = `https://github.com/arosl/agent
 export const CLOUD_AGENTS_README_URL = "https://github.com/arosl/agentic_coding_flywheel_setup#cloud-agent-environments";
 
 /** What to paste into the environment dialog's "Setup script" field. */
-export const CLOUD_SETUP_DOWNLOAD_COMMAND = `curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -H 'Accept-Encoding: identity' ${CLAUDE_CODE_WEB_SCRIPT_URL}`;
+export const CLOUD_SETUP_DOWNLOAD_COMMAND = `curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)' -H 'Accept-Encoding: identity' ${CLAUDE_CODE_WEB_SCRIPT_URL}`;
 
 function cloudBootstrapDownload(failureExit: 0 | 1): string {
   return `acfs_cloud_setup="$(${CLOUD_SETUP_DOWNLOAD_COMMAND})" || { printf '%s\\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit ${failureExit}; }`;
@@ -29,19 +29,38 @@ export const CLAUDE_CODE_WEB_SETUP_SCRIPT = `#!/bin/bash\n(\n${cloudBootstrapDow
 export const CLAUDE_CODE_WEB_DOCS_URL = "https://code.claude.com/docs/en/cloud-environments";
 
 export const CODEX_CLOUD_DOCS_URL = "https://learn.chatgpt.com/docs/environments/cloud-environments";
-export const CODEX_CLOUD_SETUP_SCRIPT = `#!/bin/bash\nset -o pipefail\nacfs_cloud_root="$(git rev-parse --show-toplevel)" || exit 1\n${cloudBootstrapDownload(1)}\nprintf '%s\\n' "$acfs_cloud_setup" | ACFS_CLOUD_SKILL_DIR="$acfs_cloud_root/.agents/skills/acfs-cloud-tools" ACFS_CLOUD_AGENT=codex ACFS_CLOUD_ROOT="$acfs_cloud_root/.acfs-cloud" bash || exit 1\nacfs_cloud_exclude="$(git rev-parse --git-path info/exclude)" || exit 1\nmkdir -p "$(dirname "$acfs_cloud_exclude")" || exit 1\nprintf '/.acfs-cloud/\\n/.agents/skills/acfs-cloud-tools/\\n' >> "$acfs_cloud_exclude"`;
+// Confine setup state while still failing the enclosing script on required errors.
+export const CODEX_CLOUD_SETUP_SCRIPT = `#!/bin/bash
+(
+set -o pipefail
+acfs_cloud_root="$(git rev-parse --show-toplevel)" || exit 1
+${cloudBootstrapDownload(1)}
+printf '%s\\n' "$acfs_cloud_setup" | ACFS_CLOUD_SKILL_DIR="$acfs_cloud_root/.agents/skills/acfs-cloud-tools" ACFS_CLOUD_AGENT=codex ACFS_CLOUD_ROOT="$acfs_cloud_root/.acfs-cloud" bash || exit 1
+acfs_cloud_exclude="$(git rev-parse --git-path info/exclude)" || exit 1
+mkdir -p "$(dirname "$acfs_cloud_exclude")" || exit 1
+printf '\\n/.acfs-cloud/\\n/.agents/skills/acfs-cloud-tools/\\n' >> "$acfs_cloud_exclude"
+) || exit 1`;
 export const CODEX_CLOUD_START_SKILL = `Find the repository root with git rev-parse --show-toplevel.
 Read <repo>/.acfs-cloud/.codex/AGENTS.md for the installed flywheel tools and <repo>/.acfs-cloud/.acfs/cloud/setup.log for failures.
 In each task shell, run acfs_cloud_root="$(git rev-parse --show-toplevel)/.acfs-cloud"; export PATH="$acfs_cloud_root/.local/bin:$PATH" before using the tools.
 Follow the guide's CASS_DATA_DIR, CASS_MEMORY_HOME and JFP_HOME exports in each task shell so search data, memory and prompt caches use the writable workspace; preserve existing overrides and keep any XDG_DATA_HOME/XDG_CONFIG_HOME writable.
+Before using Agent Mail with a read-only HOME, follow the guide's command-scoped STORAGE_ROOT recipe; reuse existing configuration and preserve DATABASE_URL.
+Before using JSM with a read-only HOME, follow the guide's command-scoped XDG recipe; reuse existing configuration and check skill installation targets separately.
 Before using MS, follow the guide's local initialization and indexing steps in a writable project; reuse existing .ms/MS_ROOT/MS_CONFIG state.
 Check br --version, bv --version, ubs --version and jsm --version before starting work.
 Use br ready --json and bv --robot-triage; never open their interactive TUIs.`;
 
-export const GENERIC_CLOUD_SETUP_SCRIPT = `#!/bin/bash\nset -o pipefail\n${cloudBootstrapDownload(1)}\nprintf '%s\\n' "$acfs_cloud_setup" | ACFS_CLOUD_AGENT=generic bash`;
+export const GENERIC_CLOUD_SETUP_SCRIPT = `#!/bin/bash
+(
+set -o pipefail
+${cloudBootstrapDownload(1)}
+printf '%s\\n' "$acfs_cloud_setup" | ACFS_CLOUD_AGENT=generic bash
+) || exit 1`;
 export const GENERIC_CLOUD_TASK_INSTRUCTIONS = `Read $HOME/.acfs/cloud/AGENTS.md and $HOME/.acfs/cloud/setup.log before starting work.
 In each task shell, run export PATH="$HOME/.local/bin:$PATH".
 If using a custom writable data root, follow the guide's CASS_DATA_DIR, CASS_MEMORY_HOME and JFP_HOME exports in each task shell; preserve existing overrides and keep any XDG_DATA_HOME/XDG_CONFIG_HOME writable.
+Before using Agent Mail with a read-only HOME, follow the guide's command-scoped STORAGE_ROOT recipe; reuse existing configuration and preserve DATABASE_URL.
+Before using JSM with a read-only HOME, follow the guide's command-scoped XDG recipe; reuse existing configuration and check skill installation targets separately.
 Before using MS, follow the guide's local initialization and indexing steps in a writable project; reuse existing .ms/MS_ROOT/MS_CONFIG state.
 Check br --version, bv --version, ubs --version and jsm --version; report missing tools from the setup log.
 Use the existing repository tracker with br ready --json and bv --robot-triage. Never open their interactive TUIs.
@@ -111,7 +130,7 @@ export const CLOUD_AGENTS: CloudAgent[] = [
  * recipe's ACFS_CLOUD_AGENT means a Claude user never copies generic mode
  * (which skips CLAUDE.md and MCP registration) by accident.
  */
-export function cloudSubsetRecipe(agentId: string, tools = "br bv am ubs"): string {
+export function cloudSubsetRecipe(agentId: string, tools = "br bv am ubs ast-grep"): string {
   const script = CLOUD_AGENTS.find((agent) => agent.id === agentId)?.script ?? GENERIC_CLOUD_SETUP_SCRIPT;
   return script.replace(" | ", ` | ACFS_CLOUD_TOOLS="${tools}" `);
 }

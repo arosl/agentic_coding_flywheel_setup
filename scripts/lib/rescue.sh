@@ -504,14 +504,21 @@ rescue_state_snapshot() {
     jq_bin="$(rescue_jq 2>/dev/null || true)"
     [[ -n "$jq_bin" ]] || return 1
     "$jq_bin" -ces '
+        # Every phase with a required step that failed and has not recovered,
+        # then failed_phase (state.sh: _ACFS_STATE_FAILED_PHASES_DEF).
+        def failed_phases:
+            [(.phase_steps | if type == "object" then . else {} end) | to_entries[]
+                | select(.value | type == "object" and any(.[]; type == "object" and .required != false and .status == "failed"))
+                | .key] as $from_steps
+            | $from_steps + ((.failed_phase | if type == "string" and . != "" then [.] else [] end) - $from_steps);
         select(length == 1 and (.[0] | type == "object")) | .[0] |
         select(
         (if has("schema_version") then (.schema_version | type == "number" and . == floor and . >= 1 and . <= 2147483647) else true end) and
         (.completed_phases | . == null or (type == "array" and all(.[]; type == "string"))) and
-        (.failed_phases | . == null or (type == "array" and all(.[]; type == "string"))) and
         (.current_phase | . == null or type == "string" or (type == "object" and (.id | type == "string"))) and
         all([.failed_phase,.failed_step,.failed_error,.resume_hint,.current_step,.install_status][]; . == null or type == "string")) |
-        {schema_version,completed_phases,current_phase,current_step,failed_phase,failed_phases,failed_step,resume_hint,install_status,
+        {schema_version,completed_phases,current_phase,current_step,failed_phase,failed_step,resume_hint,install_status,
+            failed_phases:failed_phases,
             failed_error:(if (.failed_error // "") == "" then null else "recorded" end),
             last_updated:(.last_updated // .updated_at // .last_update)}
     ' -- "$1" 2>/dev/null

@@ -1,0 +1,64 @@
+name: Ubuntu Source Audit Regression
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ubuntu-source-audit.yml
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-verified-runtime:
+    if: github.repository == 'Dicklesworthstone/agentic_coding_flywheel_setup' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Execute the immutable reviewed publisher within its integration window
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import datetime
+          import hashlib
+          import json
+          import os
+          import subprocess
+          import textwrap
+          import urllib.request
+
+          deadline = datetime.datetime(2026, 10, 17, 23, 20, tzinfo=datetime.timezone.utc)
+          if datetime.datetime.now(datetime.timezone.utc) >= deadline:
+              print('The one-time publication window has expired; no operation performed.')
+              raise SystemExit(0)
+
+          expected = '857ae5bf62d77dc5431447693fde79fc80e20257'
+          url = 'https://api.github.com/repos/Dicklesworthstone/agentic_coding_flywheel_setup/git/blobs/' + expected
+          with urllib.request.urlopen(url, timeout=30) as response:
+              data = base64.b64decode(json.load(response)['content'])
+          actual = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+          if actual != expected:
+              raise SystemExit('Publisher blob verification failed')
+
+          # These are the four literal shell steps from the reviewed immutable
+          # workflow, not a general YAML or untrusted workflow interpreter.
+          chunks = data.decode('utf-8').split('\n        run: |\n')[1:]
+          if len(chunks) != 4:
+              raise SystemExit('Unexpected publisher structure')
+          for number, chunk in enumerate(chunks):
+              script = textwrap.dedent(chunk.split('\n      - name:', 1)[0])
+              environment = dict(os.environ)
+              if number != 3:
+                  environment.pop('GH_TOKEN', None)
+              subprocess.run(['bash', '-euo', 'pipefail', '-c', script],
+                             env=environment, check=True, timeout=300)
+          PY

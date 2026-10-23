@@ -13,7 +13,7 @@
 #
 #   #!/bin/bash
 #   (
-#   acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 0; }
+#   acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 0; }
 #   printf '%s\n' "$acfs_cloud_setup" | bash
 #   )
 #
@@ -40,6 +40,7 @@
 #   ACFS_CLOUD_SKILL_DIR optional absolute repository skill directory for Codex
 #   ACFS_CLOUD_TOOLS     space-separated subset of tools to install
 #                        (default: br bv am ubs cass cm ms ast-grep jsm jfp)
+#                        Selecting ubs also includes its ast-grep dependency.
 #   ACFS_CLOUD_TIMEOUT   whole tool job timeout in seconds (default: 180, max: 180)
 #   ACFS_CLOUD_REINSTALL 1 = reinstall tools that are already on PATH
 #   ACFS_REF             ACFS git ref that supplies cloud-mirror.json (default: main)
@@ -94,7 +95,7 @@ cloud_tool_field() {
 
 cloud_download() {
     # $1 = url, $2 = destination file
-    curl -q -fsSL -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -H 'Accept-Encoding: identity' \
+    curl -q -fsSL -A 'acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)' -H 'Accept-Encoding: identity' \
         --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 \
         -o "$2" "$1"
 }
@@ -187,7 +188,7 @@ try:
     def download(url, target):
         if not url.startswith('https://'):
             raise ValueError('HTTPS required')
-        result = subprocess.run(['curl', '-q', '-fsSL', '-A', 'OpenAI File Downloader, XaiImageApiFetch/1.0',
+        result = subprocess.run(['curl', '-q', '-fsSL', '-A', 'acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)',
                                  '-H', 'Accept-Encoding: identity', '--proto', '=https', '--proto-redir', '=https',
                                  '--connect-timeout', '5', '--max-time', '60', '-w', '%{http_connect}',
                                  '-o', str(target), url], stdout=subprocess.PIPE, text=True, check=False)
@@ -417,7 +418,17 @@ cloud_tool_guide_line() {
         bv) printf '%s\n' '- `bv` (beads_viewer): graph-aware triage over beads. Use ONLY `--robot-*` flags (bare `bv` opens a blocking TUI): `bv --robot-triage`, `bv --robot-next`, `bv --robot-plan`.' ;;
         am) printf '%s\n' "- \`am\` / \`mcp-agent-mail\` (Agent Mail): agent messaging and file reservations. MCP registration status is in \`$ACFS_CLOUD_STATE_DIR/setup.log\`; use \`am --help\` for CLI access." ;;
         ast-grep) printf '%s\n' '- `ast-grep`: structural code search used by UBS. Use this name because Linux may have an unrelated `sg` command.' ;;
-        ubs) printf '%s\n' '- `ubs` (Ultimate Bug Scanner): run `ubs <changed files>` before every commit. Default exit 0 can include warnings; read the report. Use `ubs <changed files> --ci --fail-on-warning` when warnings must fail the check.' ;;
+        ubs)
+            printf '%s\n' '- `ubs` (Ultimate Bug Scanner): scan changed files before every commit. Default exit 0 can include warnings; read the report. Add `--ci --fail-on-warning` when warnings must fail the check.'
+            if [[ -d "$ACFS_CLOUD_ROOT/.local/share/ubs/modules" ]]; then
+                # The complete bundle lives with this installation. HOME or
+                # XDG_DATA_HOME may select another, unpopulated module cache.
+                printf '  Use these bundled modules for offline scans; replace the example file path:\n\n  ```bash\n  ubs --module-dir=%s path/to/changed-file\n  ```\n' \
+                    "$(printf '%q' "$ACFS_CLOUD_ROOT/.local/share/ubs/modules")"
+            else
+                printf '%s\n' '  Run `ubs <changed files>`; this upstream-only installation downloads modules on first use.'
+            fi
+            ;;
         cass) printf '%s\n' '- `cass` (session search): `cass search "query" --robot --limit 5`. Always pass `--robot` or `--json`; bare `cass` opens a TUI.' ;;
         cm) printf '%s\n' '- `cm` (CASS Memory): `cm context "<task>" --json` before starting work to pull relevant procedural memory.' ;;
         ms) printf '%s\n' '- `ms` (meta_skill): in a writable project, initialize local state once with `ms init --robot`, then index your skill directory with `ms index <skill-directory> --robot` and search with `ms search "query" --robot`. Reuse existing `.ms`, `MS_ROOT` or `MS_CONFIG` state; with configured overrides, skip this initialization recipe. Local initialization preserves an existing `.ms`; do not add `--global` or `--force`.' ;;
@@ -472,6 +483,12 @@ cloud_write_guide() {
         block+=$'For JFP\'s prompt cache in this writable data root, run:\n\n```bash\n'
         block+="export JFP_HOME=\${JFP_HOME:-$(printf '%q' "$ACFS_CLOUD_ROOT")}"$'\n```\n\n'
         block+=$'This preserves an existing JFP_HOME. If XDG_CONFIG_HOME is set, JFP uses it instead; that directory must also be writable.\n\n'
+        block+=$'For JSM state with a read-only HOME and no configured profile, prefix each CLI command as shown (replace --help with your subcommand):\n\n```bash\n'
+        block+="XDG_CONFIG_HOME=\${XDG_CONFIG_HOME:-$(printf '%q' "$ACFS_CLOUD_ROOT/.config")} XDG_DATA_HOME=\${XDG_DATA_HOME:-$(printf '%q' "$ACFS_CLOUD_ROOT/.local/share")} XDG_CACHE_HOME=\${XDG_CACHE_HOME:-$(printf '%q' "$ACFS_CLOUD_ROOT/.cache")} jsm --help"$'\n```\n\n'
+        block+=$'Reuse existing JSM configuration. These command-scoped defaults preserve explicit XDG paths and leave HOME and the parent shell unchanged. JSM_PROFILE_ROOT, when set, takes precedence and must be writable. Configuration and cache paths do not redirect skill installation targets: inspect jsm config show and select writable skill directories supported by your provider before installing. Skill discovery and premium access still require their own checks.\n\n'
+        block+=$'For Agent Mail with a read-only HOME and no configured archive, prefix each CLI command as shown (replace --help with your subcommand):\n\n```bash\n'
+        block+="STORAGE_ROOT=\${STORAGE_ROOT:-\${XDG_DATA_HOME:-$(printf '%q' "$ACFS_CLOUD_ROOT/.local/share")}/mcp-agent-mail/git_mailbox_repo} am --help"$'\n```\n\n'
+        block+=$'If Agent Mail is already configured, reuse its existing configuration. This command-scoped value preserves an explicit STORAGE_ROOT or XDG_DATA_HOME and does not change the shell\'s STORAGE_ROOT, DATABASE_URL, HOME or provider configuration. Existing configured state paths must be writable.\n\n'
     fi
     if [[ ${#installed[@]} -gt 0 ]]; then
         block+="$(printf '%s\n' "${installed[@]}")"$'\n'
@@ -486,7 +503,7 @@ cloud_write_guide() {
     block+=$'\n\nRe-run:\n\n```bash\n'
     # Buffer the complete successful bootstrap before executing any bytes.
     # The subshell contains the temporary variable and preserves curl failure.
-    block+="( acfs_cloud_setup=\"\$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -H 'Accept-Encoding: identity' $(printf '%q' "$ACFS_CLOUD_SCRIPT_URL"))\" && printf '%s\\n' \"\$acfs_cloud_setup\" | ACFS_REF=$(printf '%q' "$ACFS_REF") ACFS_CLOUD_SKILL_DIR=$(printf '%q' "$ACFS_CLOUD_SKILL_DIR") ACFS_CLOUD_ROOT=$(printf '%q' "$ACFS_CLOUD_ROOT") ACFS_CLOUD_TOOLS=$(printf '%q' "$ACFS_CLOUD_TOOLS") ACFS_CLOUD_TIMEOUT=$ACFS_CLOUD_TIMEOUT ACFS_CLOUD_AGENT=$ACFS_CLOUD_AGENT bash )"$'\n```\n'
+    block+="( acfs_cloud_setup=\"\$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)' -H 'Accept-Encoding: identity' $(printf '%q' "$ACFS_CLOUD_SCRIPT_URL"))\" && printf '%s\\n' \"\$acfs_cloud_setup\" | ACFS_REF=$(printf '%q' "$ACFS_REF") ACFS_CLOUD_SKILL_DIR=$(printf '%q' "$ACFS_CLOUD_SKILL_DIR") ACFS_CLOUD_ROOT=$(printf '%q' "$ACFS_CLOUD_ROOT") ACFS_CLOUD_TOOLS=$(printf '%q' "$ACFS_CLOUD_TOOLS") ACFS_CLOUD_TIMEOUT=$ACFS_CLOUD_TIMEOUT ACFS_CLOUD_AGENT=$ACFS_CLOUD_AGENT bash )"$'\n```\n'
     if [[ "$ACFS_CLOUD_AGENT" == codex ]]; then
         block+=$'\nAgent Mail is installed as a CLI. Hosted Codex MCP registration is not configured by this script.\n'
     elif [[ "$ACFS_CLOUD_AGENT" == generic ]]; then
@@ -593,6 +610,8 @@ export PATH={bins}:"$PATH"
 Check `br --version`, `bv --version`, `ubs --version` and `jsm --version`.
 Follow the guide's robot/JSON commands and use the repository's existing Beads tracker.
 For a custom data root, follow the guide's CASS_DATA_DIR, CASS_MEMORY_HOME and JFP_HOME exports in each task shell; preserve existing overrides and keep any XDG_DATA_HOME/XDG_CONFIG_HOME writable.
+Before using Agent Mail with a read-only HOME, follow the guide's command-scoped STORAGE_ROOT recipe; reuse existing configuration and preserve DATABASE_URL.
+Before using JSM with a read-only HOME, follow the guide's command-scoped XDG recipe; reuse existing configuration and check skill installation targets separately.
 Before using MS, follow the guide's local initialization and indexing steps in a writable project; reuse existing .ms/MS_ROOT/MS_CONFIG state.
 Do not run the full VPS installer or build tools from source.
 Agent Mail is available as a CLI; this skill does not configure hosted MCP.
@@ -620,14 +639,17 @@ PY
 
 cloud_main() {
     set -uo pipefail
-    local started tool bin status detail pid selected=" "
-    local -a pids=()
+    local started tool bin status detail pid selected=" " needs_ast_grep=0 has_ast_grep=0
+    local -a pids=() tools=()
     started=$(date +%s)
     case "$ACFS_CLOUD_AGENT" in
         claude|codex|generic) ;;
         *) cloud_warn "ACFS_CLOUD_AGENT must be claude or codex or generic"; return 0 ;;
     esac
     ACFS_CLOUD_TOOLS="${ACFS_CLOUD_TOOLS:-$ACFS_CLOUD_DEFAULT_TOOLS}"
+    # Split only on whitespace, never on checkout filenames matching a glob.
+    # Flatten newlines because read otherwise stops after the first line.
+    IFS=$' \t\n' read -r -a tools <<< "${ACFS_CLOUD_TOOLS//$'\n'/ }"
     ACFS_CLOUD_TIMEOUT="${ACFS_CLOUD_TIMEOUT:-180}"
     if [[ ! "$ACFS_CLOUD_TIMEOUT" =~ ^([1-9]|[1-9][0-9]|1[0-7][0-9]|180)$ ]]; then
         cloud_warn "ACFS_CLOUD_TIMEOUT must be an integer from 1 to 180"
@@ -640,6 +662,18 @@ cloud_main() {
     for bin in python3 curl timeout; do
         command -v "$bin" >/dev/null || { cloud_warn "Required command missing: $bin"; return 0; }
     done
+    # Resolve the runtime dependency during setup, through the same pinned
+    # bundle path. A UBS-only subset must not defer a GitHub download until
+    # the agent's first scan, when network access may already be restricted.
+    for tool in "${tools[@]}"; do
+        [[ "$tool" == ubs ]] && needs_ast_grep=1
+        [[ "$tool" == ast-grep ]] && has_ast_grep=1
+    done
+    if [[ "$needs_ast_grep" == 1 && "$has_ast_grep" == 0 ]]; then
+        tools+=(ast-grep)
+        ACFS_CLOUD_TOOLS+=" ast-grep"
+        cloud_detail "Including ast-grep, required by UBS"
+    fi
     ACFS_CLOUD_WORK="$(mktemp -d "${TMPDIR:-/tmp}/acfs-cloud.XXXXXX")" || return 0
     if ! mkdir -p "$ACFS_CLOUD_STATE_DIR/logs" "$ACFS_CLOUD_BIN_DIR" "$ACFS_CLOUD_WORK/status"; then
         cloud_warn "Cannot write the install directories; choose a writable ACFS_CLOUD_ROOT"
@@ -658,7 +692,7 @@ cloud_main() {
         printf '{}' > "$ACFS_CLOUD_WORK/cloud-mirror.json"
     fi
 
-    for tool in $ACFS_CLOUD_TOOLS; do
+    for tool in "${tools[@]}"; do
         bin="$(cloud_tool_field "$tool" 3)"
         if [[ -z "$bin" ]]; then
             cloud_warn "Unknown tool '$tool' (known: $ACFS_CLOUD_DEFAULT_TOOLS)"
@@ -692,7 +726,7 @@ cloud_main() {
     fi
 
     cloud_step "Summary ($(( $(date +%s) - started ))s)"
-    for tool in $ACFS_CLOUD_TOOLS; do
+    for tool in "${tools[@]}"; do
         [[ -f "$ACFS_CLOUD_WORK/status/$tool" ]] || continue
         IFS='|' read -r status detail < "$ACFS_CLOUD_WORK/status/$tool"
         if [[ "$status" == "ok" ]]; then

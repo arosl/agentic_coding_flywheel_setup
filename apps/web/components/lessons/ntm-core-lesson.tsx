@@ -349,7 +349,7 @@ const AGENTS: AgentPaneV2[] = [
   {
     id: "agy1",
     name: "Antigravity",
-    model: "Gemini 3.8 Flash (High)",
+    model: "Gemini 4 Argon (High)",
     flag: "--kind agy",
     color: "#8b5cf6",
     colorLight: "#c4b5fd",
@@ -374,7 +374,7 @@ const STEP_COMMANDS: Record<number, string> = {
   1: "Starting Claude-1 (claude-sonnet-4-6)...",
   2: "Starting Claude-2 (claude-sonnet-4-6)...",
   3: "Starting Codex (codex-mini)...",
-  4: "Starting Antigravity (Gemini 3.8 Flash)...",
+  4: "Starting Antigravity (Gemini 4 Argon)...",
   5: 'herdr agent prompt "$a" "Analyze this codebase"',
   6: "Agents working in parallel...",
   7: "All agents complete!",
@@ -1428,7 +1428,7 @@ function AgentRatioCard() {
         <RatioItem
           count="1"
           name="Antigravity"
-          reason="Different perspective (Gemini 3.8 Flash), good for docs"
+          reason="Different perspective (Gemini 4 Argon), good for docs"
           color="from-blue-500 to-purple-500"
         />
       </div>

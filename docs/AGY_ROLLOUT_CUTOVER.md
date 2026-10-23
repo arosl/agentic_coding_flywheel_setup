@@ -23,7 +23,7 @@ forward path for all new work.
 - **Operational** ("start a session" / spawn / recommend / default swarm) → `agy`
   through the ACFS `agy-locked` launcher.
 - **Historical** (resume/read/discover an existing Gemini session) → keep `gmi`/`gemini`.
-- **Model mandate**: every `agy` invocation is pinned to **`Gemini 3.8 Flash (High)`** —
+- **Model mandate**: every `agy` invocation is pinned to **`Gemini 4 Argon (High)`** —
   the only allowed model. Single source of truth: `scripts/lib/agy_model_guard.sh`
   (referenced by the bash, Go, and Rust ports).
 - **Disambiguation**: the `~/.gemini/` parent is shared. `~/.gemini/tmp` = gmi;
@@ -101,12 +101,15 @@ history and must not break:
 
 ## Verification
 
-- **Full ecosystem E2E** (`scripts/e2e/test_agy_ecosystem.sh`): ✅ 10/10 green on one
-  real agy conversation pinned to `Gemini 3.8 Flash (High)` — agy round-trip + model
-  guard, conversation persisted, cass index, casr resume, caam provider, dcg guard,
-  am detection, ntm agy type, a deployed skill drives agy.
-- `agy --model "Gemini 3.8 Flash (High)" --print "…"` returns a real completion on the
-  pinned model (verified on the fleet).
+- **Full ecosystem E2E** (`scripts/e2e/test_agy_ecosystem.sh`): ✅ 10/10 green on
+  2026-06-20 on one real agy conversation pinned to the model of the time,
+  `Gemini 3.1 Pro (High)` — agy round-trip + model guard, conversation persisted,
+  cass index, casr resume, caam provider, dcg guard, am detection, ntm agy type, a
+  deployed skill drives agy. It has not been re-run since the pin moved (3.7 Flash
+  2026-08-24, 3.8 Flash 2026-09-03, Gemini 4 Argon (High) 2026-10-13).
+- 2026-10-13: `agy-locked --effort max -p "…"` returned a real completion from
+  Gemini 4 Argon on all 11 dev hosts (the stray `--effort` was stripped by the
+  launcher).
 - `bash scripts/lib/agy_model_guard.sh --self-test` and
   `bash scripts/lib/agy_e2e_harness.sh --self-test` pass.
 - `bash tests/unit/test_agy_install.sh` — agy install contract (13 checks) passes;

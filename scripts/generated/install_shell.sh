@@ -350,7 +350,7 @@ acfs_security_init() {
 }
 
 # Category: shell
-# Generated modules: 2
+# Generated modules: 3
 
 # Zsh shell package
 acfs_generated_install_shell_zsh() {
@@ -389,6 +389,49 @@ INSTALL_SHELL_ZSH
     fi
 
     log_success "shell.zsh installed"
+}
+
+# Validated and recoverable login-shell configuration
+acfs_generated_install_shell_login() {
+    local module_id="shell.login"
+    acfs_require_contract "module:${module_id}" || return 1
+    acfs_generated_ensure_selection || return 1
+    if ! should_run_module "${module_id}"; then
+        log_info "Skipping shell.login (not selected)"
+        return 0
+    fi
+    log_step "Installing shell.login"
+
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: install: source \"\${ACFS_LIB_DIR:-\$HOME/.acfs/scripts/lib}/user.sh\" (current)"
+    else
+        if ! run_as_current_shell <<'INSTALL_SHELL_LOGIN'
+# The shared helper validates /etc/shells, preserves the original shell,
+# and verifies the account. Home-file writes run as the target user.
+source "${ACFS_LIB_DIR:-$HOME/.acfs/scripts/lib}/user.sh"
+set_default_shell
+INSTALL_SHELL_LOGIN
+        then
+            log_error "shell.login: install command failed: source \"\${ACFS_LIB_DIR:-\$HOME/.acfs/scripts/lib}/user.sh\""
+            return 1
+        fi
+    fi
+
+    # Verify
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: source \"\${ACFS_LIB_DIR:-\$HOME/.acfs/scripts/lib}/user.sh\" (current)"
+    else
+        if ! run_as_current_shell <<'INSTALL_SHELL_LOGIN'
+source "${ACFS_LIB_DIR:-$HOME/.acfs/scripts/lib}/user.sh"
+user_login_shell_configured
+INSTALL_SHELL_LOGIN
+        then
+            log_error "shell.login: verify failed: source \"\${ACFS_LIB_DIR:-\$HOME/.acfs/scripts/lib}/user.sh\""
+            return 1
+        fi
+    fi
+
+    log_success "shell.login installed"
 }
 
 # Oh My Zsh + Powerlevel10k + plugins + ACFS config
@@ -693,205 +736,6 @@ INSTALL_SHELL_OMZ
             return 1
         fi
     fi
-    if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: if [[ \"\$SHELL\" != */zsh ]]; then (target_user)"
-    else
-        if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
-# Generated helper functions used by this child shell.
-acfs_generated_system_binary_path() {
-    local name="${1:-}"
-    local candidate=""
-
-    [[ -n "$name" ]] || return 1
-    case "$name" in
-        .|..)
-            return 1
-            ;;
-        *[!A-Za-z0-9._+-]*)
-            return 1
-            ;;
-    esac
-
-    for candidate in \
-        "/usr/bin/$name" \
-        "/bin/$name" \
-        "/usr/sbin/$name" \
-        "/sbin/$name"
-    do
-        [[ -x "$candidate" ]] || continue
-        printf '%s\n' "$candidate"
-        return 0
-    done
-
-    return 1
-}
-
-acfs_generated_resolve_current_user() {
-    local current_user=""
-    local id_bin=""
-    local whoami_bin=""
-
-    id_bin="$(acfs_generated_system_binary_path id 2>/dev/null || true)"
-    if [[ -n "$id_bin" ]]; then
-        current_user="$("$id_bin" -un 2>/dev/null || true)"
-    fi
-
-    if [[ -z "$current_user" ]]; then
-        whoami_bin="$(acfs_generated_system_binary_path whoami 2>/dev/null || true)"
-        if [[ -n "$whoami_bin" ]]; then
-            current_user="$("$whoami_bin" 2>/dev/null || true)"
-        fi
-    fi
-
-    [[ -n "$current_user" ]] || return 1
-    printf '%s\n' "$current_user"
-}
-
-acfs_generated_getent_passwd_entry() {
-    local user="${1-}"
-    local getent_bin=""
-    local passwd_entry=""
-    local passwd_line=""
-    local printed_any=false
-
-    getent_bin="$(acfs_generated_system_binary_path getent 2>/dev/null || true)"
-    if [[ -z "$user" ]]; then
-        if [[ -n "$getent_bin" ]]; then
-            while IFS= read -r passwd_line; do
-                printf '%s\n' "$passwd_line"
-                printed_any=true
-            done < <("$getent_bin" passwd 2>/dev/null || true)
-            if [[ "$printed_any" == true ]]; then
-                return 0
-            fi
-        fi
-
-        [[ -r /etc/passwd ]] || return 1
-        while IFS= read -r passwd_line; do
-            printf '%s\n' "$passwd_line"
-        done < /etc/passwd
-        return 0
-    fi
-
-    if [[ -n "$getent_bin" ]]; then
-        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
-    fi
-
-    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
-        while IFS= read -r passwd_line; do
-            [[ "${passwd_line%%:*}" == "$user" ]] || continue
-            passwd_entry="$passwd_line"
-            break
-        done < /etc/passwd
-    fi
-
-    [[ -n "$passwd_entry" ]] || return 1
-    printf '%s\n' "$passwd_entry"
-}
-
-acfs_generated_passwd_home_from_entry() {
-    local passwd_entry="${1:-}"
-    local passwd_home=""
-
-    [[ -n "$passwd_entry" ]] || return 1
-    IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
-    if [[ -n "$passwd_home" ]] && [[ "$passwd_home" == /* ]] && [[ "$passwd_home" != "/" ]]; then
-        printf '%s\n' "${passwd_home%/}"
-        return 0
-    fi
-
-    return 1
-}
-
-acfs_generated_target_user_exists() {
-    local user="${1:-}"
-    local id_bin=""
-
-    [[ -n "$user" ]] || return 1
-    id_bin="$(acfs_generated_system_binary_path id 2>/dev/null || true)"
-    [[ -n "$id_bin" ]] || return 1
-    "$id_bin" "$user" >/dev/null 2>&1
-}
-
-acfs_generated_default_home_for_new_user() {
-    local user="${1:-}"
-
-    [[ -n "$user" ]] || return 1
-    [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]] || return 1
-
-    if [[ "$user" == "root" ]]; then
-        printf '/root\n'
-        return 0
-    fi
-
-    printf '/home/%s\n' "$user"
-}
-
-# Set default shell
-acfs_external_shell_handoff_configured() {
-  local bashrc_path="${1:-}"
-  [[ -n "$bashrc_path" && -f "$bashrc_path" ]] || return 1
-
-  awk '
-      $0 == "# ACFS externally-managed shell handoff" { marker=1; next }
-      marker && $0 ~ /^[[:space:]]*#/ { next }
-      marker && index($0, "command -v zsh") && index($0, "ACFS_ZSH_HANDOFF_ACTIVE") { found=1; exit }
-      marker && $0 !~ /^[[:space:]]*$/ { marker=0 }
-      END { exit(found ? 0 : 1) }
-  ' "$bashrc_path" 2>/dev/null
-}
-
-if [[ "$SHELL" != */zsh ]]; then
-  zsh_path="$(command -v zsh || true)"
-  if [[ -z "$zsh_path" ]]; then
-    echo "WARN: zsh not found; cannot set default shell automatically." >&2
-    exit 0
-  fi
-  current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
-  if [[ -z "$current_user" ]]; then
-    echo "WARN: Unable to resolve current user; skipping default shell change." >&2
-    exit 0
-  fi
-  passwd_entry="$(acfs_generated_getent_passwd_entry "$current_user" 2>/dev/null || true)"
-  local_entry=""
-  if [[ -r /etc/passwd ]]; then
-    local_entry="$(awk -F: -v user="$current_user" '$1 == user { print $0; exit }' /etc/passwd 2>/dev/null || true)"
-  fi
-  if [[ -n "$passwd_entry" ]] && [[ -z "$local_entry" ]]; then
-    if ! acfs_external_shell_handoff_configured ~/.bashrc; then
-      if [[ -f ~/.bashrc ]] && [[ -s ~/.bashrc ]]; then
-        last_char="$(tail -c 1 ~/.bashrc | od -An -t u1 | tr -d ' ' 2>/dev/null || true)"
-        if [[ "$last_char" != "10" ]]; then
-          printf '\n' >> ~/.bashrc
-        fi
-      fi
-      {
-        echo '# ACFS externally-managed shell handoff'
-        echo 'if [[ $- == *i* ]] && [[ -t 0 ]] && command -v zsh >/dev/null 2>&1 && [[ -z "${ACFS_ZSH_HANDOFF_ACTIVE:-}" ]]; then'
-        echo '  export ACFS_ZSH_HANDOFF_ACTIVE=1'
-        echo '  exec "$(command -v zsh)" -l'
-        echo 'fi'
-      } >> ~/.bashrc
-    fi
-    echo "WARN: $current_user is managed outside /etc/passwd; installed a bash-to-zsh handoff instead of using chsh." >&2
-  elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
-    sudo chsh -s "$zsh_path" "$current_user"
-  else
-    if [[ -t 0 ]]; then
-      if ! chsh -s "$zsh_path"; then
-        echo "WARN: Could not change default shell automatically. Run: chsh -s $zsh_path" >&2
-      fi
-    else
-      echo "WARN: Skipping shell change (no TTY). Run: chsh -s $zsh_path" >&2
-    fi
-  fi
-fi
-INSTALL_SHELL_OMZ
-        then
-            log_error "shell.omz: install command failed: if [[ \"\$SHELL\" != */zsh ]]; then"
-            return 1
-        fi
-    fi
 
     # Verify
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
@@ -924,6 +768,18 @@ test -f ~/.p10k.zsh
 INSTALL_SHELL_OMZ
         then
             log_error "shell.omz: verify failed: test -f ~/.p10k.zsh"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: source \"\${ACFS_LIB_DIR:-\$HOME/.acfs/scripts/lib}/user.sh\" (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
+source "${ACFS_LIB_DIR:-$HOME/.acfs/scripts/lib}/user.sh"
+user_login_shell_configured
+INSTALL_SHELL_OMZ
+        then
+            log_error "shell.omz: verify failed: source \"\${ACFS_LIB_DIR:-\$HOME/.acfs/scripts/lib}/user.sh\""
             return 1
         fi
     fi

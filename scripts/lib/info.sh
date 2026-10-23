@@ -1202,8 +1202,15 @@ info_get_install_outcome() {
         return 0
     fi
     "$jq_bin" -r '
-        (.failed_phases | if type == "array" then map(select(type == "string")) else [] end) as $failed |
-        (if .install_status == "failed" or ($failed | length) > 0 or ((.failed_phase // "") | type == "string" and . != "") then "failed"
+        # Every phase with a required step that failed and has not recovered,
+        # then failed_phase (state.sh: _ACFS_STATE_FAILED_PHASES_DEF).
+        def failed_phases:
+            [(.phase_steps | if type == "object" then . else {} end) | to_entries[]
+                | select(.value | type == "object" and any(.[]; type == "object" and .required != false and .status == "failed"))
+                | .key] as $from_steps
+            | $from_steps + ((.failed_phase | if type == "string" and . != "" then [.] else [] end) - $from_steps);
+        failed_phases as $failed |
+        (if .install_status == "failed" or ($failed | length) > 0 then "failed"
          elif .install_status == "complete" or .install_status == "in_progress" then .install_status
          elif .install_status == null and ((.completed_phases // []) | index("finalize")) != null then "complete"
          else "unknown" end) as $status |
@@ -1569,7 +1576,7 @@ info_get_quick_commands() {
     cat <<'EOF'
 cc|Launch Claude Code
 cod|Launch Codex CLI
-agy|Launch Antigravity CLI, model Gemini 3.8 Flash (High)
+agy|Launch Antigravity CLI, model Gemini 4 Argon (High)
 herdr|Start or reattach the agent workspace
 herdr agent list|List agents and their state
 lazygit|Visual git interface
@@ -1998,7 +2005,7 @@ info_render_json() {
   "quick_commands": [
     {"cmd": "cc", "desc": "Launch Claude Code"},
     {"cmd": "cod", "desc": "Launch Codex CLI"},
-    {"cmd": "agy", "desc": "Launch Antigravity CLI, model Gemini 3.8 Flash (High)"},
+    {"cmd": "agy", "desc": "Launch Antigravity CLI, model Gemini 4 Argon (High)"},
     {"cmd": "herdr", "desc": "Start or reattach the agent workspace"},
     {"cmd": "herdr agent list", "desc": "List agents and their state"},
     {"cmd": "lazygit", "desc": "Visual git interface"},

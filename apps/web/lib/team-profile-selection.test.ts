@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { test } from "node:test";
 import {
   buildHandoffRunbook,
@@ -31,12 +31,11 @@ const ids = (selection: ModuleSelectionInput): string[] => {
   assert.equal(plan.ok, true, plan.errors.join("\n"));
   return plan.included.map((entry) => entry.id);
 };
-function commandSelection(command: string): ModuleSelectionInput {
-  // The real generated curl|bash string receives a harmless argument printer.
-  // No download, installer, host mutation, or dependency command is executed.
-  const prefix = "curl() { printf '%s\\n' '#!/bin/bash' 'printf \"%s\\0\" \"$@\"'; }; ";
-  const args = execFileSync("/bin/bash", ["-c", prefix + command])
-    .toString()
+// The real generated curl|bash string receives a harmless argument printer.
+// No download, installer, host mutation, or dependency command is executed.
+const prefix = "curl() { printf '%s\\n' '#!/bin/bash' 'printf \"%s\\0\" \"$@\"'; }; ";
+function parseCommandSelection(output: string): ModuleSelectionInput {
+  const args = output
     .split("\0")
     .filter(Boolean);
   const result: ModuleSelectionInput = { onlyModules: [], onlyPhases: [], skipModules: [] };
@@ -54,8 +53,28 @@ function commandSelection(command: string): ModuleSelectionInput {
   return result;
 }
 
+function commandSelection(command: string): ModuleSelectionInput {
+  return parseCommandSelection(execFileSync("/bin/bash", ["-c", prefix + command]).toString());
+}
+
+function commandSelectionAsync(command: string): Promise<ModuleSelectionInput> {
+  return new Promise((resolve, reject) => {
+    execFile("/bin/bash", ["-c", prefix + command], (error, stdout) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      try {
+        resolve(parseCommandSelection(stdout));
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+
 for (const profile of manifestSelectionProfiles) {
-  test(`team profile ${profile.id} preserves every accepted tag/category exclusion through real Bash arguments`, () => {
+  test(`team profile ${profile.id} preserves every accepted tag/category exclusion through real Bash arguments`, async () => {
     const tags = [...new Set(manifestModules.flatMap((module) => module.tags))];
     const categories = [...new Set(manifestModules.map((module) => module.category))];
     const groups: ModuleSelectionInput[] = [
@@ -63,28 +82,41 @@ for (const profile of manifestSelectionProfiles) {
       ...categories.map((category) => ({ profile: profile.id, skipCategories: [category] })),
     ];
     let accepted = 0;
-    for (const selection of groups) {
-      const original = resolveModuleSelection(selection);
-      if (!original.ok) {
-        assert.throws(() => buildTeamProfile(inputs(selection)), /selection/);
-        continue;
+    const pending = [...groups];
+    // Keep every real Bash invocation while bounding concurrency to four
+    // selections (at most eight commands). Do not serialize process startup.
+    const workers = Array.from({ length: 4 }, async () => {
+      while (true) {
+        const selection = pending.shift();
+        if (!selection) return;
+        const original = resolveModuleSelection(selection);
+        if (!original.ok) {
+          assert.throws(() => buildTeamProfile(inputs(selection)), /selection/);
+          continue;
+        }
+        accepted++;
+        const exported = buildTeamProfile(inputs(selection));
+        const imported = buildTeamProfileImportDiff(JSON.parse(serializeTeamProfileJson(exported)));
+        assert.equal(imported.ok, true, JSON.stringify(imported.findings));
+        assert.deepEqual(
+          exported.install.modulePlan.included,
+          original.included.map((entry) => entry.id),
+        );
+        const [importedResult, handoffResult] = await Promise.allSettled([
+          commandSelectionAsync(imported.installerCommand.command!),
+          commandSelectionAsync(buildHandoffRunbook(inputs(selection)).install.command),
+        ]);
+        if (importedResult.status === "rejected") throw importedResult.reason;
+        if (handoffResult.status === "rejected") throw handoffResult.reason;
+        assert.deepEqual(ids(importedResult.value), exported.install.modulePlan.included);
+        assert.deepEqual(ids(handoffResult.value), exported.install.modulePlan.included);
       }
-      accepted++;
-      const exported = buildTeamProfile(inputs(selection));
-      const imported = buildTeamProfileImportDiff(JSON.parse(serializeTeamProfileJson(exported)));
-      assert.equal(imported.ok, true, JSON.stringify(imported.findings));
-      assert.deepEqual(
-        exported.install.modulePlan.included,
-        original.included.map((entry) => entry.id),
-      );
-      assert.deepEqual(
-        ids(commandSelection(imported.installerCommand.command!)),
-        exported.install.modulePlan.included,
-      );
-      assert.deepEqual(
-        ids(commandSelection(buildHandoffRunbook(inputs(selection)).install.command)),
-        exported.install.modulePlan.included,
-      );
+    });
+    // A failed assertion must fail this test, after sibling commands have
+    // finished rather than leaking their work into the next profile's test.
+    const results = await Promise.allSettled(workers);
+    for (const result of results) {
+      if (result.status === "rejected") throw result.reason;
     }
     assert.ok(accepted > 0, "The catalogue must exercise accepted as well as refused selections");
   });

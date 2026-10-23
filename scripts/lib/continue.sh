@@ -668,9 +668,19 @@ get_failed_phase() {
     fi
 }
 
-# Every phase whose last run failed, comma separated (failed_phase is the last).
+# jq: every phase with a required step that failed and has not recovered,
+# then failed_phase (state.sh: _ACFS_STATE_FAILED_PHASES_DEF).
+_CONTINUE_FAILED_PHASES_DEF='
+    def failed_phases:
+        [(.phase_steps | if type == "object" then . else {} end) | to_entries[]
+            | select(.value | type == "object" and any(.[]; type == "object" and .required != false and .status == "failed"))
+            | .key] as $from_steps
+        | $from_steps + ((.failed_phase | if type == "string" and . != "" then [.] else [] end) - $from_steps);
+'
+
+# Every failed phase, comma separated.
 get_failed_phases() {
-    get_state_value '.failed_phases | if type == "array" then map(select(type == "string")) | join(", ") else empty end'
+    get_state_value "$_CONTINUE_FAILED_PHASES_DEF"'failed_phases | join(", ")'
 }
 
 get_failed_step() {
@@ -697,7 +707,7 @@ get_resume_hint() {
 get_install_status() {
     local install_status phase_failed current_phase finalize_completed
     install_status=$(get_state_value '.install_status // empty')
-    phase_failed=$(get_state_value '(.failed_phases | type == "array" and length > 0) or ((.failed_phase // "") != "")')
+    phase_failed=$(get_state_value "$_CONTINUE_FAILED_PHASES_DEF"'failed_phases | length > 0')
     if [[ "$install_status" == "failed" || "$phase_failed" == "true" ]]; then
         echo "failed"
         return 0

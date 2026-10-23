@@ -14,6 +14,7 @@ on:
       - 'package.json'
       - '.shellcheckrc'
       - 'tests/**/*.sh'
+      - 'tests/unit/test_login_shell_safety.py'
   pull_request:
     branches: [main]
     paths:
@@ -27,6 +28,7 @@ on:
       - 'package.json'
       - '.shellcheckrc'
       - 'tests/**/*.sh'
+      - 'tests/unit/test_login_shell_safety.py'
 
 jobs:
   yaml-lint:
@@ -108,11 +110,17 @@ jobs:
       - name: Run library globals integration test
         run: bash tests/unit/test_lib_globals.sh
 
+      - name: Run login-shell safety regressions
+        run: sudo python3 -B tests/unit/test_login_shell_safety.py
+
       - name: Run installer fault-injection contract test
         run: bash tests/unit/test_installer_fault_contract.sh
 
-      - name: Run install outcome tests (state.json install_status and failed_phases)
+      - name: Run install outcome tests (state.json install_status)
         run: HOME="$(mktemp -d)" bash tests/unit/test_install_state_status.sh
+
+      - name: Run isolated partial-phase recovery regression
+        run: bash tests/e2e/test_resume_after_failure.sh --isolated
 
       - name: Run release doctor governance tests
         run: bash tests/unit/test_release_doctor.sh

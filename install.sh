@@ -537,6 +537,7 @@ export _ACFS_LOGGING_SH_LOADED=1
 # ============================================================
 type -t set_phase &>/dev/null || set_phase() { :; }
 type -t try_step &>/dev/null || try_step() { shift; "$@"; }
+type -t try_step_optional &>/dev/null || try_step_optional() { shift; "$@"; }
 type -t try_step_eval &>/dev/null || try_step_eval() {
     local bash_bin=""
     bash_bin="$(acfs_early_system_binary_path bash 2>/dev/null || true)"
@@ -1470,9 +1471,10 @@ acfs_summary_emit() {
         ' "$ACFS_STATE_FILE" 2>/dev/null) || phases_json="[]"
 
         # Build failure object if present with precise resume hint (bd-31ps.9.1).
-        # phase is the last failed phase; failed_phases names all of them.
+        # phase is failed_phase; failed_phases names every phase with an
+        # unresolved required failure (state.sh's failed_phases definition).
         local failed_phase failed_phases_json
-        failed_phases_json=$(jq -c '.failed_phases | if type == "array" then map(select(type == "string")) else [] end' "$ACFS_STATE_FILE" 2>/dev/null) || true
+        failed_phases_json=$(jq -c "${_ACFS_STATE_FAILED_PHASES_DEF:-def failed_phases: [];}"'failed_phases' "$ACFS_STATE_FILE" 2>/dev/null) || true
         [[ -n "$failed_phases_json" ]] || failed_phases_json="[]"
         failed_phase=$(jq -r '.failed_phase // empty' "$ACFS_STATE_FILE" 2>/dev/null) || true
         if [[ -n "$failed_phase" ]]; then
@@ -1677,9 +1679,17 @@ generate_resume_hint() {
 }
 
 acfs_install_run_has_failures() {
-    [[ "${SMOKE_TEST_FAILED:-false}" == "true" ]] \
+    if [[ "${SMOKE_TEST_FAILED:-false}" == "true" ]] \
         || [[ ${#ACFS_PHASE_FAILURES[@]} -gt 0 ]] \
-        || [[ ${#ACFS_MODULE_FAILURES[@]} -gt 0 ]]
+        || [[ ${#ACFS_MODULE_FAILURES[@]} -gt 0 ]]; then
+        return 0
+    fi
+    # A new process has empty reporting arrays. Persisted required failures
+    # and interrupted phases must still prevent a resumed run claiming success.
+    if [[ "${DRY_RUN:-false}" != "true" ]] && type -t state_has_required_failures &>/dev/null; then
+        state_has_required_failures && return 0
+    fi
+    return 1
 }
 
 # Terminal exit status of a finished run (returned, not exited): 0 when clean;
@@ -5243,9 +5253,121 @@ acfs_legacy_module_is_required() {
     local map_decl=""
 
     [[ -n "$module_id" ]] || return 1
+    if type -t acfs_module_explicitly_selected &>/dev/null \
+        && acfs_module_explicitly_selected "$module_id"; then
+        return 0
+    fi
     map_decl="$(declare -p ACFS_MODULE_OPTIONAL 2>/dev/null || true)"
     [[ "$map_decl" == declare\ -A* ]] || return 1
     [[ "${ACFS_MODULE_OPTIONAL[$module_id]:-}" == "0" ]]
+}
+
+# Carry optional-module semantics through nested try_step calls. Merely
+# logging a required failure as a warning must never make it optional.
+acfs_try_module_step() {
+    local module_id="$1"
+    shift
+    if acfs_legacy_module_is_required "$module_id"; then
+        try_step "$@"
+    else
+        try_step_optional "$@"
+    fi
+}
+
+# These authored paths intentionally support installations outside the
+# generated Ubuntu layout. Run binary probes as the target user; do not add
+# user-controlled directories to the privileged runner's PATH.
+# Return 2 when the manifest's normal verification commands should be used.
+acfs_verify_authored_module() {
+    local module_id="$1"
+    local executable=""
+    case "$module_id" in
+        db.postgres18)
+            if acfs_use_generated_category "db"; then
+                acfs_verify_module_commands "$module_id" || return 1
+            fi
+            acfs_postgres_ready
+            ;;
+        tools.lazygit|tools.lazydocker)
+            executable="$(binary_path "${module_id#*.}" 2>/dev/null)" || return 1
+            [[ -n "$executable" ]] || return 1
+            run_as_target "$executable" --version >/dev/null 2>&1
+            ;;
+        lang.go)
+            executable="$(binary_path go 2>/dev/null)" || executable="/usr/local/go/bin/go"
+            run_as_target "$executable" version >/dev/null 2>&1
+            ;;
+        lang.nvm)
+            executable="$(_target_latest_nvm_node_bin 2>/dev/null)" || return 1
+            run_as_target "$executable/node" --version >/dev/null 2>&1
+            ;;
+        network.tailscale)
+            executable="$(binary_path tailscale 2>/dev/null)" || return 1
+            run_as_target "$executable" version >/dev/null 2>&1 || return 1
+            if command_exists systemctl && [[ -d /run/systemd/system ]]; then
+                systemctl is-enabled --quiet tailscaled && systemctl is-active --quiet tailscaled
+            fi
+            ;;
+        *) return 2 ;;
+    esac
+}
+
+# Hook used by state.sh for both resume decisions and phase completion.
+# Resume also retries optional components that the legacy installer attempts;
+# an optional failure may finish a run, but must not be skipped forever.
+acfs_verify_phase() {
+    local phase_id="$1"
+    local verification_mode="${2:-complete}"
+    local phase_number=""
+    if ! type -t acfs_verify_phase_modules &>/dev/null; then
+        log_error "Module verification is unavailable; cannot validate $phase_id"
+        return 1
+    fi
+    case "$phase_id" in
+        base_deps) phase_number=1 ;;
+        user_setup) phase_number=2 ;;
+        filesystem) phase_number=3 ;;
+        shell_setup) phase_number=4 ;;
+        cli_tools) phase_number=5 ;;
+        languages) phase_number=6 ;;
+        agents) phase_number=7 ;;
+        cloud_db) phase_number=8 ;;
+        stack) phase_number=9 ;;
+        finalize) phase_number=10 ;;
+        *) return 1 ;;
+    esac
+    acfs_verify_phase_modules "$phase_number" || return 1
+
+    if [[ "$phase_id" == "cloud_db" && "$verification_mode" == "resume" ]]; then
+        if ! acfs_use_generated_category "db" && [[ "${SKIP_POSTGRES:-false}" != "true" ]] \
+            && acfs_legacy_module_selected "db.postgres18"; then
+            acfs_postgres_ready || return 1
+        fi
+        if ! acfs_use_generated_category "tools" && [[ "${SKIP_VAULT:-false}" != "true" ]] \
+            && acfs_legacy_module_selected "tools.vault"; then
+            acfs_verify_module "tools.vault" || return 1
+        fi
+    fi
+    return 0
+}
+
+# Recheck selected essentials after all phases, including targeted installs
+# where the full-stack smoke test is intentionally omitted.
+acfs_verify_installation() {
+    local phase_id=""
+    local failed=false
+    for phase_id in base_deps user_setup filesystem shell_setup cli_tools languages agents cloud_db stack finalize; do
+        if ! acfs_verify_phase "$phase_id" complete; then
+            log_error "Installed-state verification failed for $phase_id"
+            ACFS_PHASE_FAILURES+=("$phase_id (installed-state verification failed)")
+            if type -t state_phase_fail &>/dev/null; then
+                state_phase_fail "$phase_id" "Installed-state verification" \
+                    "Required components are missing or nonfunctional" || true
+            fi
+            failed=true
+        fi
+    done
+    [[ "$failed" == "false" ]]
 }
 
 # Failure path for a module in the legacy (non-generated) stack phase whose
@@ -5281,6 +5403,9 @@ acfs_optional_module_install_failed() {
         return 0
     fi
     log_warn "$display installation may have failed"
+    if type -t state_step_optional &>/dev/null; then
+        state_step_optional "${CURRENT_PHASE:-stack}" "${CURRENT_STEP:-}" || true
+    fi
     record_skipped_tool "$module_id" "verified installer failed"
     return 0
 }
@@ -7236,7 +7361,7 @@ acfs_arch_pkg_install() {
     # (Arch wiki: "never -Sy then -S"), so the first call is a full `-Syu`,
     # exactly what Omarchy's own installer does.
     if [[ "${ACFS_ARCH_DB_SYNCED:-false}" != "true" ]]; then
-        if try_step "Refreshing pacman database and upgrading system (pacman -Syu)" \
+        if try_step_optional "Refreshing pacman database and upgrading system (pacman -Syu)" \
             "${sudo_cmd[@]}" "$pacman_bin" -Syu --noconfirm; then
             ACFS_ARCH_DB_SYNCED=true
         else
@@ -7255,7 +7380,10 @@ acfs_arch_pkg_install() {
         fi
     fi
 
-    try_step "Installing (pacman): $*" "${sudo_cmd[@]}" "$pacman_bin" -S --needed --noconfirm "$@" || return 1
+    # This primitive is also used for optional packages and batch attempts
+    # followed by individual recovery. Its caller decides whether failure is
+    # fatal; recording it here would poison a successfully recovered phase.
+    try_step_optional "Installing (pacman): $*" "${sudo_cmd[@]}" "$pacman_bin" -S --needed --noconfirm "$@" || return 1
 }
 
 # Install a package list one-by-one, reporting which packages failed, so one
@@ -7560,25 +7688,44 @@ normalize_user() {
         # poison resume state even if we recover.
         local useradd_exit=0
         local useradd_output=""
+        local initial_shell=""
+        local created_entry=""
+        local local_created_entry=""
+        local created_shell=""
+
+        if ! initial_shell="$(user_select_initial_login_shell bash)"; then
+            log_error "No executable bash path is approved by a readable, safe /etc/shells; refusing to create '$TARGET_USER'"
+            return 1
+        fi
         
         # Create user with the home directory chosen during bootstrap. Fresh
         # root installs resolve this before the user exists so logs/state land
         # in the same home that useradd records in passwd.
-        useradd_output="$($SUDO useradd -m -d "$TARGET_HOME" -s /bin/bash "$TARGET_USER" 2>&1)" || useradd_exit=$?
+        useradd_output="$($SUDO useradd -m -d "$TARGET_HOME" -s "$initial_shell" "$TARGET_USER" 2>&1)" || useradd_exit=$?
         
         if [[ $useradd_exit -ne 0 ]]; then
-            if id "$TARGET_USER" &>/dev/null; then
-                log_warn "useradd exited ${useradd_exit}, but user '$TARGET_USER' exists; continuing"
-            else
-                log_error "Failed to create user '$TARGET_USER' (useradd exit ${useradd_exit})."
-                if [[ -n "$useradd_output" ]]; then
-                    local first_line=""
-                    first_line="$(printf '%s\n' "$useradd_output" | head -n 1)"
-                    [[ -n "$first_line" ]] && log_detail "useradd: $first_line"
-                fi
+            # A username that appears between the pre-check and useradd is not
+            # proven to be the account ACFS intended to create. Never grant it
+            # sudo/wheel membership or mutate its home on the strength of a
+            # racy id(1) observation; fail closed and let the next run validate
+            # the now-existing account before any privilege changes.
+            log_error "Failed to create user '$TARGET_USER' (useradd exit ${useradd_exit}); refusing to trust a concurrently appeared account."
+            if [[ -n "$useradd_output" ]]; then
+                local first_line=""
+                first_line="$(printf '%s\n' "$useradd_output" | head -n 1)"
+                [[ -n "$first_line" ]] && log_detail "useradd: $first_line"
+            fi
+            return 1
+        else
+            created_entry="$(user_login_passwd_entry "$TARGET_USER" 2>/dev/null || true)"
+            created_shell="${created_entry##*:}"
+            if ! user_verify_local_account_identity "$TARGET_USER" "$TARGET_HOME" "$initial_shell" ||
+               ! user_shell_is_approved "$created_shell" ||
+               ! user_shell_executable_by_account "$created_shell" "$TARGET_USER"; then
+                log_error "Created account '$TARGET_USER' did not retain the intended local identity, home, and approved login shell; refusing to set credentials or privileges"
                 return 1
             fi
-        else
+
             # Set password if user creation succeeded
             if [[ -n "$user_password" ]]; then
                 # Never let ACFS_DEBUG's xtrace echo the password into the
@@ -7610,6 +7757,13 @@ normalize_user() {
             fi
         fi
     fi
+    # Whether this account pre-existed or was just created, privilege and
+    # ownership changes require a stable local/NSS identity at TARGET_HOME.
+    if ! user_verify_local_account_identity "$TARGET_USER" "$TARGET_HOME"; then
+        log_error "Target account '$TARGET_USER' does not match the expected local identity/home '$TARGET_HOME'; refusing privilege and ownership changes"
+        return 1
+    fi
+
     # Ensure the target user has sudo-group membership even on reruns.
     # If user creation succeeded but the first `usermod` attempt failed,
     # reruns should still apply the group change (idempotent).
@@ -7738,8 +7892,8 @@ setup_filesystem() {
 
     # Install AGENTS.md template to /data/projects for agent guidance
     log_detail "Installing AGENTS.md template"
-    try_step "Installing AGENTS.md" install_asset "acfs/AGENTS.md" "/data/projects/AGENTS.md" || true
-    try_step "Setting AGENTS.md ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "/data/projects/AGENTS.md" || true
+    try_step_optional "Installing AGENTS.md" install_asset "acfs/AGENTS.md" "/data/projects/AGENTS.md" || true
+    try_step_optional "Setting AGENTS.md ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "/data/projects/AGENTS.md" || true
 
     # CRITICAL: Fix home directory ownership FIRST, before any run_as_target calls
     # Some cloud images (e.g., Hetzner) have /home/ubuntu owned by root after user creation
@@ -7766,9 +7920,10 @@ setup_filesystem() {
     # This is critical for debugging failed installs - users need `acfs doctor` to work
     # even if the install failed in Phase 3 (languages) before finalization.
     log_detail "Installing essential ACFS scripts for early debugging"
-    try_step "Installing logging.sh (early)" install_asset "scripts/lib/logging.sh" "$ACFS_HOME/scripts/lib/logging.sh" || true
-    try_step "Installing gum_ui.sh (early)" install_asset "scripts/lib/gum_ui.sh" "$ACFS_HOME/scripts/lib/gum_ui.sh" || true
-    try_step "Installing doctor.sh (early)" install_asset "scripts/lib/doctor.sh" "$ACFS_HOME/scripts/lib/doctor.sh" || true
+    try_step_optional "Installing logging.sh (early)" install_asset "scripts/lib/logging.sh" "$ACFS_HOME/scripts/lib/logging.sh" || true
+    try_step_optional "Installing gum_ui.sh (early)" install_asset "scripts/lib/gum_ui.sh" "$ACFS_HOME/scripts/lib/gum_ui.sh" || true
+    try_step_optional "Installing doctor.sh (early)" install_asset "scripts/lib/doctor.sh" "$ACFS_HOME/scripts/lib/doctor.sh" || true
+    try_step_optional "Installing user.sh (early doctor dependency)" install_asset "scripts/lib/user.sh" "$ACFS_HOME/scripts/lib/user.sh" || true
     # Set permissions and ownership so target user can run doctor
     $SUDO chmod 755 "$ACFS_HOME/scripts/lib/"*.sh 2>/dev/null || true
     acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/scripts" 2>/dev/null || true
@@ -7787,92 +7942,6 @@ setup_filesystem() {
 # ============================================================
 # Phase 3: Shell setup (zsh + oh-my-zsh + p10k)
 # ============================================================
-acfs_get_local_passwd_entry() {
-    local user="${1:-}"
-    local passwd_line=""
-    local passwd_user=""
-
-    [[ -n "$user" ]] || return 1
-    [[ -r /etc/passwd ]] || return 1
-
-    while IFS= read -r passwd_line; do
-        IFS=: read -r passwd_user _ <<< "$passwd_line"
-        if [[ "$passwd_user" == "$user" ]]; then
-            echo "$passwd_line"
-            return 0
-        fi
-    done < /etc/passwd
-
-    return 1
-}
-acfs_is_externally_managed_user() {
-    local user="${1:-}"
-    local passwd_entry=""
-    local local_entry=""
-
-    [[ -n "$user" ]] || return 1
-    passwd_entry="$(acfs_early_getent_passwd_entry "$user" 2>/dev/null || true)"
-    [[ -n "$passwd_entry" ]] || return 1
-
-    local_entry="$(acfs_get_local_passwd_entry "$user" || true)"
-    [[ -z "$local_entry" ]]
-}
-
-acfs_external_shell_handoff_configured() {
-    local target_home="${1:-}"
-    local bashrc_path=""
-
-    [[ -n "$target_home" ]] || return 1
-    bashrc_path="$target_home/.bashrc"
-    [[ -f "$bashrc_path" ]] || return 1
-
-    awk '
-        $0 == "# ACFS externally-managed shell handoff" { marker=1; next }
-        marker && $0 ~ /^[[:space:]]*#/ { next }
-        marker && index($0, "command -v zsh") && index($0, "ACFS_ZSH_HANDOFF_ACTIVE") { found=1; exit }
-        marker && $0 !~ /^[[:space:]]*$/ { marker=0 }
-        END { exit(found ? 0 : 1) }
-    ' "$bashrc_path" 2>/dev/null
-}
-
-acfs_append_external_shell_handoff() {
-    local bashrc_path="${1:-}"
-    [[ -n "$bashrc_path" ]] || return 1
-
-    if [[ -f "$bashrc_path" ]] && [[ -s "$bashrc_path" ]]; then
-        local last_char=""
-        last_char=$(tail -c 1 "$bashrc_path" | od -An -t u1 | tr -d ' ' 2>/dev/null || true)
-        if [[ "$last_char" != "10" ]]; then
-            printf '\n' >> "$bashrc_path"
-        fi
-    fi
-
-    cat >> "$bashrc_path" << 'EOF'
-# ACFS externally-managed shell handoff
-if [[ $- == *i* ]] && [[ -t 0 ]] && command -v zsh >/dev/null 2>&1 && [[ -z "${ACFS_ZSH_HANDOFF_ACTIVE:-}" ]]; then
-    export ACFS_ZSH_HANDOFF_ACTIVE=1
-    exec "$(command -v zsh)" -l
-fi
-EOF
-}
-
-acfs_configure_external_shell_handoff() {
-    local target_home="${1:-}"
-    local target_user="${2:-}"
-
-    [[ -n "$target_home" ]] || return 1
-    [[ -n "$target_user" ]] || return 1
-
-    if acfs_external_shell_handoff_configured "$target_home"; then
-        return 0
-    fi
-
-    acfs_append_external_shell_handoff "$target_home/.bashrc" || return 1
-
-    $SUDO chown "$target_user:$target_user" "$target_home/.bashrc" 2>/dev/null || true
-    return 0
-}
-
 profile_path_has_fragment() {
     local file="${1:-}"
     local fragment="${2:-}"
@@ -7994,7 +8063,7 @@ setup_shell() {
         # ~/.p10k.zsh is user-tuned; keep a backup like ~/.zshrc gets instead
         # of silently clobbering it on --force-reinstall or a state reset.
         if [[ -f "$TARGET_HOME/.p10k.zsh" ]] && ! $SUDO cmp -s "$TARGET_HOME/.p10k.zsh" "$ACFS_BOOTSTRAP_DIR/acfs/zsh/p10k.zsh" 2>/dev/null; then
-            try_step "Backing up existing p10k config" $SUDO cp -a "$TARGET_HOME/.p10k.zsh" "$TARGET_HOME/.p10k.zsh.pre-acfs.$(date +%Y%m%d%H%M%S)" || log_warn "Could not back up existing ~/.p10k.zsh"
+            try_step_optional "Backing up existing p10k config" $SUDO cp -a "$TARGET_HOME/.p10k.zsh" "$TARGET_HOME/.p10k.zsh.pre-acfs.$(date +%Y%m%d%H%M%S)" || log_warn "Could not back up existing ~/.p10k.zsh"
         fi
         try_step "Installing p10k config" install_asset "acfs/zsh/p10k.zsh" "$TARGET_HOME/.p10k.zsh" || return 1
         try_step "Setting p10k config ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/.p10k.zsh" || return 1
@@ -8092,31 +8161,9 @@ EOF
     fi
     [[ -f "$user_zprofile" ]] && $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_zprofile" 2>/dev/null || true
 
-    # Set zsh as default shell for target user. Some environments expose user
-    # entries via NSS but do not allow local chsh updates, so fall back to an
-    # interactive bash-to-zsh handoff there.
-    local current_shell
-    local current_shell_entry=""
-    local zsh_path
-    local chsh_path=""
-    current_shell_entry="$(acfs_early_getent_passwd_entry "$TARGET_USER" 2>/dev/null || true)"
-    current_shell=""
-    if [[ -n "$current_shell_entry" ]]; then
-        IFS=: read -r _ _ _ _ _ _ current_shell <<< "$current_shell_entry"
-    fi
-    zsh_path="$(acfs_early_system_binary_path zsh 2>/dev/null || true)"
-    chsh_path="$(acfs_early_system_binary_path chsh 2>/dev/null || true)"
-    if [[ -n "$zsh_path" ]] && [[ "$current_shell" != *"zsh"* ]]; then
-        if acfs_is_externally_managed_user "$TARGET_USER"; then
-            log_warn "Shell for $TARGET_USER is managed outside /etc/passwd; installing a bash-to-zsh handoff instead of using chsh"
-            try_step "Configuring bash-to-zsh handoff" acfs_configure_external_shell_handoff "$TARGET_HOME" "$TARGET_USER" || return 1
-        elif [[ -n "$chsh_path" ]]; then
-            log_detail "Setting zsh as default shell for $TARGET_USER"
-            try_step "Setting zsh as default shell" $SUDO "$chsh_path" -s "$zsh_path" "$TARGET_USER" || true
-        else
-            log_warn "Could not locate chsh; leaving the default shell unchanged for $TARGET_USER"
-        fi
-    fi
+    # The generated manifest path calls this same helper. A failed or unverifiable
+    # account change must fail the phase, preserving the original shell for recovery.
+    try_step "Setting zsh as default shell" set_default_shell || return 1
 
     log_success "Shell setup complete"
 }
@@ -8197,11 +8244,11 @@ install_cli_tools() {
     if [[ "$used_generated_cli" == "true" ]]; then
         if [[ "$used_generated_network" != "true" ]]; then
             # Preserve legacy Tailscale install when network isn't generated yet.
-            if command -v tailscale &>/dev/null; then
+            if acfs_should_skip_module "network.tailscale"; then
                 log_detail "Tailscale already installed"
             else
                 log_detail "Installing Tailscale..."
-                if try_step "Installing Tailscale" install_tailscale; then
+                if acfs_try_module_step "network.tailscale" "Installing Tailscale" install_tailscale; then
                     log_success "Tailscale installed"
                 else
                     log_warn "Tailscale installation failed (optional, continuing)"
@@ -8222,7 +8269,7 @@ install_cli_tools() {
         log_detail "gum already installed"
     elif [[ "$ACFS_DISTRO_FAMILY" == "arch" ]]; then
         log_detail "Installing gum for glamorous shell scripts"
-        acfs_arch_pkg_install gum || true
+        try_step_optional "Installing optional gum" acfs_arch_pkg_install gum || true
         if binary_installed "gum"; then
             HAS_GUM=true
             log_success "gum installed - enhanced UI now available"
@@ -8231,11 +8278,11 @@ install_cli_tools() {
         fi
     else
         log_detail "Installing gum for glamorous shell scripts"
-        try_step "Creating apt keyrings directory" $SUDO mkdir -p /etc/apt/keyrings || true
-        try_step_eval "Adding Charm apt key" "set -o pipefail; if curl --help all 2>/dev/null | grep -q -- '--proto'; then curl --proto '=https' --proto-redir '=https' -fsSL https://repo.charm.sh/apt/gpg.key; else curl -fsSL https://repo.charm.sh/apt/gpg.key; fi | $SUDO gpg --batch --yes --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null" || true
-        try_step_eval "Adding Charm apt repo" "printf 'Types: deb\nURIs: https://repo.charm.sh/apt/\nSuites: *\nComponents: *\nSigned-By: /etc/apt/keyrings/charm.gpg\n' | $SUDO tee /etc/apt/sources.list.d/charm.sources > /dev/null" || true
-        try_step "Updating apt cache" $SUDO apt-get -o DPkg::Lock::Timeout=120 update -y || true
-        if try_step "Installing gum" $SUDO apt-get -o DPkg::Lock::Timeout=120 install -y gum 2>/dev/null; then
+        try_step_optional "Creating apt keyrings directory" $SUDO mkdir -p /etc/apt/keyrings || true
+        try_step_optional "Adding Charm apt key" try_step_eval "Adding Charm apt key" "set -o pipefail; if curl --help all 2>/dev/null | grep -q -- '--proto'; then curl --proto '=https' --proto-redir '=https' -fsSL https://repo.charm.sh/apt/gpg.key; else curl -fsSL https://repo.charm.sh/apt/gpg.key; fi | $SUDO gpg --batch --yes --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null" || true
+        try_step_optional "Adding Charm apt repo" try_step_eval "Adding Charm apt repo" "printf 'Types: deb\nURIs: https://repo.charm.sh/apt/\nSuites: *\nComponents: *\nSigned-By: /etc/apt/keyrings/charm.gpg\n' | $SUDO tee /etc/apt/sources.list.d/charm.sources > /dev/null" || true
+        try_step_optional "Updating apt cache" $SUDO apt-get -o DPkg::Lock::Timeout=120 update -y || true
+        if try_step_optional "Installing gum" $SUDO apt-get -o DPkg::Lock::Timeout=120 install -y gum 2>/dev/null; then
             HAS_GUM=true
             log_success "gum installed - enhanced UI now available"
         else
@@ -8257,20 +8304,23 @@ install_cli_tools() {
             arch_required_pkgs+=(openbsd-netcat)
         fi
         log_detail "Installing required pacman packages"
-        if ! acfs_arch_pkg_install "${arch_required_pkgs[@]}"; then
+        if ! try_step_optional "Installing required CLI package batch" acfs_arch_pkg_install "${arch_required_pkgs[@]}"; then
             # One bad package (conflict, mirror glitch) must not abort the
             # whole CLI-tools phase; retry individually and only fail if a
             # truly required binary is still missing afterwards.
             log_detail "Batch install failed, trying packages individually"
-            acfs_arch_pkg_install_each "${arch_required_pkgs[@]}" || true
-            local req_bin=""
-            for req_bin in rg fzf jq gh; do
-                if ! binary_installed "$req_bin"; then
-                    log_error "Required tool '$req_bin' could not be installed via pacman"
-                    return 1
-                fi
-            done
+            try_step_optional "Retrying CLI packages individually" acfs_arch_pkg_install_each "${arch_required_pkgs[@]}" || true
         fi
+        # A successful alternative must satisfy the complete required tool
+        # set. The former five-binary check missed direnv, git-lfs, and others.
+        try_step "Verifying required CLI tools" acfs_verify_module "cli.modern" || return 1
+        local req_bin=""
+        for req_bin in rg fzf direnv jq git-lfs lsof dig strace rsync zstd gum gh minisign sqlite3 nc age bc; do
+            if ! binary_installed "$req_bin"; then
+                log_error "Required tool '$req_bin' could not be installed via pacman"
+                return 1
+            fi
+        done
     else
         log_detail "Installing required apt packages"
         # libsqlite3-dev: utils.caut links the system libsqlite3 (rusqlite
@@ -8304,18 +8354,18 @@ install_cli_tools() {
     # Git LFS setup (best-effort: installs hooks config for the target user)
     if command_exists git-lfs; then
         log_detail "Configuring git-lfs for $TARGET_USER"
-        try_step "Configuring git-lfs" run_as_target git lfs install --skip-repo || true
+        try_step_optional "Configuring git-lfs" run_as_target git lfs install --skip-repo || true
     fi
 
     # Install optional packages - batch install for speed (14→1 package-manager calls)
     if [[ "$ACFS_DISTRO_FAMILY" == "arch" ]]; then
         local -a arch_optional_pkgs=(lsd eza bat fd btop dust neovim htop tree ncdu httpie entr mtr pv cosign lazygit)
         log_detail "Installing optional pacman packages"
-        acfs_arch_pkg_install "${arch_optional_pkgs[@]}" || {
+        try_step_optional "Installing optional CLI packages" acfs_arch_pkg_install "${arch_optional_pkgs[@]}" || {
             log_detail "Batch install failed, trying packages individually"
             local pkg=""
             for pkg in "${arch_optional_pkgs[@]}"; do
-                acfs_arch_pkg_install "$pkg" >/dev/null 2>&1 || log_detail "$pkg not available (optional)"
+                try_step_optional "Installing optional $pkg" acfs_arch_pkg_install "$pkg" >/dev/null 2>&1 || log_detail "$pkg not available (optional)"
             done
         }
     else
@@ -8342,10 +8392,10 @@ install_cli_tools() {
         # an installed-but-dead docker would make `docker ps` fail until the
         # user enables it by hand.
         if command_exists systemctl && [[ -d /run/systemd/system ]]; then
-            try_step "Enabling Docker service" $SUDO systemctl enable --now docker.service || log_warn "Docker installed but its service could not be started (optional)"
+            try_step_optional "Enabling Docker service" $SUDO systemctl enable --now docker.service || log_warn "Docker installed but its service could not be started (optional)"
         fi
         if getent group docker &>/dev/null; then
-            try_step "Adding $TARGET_USER to docker group" $SUDO usermod -aG docker "$TARGET_USER" || true
+            try_step_optional "Adding $TARGET_USER to docker group" $SUDO usermod -aG docker "$TARGET_USER" || true
         fi
     else
         log_warn "Docker installation failed (optional)"
@@ -8378,13 +8428,13 @@ install_cli_tools() {
         grep -q '^root:' /etc/subuid 2>/dev/null || incus_subid_args+=(--add-subuids 1000000-1000999999)
         grep -q '^root:' /etc/subgid 2>/dev/null || incus_subid_args+=(--add-subgids 1000000-1000999999)
         if (( ${#incus_subid_args[@]} > 0 )); then
-            try_step "Adding subordinate ids for root (Incus)" $SUDO usermod "${incus_subid_args[@]}" root || log_warn "Could not add root's subordinate ids; unprivileged Incus containers won't start"
+            try_step_optional "Adding subordinate ids for root (Incus)" $SUDO usermod "${incus_subid_args[@]}" root || log_warn "Could not add root's subordinate ids; unprivileged Incus containers won't start"
         fi
         if command_exists systemctl && [[ -d /run/systemd/system ]]; then
-            try_step "Enabling Incus socket" $SUDO systemctl enable --now incus.socket || log_warn "Incus installed but its socket could not be started (optional)"
+            try_step_optional "Enabling Incus socket" $SUDO systemctl enable --now incus.socket || log_warn "Incus installed but its socket could not be started (optional)"
         fi
         if getent group incus-admin &>/dev/null; then
-            try_step "Adding $TARGET_USER to incus-admin group" $SUDO usermod -aG incus-admin "$TARGET_USER" || true
+            try_step_optional "Adding $TARGET_USER to incus-admin group" $SUDO usermod -aG incus-admin "$TARGET_USER" || true
         fi
     else
         log_warn "Incus installation failed (optional)"
@@ -8397,7 +8447,7 @@ install_cli_tools() {
         local pm_installed=false
         if [[ "$ACFS_DISTRO_FAMILY" == "arch" ]]; then
             # pacman first; pinned-tarball fallback below if it fails.
-            acfs_arch_pkg_install lazygit >/dev/null 2>&1 && pm_installed=true
+            try_step_optional "Installing lazygit package" acfs_arch_pkg_install lazygit >/dev/null 2>&1 && pm_installed=true
         elif $SUDO apt-get -o DPkg::Lock::Timeout=120 install -y lazygit >/dev/null 2>&1; then
             pm_installed=true
         fi
@@ -8443,11 +8493,11 @@ install_cli_tools() {
     # Tailscale VPN for secure remote access (bt5)
     if [[ "$used_generated_network" == "true" ]]; then
         log_detail "Tailscale handled by generated network installers"
-    elif command -v tailscale &>/dev/null; then
+    elif acfs_should_skip_module "network.tailscale"; then
         log_detail "Tailscale already installed"
     else
         log_detail "Installing Tailscale..."
-        if try_step "Installing Tailscale" install_tailscale; then
+        if acfs_try_module_step "network.tailscale" "Installing Tailscale" install_tailscale; then
             log_success "Tailscale installed"
         else
             log_warn "Tailscale installation failed (optional, continuing)"
@@ -8499,7 +8549,10 @@ _target_latest_nvm_node_bin() {
 }
 
 _ensure_target_nvm_node() {
-    if _target_has_nvm_node; then
+    local existing_node_bin=""
+    if _target_has_nvm_node \
+        && existing_node_bin="$(_target_latest_nvm_node_bin 2>/dev/null)" \
+        && run_as_target "$existing_node_bin/node" --version >/dev/null 2>&1; then
         log_detail "nvm + Node.js already installed"
         return 0
     fi
@@ -8510,7 +8563,9 @@ _ensure_target_nvm_node() {
     # itself installed fine (#351): strip the prefix env vars for the nvm call,
     # and on failure verify the installed node binary before failing the phase.
     local nvm_rc=0
-    try_step "Installing Node.js via nvm" run_as_target env -u NPM_CONFIG_PREFIX -u npm_config_prefix bash -c '
+    # This attempt has a verified fallback below. A nonzero nvm exit after a
+    # working Node installation must not leave a required-step failure behind.
+    try_step_optional "Installing Node.js via nvm" run_as_target env -u NPM_CONFIG_PREFIX -u npm_config_prefix bash -c '
         set -euo pipefail
         unset NPM_CONFIG_PREFIX npm_config_prefix
         export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
@@ -8546,7 +8601,7 @@ _ensure_target_nvm_node() {
 install_languages_legacy_lang() {
     # Bun (install as target user)
     local bun_bin="$TARGET_HOME/.bun/bin/bun"
-    if [[ ! -x "$bun_bin" ]]; then
+    if ! acfs_should_skip_module "lang.bun"; then
         log_detail "Installing Bun for $TARGET_USER"
         try_step "Installing Bun" acfs_run_verified_upstream_script_as_target "bun" "bash" || return 1
     fi
@@ -8558,13 +8613,13 @@ install_languages_legacy_lang() {
     # Rust nightly (install as target user)
     # We use nightly for latest features and to install tools like dust/lsd
     local cargo_bin="$TARGET_HOME/.cargo/bin/cargo"
-    if [[ ! -x "$cargo_bin" ]]; then
+    if ! acfs_should_skip_module "lang.rust"; then
         log_detail "Installing Rust nightly for $TARGET_USER"
         try_step "Installing Rust nightly" acfs_run_verified_upstream_script_as_target "rust" "sh" -y --default-toolchain nightly || return 1
     fi
 
     # Go (system-wide)
-    if ! binary_installed "go"; then
+    if ! acfs_should_skip_module "lang.go"; then
         log_detail "Installing Go"
         if [[ "$ACFS_DISTRO_FAMILY" == "arch" ]]; then
             try_step "Installing Go (pacman)" acfs_arch_pkg_install go || return 1
@@ -8574,7 +8629,7 @@ install_languages_legacy_lang() {
     fi
 
     # uv (install as target user)
-    if binary_installed "uv"; then
+    if acfs_should_skip_module "lang.uv"; then
         log_detail "uv already installed"
     else
         log_detail "Installing uv for $TARGET_USER"
@@ -8594,8 +8649,8 @@ install_languages_legacy_tools() {
         if [[ ! -x "$TARGET_HOME/.cargo/bin/$bin_name" ]]; then
             if [[ -x "$cargo_bin" ]]; then
                 log_detail "Installing $tool via cargo"
-                if try_step "Installing $tool via cargo" run_as_target "$cargo_bin" install "$tool" --locked 2>/dev/null || \
-                   try_step "Installing $tool via cargo (no --locked)" run_as_target "$cargo_bin" install "$tool"; then
+                if try_step_optional "Installing $tool via cargo" run_as_target "$cargo_bin" install "$tool" --locked 2>/dev/null || \
+                   try_step_optional "Installing $tool via cargo (no --locked)" run_as_target "$cargo_bin" install "$tool"; then
                     log_success "$tool installed"
                 else
                     log_warn "Failed to install $tool (optional)"
@@ -8605,7 +8660,7 @@ install_languages_legacy_tools() {
     }
 
     # ast-grep (sg) - required by UBS for syntax-aware scanning
-    if [[ ! -x "$TARGET_HOME/.cargo/bin/sg" ]]; then
+    if ! acfs_should_skip_module "tools.ast_grep"; then
         if [[ -x "$cargo_bin" ]]; then
             log_detail "Installing ast-grep (sg) via cargo"
             if try_step "Installing ast-grep via cargo" run_as_target "$cargo_bin" install ast-grep --locked; then
@@ -8648,8 +8703,8 @@ install_languages_legacy_tools() {
     # Batch install if there are tools to install
     if [[ ${#cargo_tools_needed[@]} -gt 0 ]] && [[ -x "$cargo_bin" ]]; then
         log_detail "Batch installing ${#cargo_tools_needed[@]} cargo tools: ${cargo_tools_needed[*]}"
-        if try_step "Batch installing cargo tools" run_as_target "$cargo_bin" install "${cargo_tools_needed[@]}" --locked 2>/dev/null || \
-           try_step "Batch installing cargo tools (no --locked)" run_as_target "$cargo_bin" install "${cargo_tools_needed[@]}"; then
+        if try_step_optional "Batch installing cargo tools" run_as_target "$cargo_bin" install "${cargo_tools_needed[@]}" --locked 2>/dev/null || \
+           try_step_optional "Batch installing cargo tools (no --locked)" run_as_target "$cargo_bin" install "${cargo_tools_needed[@]}"; then
             log_success "Cargo tools batch installed: ${cargo_tools_needed[*]}"
         else
             # Fallback: install individually if batch fails
@@ -8664,7 +8719,7 @@ install_languages_legacy_tools() {
 
     # Atuin (install as target user)
     # Check both the data directory and the binary location
-    if [[ -d "$TARGET_HOME/.atuin" ]] || binary_installed "atuin"; then
+    if acfs_should_skip_module "tools.atuin"; then
         log_detail "Atuin already installed"
     else
         log_detail "Installing Atuin for $TARGET_USER"
@@ -8727,7 +8782,13 @@ _acfs_atuin_agent_context() {
         return 0
     fi
 
-    parent_comm="$(ps -o comm= -p "${PPID:-0}" 2>/dev/null || true)"
+    # Linux: read the parent name directly. `ps -p` still walks every /proc entry,
+    # which cost ~0.8 s per typed command on a 2,600-process host (trj, 2026-10-14).
+    if [[ -r "/proc/${PPID:-0}/comm" ]]; then
+        IFS= read -r parent_comm < "/proc/${PPID:-0}/comm" || parent_comm=""
+    else
+        parent_comm="$(ps -o comm= -p "${PPID:-0}" 2>/dev/null || true)"
+    fi
     case "$parent_comm" in
         claude|codex|cod|cc|agy|antigravity|agy-locked|gmi|gemini|bun|node) return 0 ;;
         *) return 1 ;;
@@ -8759,19 +8820,19 @@ ATUIN_ACFS_WRAPPER_TAIL
 
     # Zoxide - prefer apt to avoid GitHub API rate limits in CI
     # Check multiple possible locations
-    if binary_installed "zoxide"; then
+    if acfs_should_skip_module "tools.zoxide"; then
         log_detail "Zoxide already installed"
     else
         log_detail "Installing Zoxide for $TARGET_USER"
         # Prefer the distro package (avoids GitHub API rate limits), fall back
         # to upstream script
         if [[ "$ACFS_DISTRO_FAMILY" == "arch" ]]; then
-            if ! try_step "Installing Zoxide (pacman)" acfs_arch_pkg_install zoxide; then
+            if ! try_step_optional "Installing Zoxide (pacman)" acfs_arch_pkg_install zoxide; then
                 log_detail "pacman install failed, falling back to upstream script"
                 try_step "Installing Zoxide (upstream)" acfs_run_verified_upstream_script_as_target "zoxide" "sh" || return 1
             fi
         elif apt-cache show zoxide &>/dev/null; then
-            try_step "Installing Zoxide (apt)" $SUDO apt-get -o DPkg::Lock::Timeout=120 install -y zoxide || {
+            try_step_optional "Installing Zoxide (apt)" $SUDO apt-get -o DPkg::Lock::Timeout=120 install -y zoxide || {
                 log_detail "apt install failed, falling back to upstream script"
                 try_step "Installing Zoxide (upstream)" acfs_run_verified_upstream_script_as_target "zoxide" "sh" || return 1
             }
@@ -8975,19 +9036,21 @@ install_agents_phase() {
     # checks require claude to exist at ~/.local/bin/claude or ~/.bun/bin/claude.
     local claude_bin_local="$ACFS_BIN_DIR/claude"
     local claude_bin_bun="$TARGET_HOME/.bun/bin/claude"
-    if [[ -x "$claude_bin_local" ]]; then
+    if [[ -x "$claude_bin_local" ]] && acfs_verify_module "agents.claude"; then
         log_detail "Claude Code already installed ($claude_bin_local)"
-    elif [[ -x "$claude_bin_bun" ]]; then
+    elif [[ -x "$claude_bin_bun" ]] \
+        && run_as_target "$claude_bin_bun" --version >/dev/null 2>&1; then
         log_detail "Claude Code already installed ($claude_bin_bun)"
     else
         acfs_ensure_primary_bin_dir 2>/dev/null || true
 
         log_detail "Installing Claude Code (native) for $TARGET_USER"
-        try_step "Installing Claude Code (native)" acfs_run_verified_upstream_script_as_target "claude" "bash" latest || true
+        try_step_optional "Installing Claude Code (native)" acfs_run_verified_upstream_script_as_target "claude" "bash" latest || true
 
-        if [[ ! -x "$claude_bin_local" && ! -x "$claude_bin_bun" ]]; then
+        if ! acfs_verify_module "agents.claude" \
+            && ! run_as_target "$claude_bin_bun" --version >/dev/null 2>&1; then
             log_detail "Claude Code not found in standard paths; attempting bun install"
-            try_step "Installing Claude Code (bun)" run_as_target "$bun_bin" install -g --trust @anthropic-ai/claude-code@latest || true
+            try_step_optional "Installing Claude Code (bun)" run_as_target "$bun_bin" install -g --trust @anthropic-ai/claude-code@latest || true
         fi
 
         # Best-effort: if claude landed in ~/.claude/*, link it into ~/.local/bin.
@@ -9027,16 +9090,19 @@ install_agents_phase() {
         acfs_ensure_primary_bin_dir 2>/dev/null || true
         try_step "Linking Claude Code into $ACFS_BIN_DIR" acfs_link_primary_bin_command "$claude_bin_bun" "claude" || true
     fi
-    if [[ ! -x "$claude_bin_local" && ! -x "$claude_bin_bun" ]]; then
-        ACFS_MODULE_FAILURES+=("agents.claude (executable missing after install attempts)")
+    if ! acfs_verify_module "agents.claude"; then
+        ACFS_MODULE_FAILURES+=("agents.claude (required verification failed after install attempts)")
         agents_phase_rc=1
     fi
 
     # Codex CLI (install as target user)
     # Uses fallback chain: @latest -> unversioned -> pinned 0.87.0
     # npm can 404 briefly after publishing; pinned version is reliable fallback
-    log_detail "Installing Codex CLI for $TARGET_USER"
-    try_step "Installing Codex CLI" run_as_target bash -c '
+    if acfs_should_skip_module "agents.codex"; then
+        log_detail "Codex CLI already installed and verified"
+    else
+        log_detail "Installing Codex CLI for $TARGET_USER"
+        try_step "Installing Codex CLI" run_as_target bash -c '
         set -euo pipefail
         bun_bin="$1"
         CODEX_FALLBACK_VERSION="0.87.0"
@@ -9049,7 +9115,8 @@ install_agents_phase() {
         fi
         echo "WARN: Codex CLI unversioned failed; retrying pinned $CODEX_FALLBACK_VERSION" >&2
         "$bun_bin" install -g --trust "@openai/codex@$CODEX_FALLBACK_VERSION"
-    ' _ "$bun_bin" || true
+        ' _ "$bun_bin" || true
+    fi
 
     # Create wrapper script that uses bun as runtime (avoids node PATH issues)
     local codex_bin_local="$ACFS_BIN_DIR/codex"
@@ -9071,22 +9138,22 @@ install_agents_phase() {
             "$rm_bin" -f "$codex_wrapper_tmp" 2>/dev/null || true
         fi
     fi
-    if [[ ! -x "$codex_bin_local" && ! -x "$TARGET_HOME/.bun/bin/codex" ]]; then
-        log_error "Codex CLI installation failed (codex executable not found)"
+    if ! acfs_verify_module "agents.codex"; then
+        log_error "Codex CLI installation failed (configured executable is not functional)"
         # Name bun's real global bin dir when the install itself succeeded
         # but landed off the ACFS PATH (#388).
         acfs_note_bun_global_bin_mismatch "codex" "@openai/codex@latest" "$bun_bin" || true
-        ACFS_MODULE_FAILURES+=("agents.codex (executable missing after install attempts)")
+        ACFS_MODULE_FAILURES+=("agents.codex (required verification failed after install attempts)")
         agents_phase_rc=1
     fi
 
     # Antigravity CLI (agy): standalone native binary. The locked wrapper keeps
     # the model/settings/DCG hook pinned while leaving the real agy binary intact.
-    if [[ -x "$ACFS_BIN_DIR/agy" || -x "$TARGET_HOME/.local/bin/agy" ]]; then
+    if acfs_should_skip_module "agents.antigravity"; then
         log_detail "Antigravity CLI already installed"
     else
         log_detail "Installing Antigravity CLI for $TARGET_USER"
-        if ! try_step "Installing Antigravity CLI" acfs_run_verified_upstream_script_as_target "antigravity" "bash"; then
+        if ! try_step_optional "Installing Antigravity CLI" acfs_run_verified_upstream_script_as_target "antigravity" "bash"; then
             log_warn "Antigravity installer returned nonzero; verifying the required launcher postcondition"
         fi
     fi
@@ -9106,6 +9173,101 @@ install_agents_phase() {
 # ============================================================
 # Phase 7: Cloud & database tools
 # ============================================================
+
+# Probe the local server as its service account, with explicit connection
+# parameters. A client binary, an active umbrella unit, or an inherited
+# PGHOST pointing at another machine cannot satisfy this postcondition.
+acfs_postgres_run_as_owner() {
+    local runner=""
+    if [[ $EUID -eq 0 ]]; then
+        runner="$(acfs_early_system_binary_path runuser 2>/dev/null)" || return 1
+        "$runner" -u postgres -- "$@"
+    else
+        runner="$(acfs_early_sudo_binary_path 2>/dev/null)" || return 1
+        "$runner" -n -u postgres -H -- "$@"
+    fi
+}
+
+acfs_postgres_query() {
+    local port="${1:-5432}"
+    local psql_bin="" env_bin="" result=""
+    [[ "$port" =~ ^[0-9]+$ ]] || return 1
+    psql_bin="$(acfs_early_system_binary_path psql 2>/dev/null)" || return 1
+    env_bin="$(acfs_early_system_binary_path env 2>/dev/null)" || return 1
+    result="$(acfs_postgres_run_as_owner "$env_bin" -u PGHOST -u PGSERVICE -u PGSERVICEFILE \
+        -u PGOPTIONS -u PGPASSWORD PGCONNECT_TIMEOUT=5 "$psql_bin" -X \
+        -h /var/run/postgresql -p "$port" -U postgres -d postgres -Atqc 'SELECT 1' 2>/dev/null)" || return 1
+    [[ "$result" == "1" ]]
+}
+
+acfs_postgres_ready() {
+    if [[ "${ACFS_DISTRO_FAMILY:-}" == "arch" ]]; then
+        pacman -Qq postgresql >/dev/null 2>&1 || return 1
+        $SUDO test -f /var/lib/postgres/data/PG_VERSION || return 1
+        acfs_postgres_query 5432
+        return $?
+    fi
+
+    local clusters_bin="" clusters="" version="" name="" port="" status="" rest=""
+    local required_version=""
+    acfs_use_generated_category "db" && required_version=18
+    clusters_bin="$(acfs_early_system_binary_path pg_lsclusters 2>/dev/null)" || return 1
+    clusters="$("$clusters_bin" --no-header 2>/dev/null)" || return 1
+    while read -r version name port status rest; do
+        [[ -n "$version" && -n "$name" && "$status" == online* ]] || continue
+        [[ -z "$required_version" || "$version" == "$required_version" ]] || continue
+        if acfs_postgres_query "$port"; then
+            return 0
+        fi
+    done <<< "$clusters"
+    return 1
+}
+
+# Repair service/cluster setup without reinstalling a working package or
+# replacing data. Existing clusters are started in place; another PostgreSQL
+# major version never satisfies an explicitly selected generated PG18 module.
+acfs_postgres_start_existing() {
+    acfs_postgres_ready && return 0
+    if [[ "${ACFS_DISTRO_FAMILY:-}" == "arch" ]]; then
+        if command_exists systemctl && [[ -d /run/systemd/system ]]; then
+            try_step "Enabling and starting PostgreSQL service" \
+                $SUDO systemctl enable --now postgresql.service || return 1
+        else
+            local pg_ctl_bin=""
+            pg_ctl_bin="$(acfs_early_system_binary_path pg_ctl 2>/dev/null)" || return 1
+            try_step "Starting PostgreSQL server" acfs_postgres_run_as_owner "$pg_ctl_bin" \
+                -D /var/lib/postgres/data -l /var/lib/postgres/data/acfs-startup.log -w start || return 1
+        fi
+    else
+        local clusters_bin="" control_bin="" create_bin="" clusters=""
+        local version="" name="" port="" status="" rest="" required_version=""
+        local found=false
+        acfs_use_generated_category "db" && required_version=18
+        clusters_bin="$(acfs_early_system_binary_path pg_lsclusters 2>/dev/null)" || return 1
+        control_bin="$(acfs_early_system_binary_path pg_ctlcluster 2>/dev/null)" || return 1
+        clusters="$("$clusters_bin" --no-header 2>/dev/null)" || return 1
+        while read -r version name port status rest; do
+            [[ "$version" =~ ^[0-9]+$ && -n "$name" ]] || continue
+            [[ -z "$required_version" || "$version" == "$required_version" ]] || continue
+            found=true
+            if [[ "$status" != online* ]]; then
+                try_step "Starting PostgreSQL cluster $version/$name" \
+                    $SUDO "$control_bin" "$version" "$name" start || return 1
+            fi
+        done <<< "$clusters"
+        if [[ "$found" != "true" ]]; then
+            [[ "$required_version" == "18" ]] || return 1
+            acfs_verify_module_commands "db.postgres18" || return 1
+            create_bin="$(acfs_early_system_binary_path pg_createcluster 2>/dev/null)" || return 1
+            try_step "Initializing PostgreSQL 18 cluster" \
+                $SUDO "$create_bin" 18 main --start || return 1
+        fi
+        if command_exists systemctl && [[ -d /run/systemd/system ]]; then
+            try_step "Enabling PostgreSQL service" $SUDO systemctl enable postgresql || return 1
+        fi
+    fi
+    acfs_postgres_ready
+}
 
 # Best-effort superuser role + database for the target user, shared by the
 # PGDG and native-fallback install paths.
@@ -9138,7 +9300,7 @@ acfs_postgres_bootstrap_role() {
 
 # PostgreSQL on Arch-family: pacman package + initdb as the postgres user.
 acfs_arch_install_postgres() {
-    if ! acfs_arch_pkg_install postgresql; then
+    if ! pacman -Qq postgresql >/dev/null 2>&1 && ! acfs_arch_pkg_install postgresql; then
         return 1
     fi
 
@@ -9150,9 +9312,9 @@ acfs_arch_install_postgres() {
         [[ -n "$sudo_bin" ]] && sudo_cmd=("$sudo_bin")
     fi
 
-    if [[ ! -f "$pg_data/PG_VERSION" ]]; then
+    if ! "${sudo_cmd[@]}" test -f "$pg_data/PG_VERSION"; then
         try_step_eval "Preparing PostgreSQL data directory" \
-            "${sudo_cmd[*]} mkdir -p '$pg_data' && ${sudo_cmd[*]} chown postgres:postgres '$pg_data' && ${sudo_cmd[*]} chmod 700 '$pg_data'" || true
+            "${sudo_cmd[*]} mkdir -p '$pg_data' && ${sudo_cmd[*]} chown postgres:postgres '$pg_data' && ${sudo_cmd[*]} chmod 700 '$pg_data'" || return 1
 
         # initdb refuses to run as root; run as the postgres user.
         local runuser_bin=""
@@ -9168,32 +9330,18 @@ acfs_arch_install_postgres() {
             # cluster); under sudo it inherits a LANG that may not be generated.
             # C.UTF-8 is always available on Arch (Arch wiki canonical invocation).
             try_step "Initializing PostgreSQL cluster" "${pg_runner[@]}" initdb --locale=C.UTF-8 --encoding=UTF8 -D "$pg_data" \
-                || log_warn "PostgreSQL: initdb failed (continuing)"
+                || return 1
         else
-            log_warn "PostgreSQL: cannot run initdb (no runuser/sudo); skipping cluster init"
+            log_warn "PostgreSQL: cannot run initdb (no runuser/sudo)"
+            return 1
         fi
     fi
 
-    local service_ok="true"
-    if command_exists systemctl && [[ -d /run/systemd/system ]]; then
-        try_step "Enabling and starting PostgreSQL service" \
-            "${sudo_cmd[@]}" systemctl enable --now postgresql.service || service_ok="false"
-    else
-        log_detail "systemd unavailable; skipping PostgreSQL service start"
-    fi
+    acfs_postgres_start_existing || return 1
 
     acfs_postgres_bootstrap_role || log_warn "PostgreSQL: role bootstrap failed (continuing)"
 
-    # Surface failures instead of reporting success with a dead service.
-    if command_exists systemctl && [[ -d /run/systemd/system ]]; then
-        if ! systemctl is-active --quiet postgresql.service; then
-            log_warn "PostgreSQL: service did not reach active state"
-            return 1
-        fi
-        [[ "$service_ok" == "true" ]] || return 1
-    fi
-
-    return 0
+    acfs_postgres_ready
 }
 
 # Vault on Arch-family: prefer a pinned generic Linux binary published in
@@ -9227,34 +9375,16 @@ install_cloud_db_legacy_db() {
     # PostgreSQL 18 (via PGDG)
     if [[ "$SKIP_POSTGRES" == "true" ]]; then
         log_detail "Skipping PostgreSQL (--skip-postgres)"
+        return 0
+    elif acfs_postgres_ready; then
+        log_detail "PostgreSQL is installed and accepts local queries"
+        return 0
     elif [[ "$ACFS_DISTRO_FAMILY" == "arch" ]]; then
-        # A bare psql client (e.g. from libpq) must not satisfy the server
-        # check on Arch; key off the server package itself.
-        # The package being present is not enough to skip: a first run can
-        # install the package and then fail initdb or the service start, and a
-        # package-only guard would skip the repair on every re-run forever.
-        # Require an initialised cluster and (where systemd exists) an active
-        # service; acfs_arch_install_postgres is idempotent otherwise.
-        local arch_pg_ready=false
-        if pacman -Qq postgresql &>/dev/null && [[ -f /var/lib/postgres/data/PG_VERSION ]]; then
-            if command_exists systemctl && [[ -d /run/systemd/system ]]; then
-                systemctl is-active --quiet postgresql.service && arch_pg_ready=true
-            else
-                arch_pg_ready=true
-            fi
-        fi
-        if [[ "$arch_pg_ready" == "true" ]]; then
-            log_detail "PostgreSQL already installed (pacman)"
-        else
-            log_detail "Installing PostgreSQL (pacman)"
-            if acfs_arch_install_postgres; then
-                log_success "PostgreSQL installed"
-            else
-                log_warn "PostgreSQL: installation failed (optional)"
-            fi
-        fi
-    elif psql_bin="$(binary_path psql 2>/dev/null || true)" && [[ -n "$psql_bin" ]]; then
-        log_detail "PostgreSQL already installed ($("$psql_bin" --version 2>/dev/null | head -1 || echo 'psql'))"
+        log_detail "Installing or repairing PostgreSQL (pacman)"
+        acfs_arch_install_postgres || return 1
+    elif command_exists pg_lsclusters && [[ -n "$(pg_lsclusters --no-header 2>/dev/null)" ]]; then
+        # Preserve an installed server and its data when only startup failed.
+        acfs_postgres_start_existing || return 1
     else
         # PGDG may lag behind new Ubuntu codenames (e.g. 25.10) - fall back to noble (24.04 LTS) when needed.
         local pgdg_codename="$codename"
@@ -9314,6 +9444,9 @@ install_cloud_db_legacy_db() {
             fi
         fi
     fi
+    acfs_postgres_start_existing || return 1
+    acfs_postgres_bootstrap_role || true
+    acfs_postgres_ready
 }
 
 install_cloud_db_legacy_tools() {
@@ -9322,8 +9455,8 @@ install_cloud_db_legacy_tools() {
     # Vault (HashiCorp apt repo)
     if [[ "$SKIP_VAULT" == "true" ]]; then
         log_detail "Skipping Vault (--skip-vault)"
-    elif vault_bin="$(binary_path vault 2>/dev/null || true)" && [[ -n "$vault_bin" ]]; then
-        log_detail "Vault already installed ($("$vault_bin" --version 2>/dev/null | head -1 || echo 'vault'))"
+    elif acfs_should_skip_module "tools.vault"; then
+        log_detail "Vault is installed and verified"
     elif [[ "$ACFS_DISTRO_FAMILY" == "arch" ]]; then
         log_detail "Installing Vault (Arch path)"
         acfs_arch_install_vault || true
@@ -9583,10 +9716,31 @@ install_cloud_db() {
 
     if acfs_use_generated_category "db"; then
         log_detail "Using generated installers for db (phase 8)"
+        if should_run_module "db.postgres18" && acfs_module_is_installed "db.postgres18"; then
+            try_step_optional "Repairing existing PostgreSQL service" acfs_postgres_start_existing || true
+        fi
         acfs_run_generated_category_phase "db" "8" || cloud_phase_rc=1
+        if should_run_module "db.postgres18"; then
+            if ! acfs_try_module_step "db.postgres18" "Verifying PostgreSQL service" acfs_postgres_start_existing; then
+                if acfs_legacy_module_is_required "db.postgres18"; then
+                    cloud_phase_rc=1
+                else
+                    record_skipped_tool "db.postgres18" "server is not functional"
+                fi
+            fi
+        fi
         ran_any=true
-    else
-        install_cloud_db_legacy_db "$codename" || return 1
+    elif acfs_legacy_module_selected "db.postgres18"; then
+        # Installation strategies may fall back. The final server probe owns
+        # the required/optional verdict, not an intermediate package attempt.
+        try_step_optional "Installing or repairing PostgreSQL" install_cloud_db_legacy_db "$codename" || true
+        if [[ "$SKIP_POSTGRES" != "true" ]] && ! acfs_try_module_step "db.postgres18" "Verifying PostgreSQL service" acfs_postgres_ready; then
+            if acfs_legacy_module_is_required "db.postgres18"; then
+                cloud_phase_rc=1
+            else
+                record_skipped_tool "db.postgres18" "server is not functional"
+            fi
+        fi
         ran_any=true
     fi
 
@@ -9594,8 +9748,15 @@ install_cloud_db() {
         log_detail "Using generated installers for tools (phase 8)"
         acfs_run_generated_category_phase "tools" "8" || cloud_phase_rc=1
         ran_any=true
-    else
-        install_cloud_db_legacy_tools "$codename" || return 1
+    elif acfs_legacy_module_selected "tools.vault"; then
+        try_step_optional "Installing Vault" install_cloud_db_legacy_tools "$codename" || true
+        if [[ "$SKIP_VAULT" != "true" ]] && ! acfs_try_module_step "tools.vault" "Verifying Vault" acfs_verify_module "tools.vault"; then
+            if acfs_legacy_module_is_required "tools.vault"; then
+                cloud_phase_rc=1
+            else
+                record_skipped_tool "tools.vault" "verification failed"
+            fi
+        fi
         ran_any=true
     fi
 
@@ -9604,7 +9765,7 @@ install_cloud_db() {
         acfs_run_generated_category_phase "cloud" "8" || cloud_phase_rc=1
         ran_any=true
     else
-        install_cloud_db_legacy_cloud || return 1
+        try_step_optional "Installing optional cloud CLIs" install_cloud_db_legacy_cloud || true
         ran_any=true
     fi
 
@@ -9613,7 +9774,7 @@ install_cloud_db() {
     fi
 
     if [[ "$cloud_phase_rc" -ne 0 ]]; then
-        log_warn "Cloud & database phase finished with generated-module failures (see summary); the phase will be retried on resume"
+        log_warn "Cloud & database phase finished with required-module failures (see summary); the phase will be retried on resume"
         return 1
     fi
     log_success "Cloud & database tools phase complete"
@@ -10277,7 +10438,7 @@ UNIT_EOF
     fi
 
     # Ultimate Bug Scanner
-    if binary_installed "ubs"; then
+    if acfs_should_skip_module "stack.ultimate_bug_scanner"; then
         log_detail "Ultimate Bug Scanner already installed"
     else
         log_detail "Installing Ultimate Bug Scanner"
@@ -10285,39 +10446,39 @@ UNIT_EOF
         # so the UBS installer must not edit ~/.claude/settings.json (#400).
         # --skip-ast-grep: tools.ast_grep provides it; UBS's own fetch could
         # install the sg launcher as ~/.local/bin/ast-grep (acfs-9ij4).
-        try_step "Installing UBS" acfs_run_verified_upstream_script_as_target "ubs" "bash" --easy-mode --skip-hooks --skip-ast-grep || acfs_optional_module_install_failed "ubs" "UBS"
+        acfs_try_module_step "stack.ultimate_bug_scanner" "Installing UBS" acfs_run_verified_upstream_script_as_target "ubs" "bash" --easy-mode --skip-hooks --skip-ast-grep || acfs_optional_module_install_failed "ubs" "UBS"
     fi
 
     # Beads Rust
-    if binary_installed "br"; then
+    if acfs_should_skip_module "stack.beads_rust"; then
         log_detail "Beads Rust already installed"
     else
         log_detail "Installing Beads Rust"
-        try_step "Installing Beads Rust" acfs_run_verified_upstream_script_as_target "br" "bash" || acfs_optional_module_install_failed "br" "Beads Rust"
+        acfs_try_module_step "stack.beads_rust" "Installing Beads Rust" acfs_run_verified_upstream_script_as_target "br" "bash" || acfs_optional_module_install_failed "br" "Beads Rust"
     fi
 
     # Beads Viewer
-    if binary_installed "bv"; then
+    if acfs_should_skip_module "stack.beads_viewer"; then
         log_detail "Beads Viewer already installed"
     else
         log_detail "Installing Beads Viewer"
-        try_step "Installing Beads Viewer" acfs_run_verified_upstream_script_as_target "bv" "bash" || acfs_optional_module_install_failed "bv" "Beads Viewer"
+        acfs_try_module_step "stack.beads_viewer" "Installing Beads Viewer" acfs_run_verified_upstream_script_as_target "bv" "bash" || acfs_optional_module_install_failed "bv" "Beads Viewer"
     fi
 
     # CASS (Coding Agent Session Search)
-    if binary_installed "cass"; then
+    if acfs_should_skip_module "stack.cass"; then
         log_detail "CASS already installed"
     else
         log_detail "Installing CASS"
-        try_step "Installing CASS" acfs_run_verified_upstream_script_as_target "cass" "bash" --easy-mode --verify || acfs_optional_module_install_failed "cass" "CASS"
+        acfs_try_module_step "stack.cass" "Installing CASS" acfs_run_verified_upstream_script_as_target "cass" "bash" --easy-mode --verify || acfs_optional_module_install_failed "cass" "CASS"
     fi
 
     # CASS Memory System
-    if binary_installed "cm"; then
+    if acfs_should_skip_module "stack.cm"; then
         log_detail "CASS Memory System already installed"
     else
         log_detail "Installing CASS Memory System"
-        try_step "Installing CM" acfs_run_verified_upstream_script_as_target "cm" "bash" --easy-mode --verify || acfs_optional_module_install_failed "cm" "CM"
+        acfs_try_module_step "stack.cm" "Installing CM" acfs_run_verified_upstream_script_as_target "cm" "bash" --easy-mode --verify || acfs_optional_module_install_failed "cm" "CM"
     fi
 
     # CAAM (Coding Agent Account Manager), the arosl fork. Its manifest
@@ -10339,7 +10500,7 @@ UNIT_EOF
     elif [[ "$ACFS_DISTRO_FAMILY" == "arch" ]]; then
         # No .deb/dpkg on Arch-family; use the upstream bash installer.
         log_detail "Installing SLB (upstream)"
-        try_step "Installing SLB (upstream)" acfs_run_verified_upstream_script_as_target "slb" "bash" || acfs_optional_module_install_failed "slb" "SLB"
+        acfs_try_module_step "stack.slb" "Installing SLB (upstream)" acfs_run_verified_upstream_script_as_target "slb" "bash" || acfs_optional_module_install_failed "slb" "SLB"
     else
         # The former .deb path fetched a pinned 0.2.0 GitHub release over
         # HTTPS with no checksum and installed it as root via dpkg — the one
@@ -10347,7 +10508,7 @@ UNIT_EOF
         # Use the checksum-verified upstream installer like every other tool
         # (the Arch branch above already does).
         log_detail "Installing SLB (verified upstream installer)"
-        try_step "Installing SLB (upstream)" acfs_run_verified_upstream_script_as_target "slb" "bash" || acfs_optional_module_install_failed "slb" "SLB"
+        acfs_try_module_step "stack.slb" "Installing SLB (upstream)" acfs_run_verified_upstream_script_as_target "slb" "bash" || acfs_optional_module_install_failed "slb" "SLB"
     fi
 
     # RU (Repo Updater), the arosl fork. Its manifest installer sets
@@ -10368,10 +10529,10 @@ UNIT_EOF
         # RCH releases (v2.1.16) have no aarch64 Linux build, so its installer
         # compiles from source; the step is long and quiet, not hung.
         log_detail "Installing RCH: no ARM64 Linux release yet, building from source (the slowest step on ARM64)"
-        try_step "Installing RCH" acfs_run_verified_upstream_script_as_target "rch" "bash" || acfs_optional_module_install_failed "rch" "RCH"
+        acfs_try_module_step "stack.rch" "Installing RCH" acfs_run_verified_upstream_script_as_target "rch" "bash" || acfs_optional_module_install_failed "rch" "RCH"
     else
         log_detail "Installing RCH"
-        try_step "Installing RCH" acfs_run_verified_upstream_script_as_target "rch" "bash" || acfs_optional_module_install_failed "rch" "RCH"
+        acfs_try_module_step "stack.rch" "Installing RCH" acfs_run_verified_upstream_script_as_target "rch" "bash" || acfs_optional_module_install_failed "rch" "RCH"
     fi
 
     # FrankenSearch (fsfs)
@@ -10385,9 +10546,9 @@ UNIT_EOF
         # _stack_run_fsfs_installer pins the prebuilt -lite tarball with a
         # checksum; delegate to it when available.
         if declare -F _stack_run_fsfs_installer >/dev/null 2>&1; then
-            try_step "Installing FrankenSearch" _stack_run_fsfs_installer --easy-mode || acfs_optional_module_install_failed "fsfs" "FrankenSearch"
+            acfs_try_module_step "stack.frankensearch" "Installing FrankenSearch" _stack_run_fsfs_installer --easy-mode || acfs_optional_module_install_failed "fsfs" "FrankenSearch"
         else
-            try_step "Installing FrankenSearch" acfs_run_verified_upstream_script_as_target "fsfs" "bash" --easy-mode || acfs_optional_module_install_failed "fsfs" "FrankenSearch"
+            acfs_try_module_step "stack.frankensearch" "Installing FrankenSearch" acfs_run_verified_upstream_script_as_target "fsfs" "bash" --easy-mode || acfs_optional_module_install_failed "fsfs" "FrankenSearch"
         fi
     fi
 
@@ -10396,7 +10557,7 @@ UNIT_EOF
         log_detail "Process Triage already installed"
     else
         log_detail "Installing Process Triage"
-        try_step "Installing Process Triage" acfs_run_verified_upstream_script_as_target "pt" "bash" || acfs_optional_module_install_failed "pt" "Process Triage"
+        acfs_try_module_step "stack.process_triage" "Installing Process Triage" acfs_run_verified_upstream_script_as_target "pt" "bash" || acfs_optional_module_install_failed "pt" "Process Triage"
     fi
 
     # Storage Ballast Helper (sbh)
@@ -10404,7 +10565,7 @@ UNIT_EOF
         log_detail "Storage Ballast Helper already installed"
     else
         log_detail "Installing Storage Ballast Helper"
-        try_step "Installing SBH" acfs_run_verified_upstream_script_as_target "sbh" "bash" || acfs_optional_module_install_failed "sbh" "SBH"
+        acfs_try_module_step "stack.storage_ballast_helper" "Installing SBH" acfs_run_verified_upstream_script_as_target "sbh" "bash" || acfs_optional_module_install_failed "sbh" "SBH"
     fi
 
     # Cross-Agent Session Resumer (casr)
@@ -10412,7 +10573,7 @@ UNIT_EOF
         log_detail "CASR already installed"
     else
         log_detail "Installing CASR"
-        try_step "Installing CASR" acfs_run_verified_upstream_script_as_target "casr" "bash" || acfs_optional_module_install_failed "casr" "CASR"
+        acfs_try_module_step "stack.cross_agent_session_resumer" "Installing CASR" acfs_run_verified_upstream_script_as_target "casr" "bash" || acfs_optional_module_install_failed "casr" "CASR"
     fi
 
     # Doodlestein Self-Releaser (dsr) — modular bash project with verified installer.
@@ -10424,7 +10585,7 @@ UNIT_EOF
         log_detail "DSR already installed"
     else
         log_detail "Installing DSR"
-        try_step "Installing DSR" acfs_run_verified_upstream_script_as_target "dsr" "bash" --easy-mode || acfs_optional_module_install_failed "dsr" "DSR"
+        acfs_try_module_step "stack.doodlestein_self_releaser" "Installing DSR" acfs_run_verified_upstream_script_as_target "dsr" "bash" --easy-mode || acfs_optional_module_install_failed "dsr" "DSR"
     fi
 
     # Agent Settings Backup (asb)
@@ -10432,7 +10593,7 @@ UNIT_EOF
         log_detail "ASB already installed"
     else
         log_detail "Installing ASB"
-        try_step "Installing ASB" acfs_run_verified_upstream_script_as_target "asb" "bash" || acfs_optional_module_install_failed "asb" "ASB"
+        acfs_try_module_step "stack.agent_settings_backup" "Installing ASB" acfs_run_verified_upstream_script_as_target "asb" "bash" || acfs_optional_module_install_failed "asb" "ASB"
     fi
 
     # Post-Compact Reminder (pcr hook)
@@ -10454,7 +10615,7 @@ UNIT_EOF
         log_detail "Skipping Post-Compact Reminder because Claude Code is not installed"
     else
         log_detail "Installing Post-Compact Reminder"
-        try_step "Installing PCR" acfs_run_verified_upstream_script_as_target "pcr" "bash" --yes || acfs_optional_module_install_failed "pcr" "PCR"
+        acfs_try_module_step "stack.pcr" "Installing PCR" acfs_run_verified_upstream_script_as_target "pcr" "bash" --yes || acfs_optional_module_install_failed "pcr" "PCR"
     fi
 
     # Eidetic Engine (ee)
@@ -10462,7 +10623,7 @@ UNIT_EOF
         log_detail "Eidetic Engine already installed"
     else
         log_detail "Installing Eidetic Engine"
-        try_step "Installing EE" acfs_run_verified_upstream_script_as_target "ee" "bash" --easy-mode || acfs_optional_module_install_failed "ee" "EE"
+        acfs_try_module_step "stack.eidetic_engine_cli" "Installing EE" acfs_run_verified_upstream_script_as_target "ee" "bash" --easy-mode || acfs_optional_module_install_failed "ee" "EE"
     fi
 
     # Franken Markdown (fmd)
@@ -10470,7 +10631,7 @@ UNIT_EOF
         log_detail "Franken Markdown already installed"
     else
         log_detail "Installing Franken Markdown"
-        try_step "Installing FMD" acfs_run_verified_upstream_script_as_target "fmd" "bash" --easy-mode || acfs_optional_module_install_failed "fmd" "FMD"
+        acfs_try_module_step "stack.franken_markdown" "Installing FMD" acfs_run_verified_upstream_script_as_target "fmd" "bash" --easy-mode || acfs_optional_module_install_failed "fmd" "FMD"
     fi
 
     # Pi Agent Rust (pi)
@@ -10478,7 +10639,7 @@ UNIT_EOF
         log_detail "Pi Agent already installed"
     else
         log_detail "Installing Pi Agent"
-        try_step "Installing PI" acfs_run_verified_upstream_script_as_target "pi" "bash" --yes --easy-mode || acfs_optional_module_install_failed "pi" "PI"
+        acfs_try_module_step "stack.pi_agent_rust" "Installing PI" acfs_run_verified_upstream_script_as_target "pi" "bash" --yes --easy-mode || acfs_optional_module_install_failed "pi" "PI"
     fi
 
     # Power Failure Resumer (pfr)
@@ -10486,16 +10647,16 @@ UNIT_EOF
         log_detail "Power Failure Resumer already installed"
     else
         log_detail "Installing Power Failure Resumer"
-        try_step "Installing PFR" acfs_run_verified_upstream_script_as_target "pfr" "bash" --easy-mode --install-skill || acfs_optional_module_install_failed "pfr" "PFR"
+        acfs_try_module_step "stack.power_failure_resumer" "Installing PFR" acfs_run_verified_upstream_script_as_target "pfr" "bash" --easy-mode --install-skill || acfs_optional_module_install_failed "pfr" "PFR"
     fi
 
     # DCG (Destructive Command Guard)
-    if binary_installed "dcg"; then
+    if acfs_should_skip_module "stack.dcg"; then
         log_detail "DCG already installed"
     else
         log_info "Installing DCG (Destructive Command Guard)..."
         log_detail "DCG blocks destructive git/fs commands before they run"
-        if try_step "Installing DCG" acfs_run_verified_upstream_script_as_target "dcg" "bash"; then
+        if acfs_try_module_step "stack.dcg" "Installing DCG" acfs_run_verified_upstream_script_as_target "dcg" "bash"; then
             log_success "DCG installed. Run 'dcg doctor' to verify."
         else
             acfs_optional_module_install_failed "dcg" "DCG"
@@ -10530,7 +10691,7 @@ UNIT_EOF
         log_detail "TRU already installed"
     else
         log_detail "Installing TRU"
-        try_step "Installing TRU" acfs_run_verified_upstream_script_as_target "tru" "bash" || acfs_optional_module_install_failed "tru" "TRU"
+        acfs_try_module_step "utils.toon_rust" "Installing TRU" acfs_run_verified_upstream_script_as_target "tru" "bash" || acfs_optional_module_install_failed "tru" "TRU"
     fi
 
     # Automated Plan Reviser (apr)
@@ -10538,7 +10699,7 @@ UNIT_EOF
         log_detail "APR already installed"
     else
         log_detail "Installing APR"
-        try_step "Installing APR" acfs_run_verified_upstream_script_as_target "apr" "bash" || acfs_optional_module_install_failed "apr" "APR"
+        acfs_try_module_step "stack.automated_plan_reviser" "Installing APR" acfs_run_verified_upstream_script_as_target "apr" "bash" || acfs_optional_module_install_failed "apr" "APR"
     fi
 
     # Chat Shared Conversation to File (csctf)
@@ -10546,7 +10707,7 @@ UNIT_EOF
         log_detail "CSCTF already installed"
     else
         log_detail "Installing CSCTF"
-        try_step "Installing CSCTF" acfs_run_verified_upstream_script_as_target "csctf" "bash" || acfs_optional_module_install_failed "csctf" "CSCTF"
+        acfs_try_module_step "utils.csctf" "Installing CSCTF" acfs_run_verified_upstream_script_as_target "csctf" "bash" || acfs_optional_module_install_failed "csctf" "CSCTF"
     fi
 
     # Grok CLI (xAI)
@@ -10556,7 +10717,7 @@ UNIT_EOF
         log_detail "Installing Grok CLI"
         # Keep the verified-installer capability identical to the manifest
         # contract. A custom ACFS_BIN_DIR is handled by the link step below.
-        try_step "Installing Grok CLI" acfs_run_verified_upstream_script_as_target_with_env "grok" "bash" "GROK_BIN_DIR=$TARGET_HOME/.local/bin" || acfs_optional_module_install_failed "grok" "Grok CLI"
+        acfs_try_module_step "agents.grok" "Installing Grok CLI" acfs_run_verified_upstream_script_as_target_with_env "grok" "bash" "GROK_BIN_DIR=$TARGET_HOME/.local/bin" || acfs_optional_module_install_failed "grok" "Grok CLI"
         local grok_installed_bin=""
         local grok_candidate=""
         for grok_candidate in "$TARGET_HOME/.local/bin/grok" "$TARGET_HOME/.grok/bin/grok"; do
@@ -10566,7 +10727,7 @@ UNIT_EOF
             fi
         done
         if [[ ! -x "$ACFS_BIN_DIR/grok" ]] && [[ -n "$grok_installed_bin" ]]; then
-            try_step "Linking grok into $ACFS_BIN_DIR" acfs_link_primary_bin_command "$grok_installed_bin" "grok" || log_warn "Could not link grok into $ACFS_BIN_DIR"
+            acfs_try_module_step "agents.grok" "Linking grok into $ACFS_BIN_DIR" acfs_link_primary_bin_command "$grok_installed_bin" "grok" || log_warn "Could not link grok into $ACFS_BIN_DIR"
         fi
     fi
 
@@ -10575,7 +10736,7 @@ UNIT_EOF
         log_detail "GIIL already installed"
     else
         log_detail "Installing GIIL"
-        try_step "Installing GIIL" acfs_run_verified_upstream_script_as_target "giil" "bash" || acfs_optional_module_install_failed "giil" "GIIL"
+        acfs_try_module_step "utils.giil" "Installing GIIL" acfs_run_verified_upstream_script_as_target "giil" "bash" || acfs_optional_module_install_failed "giil" "GIIL"
     fi
 
     # JeffreysPrompts CLI (jfp)
@@ -10583,7 +10744,7 @@ UNIT_EOF
         log_detail "JFP already installed"
     else
         log_detail "Installing JFP"
-        try_step "Installing JFP" acfs_run_verified_upstream_script_as_target "jfp" "bash" || acfs_optional_module_install_failed "jfp" "JFP"
+        acfs_try_module_step "stack.jeffreysprompts" "Installing JFP" acfs_run_verified_upstream_script_as_target "jfp" "bash" || acfs_optional_module_install_failed "jfp" "JFP"
     fi
 
     # Markdown Web Browser (mdwb)
@@ -10591,15 +10752,15 @@ UNIT_EOF
         log_detail "MDWB already installed"
     else
         log_detail "Installing MDWB"
-        try_step "Installing MDWB" acfs_run_verified_upstream_script_as_target "mdwb" "bash" || acfs_optional_module_install_failed "mdwb" "MDWB"
+        acfs_try_module_step "utils.mdwb" "Installing MDWB" acfs_run_verified_upstream_script_as_target "mdwb" "bash" || acfs_optional_module_install_failed "mdwb" "MDWB"
     fi
 
     # Meta Skill (ms)
-    if binary_installed "ms"; then
+    if acfs_should_skip_module "stack.meta_skill"; then
         log_detail "Meta Skill already installed"
     else
         log_detail "Installing Meta Skill"
-        try_step "Installing Meta Skill" acfs_run_verified_upstream_script_as_target "ms" "bash" --easy-mode || acfs_optional_module_install_failed "ms" "Meta Skill"
+        acfs_try_module_step "stack.meta_skill" "Installing Meta Skill" acfs_run_verified_upstream_script_as_target "ms" "bash" --easy-mode || acfs_optional_module_install_failed "ms" "Meta Skill"
     fi
 
     # oh-my-pi (omp)
@@ -10609,9 +10770,9 @@ UNIT_EOF
         log_detail "Installing oh-my-pi"
         # --binary forces the prebuilt release binary (default ~/.local/bin) so
         # the install stays deterministic even when bun is present.
-        try_step "Installing oh-my-pi" acfs_run_verified_upstream_script_as_target "omp" "sh" --binary || acfs_optional_module_install_failed "omp" "oh-my-pi"
+        acfs_try_module_step "agents.omp" "Installing oh-my-pi" acfs_run_verified_upstream_script_as_target "omp" "sh" --binary || acfs_optional_module_install_failed "omp" "oh-my-pi"
         if [[ ! -x "$ACFS_BIN_DIR/omp" ]] && [[ -x "$TARGET_HOME/.local/bin/omp" ]]; then
-            try_step "Linking omp into $ACFS_BIN_DIR" acfs_link_primary_bin_command "$TARGET_HOME/.local/bin/omp" "omp" || log_warn "Could not link omp into $ACFS_BIN_DIR"
+            acfs_try_module_step "agents.omp" "Linking omp into $ACFS_BIN_DIR" acfs_link_primary_bin_command "$TARGET_HOME/.local/bin/omp" "omp" || log_warn "Could not link omp into $ACFS_BIN_DIR"
         fi
     fi
 
@@ -10620,11 +10781,11 @@ UNIT_EOF
         log_detail "OpenCode already installed"
     else
         log_detail "Installing OpenCode"
-        try_step "Installing OpenCode" acfs_run_verified_upstream_script_as_target "opencode" "bash" || acfs_optional_module_install_failed "opencode" "OpenCode"
+        acfs_try_module_step "agents.opencode" "Installing OpenCode" acfs_run_verified_upstream_script_as_target "opencode" "bash" || acfs_optional_module_install_failed "opencode" "OpenCode"
         # The upstream installer hardcodes ~/.opencode/bin, which is on no PATH ACFS
         # manages; normalize the binary into the ACFS bin dir like claude/codex.
         if [[ -x "$TARGET_HOME/.opencode/bin/opencode" ]]; then
-            try_step "Linking opencode into $ACFS_BIN_DIR" acfs_link_primary_bin_command "$TARGET_HOME/.opencode/bin/opencode" "opencode" || log_warn "Could not link opencode into $ACFS_BIN_DIR"
+            acfs_try_module_step "agents.opencode" "Linking opencode into $ACFS_BIN_DIR" acfs_link_primary_bin_command "$TARGET_HOME/.opencode/bin/opencode" "opencode" || log_warn "Could not link opencode into $ACFS_BIN_DIR"
         fi
     fi
 
@@ -10643,7 +10804,7 @@ UNIT_EOF
         log_detail "RANO already installed"
     else
         log_detail "Installing RANO"
-        try_step "Installing RANO" acfs_run_verified_upstream_script_as_target "rano" "bash" || acfs_optional_module_install_failed "rano" "RANO"
+        acfs_try_module_step "utils.rano" "Installing RANO" acfs_run_verified_upstream_script_as_target "rano" "bash" || acfs_optional_module_install_failed "rano" "RANO"
     fi
 
     # Source to Prompt TUI (s2p)
@@ -10651,7 +10812,7 @@ UNIT_EOF
         log_detail "S2P already installed"
     else
         log_detail "Installing S2P"
-        try_step "Installing S2P" acfs_run_verified_upstream_script_as_target "s2p" "bash" || acfs_optional_module_install_failed "s2p" "S2P"
+        acfs_try_module_step "utils.s2p" "Installing S2P" acfs_run_verified_upstream_script_as_target "s2p" "bash" || acfs_optional_module_install_failed "s2p" "S2P"
     fi
 
     # System Resource Protection Script (srps)
@@ -10666,7 +10827,7 @@ UNIT_EOF
         log_detail "SRPS already installed"
     else
         log_detail "Installing SRPS"
-        try_step "Installing SRPS" acfs_run_verified_upstream_script_as_target "srps" "bash" --install || acfs_optional_module_install_failed "srps" "SRPS"
+        acfs_try_module_step "stack.srps" "Installing SRPS" acfs_run_verified_upstream_script_as_target "srps" "bash" --install || acfs_optional_module_install_failed "srps" "SRPS"
     fi
 
     # X Archive Search (xf)
@@ -10674,7 +10835,7 @@ UNIT_EOF
         log_detail "XF already installed"
     else
         log_detail "Installing XF"
-        try_step "Installing XF" acfs_run_verified_upstream_script_as_target "xf" "bash" --easy-mode || acfs_optional_module_install_failed "xf" "XF"
+        acfs_try_module_step "utils.xf" "Installing XF" acfs_run_verified_upstream_script_as_target "xf" "bash" --easy-mode || acfs_optional_module_install_failed "xf" "XF"
     fi
 
     # Brenner Bot
@@ -10686,7 +10847,7 @@ UNIT_EOF
         # pinned copies would overwrite them in the same bin dir (same flags as
         # acfs update, GH #210).
         # --version is the tag KNOWN_INSTALLERS[brenner_bot] pins (acfs-9hkh.54).
-        try_step "Installing Brenner Bot" acfs_run_verified_upstream_script_as_target "brenner_bot" "bash" --version 0.4.1-nhm.1 --skip-ntm --skip-cass --skip-cm || acfs_optional_module_install_failed "brenner_bot" "Brenner Bot"
+        acfs_try_module_step "stack.brenner_bot" "Installing Brenner Bot" acfs_run_verified_upstream_script_as_target "brenner_bot" "bash" --version 0.4.1-nhm.1 --skip-ntm --skip-cass --skip-cm || acfs_optional_module_install_failed "brenner_bot" "Brenner Bot"
     fi
 
     # Required modules that acfs_optional_module_install_failed recorded above
@@ -10774,7 +10935,7 @@ acfs_install_nhm_learning_profile() {
     local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh"
     [[ -f "$nhm_hooks" ]] || return 0
     acfs_legacy_module_selected "stack.nhm" || return 0
-    try_step "Setting nhm's learning profile" \
+    try_step_optional "Setting nhm's learning profile" \
         run_as_target bash "$nhm_hooks" learning-profile set || \
         log_warn "nhm's learning profile was not set (optional): see nhm_hooks.sh learning-profile check"
 }
@@ -10846,7 +11007,7 @@ acfs_install_codex_dcg_hook() {
     [[ "$dcg_rc" -eq 0 ]] || { log_warn "could not check for dcg as $TARGET_USER; Codex's dcg guard is unchanged"; return 0; }
     acfs_legacy_module_selected "stack.dcg" || return 0
     binary_installed "codex" || return 0
-    if ! try_step "Adding dcg's Bash guard to Codex's hooks" \
+    if ! try_step_optional "Adding dcg's Bash guard to Codex's hooks" \
             run_as_target bash "$nhm_hooks" codex-dcg register "$TARGET_HOME/.codex/hooks.json"; then
         log_warn "adding dcg's Bash guard for Codex failed (optional)"
         return 0
@@ -10899,7 +11060,7 @@ acfs_install_nhm_hook_lines() {
     fi
     acfs_legacy_module_selected "stack.nhm" || return 0
     if binary_installed "claude"; then
-        try_step "Registering the nhm hook lines for Claude Code" \
+        try_step_optional "Registering the nhm hook lines for Claude Code" \
             run_as_target bash "$nhm_hooks" register claude "$TARGET_HOME/.claude/settings.json" || \
             log_warn "nhm hook registration for Claude Code failed (optional)"
         run_as_target bash "$nhm_hooks" statusline claude set "$TARGET_HOME/.claude/settings.json" || statusline_rc=$?
@@ -10910,7 +11071,7 @@ acfs_install_nhm_hook_lines() {
         esac
     fi
     if binary_installed "codex"; then
-        if try_step "Registering the nhm hook lines for Codex" \
+        if try_step_optional "Registering the nhm hook lines for Codex" \
                 run_as_target bash "$nhm_hooks" register codex "$TARGET_HOME/.codex/hooks.json"; then
             # timeout: the helper bounds Codex's app-server itself (60 s);
             # this bounds the helper, so no install can hang on it.
@@ -11038,6 +11199,7 @@ finalize() {
     try_step "Installing autofix.sh" install_asset "scripts/lib/autofix.sh" "$ACFS_HOME/scripts/lib/autofix.sh" || return 1
     try_step "Installing doctor_fix.sh" install_asset "scripts/lib/doctor_fix.sh" "$ACFS_HOME/scripts/lib/doctor_fix.sh" || return 1
     try_step "Installing doctor.sh" install_asset "scripts/lib/doctor.sh" "$ACFS_HOME/scripts/lib/doctor.sh" || return 1
+    try_step "Installing user.sh" install_asset "scripts/lib/user.sh" "$ACFS_HOME/scripts/lib/user.sh" || return 1
     try_step "Installing acfs-services.sh" install_asset "scripts/lib/acfs-services.sh" "$ACFS_HOME/scripts/lib/acfs-services.sh" || return 1
     try_step "Installing agy_model_guard.sh" install_asset "scripts/lib/agy_model_guard.sh" "$ACFS_HOME/scripts/lib/agy_model_guard.sh" || return 1
     try_step "Installing agy_e2e_harness.sh" install_asset "scripts/lib/agy_e2e_harness.sh" "$ACFS_HOME/scripts/lib/agy_e2e_harness.sh" || return 1
@@ -11126,13 +11288,13 @@ finalize() {
     # (~/.acfs/docs/flywheel-agent-guide.md); deploying it into /AGENTS.md,
     # ~/.codex/AGENTS.md, or a project is an explicit user action
     # (`acfs agents install ...`) and is never done automatically.
-    if try_step "Installing flywheel-update-agents-md" install_asset "scripts/generate-root-agents-md.sh" "$ACFS_HOME/bin/flywheel-update-agents-md"; then
-        try_step "Setting flywheel-update-agents-md permissions" $SUDO chmod 755 "$ACFS_HOME/bin/flywheel-update-agents-md" || return 1
-        try_step "Setting flywheel-update-agents-md ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/flywheel-update-agents-md" || return 1
-        try_step "Linking flywheel-update-agents-md command" $SUDO ln -sf "$ACFS_HOME/bin/flywheel-update-agents-md" "/usr/local/bin/flywheel-update-agents-md" || return 1
+    if try_step_optional "Installing flywheel-update-agents-md" install_asset "scripts/generate-root-agents-md.sh" "$ACFS_HOME/bin/flywheel-update-agents-md"; then
+        try_step_optional "Setting flywheel-update-agents-md permissions" $SUDO chmod 755 "$ACFS_HOME/bin/flywheel-update-agents-md" || true
+        try_step_optional "Setting flywheel-update-agents-md ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/flywheel-update-agents-md" || true
+        try_step_optional "Linking flywheel-update-agents-md command" $SUDO ln -sf "$ACFS_HOME/bin/flywheel-update-agents-md" "/usr/local/bin/flywheel-update-agents-md" || true
         # Run in the target user's context so user-local tools
         # (~/.local/bin, ~/go/bin) are detected correctly.
-        try_step "Generating agent guide (~/.acfs/docs)" run_as_target "$ACFS_HOME/bin/flywheel-update-agents-md" || true
+        try_step_optional "Generating agent guide (~/.acfs/docs)" run_as_target "$ACFS_HOME/bin/flywheel-update-agents-md" || true
     else
         log_warn "Agent guide generator not found; skipping guide generation"
     fi
@@ -11193,7 +11355,7 @@ finalize() {
     # `acfs changelog` reads it from here. Documentation only, and archives
     # built from the runtime subset may omit it, so never fatal.
     if [[ -f "${ACFS_BOOTSTRAP_DIR:-${SCRIPT_DIR:-}}/CHANGELOG.md" ]]; then
-        try_step "Installing CHANGELOG.md" install_asset "CHANGELOG.md" "$ACFS_HOME/CHANGELOG.md" || true
+        try_step_optional "Installing CHANGELOG.md" install_asset "CHANGELOG.md" "$ACFS_HOME/CHANGELOG.md" || true
         $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/CHANGELOG.md" 2>/dev/null || true
     fi
 
@@ -11227,7 +11389,7 @@ finalize() {
     # This is especially important because ACFS config includes "dangerous mode"
     # aliases (e.g., `cc`) that can run commands without interactive approvals.
     log_detail "Installing DCG (Destructive Command Guard) PreToolUse hook"
-    try_step "Installing DCG hook" \
+    try_step_optional "Installing DCG hook" \
         env "TARGET_USER=$TARGET_USER" "TARGET_HOME=$TARGET_HOME" \
         "$ACFS_HOME/scripts/services-setup.sh" --install-claude-guard --yes || \
         log_warn "DCG hook installation failed (optional)"
@@ -11239,12 +11401,12 @@ finalize() {
     local agent_mail_hook="$ACFS_HOME/scripts/lib/agent_mail_hook.sh"
     if acfs_legacy_module_selected "stack.mcp_agent_mail" && [[ -f "$agent_mail_hook" ]]; then
         if binary_installed "claude"; then
-            try_step "Registering the Agent Mail Stop hook for Claude Code" \
+            try_step_optional "Registering the Agent Mail Stop hook for Claude Code" \
                 run_as_target bash "$agent_mail_hook" register claude "$TARGET_HOME/.claude/settings.json" || \
                 log_warn "Agent Mail Stop hook registration for Claude Code failed (optional)"
         fi
         if binary_installed "codex"; then
-            if try_step "Registering the Agent Mail Stop hook for Codex" \
+            if try_step_optional "Registering the Agent Mail Stop hook for Codex" \
                     run_as_target bash "$agent_mail_hook" register codex "$TARGET_HOME/.codex/hooks.json"; then
                 log_detail "Codex asks to trust the Agent Mail Stop hook once: open /hooks in Codex"
             else
@@ -11465,27 +11627,26 @@ run_smoke_test() {
         ((critical_failed += 1))
     fi
 
-    # 2) Shell is zsh
+    # 2) Account shell is approved by /etc/shells, or an externally managed
+    # Bash login has the verified handoff. A zsh-like pathname alone is unsafe.
     ((critical_total += 1))
     target_shell_entry="$(acfs_early_getent_passwd_entry "$TARGET_USER" 2>/dev/null || true)"
     if [[ -n "$target_shell_entry" ]]; then
         IFS=: read -r _ _ _ _ _ _ target_shell <<< "$target_shell_entry"
     fi
-    if [[ "$target_shell" == *"zsh"* ]]; then
-        echo "✅ Shell: zsh" >&2
+    if user_login_shell_configured "$TARGET_USER"; then
+        echo "✅ Shell: approved login shell and zsh configuration ($target_shell)" >&2
         ((critical_passed += 1))
-    elif acfs_is_externally_managed_user "$TARGET_USER"; then
-        if acfs_external_shell_handoff_configured "$TARGET_HOME"; then
-            echo "✅ Shell: externally managed login hands off to zsh" >&2
-            ((critical_passed += 1))
-        else
-            echo "⚠ Shell: externally managed account reports ${target_shell:-unknown}" >&2
-            echo "    Note: local chsh is not valid here; configure the identity provider shell or add the ACFS bash-to-zsh handoff." >&2
-            ((warnings += 1))
-        fi
     else
-        echo "✖ Shell: zsh (found: ${target_shell:-unknown})" >&2
-        echo "    Fix: sudo chsh -s \"\$(command -v zsh)\" \"$TARGET_USER\"" >&2
+        echo "✖ Shell: approved zsh configuration could not be verified (found: ${target_shell:-unknown})" >&2
+        local approved_zsh=""
+        if approved_zsh="$(user_select_login_shell 2>/dev/null)"; then
+            echo "    Approved zsh path: $approved_zsh" >&2
+            echo "    Fix: re-run shell setup: $(acfs_smoke_install_fix_command shell.login)" >&2
+        else
+            echo "    No executable zsh path is approved by /etc/shells; repair the host shell configuration first." >&2
+        fi
+        echo "    For externally managed accounts, configure the identity provider's login shell." >&2
         ((critical_failed += 1))
     fi
 
@@ -11707,14 +11868,34 @@ run_smoke_test() {
         ((warnings += 1))
     fi
 
-    # Non-critical: PostgreSQL service running
+    # Essential CLI tools must work in the target user's environment. Historical
+    # phase flags and the presence of unrelated agent binaries are insufficient.
+    local essential_cli
+    for essential_cli in direnv git-lfs strace lsof dig nc; do
+        ((critical_total += 1))
+        if _smoke_run_as_target "command -v $essential_cli >/dev/null"; then
+            ((critical_passed += 1))
+        else
+            echo "✖ Required CLI missing: $essential_cli" >&2
+            ((critical_failed += 1))
+        fi
+    done
+
+    # PostgreSQL keeps the manifest's optional semantics. An explicitly
+    # requested database must pass the same live server check as phase resume.
     if [[ "$SKIP_POSTGRES" == "true" ]]; then
         echo "⚠️ PostgreSQL: skipped (optional)" >&2
         ((warnings += 1))
-    elif command_exists systemctl && [[ -d /run/systemd/system ]] && systemctl is-active --quiet postgresql 2>/dev/null; then
-        echo "✅ PostgreSQL: running" >&2
-    elif command_exists pg_isready && pg_isready -q 2>/dev/null; then
-        echo "✅ PostgreSQL: running" >&2
+    elif acfs_postgres_ready; then
+        echo "✅ PostgreSQL: local server query succeeded" >&2
+        if acfs_legacy_module_is_required "db.postgres18"; then
+            ((critical_total += 1))
+            ((critical_passed += 1))
+        fi
+    elif acfs_legacy_module_is_required "db.postgres18"; then
+        echo "✖ PostgreSQL: required server is not functional" >&2
+        ((critical_total += 1))
+        ((critical_failed += 1))
     else
         echo "⚠️ PostgreSQL: not running (optional)" >&2
         ((warnings += 1))
@@ -11815,6 +11996,9 @@ Tip: use --print to see upstream install scripts that will be fetched."
     # cleanup handler's "smoke test failed" message.
     if [[ "${SMOKE_TEST_FAILED:-false}" == "true" ]]; then
         summary_all_failures+=("post-install smoke test (critical checks failed; see [Smoke Test] above)")
+    fi
+    if type -t state_has_required_failures &>/dev/null && state_has_required_failures; then
+        summary_all_failures+=("unresolved required steps or interrupted phases (see installation state; retry with --resume)")
     fi
     local summary_has_failures=false
     local failures_section_plain=""
@@ -12555,6 +12739,16 @@ main() {
     # interactive user has answered the confirmation prompt.
     ensure_base_deps
 
+    # Base dependencies run before the resumable phase loop because state and
+    # module verification need jq. Clear only older failures after checking
+    # the actual dependencies, and retain any failure from this attempt.
+    if [[ "$DRY_RUN" != "true" ]]; then
+        acfs_verify_phase "base_deps" complete || return 1
+        if type -t state_phase_reconcile &>/dev/null; then
+            state_phase_reconcile "base_deps" previous || return 1
+        fi
+    fi
+
     # From here on the user has confirmed a real install: the cleanup() EXIT
     # trap's best-effort skills/summary fallback is only allowed to engage
     # past this point, so --help/--print/early-bootstrap-failure/user-decline
@@ -12564,7 +12758,8 @@ main() {
 
     if [[ "$DRY_RUN" != "true" ]]; then
         # Execute phases with state tracking (mjt.5.8)
-        # Each run_phase call checks if phase is already completed and skips if so
+        # A historical completion record can skip work only after live
+        # verification. Partial phases rerun their idempotent module checks.
 
         # Track installation timing for report_success
         local installation_start_time
@@ -12622,6 +12817,10 @@ main() {
         _run_phase_with_report "cloud_db" "7/9 Cloud & DB" install_cloud_db || true
         _run_phase_with_report "stack" "8/9 Stack" install_stack_phase || true
         _run_phase_with_report "finalize" "9/9 Finalize" finalize || true
+
+        # Also check targeted installs, and detect a component that became
+        # unavailable after its own phase completed.
+        acfs_verify_installation || true
 
         # Always update manifest, checksums.yaml, and VERSION after all phases complete
         # This ensures resume installs get fresh metadata even if finalize was previously completed

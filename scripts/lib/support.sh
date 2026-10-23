@@ -1344,6 +1344,13 @@ support_installer_progress_summary_json() {
     "$jq_bin" '
       def safe_token:
         if type == "string" and test("^[A-Za-z0-9_.:-]{1,80}$") then . else null end;
+      # Every phase with a required step that failed and has not recovered,
+      # then failed_phase (state.sh: _ACFS_STATE_FAILED_PHASES_DEF).
+      def failed_phases:
+        [(.phase_steps | if type == "object" then . else {} end) | to_entries[]
+          | select(.value | type == "object" and any(.[]; type == "object" and .required != false and .status == "failed"))
+          | .key] as $from_steps
+        | $from_steps + ((.failed_phase | if type == "string" and . != "" then [.] else [] end) - $from_steps);
       {
         status: "pass",
         source_status: "present",
@@ -1351,7 +1358,7 @@ support_installer_progress_summary_json() {
         skipped_phase_count: ((.skipped_phases // []) | map(select(type == "string")) | length),
         current_phase: (.current_phase | safe_token),
         failed_phase: (.failed_phase | safe_token),
-        failed_phases: (.failed_phases | if type == "array" then map(safe_token) | map(select(. != null)) else [] end),
+        failed_phases: (failed_phases | map(safe_token) | map(select(. != null))),
         install_status: (.install_status | if . == "in_progress" or . == "complete" or . == "failed" then . else null end),
         failed_step_present: ((.failed_step // null) != null),
         failed_error_present: ((.failed_error // null) != null)
@@ -1480,6 +1487,13 @@ support_checkpoint_summary_json() {
         '
           def safe_token:
             if type == "string" and test("^[A-Za-z0-9_.:-]{1,80}$") then . else null end;
+          # Every phase with a required step that failed and has not recovered,
+          # then failed_phase (state.sh: _ACFS_STATE_FAILED_PHASES_DEF).
+          def failed_phases:
+            [(.phase_steps | if type == "object" then . else {} end) | to_entries[]
+              | select(.value | type == "object" and any(.[]; type == "object" and .required != false and .status == "failed"))
+              | .key] as $from_steps
+            | $from_steps + ((.failed_phase | if type == "string" and . != "" then [.] else [] end) - $from_steps);
           def safe_mode:
             if type == "string" and test("^[A-Za-z0-9_.:-]{1,40}$") then . else null end;
           def safe_version:
@@ -1506,7 +1520,7 @@ support_checkpoint_summary_json() {
           | ($completed[-1] // null) as $last_completed
           | (if ($state.current_phase | type) == "object" then ($state.current_phase.id // null) else $state.current_phase end | safe_token) as $current_phase
           | ($state.failed_phase | safe_token) as $failed_phase
-          | ($state.failed_phases | if type == "array" then map(select(type == "string")) else [] end) as $failed_phase_ids
+          | ($state | failed_phases) as $failed_phase_ids
           | ($failed_phase_ids | map(safe_token) | map(select(. != null))) as $failed_phases
           | ($state.install_status | if . == "in_progress" or . == "complete" or . == "failed" then . else null end) as $recorded_status
           # A state.json written before install_status existed: a completed

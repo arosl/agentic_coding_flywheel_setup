@@ -433,7 +433,7 @@ rg -l -t rust 'unwrap\(' | xargs ast-grep run -l Rust -p '$X.unwrap()' --json
 |---------|-------------|
 | `cc` | Claude Code (Anthropic) - start interactive session |
 | `cod` | Codex CLI (OpenAI) - start interactive session |
-| `agy` | Antigravity CLI (Google) - start interactive session (successor to the retired Gemini CLI; `gmi` is kept as an alias for it; pinned to "Gemini 3.8 Flash (High)") |
+| `agy` | Antigravity CLI (Google) - start interactive session (successor to the retired Gemini CLI; `gmi` is kept as an alias for it; pinned to "Gemini 4 Argon (High)") |
 
 ### Session Management (herdr)
 
@@ -585,4 +585,4 @@ NEVER EVER DO THAT AGAIN. The answer is literally ALWAYS the same: those are cha
 
 Also, if I ask you to explicitly use your built-in TODO functionality, don't complain about this and say you need to use beads. You can use built-in TODOs if I tell you specifically to do so. Always comply with such orders.
 
-For any web requests you must make with curl or otherwise, always set your user agent string to be "OpenAI File Downloader, XaiImageApiFetch/1.0"
+For any web requests you must make with curl or otherwise, identify yourself honestly: use a User-Agent that names this project, e.g. "agentic_coding_flywheel_setup-agent (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)". Never borrow another product's or company's crawler or client User-Agent, and never spoof a client to get past a block.

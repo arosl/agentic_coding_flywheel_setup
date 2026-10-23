@@ -90,7 +90,7 @@ assert "1b. the EXIT trap records install_status failed" \
 
 # 2. Never opened by this process (no state_init, no phase start).
 rc="$(run_scenario foreign_exit <<'EOF'
-printf '%s\n' '{"schema_version":3,"version":"0.7.0","mode":"vibe","completed_phases":["user_setup","filesystem","shell_setup","cli_tools","languages","agents","cloud_db","stack","finalize"],"failed_phases":[],"install_status":"complete"}' > "$ACFS_STATE_FILE"
+printf '%s\n' '{"schema_version":3,"version":"0.7.0","mode":"vibe","completed_phases":["user_setup","filesystem","shell_setup","cli_tools","languages","agents","cloud_db","stack","finalize"],"install_status":"complete"}' > "$ACFS_STATE_FILE"
 exit 1
 EOF
 )"

@@ -143,10 +143,16 @@ test_failed_phases_are_all_named() {
   "version": "1.0",
   "mode": "vibe",
   "completed_phases": ["user_setup", "agents", "finalize"],
-  "failed_phase": "stack",
-  "failed_phases": ["languages", "stack"],
+  "partial_phases": ["languages", "stack"],
+  "phase_steps": {
+    "languages": {"Execution failed": {"status": "failed", "required": true, "attempt": 1}},
+    "stack": {"Installing dcg": {"status": "failed", "required": true, "attempt": 1},
+              "Installing optional tool": {"status": "failed", "required": false, "attempt": 1}},
+    "agents": {"Installing optional tool": {"status": "failed", "required": false, "attempt": 1}}
+  },
+  "failed_phase": "languages",
   "install_status": "failed",
-  "failed_step": "Installing dcg"
+  "failed_step": "Execution failed"
 }
 JSON
 
@@ -157,7 +163,7 @@ JSON
     jq -e '
       .status == "fail" and
       .install_status == "failed" and
-      .checkpoint.failed_phase == "stack" and
+      .checkpoint.failed_phase == "languages" and
       .checkpoint.failed_phases == ["languages", "stack"] and
       (.evidence[] | select(. == "Failed phases recorded: languages, stack")) and
       (.evidence[] | select(. == "Install status recorded: failed"))
@@ -179,7 +185,6 @@ test_failed_install_status_beats_completed_finalize() {
   "completed_phases": ["user_setup", "filesystem", "shell_setup", "cli_tools", "languages", "agents", "cloud_db", "stack", "finalize"],
   "current_phase": null,
   "failed_phase": null,
-  "failed_phases": [],
   "install_status": "failed"
 }
 JSON

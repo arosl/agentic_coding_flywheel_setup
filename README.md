@@ -54,7 +54,7 @@ The swarm tools run on herdr: `acfs swarm launch` starts its agents in a new her
 > reorder these. Each download is buffered before execution so a failed request cannot concatenate
 > a partial installer with the fallback response.
 
-The installer is **idempotent**—if interrupted, simply re-run it. It will automatically resume from the last completed phase without prompts.
+The installer is **idempotent**—if interrupted, simply re-run it. Resume revisits installation phases and uses component checks to repair incomplete installations.
 
 > **Using a cloud agent instead of a VPS?** The [cloud agent guide](https://agent-flywheel.com/cloud-agents) has tested Claude Code / Codex setups and researched recipes for other Linux agents. See [cloud environments](#cloud-agent-environments).
 
@@ -487,7 +487,7 @@ The public [cloud agent setup guide](https://agent-flywheel.com/cloud-agents) se
 ```bash
 #!/bin/bash
 (
-acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 0; }
+acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 0; }
 printf '%s\n' "$acfs_cloud_setup" | bash
 )
 ```
@@ -516,17 +516,19 @@ The bootstrap downloads completely before it runs, with a 20-second transfer lim
 
 **Left out on purpose:** everything in `install.sh` that provisions a long-lived machine (users, zsh theming, the Ubuntu upgrade, systemd services, Tailscale, PostgreSQL, Vault, cloud CLIs), plus `herdr` (no interactive terminal to drive), `dcg` (it installs a user-level Claude Code hook, and cloud sessions only run hooks from the repository's `.claude/settings.json`), `rch` (needs SSH build workers), and `caam`, `ru`, `slb`.
 
-**Options**, set inline so the setup script itself sees them (for example `curl -fsSL … | ACFS_CLOUD_TOOLS="br bv am ubs" bash`):
+**Options**, set inline so the setup script itself sees them (for example `curl -fsSL … | ACFS_CLOUD_TOOLS="br bv am ubs ast-grep" bash`). Selecting UBS automatically includes ast-grep so its structural checks are available without a first-scan download:
 
 | Variable | Default | Effect |
 |----------|---------|--------|
-| `ACFS_CLOUD_TOOLS` | `br bv am ubs cass cm ms ast-grep jsm jfp` | Which tools to install |
+| `ACFS_CLOUD_TOOLS` | `br bv am ubs cass cm ms ast-grep jsm jfp` | Which tools to install; `ubs` also selects `ast-grep` |
 | `ACFS_CLOUD_TIMEOUT` | `180` | Deadline for each tool's job (download, install and version checks) in seconds; 1–180 |
 | `ACFS_CLOUD_REINSTALL` | `0` | `1` reinstalls tools that are already on PATH (to update inside a running session) |
 | `ACFS_CLOUD_AGENT` | `claude` | `codex` writes a Codex instruction guide and skips Claude MCP registration |
 | `ACFS_CLOUD_ROOT` | `$HOME` | Writable absolute data root for binaries/logs; Codex's custom-root guide lives there too |
 | `ACFS_CLOUD_SKILL_DIR` | Unset | Optional absolute Codex repository skill directory; existing skills are retained |
 | `ACFS_REF` | `main` | ACFS ref that supplies `cloud-mirror.json` |
+
+When choosing a custom `ACFS_CLOUD_ROOT` in generic mode, replace the `$HOME` paths in the task instructions with that root. Its guide and log are `<root>/.acfs/cloud/AGENTS.md` and `<root>/.acfs/cloud/setup.log`. The generated guide supplies the exact PATH and data commands, including Agent Mail's command-local storage setting.
 
 **Public prebuilt mirror:** every default tool, including `ast-grep`, JSM and JFP, comes from `https://downloads.agent-flywheel.com/acfs-cloud/v1`. No login, GitHub token or repository ownership is needed. Select **Full** network access, or **Custom** allowing `raw.githubusercontent.com` and `downloads.agent-flywheel.com`. Bundles are pinned by SHA256 in [`cloud-mirror.json`](cloud-mirror.json), use content-addressed URLs, and are checked before extraction and executable verification. Setup never runs upstream installers or builds from source.
 
@@ -546,13 +548,15 @@ The same public bundles work in a Linux x86_64 Codex cloud environment. In **Wor
 
 ```bash
 #!/bin/bash
+(
 set -o pipefail
 acfs_cloud_root="$(git rev-parse --show-toplevel)" || exit 1
-acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 1; }
+acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 1; }
 printf '%s\n' "$acfs_cloud_setup" | ACFS_CLOUD_SKILL_DIR="$acfs_cloud_root/.agents/skills/acfs-cloud-tools" ACFS_CLOUD_AGENT=codex ACFS_CLOUD_ROOT="$acfs_cloud_root/.acfs-cloud" bash || exit 1
 acfs_cloud_exclude="$(git rev-parse --git-path info/exclude)" || exit 1
 mkdir -p "$(dirname "$acfs_cloud_exclude")" || exit 1
-printf '/.acfs-cloud/\n/.agents/skills/acfs-cloud-tools/\n' >> "$acfs_cloud_exclude"
+printf '\n/.acfs-cloud/\n/.agents/skills/acfs-cloud-tools/\n' >> "$acfs_cloud_exclude"
+) || exit 1
 ```
 
 Enable internet access and add `raw.githubusercontent.com` and `downloads.agent-flywheel.com` to **Additional allowed domains**. These public downloads need no secrets or ownership of the tool repositories. The recipe installs into the writable repository workspace because hosted home/config paths can be read-only, and excludes its data directory through local Git metadata. It preserves `HOME` and `CODEX_HOME`. Review `<repo>/.acfs-cloud/.acfs/cloud/setup.log`, then **Publish** the prepared environment. After changing its setup, **Republish** for new tasks. See OpenAI's [current cloud environment guide](https://learn.chatgpt.com/docs/environments/cloud-environments).
@@ -564,6 +568,8 @@ Find the repository root with git rev-parse --show-toplevel.
 Read <repo>/.acfs-cloud/.codex/AGENTS.md for the installed flywheel tools and <repo>/.acfs-cloud/.acfs/cloud/setup.log for failures.
 In each task shell, run acfs_cloud_root="$(git rev-parse --show-toplevel)/.acfs-cloud"; export PATH="$acfs_cloud_root/.local/bin:$PATH" before using the tools.
 Follow the guide's CASS_DATA_DIR, CASS_MEMORY_HOME and JFP_HOME exports in each task shell so search data, memory and prompt caches use the writable workspace; preserve existing overrides and keep any XDG_DATA_HOME/XDG_CONFIG_HOME writable.
+Before using Agent Mail with a read-only HOME, follow the guide's command-scoped STORAGE_ROOT recipe; reuse existing configuration and preserve DATABASE_URL.
+Before using JSM with a read-only HOME, follow the guide's command-scoped XDG recipe; reuse existing configuration and check skill installation targets separately.
 Before using MS, follow the guide's local initialization and indexing steps in a writable project; reuse existing .ms/MS_ROOT/MS_CONFIG state.
 Check br --version, bv --version, ubs --version and jsm --version before starting work.
 Use br ready --json and bv --robot-triage; never open their interactive TUIs.
@@ -581,9 +587,11 @@ The provider-neutral template writes `$HOME/.acfs/cloud/AGENTS.md` and does not 
 
 ```bash
 #!/bin/bash
+(
 set -o pipefail
-acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 1; }
+acfs_cloud_setup="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 --max-time 20 -A 'acfs (+https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup)' -H 'Accept-Encoding: identity' https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/scripts/claude-code-web-setup.sh)" || { printf '%s\n' 'ACFS cloud bootstrap download failed; tools were not installed. Check network access and retry.' >&2; exit 1; }
 printf '%s\n' "$acfs_cloud_setup" | ACFS_CLOUD_AGENT=generic bash
+) || exit 1
 ```
 
 Include these instructions in each task:
@@ -592,6 +600,8 @@ Include these instructions in each task:
 Read $HOME/.acfs/cloud/AGENTS.md and $HOME/.acfs/cloud/setup.log before starting work.
 In each task shell, run export PATH="$HOME/.local/bin:$PATH".
 If using a custom writable data root, follow the guide's CASS_DATA_DIR, CASS_MEMORY_HOME and JFP_HOME exports in each task shell; preserve existing overrides and keep any XDG_DATA_HOME/XDG_CONFIG_HOME writable.
+Before using Agent Mail with a read-only HOME, follow the guide's command-scoped STORAGE_ROOT recipe; reuse existing configuration and preserve DATABASE_URL.
+Before using JSM with a read-only HOME, follow the guide's command-scoped XDG recipe; reuse existing configuration and check skill installation targets separately.
 Before using MS, follow the guide's local initialization and indexing steps in a writable project; reuse existing .ms/MS_ROOT/MS_CONFIG state.
 Check br --version, bv --version, ubs --version and jsm --version; report missing tools from the setup log.
 Use the existing repository tracker with br ready --json and bv --robot-triage. Never open their interactive TUIs.
@@ -683,10 +693,19 @@ The installer provisions a few keys in `~/.claude/settings.json`, always merging
 
 ### Resume Capability
 
-The installer tracks progress in `~/.acfs/state.json`. If interrupted:
-- Re-run the same command—it resumes from the last completed phase
-- No prompts or confirmations needed (with `--yes`)
-- Already-installed tools are detected and skipped
+The installer tracks progress in `~/.acfs/state.json`. Re-run the same command
+with `--resume` after fixing a failed dependency, privilege problem, or interrupted
+installation. Completed phases are checked against the selected modules' live
+verification results before they can be skipped. Incomplete phases retry their
+component checks, so working components are kept and missing or broken ones are
+repaired. This also recovers older installations whose completion records were
+written despite a failed step; do not delete the state file to recover them.
+
+Required step failures remain recorded until a successful retry or verified
+recovery resolves them. Optional failures remain visible without blocking an
+otherwise successful installation; an optional module explicitly requested with
+`--only` must succeed. Final success requires the selected essential components
+to pass verification, including for targeted installations.
 
 To force a fresh reinstall of all tools:
 ```bash
@@ -928,7 +947,8 @@ Verdicts:
 
 `acfs doctor` reports rolled back tools; `acfs-update --force` retries
 immediately. A backoff also ends as soon as the tool's pinned installer
-changes, because a new pin is a new release that has not failed yet.
+changes or its GitHub repo publishes a new release, because neither has
+failed yet.
 
 `acfs-update` exit codes distinguish partial from total failure: `0` all
 succeeded, `1` total failure (nothing updated), `2` partial failure (some tools
@@ -1192,7 +1212,7 @@ Example output:
 ║  Quick Commands:                                              ║
 ║    cc    → Claude Code (dangerous mode)                       ║
 ║    cod   → Codex CLI (dangerous mode)                         ║
-║    agy   → Antigravity CLI (Gemini 3.8 Flash High)            ║
+║    agy   → Antigravity CLI (Gemini 4 Argon High)              ║
 ║    herdr → Agent workspace                                    ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
@@ -1224,7 +1244,7 @@ Example output:
 ║  Agents                                                        ║
 ║    cc   → claude --dangerously-skip-permissions                ║
 ║    cod  → codex --dangerously-bypass-approvals-and-sandbox     ║
-║    agy  → agy --model 'Gemini 3.8 Flash (High)'                ║
+║    agy  → agy --model 'Gemini 4 Argon (High)'                  ║
 ║                                                                ║
 ║  Git                                                           ║
 ║    gs   → git status                                           ║
@@ -3413,7 +3433,7 @@ The installer is **checkpointed**. Simply re-run it:
 { acfs_installer="$(curl -fsSL "https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh")" || acfs_installer="$(curl -fsSL "https://cdn.jsdelivr.net/gh/arosl/agentic_coding_flywheel_setup@main/install.sh")"; } && printf '%s\n' "$acfs_installer" | bash -s -- --yes --mode vibe
 ```
 
-It will skip already-completed phases and resume where it left off.
+It revisits installation phases even when an older checkpoint marked them complete. Component checks skip working installations while missing dependencies and interrupted service setup can be repaired. Mandatory step failures remain in `partial_phases` and prevent phase completion; explicitly optional failures remain non-fatal. Final success requires the essential CLI tools and, unless explicitly skipped, a working local PostgreSQL query as the target user.
 
 ### How do I update tools?
 
@@ -4078,12 +4098,23 @@ Progress is tracked in `~/.acfs/state.json`:
   "last_updated": "2024-12-21T10:45:23Z",
   "mode": "vibe",
   "completed_phases": ["user_setup", "filesystem", "shell_setup"],
+  "partial_phases": ["cli_tools"],
+  "phase_attempts": {"cli_tools": 2},
+  "phase_steps": {
+    "cli_tools": {
+      "Installing required packages": {
+        "status": "running",
+        "required": true,
+        "attempt": 2,
+        "error": null
+      }
+    }
+  },
   "current_phase": "cli_tools",
   "current_step": "Installing ripgrep",
   "failed_phase": null,
   "failed_step": null,
   "failed_error": null,
-  "failed_phases": [],
   "install_status": "in_progress",
   "skipped_phases": [],
   "phase_timings": {
@@ -4094,7 +4125,7 @@ Progress is tracked in `~/.acfs/state.json`:
 }
 ```
 
-`failed_phases` lists every phase whose last run failed, in order, and `failed_phase` is its last entry. A phase leaves the list when it runs again. `install_status` describes the whole install: `in_progress` while a run is open, then `complete` or `failed` at its end. `failed` also covers a failed module or smoke test inside phases that completed.
+`install_status` describes the whole install: `in_progress` while a run is open, then `complete` or `failed` at its end. `failed` also covers a failed module or smoke test inside phases that completed, and required work an earlier run left unresolved. `acfs continue`, `acfs rescue`, `acfs info` and the support bundle name every failed phase: each phase with a required step in `phase_steps` that failed and has not recovered.
 
 ### Phase State Transitions
 
@@ -4129,20 +4160,22 @@ When the installer runs, it follows this decision tree:
 def should_run_phase(phase_id):
     state = load_state_file()
 
-    if phase_id in state.completed_phases:
-        return SKIP  # Already done
-
     if phase_id in state.skipped_phases:
         return SKIP  # User explicitly skipped
 
-    if state.failed_phase == phase_id:
-        if user_wants_retry():
-            return RUN  # Retry failed phase
-        else:
-            return ABORT  # Don't continue past failure
+    if phase_id in state.completed_phases:
+        if verify_selected_modules(phase_id):
+            return SKIP
 
-    return RUN  # Normal execution
+    return RUN  # Retry incomplete work with per-component verification
 ```
+
+Starting a phase removes its completion checkpoint and records it as partial.
+Each step records whether it is required and whether it is running, successful,
+or failed. A zero exit status from the enclosing phase cannot override a failed
+required step. Completion requires clean results from the current attempt and
+successful module verification; only then can earlier failures be reconciled.
+An interrupted required step remains pending recovery in the next process.
 
 ### Atomic State Updates
 
@@ -4844,23 +4877,60 @@ acfs support-bundle --no-redact
 
 ### Shell Not Changing to zsh
 
-**Symptom**: Still seeing bash prompt after install.
+**Symptoms**: Still seeing a Bash prompt, shell setup refuses to complete, or a
+previous installation selected an unlisted shell alias.
 
-**Solutions**:
+**Keep the current session open while repairing the account.** Inspect the
+effective account record instead of `$SHELL`, which can describe an older
+session. Run these checks as the affected user so the executable check uses that
+account's permissions:
 
-1. **Log out and back in** (the change happens at next login)
+```bash
+account="$(id -un)"
+login_shell="$(getent passwd "$account" | cut -d: -f7)"
+printf 'Login shell for %s: %s\n' "$account" "$login_shell"
+[[ "$login_shell" == /* && -f "$login_shell" && -x "$login_shell" ]] &&
+  grep -aFxq -- "$login_shell" /etc/shells
+```
 
-2. **Manually set shell**:
-   ```bash
-   chsh -s $(which zsh)
-   # Then log out and back in
-   ```
+The configured path must be executable by that account and appear **exactly** in
+`/etc/shells`. On Arch/usrmerge, `/usr/sbin/zsh` and `/usr/bin/zsh` can reach the
+same binary while only one spelling is approved. Authentication using
+[`pam_shells`](https://man.archlinux.org/man/pam_shells.8.en) can reject the
+unlisted spelling; see [issue #473](https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues/473).
 
-3. **Check shell was installed**:
-   ```bash
-   which zsh  # Should show /usr/bin/zsh
-   cat /etc/shells  # zsh should be listed
-   ```
+ACFS's `shell.login` module selects an approved executable path, preserves the
+original login shell, applies the change, and verifies both the local and NSS
+account records. It reports failure if no acceptable shell can be established,
+the approval file is missing or unsafe, privileges are insufficient, or the
+change cannot be verified. It does not add entries to `/etc/shells`. An
+administrator must repair an invalid host approval policy before retrying.
+
+To repair a previous installation using the current verified installer, rerun
+the account-shell module and its dependencies. The explicit target keeps a
+root-run repair attached to the intended account. From an administrator session,
+set `account` to the affected Linux username; when already root, omit `sudo`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh |
+  sudo env TARGET_USER="$account" bash -s -- --yes --mode safe --force-reinstall --only shell.login
+```
+
+Before the first local shell change, ACFS creates `.shell.pre-acfs` in the
+account's home with permissions `0600`. Retries preserve that first snapshot.
+This is a recovery record, **not an automatically approved restore target**: it
+may contain the previously invalid `/usr/sbin/zsh` alias. Validate any proposed
+manual restore path against `/etc/shells` and the account's executable access
+before using it. When a change fails after writing, ACFS attempts to restore an
+approved original shell while the account identity remains unchanged, then
+verifies the result and still reports the installation failure.
+
+For externally managed users, ACFS leaves the provider's login shell unchanged.
+An approved Bash login can receive a verified interactive zsh handoff; an
+unapproved or unsupported provider shell requires an identity-provider fix.
+After successful repair, repeat the account checks above and test a new login
+before closing the recovery session. An existing Bash session stays Bash until
+you start a new shell or log in again.
 
 ### Agent Authentication Issues
 

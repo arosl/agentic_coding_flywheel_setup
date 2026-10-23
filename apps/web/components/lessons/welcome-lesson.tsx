@@ -254,7 +254,7 @@ const archLayers: ArchLayer[] = [
         shortName: "Zsh",
         description:
           "Z Shell with the Oh My Zsh framework and Powerlevel10k theme. Gives you autocomplete, syntax highlighting, and a gorgeous prompt.",
-        commands: ["chsh -s $(which zsh)", "omz update"],
+        commands: ['getent passwd "$USER" | cut -d: -f7', "omz update"],
         dependencies: ["ubuntu"],
         status: "active",
       },
@@ -353,7 +353,7 @@ const archLayers: ArchLayer[] = [
         name: "Antigravity CLI (Google)",
         shortName: "agy",
         description:
-          "Google's coding assistant, pinned to Gemini 3.8 Flash (High). Excellent for research-heavy tasks, fresh-eyes review, and large codebases. (Successor to the retired Gemini CLI / gmi.)",
+          "Google's coding assistant, pinned to Gemini 4 Argon (High). Excellent for research-heavy tasks, fresh-eyes review, and large codebases. (Successor to the retired Gemini CLI / gmi.)",
         commands: ["agy", "agy -p 'explain this codebase'"],
         dependencies: ["herdr", "runtimes", "git"],
         status: "ready",
