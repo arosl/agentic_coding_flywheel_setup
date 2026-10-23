@@ -7,7 +7,9 @@
 # throwaway HOME with login files. Proves what `up` passes to the launcher,
 # the order and the resumability of --replace, and what `verify` reports
 # for each tool state, without a real Incus, a real login or a paid
-# request. The `acfs machine` route in doctor.sh is checked too.
+# request. On "macOS" (stub colima, sw_vers and route), it proves how `up`
+# starts Colima, sets up its Incus and attaches. The `acfs machine` route
+# in doctor.sh is checked too.
 #
 # Usage: bash tests/unit/test_machine.sh
 # ============================================================
@@ -114,7 +116,58 @@ case "$1" in
                 ;;
         esac
         ;;
+    remote)
+        case "$2" in
+            get-default) cat "$STUB_DIR/remote-default" 2>/dev/null || echo local ;;
+            switch) printf '%s\n' "$3" >"$STUB_DIR/remote-default" ;;
+        esac
+        ;;
+    info) exit "${STUB_INCUS_INFO_EXIT:-0}" ;;
 esac
+STUB
+
+# colima: `list` answers from $STUB_DIR/colima-list.json (absent: no such
+# profile); `start` leaves the profile running. `ssh` runs its command as
+# if in Colima's VM: a bare environment with $STUB_DIR/vm-bin as PATH and
+# $STUB_DIR/vm-home as HOME.
+cat >"$WORK/bin/colima" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+# One line per call: a script's newlines are logged as \n.
+call="$*"
+printf '%s\n' "${call//$'\n'/\\n}" >>"$STUB_DIR/calls-colima"
+case "$1" in
+    version)
+        printf 'colima version %s\ngit commit: 0000000\n' "${STUB_COLIMA_VERSION:-0.10.3}"
+        ;;
+    list)
+        [[ ! -f "$STUB_DIR/colima-list.json" ]] || cat "$STUB_DIR/colima-list.json"
+        ;;
+    start)
+        [[ -z "${STUB_COLIMA_START_EXIT:-}" ]] || exit "$STUB_COLIMA_START_EXIT"
+        printf '{"name":"acfs","status":"Running","arch":"aarch64","runtime":"incus","address":"192.168.64.2"}\n' >"$STUB_DIR/colima-list.json"
+        # A Colima that ignored --activate=false would switch the remote.
+        [[ -z "${STUB_COLIMA_SWITCHES:-}" ]] || echo colima-acfs >"$STUB_DIR/remote-default"
+        ;;
+    ssh)
+        while [[ "$1" != -- ]]; do shift; done
+        shift
+        mkdir -p "$STUB_DIR/vm-home" "$STUB_DIR/vm-tmp"
+        exec env -i HOME="$STUB_DIR/vm-home" PATH="$STUB_DIR/vm-bin" TMPDIR="$STUB_DIR/vm-tmp" \
+            STUB_DIR="$STUB_DIR" STUB_HOST_SETUP_EXIT="${STUB_HOST_SETUP_EXIT:-}" "$@"
+        ;;
+esac
+STUB
+cat >"$WORK/bin/sw_vers" <<'STUB'
+#!/usr/bin/env bash
+echo "${STUB_MACOS:-15.1}"
+STUB
+# route -n get <address>: the route goes through STUB_ROUTE_VIA, by default
+# the Colima VM's address in the colima stub.
+cat >"$WORK/bin/route" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_DIR/calls-route"
+printf '   route to: %s\n    gateway: %s\n  interface: bridge100\n' "$3" "${STUB_ROUTE_VIA:-192.168.64.2}"
 STUB
 
 # The launcher: records its arguments; on success it "creates" the
@@ -192,6 +245,24 @@ echo /
 STUB
 chmod +x "$WORK"/bin/*
 
+# A checkout for the Colima cases: up takes host-setup from its HEAD. Its
+# host-setup records its arguments and, like the real one, writes incus.env
+# last.
+REPO="$WORK/repo"
+mkdir -p "$REPO/scripts/lib" "$REPO/scripts/providers"
+echo '# logging.sh' >"$REPO/scripts/lib/logging.sh"
+cat >"$REPO/scripts/providers/incus_host.sh" <<'STUB'
+printf '%s\n' "$*" >>"$STUB_DIR/calls-host-setup"
+[[ -z "$STUB_HOST_SETUP_EXIT" ]] || exit "$STUB_HOST_SETUP_EXIT"
+[[ -f "$(dirname "$0")/../lib/logging.sh" ]] || exit 9
+mkdir -p "$HOME/.config/acfs"
+printf '# Written by scripts/providers/incus.sh host-setup; read by incus.sh.\nACFS_INCUS_POOL=default\n' >"$HOME/.config/acfs/incus.env"
+STUB
+cp "$WORK/bin/launcher" "$REPO/scripts/providers/incus.sh"
+git -C "$REPO" init -q
+git -C "$REPO" add -A
+git -C "$REPO" -c user.name=test -c user.email=test@example.invalid -c core.hooksPath=/dev/null commit -q -m fixture
+
 CASE=""
 RC=0
 
@@ -230,7 +301,9 @@ run_machine() {
     fi
     set +e
     PATH="$path" STUB_DIR="$CASE" STUB_ROOTFS="$CASE/rootfs" HOME="$CASE/home" \
-        XDG_STATE_HOME="$CASE/home/.local/state" ACFS_MACHINE_STATE_DIR="$CASE/state" \
+        XDG_STATE_HOME="$CASE/home/.local/state" XDG_CONFIG_HOME="$CASE/home/.config" \
+        ACFS_MACHINE_STATE_DIR="$CASE/state" \
+        ACFS_MACHINE_UNAME="${UNAME:-Linux}" ACFS_MACHINE_ARCH="${ARCH:-arm64}" \
         ACFS_MACHINE_LAUNCHER="${LAUNCHER_OVERRIDE:-$WORK/bin/launcher}" \
         ACFS_VERIFY_HOST_KEYS="$CASE/host_key.pub" ACFS_MACHINE_GUEST_SOCK="$CASE/guest.sock" \
         ACFS_VERIFY_PROJECT="$CASE/project" ACFS_VERIFY_SEARCH_ROOT="$CASE/rootfs" \
@@ -332,6 +405,190 @@ check "--help: exits 0" rc_is 0
 check "--help: prints the usage" out_has 'acfs machine up'
 run_machine bogus
 check "unknown subcommand: exits 2" rc_is 2
+
+# colima_case <name>: a fresh case on "macOS", where Colima's Incus answers
+# with its default profile on the bridge incusbr0 (192.168.100.1/24). The
+# VM's PATH has what the setup script uses, jq unless VM_NO_JQ, and a sudo
+# that only records.
+colima_case() {
+    new_case "$1"
+    mkdir -p "$CASE/vm-bin"
+    local b
+    for b in sh bash tar mktemp rm rmdir cat mkdir dirname; do
+        ln -sf "$(command -v "$b")" "$CASE/vm-bin/$b"
+    done
+    [[ -n "${VM_NO_JQ:-}" ]] || ln -sf "$(command -v jq)" "$CASE/vm-bin/jq"
+    printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"$STUB_DIR/calls-vm-sudo"\n' >"$CASE/vm-bin/sudo"
+    chmod +x "$CASE/vm-bin/sudo"
+    # The incus stub's query answers from devices-<last path element>.json.
+    echo '{"devices":{"eth0":{"type":"nic","network":"incusbr0"},"root":{"type":"disk"}}}' >"$CASE/devices-default.json"
+    echo '{"config":{"ipv4.address":"192.168.100.1/24"}}' >"$CASE/devices-incusbr0.json"
+}
+# A setup that finished in the VM earlier, and its pool on the Mac.
+colima_set_up() {
+    mkdir -p "$CASE/vm-home/.config/acfs" "$CASE/home/.config/acfs"
+    printf 'ACFS_INCUS_POOL=default\n' >"$CASE/vm-home/.config/acfs/incus.env"
+    printf 'ACFS_INCUS_POOL=default\n' >"$CASE/home/.config/acfs/incus.env"
+}
+run_colima() { UNAME=Darwin LAUNCHER_OVERRIDE="$REPO/scripts/providers/incus.sh" run_machine "$@"; }
+colima_called() { grep -q -- "$1" "$CASE/calls-colima"; }
+colima_not_called() { ! grep -q -- "$1" "$CASE/calls-colima" 2>/dev/null; }
+colima_start_is() { [[ "$(grep '^start ' "$CASE/calls-colima")" == "start $1" ]]; }
+every_colima_call_names_the_profile() { ! grep -v -- '--profile acfs' "$CASE/calls-colima"; }
+mac_env_has() { grep -qx -- "$1" "$CASE/home/.config/acfs/incus.env"; }
+vm_tmp_empty() { [[ -z "$(ls -A "$CASE/vm-tmp")" ]]; }
+
+echo "== up on macOS: a new Colima profile, set up once, then the launcher on colima-acfs"
+colima_case colima-new
+run_colima up dev --ssh-key k
+check "exits 0" rc_is 0
+check "creates the profile acfs with Incus, VZ, virtiofs, the arch, the sizes, the route and no share" \
+    colima_start_is "--profile acfs --activate=false --runtime incus --vm-type vz --mount-type virtiofs --arch aarch64 --memory 8 --disk 160 --cpus 4 --network-address --mount none"
+check "every colima call names the profile acfs, never the default one" every_colima_call_names_the_profile
+check "waits for Colima's Incus" incus_called '^info colima-acfs:$'
+check "keeps the current Incus remote: nothing switches it" incus_not_called '^remote switch'
+check "runs host-setup in the VM on Colima's pool" bash -c '[[ "$(cat "$1")" == "--storage default" ]]' _ "$CASE/calls-host-setup"
+check "the VM has jq, so nothing is installed there" bash -c '[[ ! -e "$1" ]]' _ "$CASE/calls-vm-sudo"
+check "the setup leaves no temp files in the VM" vm_tmp_empty
+check "records Colima's pool on the Mac" mac_env_has 'ACFS_INCUS_POOL=default'
+check "the Mac's incus.env says where it came from" bash -c 'head -n 1 "$1" | grep -q "Copied from Colima"' _ "$CASE/home/.config/acfs/incus.env"
+check "the Mac's incus.env is mode 0644" bash -c '[[ "$(stat -c %a "$1")" == 644 ]]' _ "$CASE/home/.config/acfs/incus.env"
+check "checks the route to the bridge's gateway" bash -c 'grep -qx -- "-n get 192.168.100.1" "$1"' _ "$CASE/calls-route"
+check "the route goes through the VM, so the launcher gets no jump" launcher_args_are "colima-acfs:dev --ssh-key k"
+check "says the SSH entry goes into this Mac's ~/.ssh/config" err_has "into this Mac's ~/.ssh/config"
+
+echo "== up on macOS: a re-run finds the profile running and set up"
+colima_case colima-running
+colima_set_up
+echo '{"name":"acfs","status":"Running","runtime":"incus","address":"192.168.64.2"}' >"$CASE/colima-list.json"
+run_colima up dev --colima-cpus 8
+check "exits 0" rc_is 0
+check "starts nothing" colima_not_called '^start'
+check "runs no host-setup" bash -c '[[ ! -e "$1" ]]' _ "$CASE/calls-host-setup"
+check "says the sizes are ignored for an existing profile" err_has 'ignored: the profile acfs exists'
+check "the launcher gets the remote-qualified name" launcher_args_are "colima-acfs:dev"
+
+echo "== up on macOS: a stopped profile is started as it is"
+colima_case colima-stopped
+colima_set_up
+echo '{"name":"acfs","status":"Stopped","runtime":"incus"}' >"$CASE/colima-list.json"
+run_colima up dev
+check "exits 0" rc_is 0
+check "starts it with no creation flags" colima_start_is "--profile acfs --activate=false"
+
+echo "== up on macOS: Colima before 0.10.0 has no route and no --mount none"
+colima_case colima-old
+export STUB_COLIMA_VERSION=0.8.4
+run_colima up dev --ssh-key k --colima-memory 12
+unset STUB_COLIMA_VERSION
+check "exits 0" rc_is 0
+check "creates the profile with --cpu, the given memory and an empty share" \
+    colima_start_is "--profile acfs --activate=false --runtime incus --vm-type vz --mount-type virtiofs --arch aarch64 --memory 12 --disk 160 --cpu 4 --mount $CASE/state/colima-empty"
+check "the shared directory is empty and owner only" bash -c '[[ -z "$(ls -A "$1")" && "$(stat -c %a "$1")" == 700 ]]' _ "$CASE/state/colima-empty"
+check "checks no route" bash -c '[[ ! -e "$1" ]]' _ "$CASE/calls-route"
+check "the SSH entry jumps through Colima's VM" launcher_args_are "colima-acfs:dev --ssh-key k --jump colima-acfs"
+
+echo "== up on macOS: a route that misses the VM means a jump; a --jump given is kept"
+colima_case colima-no-route
+export STUB_ROUTE_VIA=10.0.0.1
+run_colima up dev
+check "exits 0" rc_is 0
+check "jumps through Colima's VM" launcher_args_are "colima-acfs:dev --jump colima-acfs"
+check "says why" err_has "doesn't go through its VM"
+colima_case colima-own-jump
+run_colima up dev --jump box
+unset STUB_ROUTE_VIA
+check "a --jump of the user's own is the only one" launcher_args_are "colima-acfs:dev --jump box"
+
+echo "== up on macOS: an Intel Mac, a VM without jq, and a Colima that switches the remote anyway"
+VM_NO_JQ=1 colima_case colima-intel
+echo myremote >"$CASE/remote-default"
+export STUB_COLIMA_SWITCHES=1
+ARCH=x86_64 run_colima up dev
+unset STUB_COLIMA_SWITCHES
+check "exits 0" rc_is 0
+check "an Intel Mac gets --arch x86_64" colima_called '--arch x86_64 '
+check "installs jq in the VM before host-setup" bash -c 'grep -q "apt-get install -y -qq jq" "$1"' _ "$CASE/calls-vm-sudo"
+check "switches the default remote back to the user's" incus_called '^remote switch myremote$'
+check "the default remote is the user's again" bash -c '[[ "$(cat "$1")" == myremote ]]' _ "$CASE/remote-default"
+
+echo "== up on macOS: refusals"
+colima_case colima-too-old
+export STUB_COLIMA_VERSION=0.6.9
+run_colima up dev
+unset STUB_COLIMA_VERSION
+check "Colima 0.6.9: exits 2" rc_is 2
+check "Colima 0.6.9: says 0.7.0 is needed" err_has 'needs 0.7.0 or newer'
+check "Colima 0.6.9: starts nothing" colima_not_called '^start'
+colima_case colima-macos-12
+export STUB_MACOS=12.7.4
+run_colima up dev
+unset STUB_MACOS
+check "macOS 12: exits 2, naming VZ" bash -c '[[ "$1" -eq 2 ]] && grep -q "VZ virtual machine needs macOS 13" "$2"' _ "$RC" "$CASE/err"
+colima_case colima-docker
+echo '{"name":"acfs","status":"Running","runtime":"docker"}' >"$CASE/colima-list.json"
+run_colima up dev
+check "a profile acfs with the docker runtime: exits 2" rc_is 2
+check "a profile acfs with the docker runtime: is left alone" colima_not_called '^start'
+check "a profile acfs with the docker runtime: launches nothing" no_launch
+colima_case colima-broken
+echo '{"name":"acfs","status":"Broken","runtime":"incus"}' >"$CASE/colima-list.json"
+run_colima up dev
+check "a broken profile: exits 1, naming its status" bash -c '[[ "$1" -eq 1 ]] && grep -q "profile acfs is Broken" "$2"' _ "$RC" "$CASE/err"
+colima_case colima-vm
+run_colima up dev --vm
+check "--vm: exits 2" rc_is 2
+check "--vm: starts no Colima" bash -c '[[ ! -e "$1" ]]' _ "$CASE/calls-colima"
+colima_case colima-start-fails
+export STUB_COLIMA_START_EXIT=1
+run_colima up dev
+unset STUB_COLIMA_START_EXIT
+check "a failed colima start: exits 1 and launches nothing" bash -c '[[ "$1" -eq 1 ]] && [[ ! -e "$2" ]]' _ "$RC" "$CASE/calls-launcher"
+colima_case colima-no-answer
+export STUB_INCUS_INFO_EXIT=1 ACFS_COLIMA_TIMEOUT=0
+run_colima up dev
+unset STUB_INCUS_INFO_EXIT ACFS_COLIMA_TIMEOUT
+check "Incus doesn't answer: exits 1, naming incus info" bash -c '[[ "$1" -eq 1 ]] && grep -q "didn.t answer .incus info colima-acfs:." "$2"' _ "$RC" "$CASE/err"
+colima_case colima-setup-fails
+export STUB_HOST_SETUP_EXIT=1
+run_colima up dev
+unset STUB_HOST_SETUP_EXIT
+check "a failed host-setup: exits 1 and launches nothing" bash -c '[[ "$1" -eq 1 ]] && [[ ! -e "$2" ]]' _ "$RC" "$CASE/calls-launcher"
+check "a failed host-setup: the message doesn't end in the exit code" err_lacks 're-run) 1$'
+check "a failed host-setup: writes no incus.env on the Mac" bash -c '[[ ! -e "$1" ]]' _ "$CASE/home/.config/acfs/incus.env"
+check "a failed host-setup: leaves no temp files in the VM" vm_tmp_empty
+colima_case colima-env-conflict
+mkdir -p "$CASE/home/.config/acfs"
+printf 'ACFS_INCUS_POOL=acfs\n' >"$CASE/home/.config/acfs/incus.env"
+run_colima up dev
+check "another pool in the Mac's incus.env: exits 2" rc_is 2
+check "another pool in the Mac's incus.env: names both" err_has "records the pool 'acfs', but Colima's Incus uses 'default'"
+check "another pool in the Mac's incus.env: is kept as it is" mac_env_has 'ACFS_INCUS_POOL=acfs'
+check "another pool in the Mac's incus.env: launches nothing" no_launch
+
+echo "== up --replace on macOS: the rebuild runs on colima-acfs"
+colima_case colima-replace
+colima_set_up
+echo '{"name":"acfs","status":"Running","runtime":"incus","address":"192.168.64.2"}' >"$CASE/colima-list.json"
+installed_machine
+run_colima up --replace dev --ssh-key k
+check "exits 0" rc_is 0
+check "stops the instance on colima-acfs" incus_called '^stop colima-acfs:dev$'
+check "renames it there" incus_called '^rename colima-acfs:dev colima-acfs:dev-old$'
+check "launches colima-acfs:dev with the lease" launcher_args_are "colima-acfs:dev --lease-from dev-old --ssh-key k"
+
+echo "== up on macOS with another remote, and the Colima sizes off macOS"
+colima_case colima-other-remote
+run_colima up far:dev --ssh-key k
+check "a named remote: exits 0 without Colima" bash -c '[[ "$1" -eq 0 && ! -e "$2" ]]' _ "$RC" "$CASE/calls-colima"
+check "a named remote: reaches the launcher as given" launcher_args_are "far:dev --ssh-key k"
+new_case colima-linux-sizes
+run_machine up dev --colima-disk 200
+check "on Linux: --colima-disk is ignored, with a note" bash -c '[[ "$1" -eq 0 ]] && grep -q "ignored: only on macOS" "$2"' _ "$RC" "$CASE/err"
+check "on Linux: the launcher doesn't get it" launcher_args_are "dev"
+new_case colima-bad-size
+run_machine up dev --colima-memory 8GiB
+check "--colima-memory 8GiB: exits 2 (whole GiB only)" rc_is 2
 
 echo "== up --replace: stop, snapshot, export, detach the launcher's devices, rename, launch with the lease, move the lease, verify"
 new_case replace
