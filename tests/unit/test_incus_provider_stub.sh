@@ -78,18 +78,7 @@ case "$1" in
         [[ "$2" == show && -f "$STUB_DIR/profile-${3#*:}" ]] || { echo 'Error: Profile not found' >&2; exit 1; }
         ;;
     network)
-        case "$3" in
-            show) [[ -f "$STUB_DIR/acl-${4#*:}.yaml" ]] || { echo 'Error: Network ACL not found' >&2; exit 1; } ;;
-            # Like the real client, it reports the creation on stdout unless --quiet.
-            create)
-                if [[ "$4" == --quiet ]]; then
-                    cat >"$STUB_DIR/acl-${5#*:}.yaml"
-                else
-                    cat >"$STUB_DIR/acl-${4#*:}.yaml"
-                    echo "Network ACL ${4#*:} created"
-                fi
-                ;;
-        esac
+        [[ "$3" == show && -f "$STUB_DIR/acl-${4#*:}.yaml" ]] || { echo 'Error: Network ACL not found' >&2; exit 1; }
         ;;
     storage)
         case "$3" in
@@ -104,9 +93,9 @@ case "$1" in
     init)
         shift
         printf '%s\n' "$@" >"$STUB_DIR/init.args"
-        cp "$STUB_FIXTURES/list-stopped-marked.json" "$STUB_DIR/list.json"
+        jq 'map(.type = "container")' "$STUB_FIXTURES/list-stopped-marked.json" >"$STUB_DIR/list.json"
         ;;
-    start) cp "$STUB_FIXTURES/list-running-started.json" "$STUB_DIR/list.json" ;;
+    start) jq 'map(.type = "container")' "$STUB_FIXTURES/list-running-started.json" >"$STUB_DIR/list.json" ;;
     # Real `incus file push` writes its progress to stdout unless --quiet.
     file)
         shift 2
@@ -153,11 +142,13 @@ RC=0
 # new_case <name> <list fixture state>: a fresh stub state for one run, on
 # a host where host-setup has run: the swarm profile and ACL exist, the
 # server is 6.0.5 with the required extensions, the env file names the pool
-# "acfs", and no volume exists.
+# "acfs", and no volume exists. The captured list fixtures are VMs, which the
+# launcher refuses, so the case's list sets .type the way `incus list -f
+# json` reports a container (the stub does the same after init and start).
 new_case() {
     CASE="$WORK/case-$1"
     mkdir -p "$CASE/home/.config/acfs"
-    cp "$FIXTURES/list-$2.json" "$CASE/list.json"
+    jq 'map(.type = "container")' "$FIXTURES/list-$2.json" >"$CASE/list.json"
     cp "$FIXTURES/network-incusbr0.json" "$CASE/network.json"
     cp "$FIXTURES/server-1.0.json" "$CASE/server.json"
     : >"$CASE/profile-acfs-swarm"
@@ -199,7 +190,6 @@ called_in_order() { called_before "$1" "$2" && called_before "$2" "$3"; }
 both_called() { called "$1" && called "$2"; }
 lease_set() { grep -q -E '^user\.acfs\.lease=[0-9a-f]{32}$' "$CASE/config-set"; }
 no_lease_set() { [[ ! -e "$CASE/config-set" ]] || ! grep -q '^user\.acfs\.lease=' "$CASE/config-set"; }
-no_volumes_at_all() { no_volume_calls && [[ ! -e "$CASE/device-add" ]]; }
 only_the_lookup() { [[ "$(cut -f2 "$CASE/calls" | cut -d' ' -f1 | sort -u)" == list ]]; }
 two_quiet_pushes() {
     [[ "$(grep -c $'\tfile push --quiet ' "$CASE/calls")" -eq 2 \
@@ -218,9 +208,7 @@ only_expected_devices() {
     done <"$CASE/init.args"
 }
 root_on_pool_sized() { init_has 'root,pool=acfs' && init_has "root,size=$1"; }
-only_null_stdin_except_acl_create() {
-    ! grep -v $'^null\t' "$CASE/calls" | grep -v $'^other\tnetwork acl create ' | grep -q .
-}
+only_null_stdin() { ! grep -v $'^null\t' "$CASE/calls" | grep -q .; }
 
 # expected_block <jump> [failed]
 expected_block() {
@@ -261,7 +249,6 @@ check "uses the existing swarm ACL unchecked" err_has 'Using the existing networ
 check "creates the state volume on the pool from incus.env, 20 GiB" volume_created 'acfs acfs-state-dev size=20GiB'
 check "creates the data volume on the pool, 60 GiB" volume_created 'acfs dev-data size=60GiB'
 check "inits the cloud image" init_has 'images:ubuntu/26.04/cloud'
-check "doesn't pass --vm" init_lacks '^--vm$'
 check "applies the default profile and the swarm profile, in that order" \
     bash -c '[[ "$(grep -A1 -x -- -p "$1" | grep -v -x -e -p -e -- | tr "\n" " ")" == "default acfs-swarm " ]]' _ "$CASE/init.args"
 check "passes no limits (the swarm profile's)" init_lacks '^limits\.'
@@ -300,7 +287,7 @@ check "sets the lease after the volumes, before the start" called_in_order $'\tc
 check "marks the install started after the volumes, before the start" \
     called_in_order $'\tconfig device add ' "config set dev user.acfs.install-started=$SHA" $'\tstart dev$'
 check "starts the container" called $'\tstart dev$'
-check "every incus call gets /dev/null on stdin" only_null_stdin_except_acl_create
+check "every incus call gets /dev/null on stdin" only_null_stdin
 check "pushes HEAD as a bootstrap archive with GitHub's prefix" \
     bash -c 'tar -tzf "$1" | grep -qx "agentic_coding_flywheel_setup-$2/install.sh"' _ "$CASE/pushed-acfs.tar.gz" "$SHA"
 check "pushes HEAD's install.sh" grep -qx 'echo committed installer' "$CASE/pushed-install.sh"
@@ -371,44 +358,7 @@ new_case lease-from-bad-name absent
 run_launcher dev --ssh-key "$WORK/laptop.pub" --lease-from 'bad name'
 check "an invalid source name: exits 2" rc_is 2
 
-echo "== --vm: a VM with the launcher's own limits, no profile, no volumes"
-new_case vm absent
-run_launcher dev --ssh-key "$WORK/laptop.pub" --vm --jump box
-check "exits 0" rc_is 0
-check "inits the same cloud image" init_has 'images:ubuntu/26.04/cloud'
-check "passes --vm" init_has '--vm'
-check "limits: 4 vCPU" init_has 'limits.cpu=4'
-check "limits: 8 GiB" init_has 'limits.memory=8GiB'
-check "root disk 40 GiB on the pool" root_on_pool_sized 40GiB
-check "no profile beyond the default" init_lacks '^-p$'
-check "a VM gets none of the container's security keys" init_lacks '^security\.'
-check "marks the instance as the launcher's" init_has 'user.acfs.provider=incus'
-check "attaches the VM ACL to the profile's NIC" init_has 'eth0,security.acls=acfs-vm-egress'
-check "creates the VM ACL, rejecting private, CGNAT and link-local egress" \
-    grep -q 'destination: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16,fc00::/7,fe80::/10' "$CASE/acl-acfs-vm-egress.yaml"
-check "every incus call but the ACL's YAML gets /dev/null on stdin" only_null_stdin_except_acl_create
-check "no device at init beyond root and the NIC's ACL keys" only_expected_devices 40GiB
-check "doesn't query the server" not_called $'\tquery /1.0$'
-check "doesn't look for the swarm profile" not_called 'profile show'
-check "creates and attaches no volume" no_volumes_at_all
-check "sets no lease" no_lease_set
-check "marks the install started before the start" called_before "config set dev user.acfs.install-started=$SHA" $'\tstart dev$'
-check "says it creates a VM" err_has 'Creating VM dev from images:ubuntu/26.04/cloud (4 vCPU, 8 GiB RAM, 40GiB disk on pool acfs)'
-check "waits for the VM agent" err_has 'Waiting for the VM to accept incus exec'
-check "runs the installer the same way" called '--bootstrap-archive /root/acfs.tar.gz < /root/install.sh'
-check "records the installed sha" grep -qx "user.acfs.installed=$SHA" "$CASE/config-set"
-check "stdout is exactly the attach block" stdout_is_block box
-
-echo "== --vm with an existing VM ACL: left as it is"
-new_case vm-acl-exists absent
-printf 'existing\n' >"$CASE/acl-acfs-vm-egress.yaml"
-run_launcher dev --ssh-key "$WORK/laptop.pub" --vm
-check "exits 0" rc_is 0
-check "does not create the ACL again" not_called 'network acl create'
-check "does not change the ACL" grep -qx existing "$CASE/acl-acfs-vm-egress.yaml"
-check "says it uses the existing ACL unchecked" err_has 'Using the existing network ACL acfs-vm-egress'
-
-echo "== refusals before anything is created (container)"
+echo "== refusals before anything is created"
 new_case no-env absent
 rm -f "$CASE/home/.config/acfs/incus.env"
 run_launcher dev --ssh-key "$WORK/laptop.pub"
@@ -436,7 +386,7 @@ new_case no-swarm-acl absent
 rm -f "$CASE/acl-acfs-swarm-egress.yaml"
 run_launcher dev --ssh-key "$WORK/laptop.pub"
 check "no swarm ACL: exits 1" rc_is 1
-check "no swarm ACL: says host-setup creates it" err_has "network ACL acfs-swarm-egress doesn't exist; host-setup creates acfs-swarm-egress and acfs-vm-egress"
+check "no swarm ACL: says host-setup creates it" err_has "network ACL acfs-swarm-egress doesn't exist; host-setup creates acfs-swarm-egress"
 check "no swarm ACL: doesn't create it" not_called 'network acl create'
 check "no swarm ACL: creates no volume" no_volume_calls
 check "no swarm ACL: inits nothing" no_init
@@ -476,17 +426,8 @@ check "no api_extensions in /1.0: exits 1" rc_is 1
 check "no api_extensions in /1.0: says so" err_has 'reports no api_extensions'
 check "no api_extensions in /1.0: inits nothing" no_init
 
-echo "== --vm needs no server check"
-new_case vm-no-extension absent
-jq '.api_extensions -= ["disk_volume_subpath"]' "$FIXTURES/server-1.0.json" >"$CASE/server.json"
-run_launcher dev --ssh-key "$WORK/laptop.pub" --vm
-check "a VM on a server without the container's extensions: exits 0" rc_is 0
-
-# Synthetic: the captured fixtures are VMs, so these set .type the way
-# `incus list -f json` reports a container.
 echo "== existing container whose install never completed: resumed as a container"
 new_case container-resume running-started
-jq '.[0].type = "container"' "$FIXTURES/list-running-started.json" >"$CASE/list.json"
 export STUB_INSTALL_EXIT=7
 run_launcher dev
 unset STUB_INSTALL_EXIT
@@ -498,23 +439,26 @@ check "runs the installer" called 'bootstrap-archive'
 check "calls it a container" err_has 'the container is kept'
 check "doesn't warn about creation options" err_lacks 'are ignored'
 
-echo "== --vm on an existing container: the container keeps its type"
-new_case vm-on-container running-installed
-jq '.[0].type = "container"' "$FIXTURES/list-running-installed.json" >"$CASE/list.json"
-run_launcher dev --vm
+echo "== --acl and sizes on an existing container: ignored with a warning"
+new_case sizes-on-existing running-installed
+run_launcher dev --acl my-egress --root-size 100GiB
 check "exits 0" rc_is 0
-check "warns that --vm is ignored" err_has -- '--vm, --acl and the sizes are ignored: dev exists as a container'
+check "warns that they are ignored" err_has -- '--acl, --lease-from and the sizes are ignored: dev exists, and a container keeps'
 check "inits nothing" no_init
 check "runs no installer" not_called 'bootstrap-archive'
-check "calls it a container" err_has 'Update inside the container with: acfs update'
 check "stdout is the attach block" stdout_is_block ''
 
-echo "== sizes on an existing VM: ignored with a warning"
-new_case sizes-on-existing running-installed
-run_launcher dev --root-size 100GiB
-check "exits 0" rc_is 0
-check "warns that the sizes are ignored" err_has 'are ignored: dev exists as a VM'
-check "calls it a VM" err_has 'Update inside the VM with: acfs update'
+# The captured fixtures as they are: VMs from an earlier launcher.
+echo "== existing VM: refused, untouched"
+for state in running-installed stopped-started; do
+    new_case "vm-$state" "$state"
+    cp "$FIXTURES/list-$state.json" "$CASE/list.json"
+    run_launcher dev --ssh-key "$WORK/laptop.pub"
+    check "$state VM: exits 2" rc_is 2
+    check "$state VM: says the launcher makes containers only" err_has 'is a VM; this launcher makes and resumes containers only'
+    check "$state VM: makes no call but the lookup (no start, no exec, no installer)" only_the_lookup
+    check "$state VM: prints no block" bash -c '[[ ! -s "$1" ]]' _ "$CASE/out"
+done
 
 echo "== key refusals (absent instance)"
 new_case no-key absent
@@ -568,7 +512,7 @@ check "exits 2" rc_is 2
 check "says a half-created instance is deleted and re-run, keeping its volumes" err_has 'delete it and re-run; its volumes are kept and reused'
 check "makes no call but the lookup (no start)" only_the_lookup
 
-echo "== installed VM: re-run prints and changes nothing"
+echo "== installed container: re-run prints and changes nothing"
 new_case installed running-installed
 run_launcher dev --jump box
 check "exits 0" rc_is 0
@@ -576,10 +520,10 @@ check "pushes no files" not_called $'\tfile push'
 check "runs no installer" not_called 'bootstrap-archive'
 check "sets no config" bash -c '[[ ! -e "$1" ]]' _ "$CASE/config-set"
 check "creates no volume" no_volume_calls
-check "points at acfs update" err_has 'Update inside the VM with: acfs update'
+check "points at acfs update" err_has 'Update inside the container with: acfs update'
 check "stdout is the attach block" stdout_is_block box
 
-echo "== VM installed by hand and marked user.acfs.installed: prints only"
+echo "== container installed by hand and marked user.acfs.installed: prints only"
 new_case handmarked running-handmarked
 # An install made by hand may be on an image without cloud-init: the block
 # needs only the agent, so cloud-init's state mustn't matter.
@@ -593,13 +537,13 @@ check "runs no installer" not_called 'bootstrap-archive'
 check "sets no config" bash -c '[[ ! -e "$1" ]]' _ "$CASE/config-set"
 check "stdout is the attach block" stdout_is_block ''
 
-echo "== stopped VM whose install never completed: start and resume"
+echo "== stopped container whose install never completed: start and resume"
 new_case resume stopped-started
 run_launcher dev --ssh-key "$WORK/laptop.pub"
 check "exits 0" rc_is 0
-check "starts the VM" called $'\tstart dev'
+check "starts the container" called $'\tstart dev'
 check "re-marks the install as started at HEAD" grep -qx "user.acfs.install-started=$SHA" "$CASE/config-set"
-check "warns that --ssh-key is ignored" err_has '--ssh-key is ignored for an existing VM'
+check "warns that --ssh-key is ignored" err_has '--ssh-key is ignored for an existing container'
 check "inits nothing" no_init
 check "runs the installer" called 'bootstrap-archive'
 check "records the installed sha" grep -qx "user.acfs.installed=$SHA" "$CASE/config-set"
@@ -717,6 +661,8 @@ run_launcher dev --bogus
 check "unknown option: exits 2" rc_is 2
 run_launcher dev --container
 check "--container (gone: a container is the default): exits 2" rc_is 2
+run_launcher dev --vm
+check "--vm (gone: the launcher makes containers only): exits 2" rc_is 2
 run_launcher dev other
 check "two names: exits 2" rc_is 2
 run_launcher dev --root-size 100

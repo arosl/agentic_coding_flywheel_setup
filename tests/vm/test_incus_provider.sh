@@ -1,35 +1,32 @@
 #!/usr/bin/env bash
 # ============================================================
-# scripts/providers/incus.sh against real Incus (opt-in VM tier)
+# scripts/providers/incus.sh against real Incus (opt-in)
 #
-# Creates a real VM with the launcher, then checks it the way a user would
-# reach it: only through the ssh_config entry and known_hosts line the
-# launcher printed. It needs Incus (on a KVM-capable host, for a VM) and
-# network access to images: and GitHub, and it runs the full ACFS install.
+# Creates a real unprivileged system container, then checks it the way a
+# user would reach it: only through the ssh_config entry and known_hosts
+# line the launcher printed. It needs Incus and network access to images:
+# and GitHub, and it runs the full ACFS install.
 #
-# Usage: tests/vm/test_incus_provider.sh [--vm] [<remote>:]<instance-name>
+# Usage: tests/vm/test_incus_provider.sh [<remote>:]<instance-name>
 #
-# Without --vm and without a remote it creates the launcher's default, an
-# unprivileged system container (a swarm machine), which needs no KVM but
-# does need the host-setup of scripts/providers/incus.md (the profile, the
-# ACLs and the pool in ~/.config/acfs/incus.env).
+# Without a remote the launcher creates the container, a swarm machine,
+# which needs the host-setup of scripts/providers/incus.md (the profile,
+# the ACLs and the pool in ~/.config/acfs/incus.env).
 #
-# With --vm, or with a remote, the harness makes the instance itself, with
-# incus launch in the restricted project acfs-tests (ACFS_TEST_PROJECT),
-# which host setup makes only with --test-project, and installs committed
-# HEAD the way the launcher does. So the VM tier
-# doesn't need the launcher's --vm. Through a remote (from inside a
-# machine, with the client certificate host setup trusted for acfs-tests
-# alone), KVM is probed on the remote server, by its qemu driver, and the
-# certificate's refusals are tested: no default project, no host path, no
-# raw.* key, no unix-char device, no nesting or privilege, and no instance
-# beyond the project's limits. The checks that need the host's own view
-# (its addresses, its bridge, the Ctrl-C probe) run only without a remote.
+# With a remote (from inside a machine, with the client certificate host
+# setup trusted for acfs-tests alone), the harness makes the container
+# itself, with incus launch in the restricted project acfs-tests
+# (ACFS_TEST_PROJECT), which host setup makes only with --test-project, and
+# installs committed HEAD the way the launcher does. It also tests the
+# certificate's refusals: no default project, no host path, no raw.* key, no
+# unix-char device, no nesting or privilege, and no instance beyond the
+# project's limits. The checks that need the host's own view (its
+# addresses, its bridge, the Ctrl-C probe) run only without a remote.
 #
-# Every run ends by measuring the instance: disk and memory once installed,
-# and a cold start from stopped to an SSH login. Run it in each mode to
-# compare them. The last line is "RESULT: pass", "RESULT: fail" or
-# "RESULT: skip (<why>)"; a skip exits 77, so it never reads as a pass.
+# Every run ends by measuring the container: disk and memory once
+# installed, and a cold start from stopped to an SSH login. The last line
+# is "RESULT: pass", "RESULT: fail" or "RESULT: skip (<why>)"; a skip exits
+# 77, so it never reads as a pass.
 #
 # The instance must not exist yet. The test stops it at the end and never
 # deletes it; it prints the delete command instead. The launcher path runs
@@ -40,11 +37,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LAUNCHER="$ROOT/scripts/providers/incus.sh"
-MODE_ARGS=()
-if [[ "${1:-}" == "--vm" ]]; then
-    MODE_ARGS=(--vm)
-    shift
-fi
 NAME="${1:-}"
 IMAGE="images:ubuntu/26.04/cloud"
 TEST_PROJECT="${ACFS_TEST_PROJECT:-acfs-tests}"
@@ -62,10 +54,10 @@ check() {
 }
 not() { ! "$@"; }
 
-[[ -n "$NAME" ]] || { echo "Usage: $0 [--vm] [<remote>:]<instance-name>" >&2; exit 2; }
+[[ -n "$NAME" ]] || { echo "Usage: $0 [<remote>:]<instance-name>" >&2; exit 2; }
 
 # <remote>:<name> reaches the instance through that remote; the harness then
-# makes it itself, in the test project, as it does every VM.
+# makes it itself, in the test project.
 REMOTE=""
 INAME="$NAME"
 if [[ "$NAME" == *:* ]]; then
@@ -76,7 +68,7 @@ fi
 [[ "$INAME" =~ ^[a-z]([a-z0-9-]{0,48}[a-z0-9])?$ ]] \
     || { echo "the instance name must be at most 50 lowercase letters, digits and hyphens: $INAME" >&2; exit 2; }
 OWN=false
-[[ -z "$REMOTE" && ${#MODE_ARGS[@]} -eq 0 ]] || OWN=true
+[[ -z "$REMOTE" ]] || OWN=true
 SERVER="${REMOTE:+$REMOTE:}"
 # incus for this instance: in the test project when the harness makes it.
 inc() {
@@ -93,11 +85,6 @@ if [[ -n "$REMOTE" ]]; then
 else
     incus info </dev/null >/dev/null 2>&1 || skip "this user can't reach the Incus daemon (not in incus-admin?)"
 fi
-# KVM is the server's, not this machine's: its driver list names qemu.
-if [[ ${#MODE_ARGS[@]} -gt 0 ]]; then
-    drivers="$(incus query "${SERVER}/1.0" </dev/null 2>/dev/null | jq -r '.environment.driver // ""' 2>/dev/null || true)"
-    [[ "$drivers" == *qemu* ]] || skip "the Incus server ${REMOTE:-here} has no qemu driver (${drivers:-none}), so it can't run VMs (no KVM there)"
-fi
 if [[ "$OWN" == true ]]; then
     inc list "$SERVER" -f csv -c n >/dev/null 2>&1 \
         || skip "the project $TEST_PROJECT isn't usable on ${REMOTE:-this server} (host setup --test-project makes it; a remote needs the client certificate it trusted)"
@@ -108,10 +95,10 @@ if inc info "$NAME" >/dev/null 2>&1; then
     exit 2
 fi
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/acfs-incus-vm.XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/acfs-incus-test.XXXXXX")"
 # The directory is flat: remove its files, then the directory, nothing else.
 trap 'rm -f -- "$WORK"/*; rmdir -- "$WORK"' EXIT
-ssh-keygen -q -t ed25519 -N '' -C acfs-incus-vm-test -f "$WORK/key"
+ssh-keygen -q -t ed25519 -N '' -C acfs-incus-test -f "$WORK/key"
 
 # --- The restricted certificate's refusals (through a remote only) ---------
 # Each refused request changes nothing. One that Incus accepts is a finding:
@@ -159,9 +146,10 @@ if [[ "$OWN" == false ]]; then
     check "the block has an ssh_config entry" grep -qx "Host $NAME" "$WORK/ssh_config"
     check "the block has a known_hosts line" grep -q "^$NAME ssh-ed25519 " "$WORK/known_hosts"
 else
-    # The harness's own instance: the project's default profile gives it
-    # its limits and a NIC on acfstest0 behind acfs-vm-egress. Then the
-    # launcher's install of committed HEAD, by the same command.
+    # The harness's own container: the project's default profile gives it
+    # its limits and a NIC on acfstest0 behind the ACL host setup put
+    # there. Then the launcher's install of committed HEAD, by the same
+    # command.
     own_install() {
         local sha owner wrapper deadline state
         sha="$(git -C "$ROOT" rev-parse HEAD)"
@@ -173,7 +161,7 @@ else
             printf 'packages: [openssh-server, curl, git, jq, ca-certificates, unzip]\n'
             printf 'ssh_authorized_keys:\n  - %s\n' "$(jq -Rn --arg k "$(cat "$WORK/key.pub")" '$k')"
         } >"$WORK/user-data"
-        inc launch "$IMAGE" "$NAME" "${MODE_ARGS[@]}" -c "cloud-init.user-data=$(cat "$WORK/user-data")" \
+        inc launch "$IMAGE" "$NAME" -c "cloud-init.user-data=$(cat "$WORK/user-data")" \
             >"$WORK/create.log" 2>&1 || return 1
         deadline=$((SECONDS + 600))
         until inc exec "$NAME" -- true >/dev/null 2>&1; do
@@ -215,60 +203,51 @@ if [[ -n "$REMOTE" ]] && inc info "$NAME" >/dev/null 2>&1; then
         || inc config device remove "$NAME" acfs-neg-host >/dev/null 2>&1 || true
     refused "add a unix-char device" config device add "$NAME" acfs-neg-kvm unix-char path=/dev/kvm \
         || inc config device remove "$NAME" acfs-neg-kvm >/dev/null 2>&1 || true
-    if [[ ${#MODE_ARGS[@]} -eq 0 ]]; then
-        refused "set raw.lxc" config set "$NAME" raw.lxc=lxc.apparmor.profile=unconfined \
-            || inc config unset "$NAME" raw.lxc >/dev/null 2>&1 || true
-        refused "turn on nesting" config set "$NAME" security.nesting=true \
-            || inc config unset "$NAME" security.nesting >/dev/null 2>&1 || true
-        refused "make the container privileged" config set "$NAME" security.privileged=true \
-            || inc config unset "$NAME" security.privileged >/dev/null 2>&1 || true
-    else
-        refused "set raw.qemu" config set "$NAME" raw.qemu=-no-reboot \
-            || inc config unset "$NAME" raw.qemu >/dev/null 2>&1 || true
-    fi
+    refused "set raw.lxc" config set "$NAME" raw.lxc=lxc.apparmor.profile=unconfined \
+        || inc config unset "$NAME" raw.lxc >/dev/null 2>&1 || true
+    refused "turn on nesting" config set "$NAME" security.nesting=true \
+        || inc config unset "$NAME" security.nesting >/dev/null 2>&1 || true
+    refused "make the container privileged" config set "$NAME" security.privileged=true \
+        || inc config unset "$NAME" security.privileged >/dev/null 2>&1 || true
 fi
 
 echo "== instance type"
 instance_type="$(inc query "${SERVER}/1.0/instances/$INAME" | jq -r '.type' || true)"
-if [[ ${#MODE_ARGS[@]} -eq 0 ]]; then
-    check "the instance is a container" test "$instance_type" = container
-    # The launcher pins these; the test project enforces its own instead.
-    if [[ "$OWN" == false ]]; then
-        for setting in security.privileged=false security.nesting=false security.idmap.isolated=true; do
-            check "it carries $setting" test "$(inc config get "$NAME" "${setting%%=*}")" = "${setting#*=}"
-        done
-    fi
-    # /proc/self/uid_map: <uid inside> <uid on the host> <count>.
-    root_host_uid="$(inc exec "$NAME" -- awk '$1 == 0 {print $2; exit}' /proc/self/uid_map || true)"
-    check "root in the container is an unprivileged uid on the host (${root_host_uid:-none})" \
-        bash -c '[[ "$1" =~ ^[1-9][0-9]*$ ]]' _ "$root_host_uid"
-else
-    check "the instance is a VM" test "$instance_type" = virtual-machine
+check "the instance is a container" test "$instance_type" = container
+# The launcher pins these; the test project enforces its own instead.
+if [[ "$OWN" == false ]]; then
+    for setting in security.privileged=false security.nesting=false security.idmap.isolated=true; do
+        check "it carries $setting" test "$(inc config get "$NAME" "${setting%%=*}")" = "${setting#*=}"
+    done
 fi
+# /proc/self/uid_map: <uid inside> <uid on the host> <count>.
+root_host_uid="$(inc exec "$NAME" -- awk '$1 == 0 {print $2; exit}' /proc/self/uid_map || true)"
+check "root in the container is an unprivileged uid on the host (${root_host_uid:-none})" \
+    bash -c '[[ "$1" =~ ^[1-9][0-9]*$ ]]' _ "$root_host_uid"
 
-vm_ssh() {
+ssh_in() {
     ssh -F "$WORK/ssh_config" -i "$WORK/key" -o IdentitiesOnly=yes -o BatchMode=yes \
         -o ConnectTimeout=10 -o "UserKnownHostsFile=$WORK/known_hosts" "$NAME" "$@" </dev/null
 }
 
 echo "== SSH and sshd"
-check "key login as ubuntu through the printed entry" vm_ssh true
-sshd_usepam="$(vm_ssh sudo sshd -T 2>/dev/null | grep -i '^usepam ' || true)"
+check "key login as ubuntu through the printed entry" ssh_in true
+sshd_usepam="$(ssh_in sudo sshd -T 2>/dev/null | grep -i '^usepam ' || true)"
 check "sshd -T: usepam yes" test "$sshd_usepam" = "usepam yes"
 check "ubuntu has no usable password, so password login can't succeed" \
-    bash -c '[[ "$1" == "ubuntu L "* ]]' _ "$(vm_ssh sudo passwd -S ubuntu 2>/dev/null)"
+    bash -c '[[ "$1" == "ubuntu L "* ]]' _ "$(ssh_in sudo passwd -S ubuntu 2>/dev/null)"
 check "root has no usable password" \
-    bash -c '[[ "$1" == "root L "* ]]' _ "$(vm_ssh sudo passwd -S root 2>/dev/null)"
+    bash -c '[[ "$1" == "root L "* ]]' _ "$(ssh_in sudo passwd -S root 2>/dev/null)"
 check "a password-only login is refused" \
     bash -c '! ssh -F "$1/ssh_config" -o BatchMode=yes -o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive -o ConnectTimeout=10 -o "UserKnownHostsFile=$1/known_hosts" "$2" true </dev/null 2>/dev/null' _ "$WORK" "$NAME"
 
 echo "== ACFS"
 # Remote paths are relative to ubuntu's home, where ssh starts; ~/.local/bin
 # isn't on the non-interactive PATH.
-herdr_version="$(vm_ssh .local/bin/herdr --version 2>/dev/null || true)"
+herdr_version="$(ssh_in .local/bin/herdr --version 2>/dev/null || true)"
 check "herdr runs from ~/.local/bin" bash -c '[[ "$1" == herdr\ * ]]' _ "$herdr_version"
-check "the block names the VM's herdr version" grep -qF "($NAME runs $herdr_version)" "$WORK/block"
-doctor_json="$(vm_ssh .acfs/bin/acfs doctor --json 2>/dev/null || true)"
+check "the block names the container's herdr version" grep -qF "($NAME runs $herdr_version)" "$WORK/block"
+doctor_json="$(ssh_in .acfs/bin/acfs doctor --json 2>/dev/null || true)"
 doctor_failures="$(jq -r '.summary.fail // "no summary"' <<<"$doctor_json" 2>/dev/null || echo "no JSON")"
 echo "  acfs doctor failures: $doctor_failures"
 jq -r '.checks[]? | select(.status == "fail") | "  | fail: \(.id // .name // "?"): \(.message // .label // "")"' \
@@ -283,17 +262,17 @@ else
 echo "== network ACL"
 # The field after "via": an IPv6 route puts "nhid <n>" before it.
 route_via='{for (i = 1; i < NF; i++) if ($i == "via") {print $(i + 1); exit}}'
-gateway="$(vm_ssh "ip -4 route show default | awk '$route_via'" 2>/dev/null || true)"
-check "DNS resolves in the VM" vm_ssh getent hosts github.com
-check "the VM reaches the internet over HTTPS" vm_ssh curl -fsS -o /dev/null --max-time 15 https://github.com
-nic="$(vm_ssh "ip -4 route show default | awk '{print \$5; exit}'" 2>/dev/null || true)"
-vm_address() { vm_ssh "ip -4 -o addr show dev $nic scope global | awk '{print \$4; exit}'" 2>/dev/null || true; }
-address_before="$(vm_address)"
-vm_ssh "sudo networkctl renew $nic && sleep 5" || true
-check "a DHCP renew keeps the VM's address ($address_before)" \
-    bash -c '[[ -n "$1" && "$1" == "$2" ]]' _ "$address_before" "$(vm_address)"
+gateway="$(ssh_in "ip -4 route show default | awk '$route_via'" 2>/dev/null || true)"
+check "DNS resolves in the container" ssh_in getent hosts github.com
+check "the container reaches the internet over HTTPS" ssh_in curl -fsS -o /dev/null --max-time 15 https://github.com
+nic="$(ssh_in "ip -4 route show default | awk '{print \$5; exit}'" 2>/dev/null || true)"
+instance_address() { ssh_in "ip -4 -o addr show dev $nic scope global | awk '{print \$4; exit}'" 2>/dev/null || true; }
+address_before="$(instance_address)"
+ssh_in "sudo networkctl renew $nic && sleep 5" || true
+check "a DHCP renew keeps the container's address ($address_before)" \
+    bash -c '[[ -n "$1" && "$1" == "$2" ]]' _ "$address_before" "$(instance_address)"
 # Each blocked address is only tested where the host itself accepts on :22
-# there, so a refusal from the VM is the ACL and not a closed port.
+# there, so a refusal from the container is the ACL and not a closed port.
 blocked=("$gateway")
 while read -r address; do
     [[ "$address" == "$gateway" ]] || blocked+=("$address")
@@ -302,8 +281,8 @@ done < <(ip -4 -o addr show scope global | awk '{split($4, a, "/"); print a[1]}'
 for address in "${blocked[@]}"; do
     [[ -n "$address" ]] || continue
     if timeout 5 bash -c "</dev/tcp/$address/22" 2>/dev/null; then
-        check "the VM can't open $address:22 (the host accepts there)" \
-            not vm_ssh "timeout 5 bash -c '</dev/tcp/$address/22'"
+        check "the container can't open $address:22 (the host accepts there)" \
+            not ssh_in "timeout 5 bash -c '</dev/tcp/$address/22'"
     else
         echo "  (not tested: the host itself doesn't accept on $address:22)"
     fi
@@ -312,38 +291,38 @@ done
 echo "== IPv6 under the ACL"
 # fe80::/10 and fc00::/7 are rejected, so check that the bridge's IPv6 still
 # works. Router advertisements come in, which the egress ACL doesn't filter:
-# a global address and a default route show them. The VM's neighbour
+# a global address and a default route show them. The container's neighbour
 # advertisements go out, as unicast replies to whichever address solicited
 # them, so each range gets a solicitation from the host's address in it. The
 # ping's echo reply may or may not pass, and Linux doesn't count it as
 # neighbour confirmation either way, so only an advertisement makes the entry
 # REACHABLE: an existing one goes DELAY, then PROBE (about 5 s, then up to 3
 # probes 1 s apart) and ends REACHABLE, or FAILED without one.
-vm_global6="$(vm_ssh "ip -6 -o addr show dev $nic scope global | awk '{split(\$4, a, \"/\"); print a[1]; exit}'" 2>/dev/null || true)"
-vm_link6="$(vm_ssh "ip -6 -o addr show dev $nic scope link | awk '{split(\$4, a, \"/\"); print a[1]; exit}'" 2>/dev/null || true)"
-gateway6="$(vm_ssh "ip -6 route show default | awk '$route_via'" 2>/dev/null || true)"
+global6="$(ssh_in "ip -6 -o addr show dev $nic scope global | awk '{split(\$4, a, \"/\"); print a[1]; exit}'" 2>/dev/null || true)"
+link6="$(ssh_in "ip -6 -o addr show dev $nic scope link | awk '{split(\$4, a, \"/\"); print a[1]; exit}'" 2>/dev/null || true)"
+gateway6="$(ssh_in "ip -6 route show default | awk '$route_via'" 2>/dev/null || true)"
 bridge_dev="$(ip -6 -o addr show scope link | awk -v a="$gateway6" '{split($4, x, "/"); if (x[1] == a) {print $2; exit}}')"
-check "the VM has a global IPv6 address (SLAAC)" test -n "$vm_global6"
-check "the VM has an IPv6 default route" test -n "$gateway6"
+check "the container has a global IPv6 address (SLAAC)" test -n "$global6"
+check "the container has an IPv6 default route" test -n "$gateway6"
 # neighbour_confirmed <address> <ping target>
 neighbour_confirmed() {
     ping -6 -c 1 -W 2 "$2" >/dev/null 2>&1 || true
     sleep 10
     ip -6 neigh show "$1" dev "$bridge_dev" | grep -q -w REACHABLE
 }
-if [[ -n "$bridge_dev" && -n "$vm_global6" ]]; then
-    check "the VM answers neighbour solicitation from the host's global address (fc00::/7)" \
-        neighbour_confirmed "$vm_global6" "$vm_global6"
+if [[ -n "$bridge_dev" && -n "$global6" ]]; then
+    check "the container answers neighbour solicitation from the host's global address (fc00::/7)" \
+        neighbour_confirmed "$global6" "$global6"
 fi
-if [[ -n "$bridge_dev" && -n "$vm_link6" ]]; then
-    check "the VM answers neighbour solicitation from the host's link-local address (fe80::/10)" \
-        neighbour_confirmed "$vm_link6" "$vm_link6%$bridge_dev"
+if [[ -n "$bridge_dev" && -n "$link6" ]]; then
+    check "the container answers neighbour solicitation from the host's link-local address (fe80::/10)" \
+        neighbour_confirmed "$link6" "$link6%$bridge_dev"
 else
-    fail "the VM's link-local address and the host's bridge device are known"
+    fail "the container's link-local address and the host's bridge device are known"
 fi
 if [[ -n "$gateway6" && -n "$bridge_dev" ]] && timeout 5 bash -c "</dev/tcp/$gateway6%$bridge_dev/22" 2>/dev/null; then
-    check "the VM can't open the gateway's link-local :22 (the host accepts there)" \
-        not vm_ssh "timeout 5 bash -c '</dev/tcp/$gateway6%$nic/22'"
+    check "the container can't open the gateway's link-local :22 (the host accepts there)" \
+        not ssh_in "timeout 5 bash -c '</dev/tcp/$gateway6%$nic/22'"
 else
     echo "  (not tested: the host itself doesn't accept on the gateway's link-local :22)"
 fi
@@ -354,37 +333,37 @@ echo "== re-run"
 if [[ "$OWN" == true ]]; then
     echo "  (not tested: the harness made this instance itself; the launcher's re-run is the container path's)"
 elif [[ "$create_rc" -eq 0 ]]; then
-    before="$(vm_ssh 'stat -c %Y ~/.acfs/state.json' 2>/dev/null || true)"
+    before="$(ssh_in 'stat -c %Y ~/.acfs/state.json' 2>/dev/null || true)"
     set +e
     "$LAUNCHER" "$NAME" >"$WORK/block2" 2>"$WORK/rerun.log"
     rerun_rc=$?
     set -e
     check "a re-run exits 0" test "$rerun_rc" -eq 0
     check "a re-run says it's already installed" grep -q 'Already installed' "$WORK/rerun.log"
-    check "a re-run doesn't touch the install" test "$before" = "$(vm_ssh 'stat -c %Y ~/.acfs/state.json' 2>/dev/null || true)"
+    check "a re-run doesn't touch the install" test "$before" = "$(ssh_in 'stat -c %Y ~/.acfs/state.json' 2>/dev/null || true)"
     check "a re-run prints the same block" diff -q "$WORK/block" "$WORK/block2"
     diff -u "$WORK/block" "$WORK/block2" | cat -A | head -n 40 | sed 's/^/  | /' || true
 else
     echo "  (not tested: the install didn't complete, so a re-run resumes it by design)"
 fi
 
-echo "== lifting the ACL on the running VM (the guide's command)"
+echo "== lifting the ACL on the running container (the guide's command)"
 if [[ "$OWN" == true ]]; then
     echo "  (not tested: the instance's NIC is the test project's profile's, which the guide's command leaves alone)"
 else
-vm_nic="$(incus query "/1.0/instances/$NAME" </dev/null \
+instance_nic="$(incus query "/1.0/instances/$NAME" </dev/null \
     | jq -r '.devices | to_entries[] | select(.value.type == "nic") | .key' | head -n 1)"
-check "the VM has its own NIC device" test -n "$vm_nic"
-if [[ -n "$vm_nic" ]] && incus config device unset "$NAME" "$vm_nic" security.acls </dev/null; then
-    pass "incus config device unset $NAME $vm_nic security.acls"
+check "the container has its own NIC device" test -n "$instance_nic"
+if [[ -n "$instance_nic" ]] && incus config device unset "$NAME" "$instance_nic" security.acls </dev/null; then
+    pass "incus config device unset $NAME $instance_nic security.acls"
     if [[ -n "$gateway" ]] && timeout 5 bash -c "</dev/tcp/$gateway/22" 2>/dev/null; then
-        check "without a restart, the VM now opens $gateway:22" \
-            vm_ssh "timeout 5 bash -c '</dev/tcp/$gateway/22'"
+        check "without a restart, the container now opens $gateway:22" \
+            ssh_in "timeout 5 bash -c '</dev/tcp/$gateway/22'"
     else
         echo "  (not tested: the host itself doesn't accept on the gateway's :22)"
     fi
 else
-    fail "incus config device unset $NAME ${vm_nic:-<no NIC>} security.acls"
+    fail "incus config device unset $NAME ${instance_nic:-<no NIC>} security.acls"
 fi
 fi
 
@@ -406,16 +385,16 @@ probe_rc=0
     | timeout 60 script -q -e -c "$probe_command" /dev/null >/dev/null 2>&1 || probe_rc=$?
 sleep 2
 check "the client exits 130 on SIGINT (exit $probe_rc)" test "$probe_rc" -eq 130
-check "SIGINT to the client ends the bash and its child in the VM" \
+check "SIGINT to the client ends the bash and its child in the container" \
     not inc exec "$NAME" -- pgrep -f "sleep 900"
 
-# Printed for comparing a VM with a container, not checked. The host's view
-# is what the instance costs the host; a VM's disk usage may be missing
-# there, depending on the storage driver.
+# Printed, not checked. The host's view is what the container costs the
+# host; its disk usage may be missing there, depending on the storage
+# driver.
 echo "== measurements ($instance_type, installed, idle)"
 instance_state="$(inc query "${SERVER}/1.0/instances/$INAME/state" || true)"
 echo "  host's view: memory $(jq -r '.memory.usage // "?"' <<<"$instance_state" 2>/dev/null) B, root disk $(jq -r '.disk.root.usage // "?"' <<<"$instance_state" 2>/dev/null) B"
-echo "  inside: / has $(vm_ssh "df -B1 --output=used / | tail -n 1" 2>/dev/null || echo '?') B used, memory used $(vm_ssh "free -b | awk '/^Mem:/ {print \$3}'" 2>/dev/null || echo '?') B"
+echo "  inside: / has $(ssh_in "df -B1 --output=used / | tail -n 1" 2>/dev/null || echo '?') B used, memory used $(ssh_in "free -b | awk '/^Mem:/ {print \$3}'" 2>/dev/null || echo '?') B"
 
 inc stop "$NAME"
 
@@ -425,10 +404,10 @@ inc start "$NAME" || fail "incus start $NAME"
 deadline=$((SECONDS + 300))
 until inc exec "$NAME" -- true >/dev/null 2>&1 || ((SECONDS >= deadline)); do sleep 0.2; done
 exec_ms="$(date +%s%3N)"
-until vm_ssh true 2>/dev/null || ((SECONDS >= deadline)); do sleep 0.5; done
+until ssh_in true 2>/dev/null || ((SECONDS >= deadline)); do sleep 0.5; done
 ssh_ms="$(date +%s%3N)"
 echo "  incus exec answered after $((exec_ms - start_ms)) ms, SSH login after $((ssh_ms - start_ms)) ms"
-check "an SSH login works after a cold start" vm_ssh true
+check "an SSH login works after a cold start" ssh_in true
 
 inc stop "$NAME"
 echo

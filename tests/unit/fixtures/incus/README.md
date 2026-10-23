@@ -31,6 +31,6 @@ All of them were captured on 2026-10-09 from Incus 6.0.5 (client and server), fr
 
 **Synthetic, stored here:** `server-1.0.json` has the shape of `incus query /1.0` trimmed to `api_extensions` and `environment.server_version`, written by hand on 2026-10-10 on a machine without Incus, modelled on Ubuntu 26.04's Incus 6.0.5 package: it has the three extensions the launcher requires and lacks the two optional ones (`instance_limits_oom`, `container_disk_tmpfs`). It lists eight names, not the real list of several hundred. To recapture it from a real server: `incus query /1.0 | jq '{api_extensions, environment: {server_version: .environment.server_version}}'`.
 
-**Synthetic, made by the test at run time and not stored here:** the VM's SSH host key (generated with `ssh-keygen`), the `herdr --version` line, the `ssh-keygen -l` line for `authorized_keys`, and the installer's output.
+**Synthetic, made by the test at run time and not stored here:** the instance's SSH host key (generated with `ssh-keygen`), the `herdr --version` line, the `ssh-keygen -l` line for `authorized_keys`, and the installer's output. The launcher makes containers only and refuses an existing VM (acfs-ioo3.19), so the test sets each list's `type` to `container`, except where it checks that refusal against the VMs as captured.
 
-**To recapture:** create a VM with `scripts/providers/incus.sh`, run the commands above against it, and trim the output the same way.
+**To recapture:** create a container with `scripts/providers/incus.sh`, run the commands above against it, and trim the output the same way. The `type` is then `container` already.
