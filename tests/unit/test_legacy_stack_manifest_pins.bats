@@ -136,7 +136,7 @@ run_stack_phase() {
     [[ -n "$body" ]]
     [[ "$body" == *'[ "$(uname -m)" != aarch64 ] && [ "$(uname -m)" != arm64 ]'* ]]
     [[ "$body" == *"Chrome for Testing has no linux-arm64 build"* ]]
-    [[ "$body" == *"'PATH='\"\$TARGET_HOME\"'/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin'"* ]]
+    [[ "$body" == *"'PATH='\"\$TARGET_HOME\"'/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin'"* ]]
 }
 
 @test "install.sh runs mdwb's installer only through its generated installer" {

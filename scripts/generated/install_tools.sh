@@ -2248,7 +2248,7 @@ INSTALL_UTILS_MDWB_PRE_INSTALL_CHECK
                         elif ! "$verified_installer_chmod_bin" 0444 "$verified_installer_file"; then
                             log_error "utils.mdwb: failed to make verified installer staging file read-only"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
-                        elif run_as_target_runner 'env' 'PATH='"$TARGET_HOME"'/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin' 'bash' "$verified_installer_file"; then
+                        elif run_as_target_runner 'env' 'PATH='"$TARGET_HOME"'/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin' 'bash' "$verified_installer_file"; then
                             install_success=true
                         else
                             log_error "utils.mdwb: verified installer execution failed"

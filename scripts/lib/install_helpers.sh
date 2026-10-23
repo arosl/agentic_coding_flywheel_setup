@@ -1007,9 +1007,10 @@ _acfs_clean_runner_env_allowed() {
             "GROK_BIN_DIR=$user_home/.local/bin")
                 return 0
                 ;;
-            "PATH=$user_home/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
-                # utils.mdwb: the user's own bin first, so its installer finds
-                # lang.uv's uv instead of installing an older one (acfs-2qhv).
+            "PATH=$user_home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin")
+                # utils.mdwb: the clean PATH with the user's own bin first, so
+                # its installer finds lang.uv's uv instead of installing an
+                # older one (acfs-2qhv).
                 return 0
                 ;;
         TMPDIR=*)
@@ -1216,6 +1217,8 @@ if [[ "${ACFS_FORCE_INSTALL_HELPERS_SECURITY_REDEFINE:-0}" == "1" ]] || ! declar
             # Fixed PATH for verified upstream installers: no caller or
             # user-writable entries, matching sudo's secure_path so an
             # installer can find the binary it just placed in /usr/local/bin.
+            # The one exception is utils.mdwb, whose manifest env puts the
+            # target user's ~/.local/bin before it (acfs-2qhv).
             command_path="$system_path_prefix"
         fi
 

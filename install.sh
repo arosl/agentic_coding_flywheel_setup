@@ -5094,9 +5094,10 @@ _acfs_clean_runner_env_allowed() {
         "GROK_BIN_DIR=$user_home/.local/bin")
             return 0
             ;;
-        "PATH=$user_home/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
-            # utils.mdwb: the user's own bin first, so its installer finds
-            # lang.uv's uv instead of installing an older one (acfs-2qhv).
+        "PATH=$user_home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin")
+            # utils.mdwb: the clean PATH with the user's own bin first, so its
+            # installer finds lang.uv's uv instead of installing an older one
+            # (acfs-2qhv).
             return 0
             ;;
         TMPDIR=*)
@@ -5599,6 +5600,10 @@ run_as_target() {
         # source builds (CMake, `make install`) and prebuilt-binary installers
         # target, so an installer's own `command -v <tool>` post-install
         # check must be able to find what it just installed (#386).
+        # The one exception is utils.mdwb, whose manifest env puts the target
+        # user's ~/.local/bin before this PATH so its installer keeps
+        # lang.uv's uv. It runs as that user, so that gains no privilege,
+        # and acfs update gives it the same PATH (acfs-2qhv).
         command_path="$system_path_prefix"
     fi
 

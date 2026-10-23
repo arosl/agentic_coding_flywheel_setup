@@ -4029,14 +4029,15 @@ modules:
     installed_check:
       run_as: target_user
       command: "command -v mdwb"
-    # ~/.local/bin first on PATH, as acfs update has it: mdwb's installer
-    # installs its own pinned uv unless `command -v uv` finds lang.uv's,
-    # and would replace that uv with an older one (acfs-2qhv).
+    # The clean runner's PATH with ~/.local/bin first, as acfs update has
+    # it: mdwb's installer installs its own pinned uv unless `command -v uv`
+    # finds lang.uv's, and would replace that uv with an older one
+    # (acfs-2qhv).
     verified_installer:
       tool: mdwb
       runner: bash
       url: "https://raw.githubusercontent.com/Dicklesworthstone/markdown_web_browser/main/install.sh"
-      env: ["PATH=$TARGET_HOME/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
+      env: ["PATH=$TARGET_HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"]
     install: []
     verify:
       - mdwb --help || mdwb --version

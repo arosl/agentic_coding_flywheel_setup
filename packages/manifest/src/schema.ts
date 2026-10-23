@@ -53,8 +53,13 @@ function isAllowedVerifiedInstallerEnv(tool: string, entry: string): boolean {
   }
   if (tool === "grok") return entry === "GROK_BIN_DIR=$TARGET_HOME/.local/bin";
   // mdwb's installer installs its own pinned uv unless it finds lang.uv's on
-  // PATH, so the user's own bin goes first (acfs-2qhv).
-  if (tool === "mdwb") return entry === "PATH=$TARGET_HOME/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+  // PATH, so the user's own bin goes before the clean runner's PATH
+  // (acfs-2qhv).
+  if (tool === "mdwb") {
+    return (
+      entry === "PATH=$TARGET_HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+    );
+  }
   if (tool === "ru") {
     // The fork's tagged installer (acfs-9hkh.64): RU_VERSION pins the
     // release, and no self-refresh fetches main's installer instead.
