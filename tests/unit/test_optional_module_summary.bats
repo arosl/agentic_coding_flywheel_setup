@@ -129,9 +129,11 @@ legacy_setup() {
 }
 
 # The legacy stack phase's call sites are all `|| acfs_optional_module_install_failed`,
-# but nine of those tools (br, bv, cass, cm, caam, dcg, ru, ubs, ms) are
+# but seven of those tools (br, bv, cass, cm, dcg, ubs, ms) are
 # `optional: false` in the manifest. Those must land in the failure list the
-# exit code reads, never under "Optional modules skipped".
+# exit code reads, never under "Optional modules skipped". caam and ru, also
+# required, run through acfs_legacy_run_manifest_module instead (acfs-tqh9),
+# which test_legacy_stack_manifest_pins.bats guards.
 @test "acfs_optional_module_install_failed records a REQUIRED manifest module as a module failure, not an optional skip" {
     legacy_setup
     declare -gA ACFS_MODULE_VERIFIED_INSTALLER_TOOL=(["stack.ultimate_bug_scanner"]="ubs")
@@ -259,7 +261,7 @@ legacy_setup() {
     phase="$(sed -n '/^install_stack_phase() {$/,/^}$/p' "$INSTALL_SH")"
     [[ -n "$phase" ]]
     run grep -c 'acfs_optional_module_install_failed "' <<< "$phase"
-    (( output >= 38 ))
+    (( output >= 37 ))
     # The only remaining "may have failed" text belongs to the REQUIRED Agent Mail module.
     run grep -E 'log_warn "[^"]* installation may have failed"' <<< "$phase"
     [[ "$status" -ne 0 ]]
@@ -301,7 +303,7 @@ legacy_setup() {
 
     # With the real index loaded, every legacy call site lands where the
     # manifest's optional flag says: required modules in the failure list, the
-    # rest in the optional-skip list. Guards the 38 sites against the manifest.
+    # rest in the optional-skip list. Guards the 37 sites against the manifest.
     local required_seen=0 optional_seen=0
     while IFS= read -r tool; do
         id="$(acfs_module_id_for_verified_installer_tool "$tool")"
@@ -322,7 +324,8 @@ legacy_setup() {
             }
         fi
     done < <(grep -o 'acfs_optional_module_install_failed "[a-z0-9_]*"' <<< "$phase" | sed -E 's/.*"([a-z0-9_]+)"/\1/' | sort -u)
-    # br bv caam cass cm dcg ms ru ubs are required today; the rest optional.
-    (( required_seen >= 9 ))
+    # br bv cass cm dcg ms ubs are required today; the rest optional. caam and
+    # ru, also required, run through acfs_legacy_run_manifest_module (acfs-tqh9).
+    (( required_seen >= 7 ))
     (( optional_seen >= 25 ))
 }
