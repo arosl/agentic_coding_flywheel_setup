@@ -348,8 +348,17 @@ try_step_optional() {
         log_detail "$description (optional)..."
     fi
 
-    local exit_code=0
-    "$@" >/dev/null 2>&1 || exit_code=$?
+    # Capture the output as try_step does, so that a failure can say why.
+    # Verbose mode, or no safe temp file, streams it to stderr instead.
+    local exit_code=0 output_file=""
+    if [[ "${ERROR_VERBOSE:-false}" != "true" ]]; then
+        output_file=$(mktemp "${TMPDIR:-/tmp}/acfs_step.XXXXXX" 2>/dev/null) || output_file=""
+    fi
+    if [[ -n "$output_file" ]]; then
+        "$@" > "$output_file" 2>&1 || exit_code=$?
+    else
+        "$@" >&2 || exit_code=$?
+    fi
 
     if [[ $exit_code -ne 0 ]]; then
         if type -t state_step_result &>/dev/null; then
@@ -357,9 +366,23 @@ try_step_optional() {
         fi
         if type -t log_warn &>/dev/null; then
             log_warn "$description failed (non-critical)"
+            # An optional step often wraps a whole installer, which says why it
+            # failed at the end: print the tail, where try_step prints the head.
+            if [[ -n "$output_file" && -s "$output_file" ]]; then
+                local max_len="${ERROR_OUTPUT_MAX_LENGTH:-2000}"
+                if [[ ! "$max_len" =~ ^[0-9]+$ ]] || [[ "$max_len" -lt 1 ]]; then
+                    max_len=2000
+                fi
+                echo "  Error output (last lines):" >&2
+                tail -c "$max_len" "$output_file" 2>/dev/null | tail -n 50 | sed 's/^/    /' >&2 || true
+            fi
         fi
     elif type -t state_step_result &>/dev/null; then
         state_step_result "$CURRENT_PHASE" "$description" success false || true
+    fi
+
+    if [[ -n "$output_file" ]]; then
+        rm -f "$output_file" 2>/dev/null || true
     fi
 
     LAST_ERROR="$saved_error"

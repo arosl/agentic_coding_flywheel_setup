@@ -119,6 +119,98 @@ teardown() {
     assert_output 'Required packages'
 }
 
+@test "optional step failure prints its output on stderr and keeps the phase" {
+    source_lib state
+    export ACFS_HOME="$(create_temp_dir)"
+    export ACFS_STATE_FILE="$ACFS_HOME/state.json"
+    state_init
+    set_phase cli_tools
+    local out_file="$ACFS_HOME/stdout" err_file="$ACFS_HOME/stderr"
+    failing_installer() {
+        echo "fetching node tarball"
+        echo "curl: (22) The requested URL returned error: 404" >&2
+        return 3
+    }
+
+    local status=0
+    try_step_optional 'Installing Node.js' failing_installer >"$out_file" 2>"$err_file" || status=$?
+
+    [[ "$status" -eq 3 ]]
+    [[ ! -s "$out_file" ]]
+    run cat "$err_file"
+    assert_output --partial "Installing Node.js failed (non-critical)"
+    assert_output --partial "Error output (last lines):"
+    assert_output --partial "    fetching node tarball"
+    assert_output --partial "    curl: (22) The requested URL returned error: 404"
+    run state_get '.phase_steps.cli_tools["Installing Node.js"].status'
+    assert_output failed
+    run clear_phase
+    assert_success
+}
+
+@test "optional step failure prints the tail of long output" {
+    long_failure() {
+        local i
+        for ((i = 1; i <= 200; i++)); do echo "progress line $i"; done
+        echo "E: Unable to locate package vault"
+        return 100
+    }
+
+    ERROR_OUTPUT_MAX_LENGTH=400
+    run try_step_optional 'Installing Vault' long_failure
+
+    assert_failure 100
+    assert_output --partial "E: Unable to locate package vault"
+    assert_output --partial "progress line 200"
+    refute_output --partial "progress line 50"
+    refute_output --partial "progress line 100"
+}
+
+@test "optional step failure shows a nested try_step's error block" {
+    nested_installer() {
+        try_step 'Adding PostgreSQL apt key' bash -c 'echo "gpg: no valid OpenPGP data found" >&2; exit 2' || true
+        echo "PostgreSQL: failed to install signing key (skipping)" >&2
+        return 1
+    }
+
+    run try_step_optional 'Installing or repairing PostgreSQL' nested_installer
+
+    assert_failure 1
+    assert_output --partial "Installing or repairing PostgreSQL failed (non-critical)"
+    assert_output --partial "Adding PostgreSQL apt key failed (exit 2)"
+    assert_output --partial "gpg: no valid OpenPGP data found"
+    assert_output --partial "PostgreSQL: failed to install signing key (skipping)"
+}
+
+@test "optional step success prints nothing of its output" {
+    local out_file err_file
+    out_file="$(create_temp_dir)/stdout"
+    err_file="${out_file%/stdout}/stderr"
+    chatty_installer() { echo "lots of progress"; echo "a warning on stderr" >&2; }
+
+    try_step_optional 'Installing zoxide' chatty_installer >"$out_file" 2>"$err_file"
+
+    [[ ! -s "$out_file" ]]
+    run cat "$err_file"
+    refute_output --partial "lots of progress"
+    refute_output --partial "a warning on stderr"
+    refute_output --partial "Error output"
+}
+
+@test "optional step in verbose mode streams its output to stderr only" {
+    local out_file err_file
+    out_file="$(create_temp_dir)/stdout"
+    err_file="${out_file%/stdout}/stderr"
+    chatty_installer() { echo "lots of progress"; echo "a warning on stderr" >&2; }
+
+    ERROR_VERBOSE=true try_step_optional 'Installing zoxide' chatty_installer >"$out_file" 2>"$err_file"
+
+    [[ ! -s "$out_file" ]]
+    run cat "$err_file"
+    assert_output --partial "lots of progress"
+    assert_output --partial "a warning on stderr"
+}
+
 @test "retry wrapper resolves only the successful step result" {
     source_lib state
     export ACFS_HOME="$(create_temp_dir)"
