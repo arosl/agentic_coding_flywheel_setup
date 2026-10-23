@@ -4,11 +4,12 @@
 #
 # Prepares the hypervisor (the physical machine that runs Incus) once, as an
 # Incus admin there: the storage pool at the location you give, the
-# policy-only profile acfs-swarm for ACFS containers, the restricted project
-# acfs-tests on its own bridge acfstest0, the egress ACLs acfs-swarm-egress
-# and acfs-vm-egress, and optionally a client certificate restricted to
-# acfs-tests. It records the result in
-# ${XDG_CONFIG_HOME:-~/.config}/acfs/incus.env, which incus.sh reads.
+# policy-only profile acfs-swarm for ACFS containers, and the egress ACLs
+# acfs-swarm-egress and acfs-vm-egress. With --test-project, for ACFS's own
+# tests, also the restricted project acfs-tests on its own bridge acfstest0,
+# and optionally a client certificate restricted to acfs-tests. It records
+# the result in ${XDG_CONFIG_HOME:-~/.config}/acfs/incus.env, which incus.sh
+# reads.
 #
 # The storage location is required and has no default: it is prompted for
 # on a terminal and refused when missing otherwise. It is an existing Incus
@@ -89,7 +90,11 @@ TEST_PROJECT_LIMITS=(
 # that don't set them, so its default profile sets incus.sh's sizes.
 TEST_PROFILE_CONFIG=(limits.cpu=4 limits.memory=8GiB)
 TEST_ROOT_SIZE="40GiB"
+# Every Incus since 6.0 has these.
 REQUIRED_API_EXTENSIONS=(projects_networks_restricted_access container_syscall_intercept_sysinfo)
+# The API extension behind restricted.images.servers: Incus 6.22 and 6.0.6
+# added it, and an older server refuses the key.
+IMAGE_SERVERS_EXTENSION="projects_restricted_image_servers"
 
 usage() {
     cat <<'EOF'
@@ -114,12 +119,16 @@ ${XDG_CONFIG_HOME:-~/.config}/acfs/incus.env.
                          Overrides that choice.
   --rch-worker ADDR      An IPv4 address of an rch build worker that the
                          containers may reach over SSH (repeatable).
-  --client-cert FILE     Trust this client certificate, restricted to acfs-tests.
+  --test-project         Also the restricted project acfs-tests on its own
+                         bridge acfstest0, for ACFS's own tests
+                         (tests/vm/test_incus_provider.sh); none without it.
+  --client-cert FILE     Trust this client certificate, restricted to acfs-tests
+                         (needs --test-project).
   --client-name NAME     The name it is trusted under (required with --client-cert).
 
 ACFS containers reach the internet, and of private addresses only the
 hypervisor's Incus API (8443 on their bridge's gateway), SSH and ping to the
-test instances on acfstest0, and SSH to the rch workers.
+test instances on acfstest0 (with --test-project), and SSH to the rch workers.
 
 Re-running is safe: absent objects are created, and existing ones are checked
 and never changed. See scripts/providers/incus.md.
@@ -152,6 +161,7 @@ pool_name="acfs"
 memory=""
 memory_enforce=""
 rch_workers=()
+test_project="false"
 client_cert=""
 client_name=""
 
@@ -171,6 +181,7 @@ parse_args() {
                 esac
                 shift 2
                 ;;
+            --test-project) test_project="true"; shift ;;
             -h|--help) usage; exit 0 ;;
             *) usage >&2; die "unknown argument: $1" 2 ;;
         esac
@@ -187,6 +198,7 @@ parse_args() {
     done
     if [[ -n "$client_cert" || -n "$client_name" ]]; then
         [[ -n "$client_cert" && -n "$client_name" ]] || die "--client-cert and --client-name go together" 2
+        [[ "$test_project" == true ]] || die "--client-cert trusts a certificate for the project acfs-tests only; it needs --test-project" 2
         [[ -f "$client_cert" && -r "$client_cert" ]] || die "--client-cert $client_cert: not a readable file" 2
         [[ "$client_name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || die "invalid --client-name '$client_name'" 2
     fi
@@ -212,15 +224,49 @@ require_commands() {
 
 server_json=""
 
+server_has_extension() {
+    jq -e --arg ext "$1" '.api_extensions | index($ext) != null' <<<"$server_json" >/dev/null
+}
+
 check_server() {
     server_json="$(incus_get /1.0)" || die "cannot reach the local Incus daemon; run this on the hypervisor as a member of incus-admin" 1
     jq -e '.auth == "trusted"' <<<"$server_json" >/dev/null \
         || die "the local Incus daemon doesn't trust this user; host setup needs an Incus admin (the incus-admin group)" 1
     local ext
     for ext in "${REQUIRED_API_EXTENSIONS[@]}"; do
-        jq -e --arg ext "$ext" '.api_extensions | index($ext) != null' <<<"$server_json" >/dev/null \
-            || die "this Incus lacks the API extension $ext; ACFS containers need Incus 6.0.6 or later" 1
+        server_has_extension "$ext" \
+            || die "this Incus lacks the API extension $ext, which ACFS containers need; every Incus since 6.0 has it" 1
     done
+}
+
+# An older server refuses restricted.images.servers, so the test project is
+# made without it there; its other restrictions still hold. A later run on
+# an upgraded server sets it, as it sets every key that is unset.
+test_project_image_servers() {
+    [[ "$test_project" == true ]] || return 0
+    server_has_extension "$IMAGE_SERVERS_EXTENSION" && return 0
+    log_warn "This Incus lacks the API extension $IMAGE_SERVERS_EXTENSION (Incus 6.22 and 6.0.6 have it): project $TEST_PROJECT gets no restricted.images.servers, so its instances may use images from any server"
+    local kept=() kv
+    for kv in "${TEST_PROJECT_CONFIG[@]}"; do
+        [[ "${kv%%=*}" == restricted.images.servers ]] || kept+=("$kv")
+    done
+    TEST_PROJECT_CONFIG=("${kept[@]}")
+}
+
+# Without --test-project, a test project or bridge from an earlier setup is
+# refused before anything is created: the swarm ACL that run made allows
+# the test bridge, and host setup never deletes anything.
+check_no_test_project() {
+    [[ "$test_project" == false ]] || return 0
+    local found=""
+    if incus_get "/1.0/projects/$TEST_PROJECT" >/dev/null; then
+        found="project $TEST_PROJECT"
+    elif incus_get "/1.0/networks/$TEST_BRIDGE" >/dev/null; then
+        found="bridge $TEST_BRIDGE"
+    else
+        return 0
+    fi
+    die "this hypervisor has the test $found from an earlier host setup; pass --test-project to keep checking it (host setup never deletes anything)" 1
 }
 
 driver_supported() {
@@ -516,10 +562,13 @@ rule() {
 }
 
 swarm_acl_rules() {
-    local gateway="$1" test_net test_gateway worker excluded=() reject=() workers=() cidr
-    test_net="$(cidr_network "$test_bridge_cidr")"
-    test_gateway="${test_bridge_cidr%/*}"
-    excluded=("$gateway/32" "$test_net")
+    local gateway="$1" test_net="" test_gateway worker excluded=() reject=() workers=() cidr
+    excluded=("$gateway/32")
+    if [[ "$test_project" == true ]]; then
+        test_net="$(cidr_network "$test_bridge_cidr")"
+        test_gateway="${test_bridge_cidr%/*}"
+        excluded+=("$test_net")
+    fi
     for worker in "${rch_workers[@]}"; do
         excluded+=("$worker/32")
         workers+=("$worker/32")
@@ -533,12 +582,14 @@ swarm_acl_rules() {
         rule reject "$(join_by , "${reject[@]}")"
         rule reject "$gateway/32" tcp "1-$((SWARM_API_PORT - 1)),$((SWARM_API_PORT + 1))-65535"
         rule reject "$gateway/32" udp
-        rule reject "$test_gateway/32"
-        rule reject "$test_net" tcp 1-21,23-65535
-        rule reject "$test_net" udp
         rule allow "$gateway/32" tcp "$SWARM_API_PORT"
-        rule allow "$test_net" tcp 22
-        rule allow "$test_net" icmp4
+        if [[ -n "$test_net" ]]; then
+            rule reject "$test_gateway/32"
+            rule reject "$test_net" tcp 1-21,23-65535
+            rule reject "$test_net" udp
+            rule allow "$test_net" tcp 22
+            rule allow "$test_net" icmp4
+        fi
         if ((${#workers[@]} > 0)); then
             rule reject "$(join_by , "${workers[@]}")" tcp 1-21,23-65535
             rule reject "$(join_by , "${workers[@]}")" udp
@@ -623,8 +674,10 @@ write_env_file() {
         printf '# Written by scripts/providers/incus.sh host-setup; read by incus.sh.\n'
         printf 'ACFS_INCUS_POOL=%q\n' "$pool_name"
         printf 'ACFS_INCUS_STORAGE_SOURCE=%q\n' "$pool_source"
-        printf 'ACFS_INCUS_PROJECT=%q\n' "$TEST_PROJECT"
-        printf 'ACFS_INCUS_BRIDGE_TESTS=%q\n' "$TEST_BRIDGE"
+        if [[ "$test_project" == true ]]; then
+            printf 'ACFS_INCUS_PROJECT=%q\n' "$TEST_PROJECT"
+            printf 'ACFS_INCUS_BRIDGE_TESTS=%q\n' "$TEST_BRIDGE"
+        fi
     } >"$tmp"
     chmod 0644 "$tmp"
     mv -f -- "$tmp" "$file"
@@ -639,6 +692,7 @@ main() {
     require_commands
     check_server
     add_memory_config
+    test_project_image_servers
 
     local gateway
     gateway="$(swarm_gateway)"
@@ -646,13 +700,16 @@ main() {
     # already set up with another pool is refused untouched.
     [[ "$storage" == */* ]] || pool_name="$storage"
     check_env_file
+    check_no_test_project
     ensure_pool
     ensure_swarm_profile
-    ensure_test_bridge
+    [[ "$test_project" == false ]] || ensure_test_bridge
     ensure_acl "$VM_ACL" "$VM_ACL_DESCRIPTION" "$(vm_acl_rules)"
     ensure_acl "$SWARM_ACL" "$SWARM_ACL_DESCRIPTION" "$(swarm_acl_rules "$gateway")"
-    ensure_test_project
-    ensure_client_cert
+    if [[ "$test_project" == true ]]; then
+        ensure_test_project
+        ensure_client_cert
+    fi
     write_env_file
 }
 

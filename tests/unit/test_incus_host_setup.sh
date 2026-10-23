@@ -143,7 +143,8 @@ chmod +x "$WORK/bin/incus" "$WORK/bin/findmnt" "$WORK/bin/swapon"
 GATEWAY_NET='{"managed": true, "type": "bridge", "config": {"ipv4.address": "10.20.30.1/24"}}'
 DEFAULT_PROFILE='{"config": {}, "devices": {"eth0": {"type": "nic", "network": "incusbr0"}, "root": {"type": "disk", "path": "/", "pool": "default"}}}'
 SERVER='{"auth": "trusted",
-  "api_extensions": ["projects_networks_restricted_access", "container_syscall_intercept_sysinfo", "disk_volume_subpath"],
+  "api_extensions": ["projects_networks_restricted_access", "container_syscall_intercept_sysinfo", "disk_volume_subpath",
+    "projects_restricted_image_servers"],
   "environment": {"storage_supported_drivers": [{"Name": "dir"}, {"Name": "btrfs"}, {"Name": "zfs"}]}}'
 
 CASE=""
@@ -204,12 +205,14 @@ only_null_stdin_except_acl_create() {
 }
 env_file() { printf '%s/.config/acfs/incus.env\n' "$CASE/home"; }
 no_env_file() { [[ ! -e "$(env_file)" ]]; }
+env_lacks() { ! grep -q -- "$1" "$(env_file)"; }
+# env_is <pool> <source> [<test project> <test bridge>]: empty when not given.
 env_is() {
     local ACFS_INCUS_POOL="" ACFS_INCUS_STORAGE_SOURCE="" ACFS_INCUS_PROJECT="" ACFS_INCUS_BRIDGE_TESTS=""
     # shellcheck disable=SC1090
     source "$(env_file)"
     [[ "$ACFS_INCUS_POOL" == "$1" && "$ACFS_INCUS_STORAGE_SOURCE" == "$2" \
-        && "$ACFS_INCUS_PROJECT" == acfs-tests && "$ACFS_INCUS_BRIDGE_TESTS" == acfstest0 ]]
+        && "$ACFS_INCUS_PROJECT" == "${3:-}" && "$ACFS_INCUS_BRIDGE_TESTS" == "${4:-}" ]]
 }
 config_is() { [[ "$(api "$1" | jq -r --arg k "$2" '.config[$k] // "<unset>"')" == "$3" ]]; }
 pool_is() { [[ "$(api "/1.0/storage-pools/$1" | jq -c '[.driver, .config.source]')" == "$2" ]]; }
@@ -247,9 +250,34 @@ check "names --storage" err_has 'storage is required'
 check "makes no incus call" no_calls
 check "writes no incus.env" no_env_file
 
-echo "== a fresh host, a directory on ext4 without project quotas"
-new_case fresh
+echo "== a fresh host without --test-project: no test project, bridge or test-net rules"
+new_case notest
 run_setup --storage "$STORAGE_DIR"
+check "exits 0" rc_is 0
+check "stdout stays empty" stdout_empty
+check "creates the profile" config_is /1.0/profiles/acfs-swarm security.privileged false
+check "creates no project" not_called 'project create'
+check "creates no bridge" not_called 'network create'
+check "creates the vm ACL (the launcher and the sidecar use it)" \
+    jq_is /1.0/network-acls/acfs-vm-egress '[.egress[] | .action]' '["reject"]'
+check "swarm ACL: allows the host API on the gateway" acl_allows acfs-swarm-egress 10.20.30.1 tcp 8443
+check "swarm ACL: rejects SSH into 10/8 (no test bridge to allow)" acl_rejects acfs-swarm-egress 10.99.0.50 tcp 22
+check "swarm ACL: rejects ICMP into 10/8" acl_rejects acfs-swarm-egress 10.99.0.50 icmp4
+check "swarm ACL: allows the internet" acl_allows acfs-swarm-egress 1.1.1.1 tcp 443
+check "creates no certificate" not_called 'config trust'
+check "incus.env records the pool, and no test project or bridge" env_is acfs "$STORAGE_DIR"
+check "incus.env has no test lines" env_lacks 'ACFS_INCUS_PROJECT\|ACFS_INCUS_BRIDGE_TESTS'
+: >"$CASE/calls"
+run_setup --storage "$STORAGE_DIR"
+check "re-run: exits 0" rc_is 0
+check "re-run: creates and changes nothing" no_creates
+run_setup --storage "$STORAGE_DIR" --client-cert "$WORK/no-such.crt" --client-name devbox
+check "--client-cert without --test-project: exits 2" rc_is 2
+check "--client-cert without --test-project: names it" err_has 'needs --test-project'
+
+echo "== a fresh host with --test-project, a directory on ext4 without project quotas"
+new_case fresh
+run_setup --storage "$STORAGE_DIR" --test-project
 check "exits 0" rc_is 0
 check "stdout stays empty" stdout_empty
 check "creates a dir pool acfs on the directory" pool_is acfs "[\"dir\",\"$STORAGE_DIR\"]"
@@ -298,23 +326,40 @@ check "swarm ACL: rejects the tailnet" acl_rejects acfs-swarm-egress 100.100.1.1
 check "swarm ACL: rejects IPv6 ULA" acl_rejects acfs-swarm-egress fd00::1 tcp 443
 check "swarm ACL: allows the internet" acl_allows acfs-swarm-egress 1.1.1.1 tcp 443
 check "creates no certificate without --client-cert" not_called 'config trust'
-check "incus.env records the pool and its source" env_is acfs "$STORAGE_DIR"
+check "incus.env records the pool, its source, the project and the bridge" env_is acfs "$STORAGE_DIR" acfs-tests acfstest0
 check "every incus call but the ACL creates has stdin /dev/null" only_null_stdin_except_acl_create
 check "every incus call is local" all_local
 
 echo "== re-run on the set-up host"
 : >"$CASE/calls"
-run_setup --storage "$STORAGE_DIR"
+run_setup --storage "$STORAGE_DIR" --test-project
 check "exits 0" rc_is 0
 check "creates and changes nothing" no_creates
-check "incus.env is unchanged" env_is acfs "$STORAGE_DIR"
+check "incus.env is unchanged" env_is acfs "$STORAGE_DIR" acfs-tests acfstest0
+
+echo "== re-run without --test-project on a host that has the test project"
+: >"$CASE/calls"
+run_setup --storage "$STORAGE_DIR"
+check "exits 1" rc_is 1
+check "names the project and --test-project" err_has 'test project acfs-tests from an earlier host setup; pass --test-project'
+check "creates and changes nothing" no_creates
+check "incus.env is unchanged" env_is acfs "$STORAGE_DIR" acfs-tests acfstest0
 
 echo "== re-run with an rch worker: the swarm ACL would differ"
 : >"$CASE/calls"
-run_setup --storage "$STORAGE_DIR" --rch-worker 192.168.5.20
+run_setup --storage "$STORAGE_DIR" --test-project --rch-worker 192.168.5.20
 check "exits 1" rc_is 1
 check "names the ACL" err_has 'acfs-swarm-egress exists with other egress rules'
 check "changes nothing" no_creates
+
+echo "== without --test-project, after a run that made the test bridge and stopped at the project"
+new_case bridgeonly
+seed /1.0/networks/acfstest0 '{"managed": true, "type": "bridge", "config": {"ipv4.address": "10.99.0.1/24"}}'
+run_setup --storage "$STORAGE_DIR"
+check "exits 1" rc_is 1
+check "names the bridge" err_has 'test bridge acfstest0'
+check "creates nothing" no_creates
+check "writes no incus.env" no_env_file
 
 echo "== rch workers on a fresh hypervisor"
 new_case rch
@@ -387,12 +432,12 @@ check "a missing directory: creates nothing" no_creates
 
 echo "== an existing pool by name"
 new_case existing
-run_setup --storage default
+run_setup --storage default --test-project
 check "exits 0" rc_is 0
 check "creates no pool" not_called 'storage create'
 check "the test project's root is on it" \
     jq_is '/1.0/profiles/default?project=acfs-tests' .devices.root.pool '"default"'
-check "incus.env records it and its source" env_is default /var/lib/incus/storage-pools/default
+check "incus.env records it and its source" env_is default /var/lib/incus/storage-pools/default acfs-tests acfstest0
 new_case nopool
 run_setup --storage nosuchpool
 check "an unknown pool name: exits 2" rc_is 2
@@ -426,7 +471,30 @@ seed /1.0 "$(jq -c '.api_extensions = ["container_syscall_intercept_sysinfo"]' <
 run_setup --storage "$STORAGE_DIR"
 check "missing extension: exits 1" rc_is 1
 check "missing extension: names it" err_has 'projects_networks_restricted_access'
+check "missing extension: claims no 6.0.6 floor" err_lacks '6.0.6'
 check "missing extension: creates nothing" no_creates
+
+echo "== --test-project on an Incus without restricted.images.servers (6.0.5)"
+new_case noimageservers
+seed /1.0 "$(jq -c '.api_extensions -= ["projects_restricted_image_servers"]' <<<"$SERVER")"
+run_setup --storage "$STORAGE_DIR" --test-project
+check "exits 0" rc_is 0
+check "warns, naming the extension" err_has 'lacks the API extension projects_restricted_image_servers'
+check "the key is left out" config_is /1.0/projects/acfs-tests restricted.images.servers '<unset>'
+check "the project is restricted otherwise" config_is /1.0/projects/acfs-tests restricted true
+check "and keeps its network restriction" config_is /1.0/projects/acfs-tests restricted.networks.access acfstest0
+check "the key is never sent" not_called 'restricted.images.servers'
+seed /1.0 "$SERVER"
+: >"$CASE/calls"
+run_setup --storage "$STORAGE_DIR" --test-project
+check "after an upgrade: exits 0" rc_is 0
+check "after an upgrade: the key is set" config_is /1.0/projects/acfs-tests restricted.images.servers images.linuxcontainers.org
+check "after an upgrade: no warning" err_lacks 'projects_restricted_image_servers'
+new_case noimageservers-default
+seed /1.0 "$(jq -c '.api_extensions -= ["projects_restricted_image_servers"]' <<<"$SERVER")"
+run_setup --storage "$STORAGE_DIR"
+check "without --test-project: exits 0" rc_is 0
+check "without --test-project: no warning" err_lacks 'projects_restricted_image_servers'
 
 echo "== existing objects are checked, not changed"
 new_case loose
@@ -446,7 +514,7 @@ run_setup --storage "$STORAGE_DIR"
 check "a profile with devices: exits 1" rc_is 1
 new_case looseproject
 seed /1.0/projects/acfs-tests '{"config": {"restricted.containers.nesting": "allow"}}'
-run_setup --storage "$STORAGE_DIR"
+run_setup --storage "$STORAGE_DIR" --test-project
 check "a loosened project: exits 1" rc_is 1
 check "a loosened project: never set" not_called 'project set'
 new_case tunedproject
@@ -458,7 +526,7 @@ seed /1.0/projects/acfs-tests "$(jq -n '{config: ($ARGS.positional | map(split("
     restricted.images.servers=images.linuxcontainers.org restricted.snapshots=block restricted.backups=block \
     limits.instances=10)"
 seed '/1.0/profiles/default?project=acfs-tests' '{"config": {}, "devices": {}}'
-run_setup --storage "$STORAGE_DIR"
+run_setup --storage "$STORAGE_DIR" --test-project
 check "a project with the operator's own limit: exits 0" rc_is 0
 check "keeps the operator's limit" config_is /1.0/projects/acfs-tests limits.instances 10
 check "sets the limits it lacked" config_is /1.0/projects/acfs-tests limits.memory 32GiB
@@ -476,19 +544,22 @@ new_case cert
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 1 -subj /CN=devbox \
     -keyout "$CASE/client.key" -out "$CASE/client.crt" 2>/dev/null
 FP="$(openssl x509 -in "$CASE/client.crt" -noout -fingerprint -sha256 | sed 's/.*=//; s/://g' | tr 'A-F' 'a-f')"
-run_setup --storage "$STORAGE_DIR" --client-cert "$CASE/client.crt"
+run_setup --storage "$STORAGE_DIR" --test-project --client-cert "$CASE/client.crt"
 check "--client-cert without --client-name: exits 2" rc_is 2
 run_setup --storage "$STORAGE_DIR" --client-cert "$CASE/client.crt" --client-name devbox
+check "--client-cert without --test-project: exits 2" rc_is 2
+check "--client-cert without --test-project: makes no incus call" no_calls
+run_setup --storage "$STORAGE_DIR" --test-project --client-cert "$CASE/client.crt" --client-name devbox
 check "exits 0" rc_is 0
 check "trusted restricted to acfs-tests under its name" \
     args_are trust.args "$CASE/client.crt --restricted --projects acfs-tests --name devbox"
 seed '/1.0/certificates?recursion=1' "[{\"fingerprint\": \"$FP\", \"name\": \"devbox\", \"restricted\": true, \"projects\": [\"acfs-tests\"]}]"
 : >"$CASE/calls"
-run_setup --storage "$STORAGE_DIR" --client-cert "$CASE/client.crt" --client-name devbox
+run_setup --storage "$STORAGE_DIR" --test-project --client-cert "$CASE/client.crt" --client-name devbox
 check "already trusted that way: exits 0" rc_is 0
 check "already trusted that way: not added again" not_called 'config trust'
 seed '/1.0/certificates?recursion=1' "[{\"fingerprint\": \"$FP\", \"name\": \"devbox\", \"restricted\": false, \"projects\": []}]"
-run_setup --storage "$STORAGE_DIR" --client-cert "$CASE/client.crt" --client-name devbox
+run_setup --storage "$STORAGE_DIR" --test-project --client-cert "$CASE/client.crt" --client-name devbox
 check "trusted unrestricted: exits 1" rc_is 1
 check "trusted unrestricted: says so" err_has 'not restricted to acfs-tests'
 

@@ -16,7 +16,8 @@
 #
 # With --vm, or with a remote, the harness makes the instance itself, with
 # incus launch in the restricted project acfs-tests (ACFS_TEST_PROJECT),
-# and installs committed HEAD the way the launcher does. So the VM tier
+# which host setup makes only with --test-project, and installs committed
+# HEAD the way the launcher does. So the VM tier
 # doesn't need the launcher's --vm. Through a remote (from inside a
 # machine, with the client certificate host setup trusted for acfs-tests
 # alone), KVM is probed on the remote server, by its qemu driver, and the
@@ -99,7 +100,7 @@ if [[ ${#MODE_ARGS[@]} -gt 0 ]]; then
 fi
 if [[ "$OWN" == true ]]; then
     inc list "$SERVER" -f csv -c n >/dev/null 2>&1 \
-        || skip "the project $TEST_PROJECT isn't usable on ${REMOTE:-this server} (host setup makes it; a remote needs the client certificate it trusted)"
+        || skip "the project $TEST_PROJECT isn't usable on ${REMOTE:-this server} (host setup --test-project makes it; a remote needs the client certificate it trusted)"
 fi
 incus image info "$IMAGE" </dev/null >/dev/null 2>&1 || skip "the images: remote isn't reachable"
 if inc info "$NAME" >/dev/null 2>&1; then

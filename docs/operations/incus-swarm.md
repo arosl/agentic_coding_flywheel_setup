@@ -13,7 +13,7 @@ How to move a running ACFS dev machine, a VM or a VPS with a swarm on it, into a
 
 ## 1. The host
 
-Once, on the host: `incus.sh host-setup --storage <pool|directory> [--memory SIZE]`, sized for the new machine and anything else that will run there. Also anything you want beyond it: `core.https_address` for the test project, or swap. See the guide's "Host setup".
+Once, on the host: `incus.sh host-setup --storage <pool|directory> [--memory SIZE]`, sized for the new machine and anything else that will run there. Also anything you want beyond it: `--test-project` and `core.https_address` for ACFS's own tests, or swap. See the guide's "Host setup".
 
 ## 2. Create and check the new machine
 

@@ -36,8 +36,8 @@ The new pool is called `acfs` unless you pass `--pool-name`. ACFS formats no dis
 - **The profile `acfs-swarm`,** policy only: the security pins ([below](#the-containers-shape)), the `sysinfo` intercept, `limits.processes=30000`, `limits.kernel.nofile=1048576`, autostart, and the CPU rule. A container sees every host thread (no `limits.cpu`) and yields under contention: `limits.cpu.priority=0` and `limits.cpu.allowance=30%`, which Incus turns into a `cpu.weight` of 20 against the 100 of the host's own services.
 - **Memory,** with `--memory SIZE`: `limits.memory` on the profile. It is soft (the container is throttled and reclaimed, nothing is killed) when the host has swap, and hard (killed inside the container at the limit) when it has none; `--memory-enforce soft|hard` overrides that. Without `--memory` there is no limit.
 - **The egress ACLs** `acfs-swarm-egress` and `acfs-vm-egress` ([The network](#the-network)). `--rch-worker ADDR` (repeatable) lets the containers reach an rch build worker over SSH.
-- **The test project** `acfs-tests` on its own bridge `acfstest0` ([below](#the-test-project)), and with `--client-cert FILE --client-name NAME` a client certificate trusted for that project only.
-- **`~/.config/acfs/incus.env`** (`$XDG_CONFIG_HOME/acfs/incus.env`): `ACFS_INCUS_POOL`, `ACFS_INCUS_STORAGE_SOURCE`, `ACFS_INCUS_PROJECT` and `ACFS_INCUS_BRIDGE_TESTS`. The launcher reads it on every run and stops without it.
+- **The test project,** only with `--test-project`: `acfs-tests` on its own bridge `acfstest0` ([below](#the-test-project)), and with `--client-cert FILE --client-name NAME` a client certificate trusted for that project only. Only ACFS's own tests use it, so without the flag there is no test project, bridge or certificate, and `acfs-swarm-egress` lets the containers reach no test instance.
+- **`~/.config/acfs/incus.env`** (`$XDG_CONFIG_HOME/acfs/incus.env`): `ACFS_INCUS_POOL` and `ACFS_INCUS_STORAGE_SOURCE`, and with `--test-project` also `ACFS_INCUS_PROJECT` and `ACFS_INCUS_BRIDGE_TESTS`. The launcher reads it on every run and stops without it.
 
 **Re-running it is safe.** What exists is checked against what these options would create and never changed: a difference stops the run and names the object, so change an existing profile or ACL yourself with `incus profile set` or `incus network acl edit`. Host setup never deletes anything.
 
@@ -134,7 +134,7 @@ Re-running the same command is safe:
 The instance sits on Incus's NAT bridge, so nothing outside reaches it except through SSH on the host.
 
 **In the other direction,** an instance on a plain bridge can reach the host and everything the host can route to: its LAN, and its tailnet when the host runs Tailscale. The launcher limits that with an Incus network ACL on the instance's NIC:
-- **A container gets `acfs-swarm-egress`,** which host setup creates: the internet passes, and of the private ranges only the host's Incus API, the test project's bridge and the configured rch build workers. The launcher doesn't create it, since its allows name addresses only host setup knows; without it the launcher stops before creating anything.
+- **A container gets `acfs-swarm-egress`,** which host setup creates: the internet passes, and of the private ranges only the host's Incus API, the test project's bridge (with `--test-project`) and the configured rch build workers. The launcher doesn't create it, since its allows name addresses only host setup knows; without it the launcher stops before creating anything.
 - **A VM gets `acfs-vm-egress`.** It rejects outgoing traffic to `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` (CGNAT, which includes tailnets), `169.254.0.0/16`, `fc00::/7` and `fe80::/10` (IPv6 link-local, on which the host and every other instance on the bridge are reachable). The launcher creates it on the first run if it doesn't exist.
 - **`--acl <name>`** puts another existing ACL on the NIC instead, for either type.
 - **Everything else passes,** including the internet and the replies to your SSH sessions. The bridge's own DNS and DHCP pass too: Incus allows its own services ahead of any ACL. The launcher never changes an existing ACL.
@@ -228,13 +228,13 @@ This puts the machine on your tailnet without Tailscale in it. A small container
 
 ## The test project
 
-Tests that need their own Incus instances run them in `acfs-tests`, a project that host setup restricts:
-- **Restrictions:** no nesting, no privileged or shared-idmap containers, no syscall interception, no unix-char or GPU devices, disks and NICs only from managed pools and networks, only the bridge `acfstest0`, images only from `images.linuxcontainers.org`, and no snapshots or backups.
+Tests that need their own Incus instances run them in `acfs-tests`, a project that host setup makes and restricts when you pass `--test-project`. A host set up with it stays so: a later run without the flag stops and asks for it, because host setup never deletes anything.
+- **Restrictions:** no nesting, no privileged or shared-idmap containers, no syscall interception, no unix-char or GPU devices, disks and NICs only from managed pools and networks, only the bridge `acfstest0`, images only from `images.linuxcontainers.org`, and no snapshots or backups. The image restriction needs the API extension `projects_restricted_image_servers` (Incus 6.22, and 6.0.6 in the 6.0 LTS). On an older server, such as Ubuntu 26.04's 6.0.5, host setup warns and leaves that one key out; a run after the upgrade sets it.
 - **Limits:** 6 instances, 16 CPUs, 32 GiB of memory and 200 GiB of disk in all. Its default profile gives each instance 4 CPUs and 8 GiB, because a project with limits refuses instances that set none. Host setup sets these limits only when they are unset, so changes you make are kept.
 
 **To let a machine use it:**
 1. **The certificate:** inside the machine, any `incus` command (`incus remote list`) creates its client certificate, `~/.config/incus/client.crt`. Copy that file to the host.
-2. **Trust it:** on the host, `incus.sh host-setup … --client-cert client.crt --client-name dev`. The certificate is trusted for `acfs-tests` only.
+2. **Trust it:** on the host, `incus.sh host-setup … --test-project --client-cert client.crt --client-name dev`. The certificate is trusted for `acfs-tests` only.
 3. **Expose the API:** host setup doesn't make Incus listen on the network. Set `core.https_address` to the gateway address of the machine's bridge, port 8443, and allow that port in the host's firewall. `acfs-swarm-egress` already lets the containers reach exactly that address and port.
 4. **Add the remote:** inside the machine, `incus remote add host https://<gateway>:8443`. Before you accept the server's certificate, compare its fingerprint with the host's own `incus info`. The machine then reaches the instances on `acfstest0` over SSH and ping, and nothing else of the host's.
 
@@ -300,4 +300,4 @@ Untested, because there was no Mac. What should apply:
 - `bash tests/unit/test_incus_provider_stub.sh`: the launcher's calls and output, against a stub `incus`.
 - `bash tests/unit/test_incus_host_setup.sh` and `bash tests/unit/test_incus_tailscale.sh`: host setup and the sidecar, against the same stub.
 - `bash tests/unit/test_state_layer.sh`: `acfs state` against a fixture home and volume.
-- `tests/vm/test_incus_provider.sh [--vm] [<remote>:]<new-name>`: a real container through the launcher, or with `--vm` or a remote an instance the harness makes itself in the `acfs-tests` project, checked through the printed block, then measured. It's opt-in and runs a full ACFS install. Its last line is `RESULT: pass`, `RESULT: fail` or `RESULT: skip (<why>)`, and a skip exits 77: without Incus, without KVM (for a VM, probed on the server) or without `images:`. A container run needs host setup first.
+- `tests/vm/test_incus_provider.sh [--vm] [<remote>:]<new-name>`: a real container through the launcher, or with `--vm` or a remote an instance the harness makes itself in the `acfs-tests` project, checked through the printed block, then measured. It's opt-in and runs a full ACFS install. Its last line is `RESULT: pass`, `RESULT: fail` or `RESULT: skip (<why>)`, and a skip exits 77: without Incus, without KVM (for a VM, probed on the server) or without `images:`. A container run needs host setup first, and a VM or remote run host setup with `--test-project`.
