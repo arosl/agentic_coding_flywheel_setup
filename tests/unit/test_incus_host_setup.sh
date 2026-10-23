@@ -261,8 +261,8 @@ check "stdout stays empty" stdout_empty
 check "creates the profile" config_is /1.0/profiles/acfs-swarm security.privileged false
 check "creates no project" not_called 'project create'
 check "creates no bridge" not_called 'network create'
-check "creates the vm ACL (the launcher uses it)" \
-    jq_is /1.0/network-acls/acfs-vm-egress '[.egress[] | .action]' '["reject"]'
+check "creates no test ACL" not_called 'acfs-test-egress'
+check "makes and reads nothing named acfs-vm-egress" not_called 'acfs-vm-egress'
 check "swarm ACL: allows the host API on the gateway" acl_allows acfs-swarm-egress 10.20.30.1 tcp 8443
 check "swarm ACL: rejects SSH into 10/8 (no test bridge to allow)" acl_rejects acfs-swarm-egress 10.99.0.50 tcp 22
 check "swarm ACL: rejects ICMP into 10/8" acl_rejects acfs-swarm-egress 10.99.0.50 icmp4
@@ -329,16 +329,17 @@ for kv in features.images=true features.profiles=true features.storage.volumes=t
 done
 check "test profile: root on the pool, 40GiB" \
     jq_is '/1.0/profiles/default?project=acfs-tests' '.devices.root | [.pool, .size]' '["acfs","40GiB"]'
-check "test profile: NIC on acfstest0 behind acfs-vm-egress" \
-    jq_is '/1.0/profiles/default?project=acfs-tests' '.devices.eth0 | [.network, .["security.acls"]]' '["acfstest0","acfs-vm-egress"]'
+check "test profile: NIC on acfstest0 behind acfs-test-egress" \
+    jq_is '/1.0/profiles/default?project=acfs-tests' '.devices.eth0 | [.network, .["security.acls"]]' '["acfstest0","acfs-test-egress"]'
 check "test profile: limits the project requires" config_is "/1.0/profiles/default?project=acfs-tests" limits.cpu 4
 check "bridge acfstest0: IPv4 with NAT, no IPv6" \
     args_are network-create.args '--type=bridge ipv4.address=auto ipv4.nat=true ipv6.address=none'
-check "vm ACL: the launcher's one reject rule" \
-    jq_is /1.0/network-acls/acfs-vm-egress '[.egress[] | [.action, .destination]]' \
+check "test ACL: one reject rule for every private, CGNAT and link-local range" \
+    jq_is /1.0/network-acls/acfs-test-egress '[.egress[] | [.action, .destination]]' \
     '[["reject","10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16,fc00::/7,fe80::/10"]]'
-check "vm ACL: the launcher's description" \
-    jq_is /1.0/network-acls/acfs-vm-egress .description '"ACFS instances: no egress to private, CGNAT or link-local ranges"'
+check "test ACL: its description" \
+    jq_is /1.0/network-acls/acfs-test-egress .description '"ACFS test instances: no egress to private, CGNAT or link-local ranges"'
+check "makes nothing named acfs-vm-egress" not_called 'acfs-vm-egress'
 check "swarm ACL: allows the host API on the gateway" acl_allows acfs-swarm-egress 10.20.30.1 tcp 8443
 check "swarm ACL: rejects SSH to the gateway" acl_rejects acfs-swarm-egress 10.20.30.1 tcp 22
 check "swarm ACL: rejects UDP to the gateway" acl_rejects acfs-swarm-egress 10.20.30.1 udp 123
@@ -615,14 +616,36 @@ run_setup --storage "$STORAGE_DIR" --test-project
 check "a project with the operator's own limit: exits 0" rc_is 0
 check "keeps the operator's limit" config_is /1.0/projects/acfs-tests limits.instances 10
 check "sets the limits it lacked" config_is /1.0/projects/acfs-tests limits.memory 32GiB
-new_case launcheracl
-# acfs-vm-egress as incus.sh creates it, as Incus returns it.
+new_case oldvmacl
+# acfs-vm-egress as an earlier launcher made it, as Incus returns it.
 seed /1.0/network-acls/acfs-vm-egress '{"name": "acfs-vm-egress", "description": "x", "ingress": [],
   "egress": [{"action": "reject", "source": "", "destination": "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16,fc00::/7,fe80::/10",
   "protocol": "", "source_port": "", "destination_port": "", "icmp_type": "", "icmp_code": "", "description": "", "state": "enabled"}]}'
-run_setup --storage "$STORAGE_DIR"
-check "the launcher's acfs-vm-egress is accepted as it is" rc_is 0
-check "and not created again" not_called 'network acl create acfs-vm-egress'
+run_setup --storage "$STORAGE_DIR" --test-project
+check "an earlier acfs-vm-egress: exits 0" rc_is 0
+check "an earlier acfs-vm-egress: neither read nor changed" not_called 'acfs-vm-egress'
+check "an earlier acfs-vm-egress: the test ACL is made beside it" called 'network acl create --quiet acfs-test-egress'
+
+echo "== a test project whose NIC an earlier host setup put behind acfs-vm-egress"
+new_case oldtestnic
+run_setup --storage "$STORAGE_DIR" --test-project
+seed '/1.0/profiles/default?project=acfs-tests' \
+    "$(api '/1.0/profiles/default?project=acfs-tests' | jq -c '.devices.eth0["security.acls"] = "acfs-vm-egress"')"
+: >"$CASE/calls"
+run_setup --storage "$STORAGE_DIR" --test-project
+check "exits 1" rc_is 1
+check "names the earlier ACL" err_has "has its NIC behind acfs-vm-egress, an earlier host setup's name for acfs-test-egress"
+check "prints the command that moves it" \
+    err_has 'incus profile device set --force-local default eth0 security.acls=acfs-test-egress --project acfs-tests'
+check "creates and changes nothing" no_creates
+check "the NIC stays behind acfs-vm-egress" \
+    jq_is '/1.0/profiles/default?project=acfs-tests' '.devices.eth0["security.acls"]' '"acfs-vm-egress"'
+seed '/1.0/profiles/default?project=acfs-tests' \
+    "$(api '/1.0/profiles/default?project=acfs-tests' | jq -c '.devices.eth0["security.acls"] = "some-other-acl"')"
+run_setup --storage "$STORAGE_DIR" --test-project
+check "a NIC behind any other ACL: exits 1" rc_is 1
+check "a NIC behind any other ACL: says so, with no command" \
+    bash -c 'grep -q "has a NIC that isn'"'"'t on acfstest0 behind acfs-test-egress" "$1" && ! grep -q "profile device set" "$1"' _ "$CASE/err"
 
 echo "== the restricted client certificate"
 new_case cert

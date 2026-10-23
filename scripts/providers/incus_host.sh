@@ -5,10 +5,10 @@
 # Prepares the hypervisor (the physical machine that runs Incus) once, as an
 # Incus admin there: the storage pool at the location you give, the
 # policy-only profile acfs-swarm for ACFS containers, and the egress ACLs
-# acfs-swarm-egress, acfs-vm-egress and acfs-sidecar-egress (the Tailscale
-# sidecar's). With --test-project, for ACFS's own tests, also the
-# restricted project acfs-tests on its own bridge acfstest0, and
-# optionally a client certificate restricted to acfs-tests. It records
+# acfs-swarm-egress and acfs-sidecar-egress (the Tailscale sidecar's). With
+# --test-project, for ACFS's own tests, also the restricted project
+# acfs-tests on its own bridge acfstest0 behind the ACL acfs-test-egress,
+# and optionally a client certificate restricted to acfs-tests. It records
 # the result in ${XDG_CONFIG_HOME:-~/.config}/acfs/incus.env, which incus.sh
 # reads.
 #
@@ -36,10 +36,14 @@ SWARM_PROFILE="acfs-swarm"
 TEST_PROJECT="acfs-tests"
 TEST_BRIDGE="acfstest0"
 SWARM_ACL="acfs-swarm-egress"
-VM_ACL="acfs-vm-egress"
-# The same ranges, rule and description as incus.sh's acfs-vm-egress, so that
-# the launcher finds this ACL as its own.
-VM_ACL_DESCRIPTION="ACFS instances: no egress to private, CGNAT or link-local ranges"
+# The test project's NIC: no private, CGNAT or link-local range at all.
+TEST_ACL="acfs-test-egress"
+TEST_ACL_DESCRIPTION="ACFS test instances: no egress to private, CGNAT or link-local ranges"
+# The same rule's earlier name, from when the launcher made VMs behind it
+# (acfs-ioo3.19). Host setup no longer makes or checks it, and never deletes
+# it; a test project's NIC still behind it is named with the command that
+# moves it.
+OLD_TEST_ACL="acfs-vm-egress"
 SWARM_ACL_DESCRIPTION="ACFS containers: the hypervisor's Incus API, SSH to the test instances and the rch workers; no other private ranges"
 SIDECAR_ACL="acfs-sidecar-egress"
 SIDECAR_ACL_DESCRIPTION="ACFS Tailscale sidecars: DNS and DHCP on the bridge's gateway and TCP to the instances on the bridge; no other private ranges"
@@ -123,7 +127,8 @@ ${XDG_CONFIG_HOME:-~/.config}/acfs/incus.env.
   --rch-worker ADDR      An IPv4 address of an rch build worker that the
                          containers may reach over SSH (repeatable).
   --test-project         Also the restricted project acfs-tests on its own
-                         bridge acfstest0, for ACFS's own tests
+                         bridge acfstest0, behind the ACL acfs-test-egress,
+                         for ACFS's own tests
                          (tests/vm/test_incus_provider.sh); none without it.
   --client-cert FILE     Trust this client certificate, restricted to acfs-tests
                          (needs --test-project).
@@ -133,7 +138,9 @@ ACFS containers reach the internet, and of private addresses only the
 hypervisor's Incus API (8443 on their bridge's gateway), SSH and ping to the
 test instances on acfstest0 (with --test-project), and SSH to the rch workers.
 Tailscale sidecars (incus.sh tailscale) reach the internet, DNS and DHCP on
-the gateway, and TCP to the instances on that bridge.
+the gateway, and TCP to the instances on that bridge. Test instances
+(--test-project) reach the internet; their ACL rejects every private, CGNAT
+and link-local range.
 
 Re-running is safe: absent objects are created, and existing ones are checked
 and never changed. See scripts/providers/incus.md.
@@ -489,6 +496,12 @@ ensure_test_bridge() {
     cidr_parse "$test_bridge_cidr" >/dev/null || die "network $TEST_BRIDGE has no IPv4 address (ipv4.address='$test_bridge_cidr')" 1
 }
 
+# test_nic_is <profile JSON> <ACL>: its eth0 is on the test bridge, behind <ACL>.
+test_nic_is() {
+    jq -e --arg n "$TEST_BRIDGE" --arg a "$2" \
+        '.devices.eth0.network == $n and .devices.eth0["security.acls"] == $a' <<<"$1" >/dev/null
+}
+
 ensure_test_project() {
     local json q="?project=$TEST_PROJECT" profile
     if json="$(incus_get "/1.0/projects/$TEST_PROJECT")"; then
@@ -519,13 +532,18 @@ ensure_test_project() {
         die "project $TEST_PROJECT's default profile has its root disk on pool $(jq -r '.devices.root.pool' <<<"$profile"), not $pool_name" 1
     fi
     if ! jq -e '.devices.eth0' <<<"$profile" >/dev/null; then
-        log_step "Project $TEST_PROJECT: NIC on $TEST_BRIDGE with ACL $VM_ACL"
-        incus_run profile device add default eth0 nic "network=$TEST_BRIDGE" "security.acls=$VM_ACL" \
+        log_step "Project $TEST_PROJECT: NIC on $TEST_BRIDGE with ACL $TEST_ACL"
+        incus_run profile device add default eth0 nic "network=$TEST_BRIDGE" "security.acls=$TEST_ACL" \
             security.acls.default.egress.action=allow security.acls.default.ingress.action=allow \
             --project "$TEST_PROJECT" >/dev/null || die "could not add the NIC to $TEST_PROJECT's default profile" 1
-    elif ! jq -e --arg n "$TEST_BRIDGE" --arg a "$VM_ACL" \
-            '.devices.eth0.network == $n and .devices.eth0["security.acls"] == $a' <<<"$profile" >/dev/null; then
-        die "project $TEST_PROJECT's default profile has a NIC that isn't on $TEST_BRIDGE behind $VM_ACL" 1
+    elif ! test_nic_is "$profile" "$TEST_ACL"; then
+        if test_nic_is "$profile" "$OLD_TEST_ACL"; then
+            log_error "project $TEST_PROJECT's default profile has its NIC behind $OLD_TEST_ACL, an earlier host setup's name for $TEST_ACL; it is left as it is"
+            log_detail "To move it to $TEST_ACL (the same rule), run on this hypervisor, then run host setup again:"
+            log_detail "  incus profile device set --force-local default eth0 security.acls=$TEST_ACL --project $TEST_PROJECT"
+            exit 1
+        fi
+        die "project $TEST_PROJECT's default profile has a NIC that isn't on $TEST_BRIDGE behind $TEST_ACL" 1
     fi
     # Limits the operator changed there are theirs: only unset ones are set.
     local missing=()
@@ -613,7 +631,7 @@ swarm_acl_rules() {
     } | jq -sc .
 }
 
-vm_acl_rules() {
+test_acl_rules() {
     rule reject "$(join_by , "${PRIVATE_V4[@]}" "${PRIVATE_V6[@]}")" | jq -sc .
 }
 
@@ -774,10 +792,10 @@ main() {
     ensure_pool
     ensure_swarm_profile
     [[ "$test_project" == false ]] || ensure_test_bridge
-    ensure_acl "$VM_ACL" "$VM_ACL_DESCRIPTION" "$(vm_acl_rules)"
     ensure_acl "$SWARM_ACL" "$SWARM_ACL_DESCRIPTION" "$(swarm_acl_rules "$gateway")"
     ensure_acl "$SIDECAR_ACL" "$SIDECAR_ACL_DESCRIPTION" "$(sidecar_acl_rules "$bridge_address")"
     if [[ "$test_project" == true ]]; then
+        ensure_acl "$TEST_ACL" "$TEST_ACL_DESCRIPTION" "$(test_acl_rules)"
         ensure_test_project
         ensure_client_cert
     fi
