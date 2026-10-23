@@ -9,7 +9,9 @@
 # its live herdr status and a preview of its screen. The send itself is
 # `acfs agents send --template FILE` (herdr_agents.sh), so placeholders,
 # skipping agents blocked at a dialog and the check that each prompt was
-# submitted stay in one place.
+# submitted stay in one place. Once nhm owns the herdr server, where that
+# send refuses, the interactive palette hands over to `nhm palette`, this
+# script's port to `nhm send` (acfs-f2mc.5.3).
 #
 # Inside herdr, prefix+a (ctrl+b, then a) opens it in a popup over the
 # current tab, as ntm's F6 did in tmux: `acfs palette bind` writes that
@@ -739,6 +741,28 @@ palette_unbind() {
 # main
 # ------------------------------------------------------------
 
+# Once nhm owns this herdr server, `acfs agents send` refuses, so the
+# interactive palette is nhm's: nhm-palette is this script ported to
+# `nhm send`, with the same files, steps and keys (acfs-f2mc.5.3). The
+# workspace $1, the directory and a --file carry over. Returns only while
+# the Bash commands still drive the agents (`acfs agents owner`).
+palette_hand_to_nhm() {
+    local ws="$1" owner nhm_bin
+    local -a args=(palette)
+    owner="$(bash "$PALETTE_AGENTS_SCRIPT" owner 2>/dev/null || true)"
+    [[ "$owner" == nhm ]] || return 0
+    nhm_bin="${NHM_BIN:-nhm}"
+    command -v "$nhm_bin" >/dev/null 2>&1 \
+        || palette_die "nhm owns this herdr server, so the palette is nhm's, but nhm isn't on PATH"
+    [[ -z "$ws" ]] || args+=(--workspace "$ws")
+    if [[ -n "${ACFS_PALETTE_FILE:-}" ]]; then
+        args+=(--file "$ACFS_PALETTE_FILE")
+    elif [[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/acfs/command_palette.md" ]]; then
+        palette_note "nhm's palette reads ~/.config/nhm/command_palette.md, not ~/.config/acfs/command_palette.md: move your prompts there"
+    fi
+    NHM_PALETTE_CWD="$ACFS_PALETTE_CWD" exec "$nhm_bin" "${args[@]}"
+}
+
 # Send the text in file $1 to target rows $3 of workspace $2, through
 # `acfs agents send --template`. Asks for the thread when the text needs
 # one. Returns send's status.
@@ -863,6 +887,7 @@ palette_main() {
             if [[ "$workspace_set" == false ]]; then
                 workspace="${HERDR_ACTIVE_WORKSPACE_ID:-${HERDR_WORKSPACE_ID:-}}"
             fi
+            palette_hand_to_nhm "$workspace"
             palette_interactive "$workspace"
             ;;
     esac
