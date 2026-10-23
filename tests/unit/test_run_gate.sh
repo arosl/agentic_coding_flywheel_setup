@@ -155,7 +155,7 @@ STUB
 web_browsers() { # web_browsers [--browser-project NAME...]: the helper's arguments
     : >"$LOG"
     PATH="$WORK/bin:$PATH" ACFS_BROWSER_GATE_LOCK="$WORK/browser.lock" \
-        bash "$GATE" --root "$FIXTURE" --tmp-parent "$PARENT" --step web "$@" >"$WORK/out" 2>&1 || true
+        bash "$GATE" --root "$FIXTURE" --tmp-parent "$PARENT" --step web --bun-memory-max none "$@" >"$WORK/out" 2>&1 || true
     cat "$LOG"
 }
 check "web: every project by default, so every browser" \
@@ -165,6 +165,82 @@ check "web: Mobile Chrome needs only chromium" \
 check "web: firefox and Mobile Safari add theirs" \
     test "$(web_browsers --browser-project firefox --browser-project 'Mobile Safari')" = "--web $FIXTURE/apps/web chromium firefox webkit"
 check "removes the gate root after the web step" parent_empty
+
+echo "run_gate: the bun memory cap (acfs-dpvr)"
+# Stubs: bun records its arguments; systemctl answers the user manager's
+# state from GATE_TEST_SYSTEMD_STATE; systemd-run records its options and
+# runs the command after --, as a scope would.
+mkdir -p "$FIXTURE/packages/manifest" "$WORK/capbin" "$WORK/oombin"
+cat >"$WORK/capbin/bun" <<'STUB'
+#!/usr/bin/env bash
+printf 'bun %s\n' "$*" >>"$GATE_TEST_LOG"
+STUB
+cat >"$WORK/capbin/systemctl" <<'STUB'
+#!/usr/bin/env bash
+[[ "$*" == "--user is-system-running" ]] || exit 99
+printf '%s\n' "$GATE_TEST_SYSTEMD_STATE"
+[[ "$GATE_TEST_SYSTEMD_STATE" == running ]]
+STUB
+cat >"$WORK/capbin/systemd-run" <<'STUB'
+#!/usr/bin/env bash
+options=()
+while [[ $# -gt 0 && "$1" != -- ]]; do options+=("$1"); shift; done
+shift
+printf 'systemd-run %s\n' "${options[*]}" >>"$GATE_TEST_LOG"
+exec "$@"
+STUB
+chmod +x "$WORK/capbin/bun" "$WORK/capbin/systemctl" "$WORK/capbin/systemd-run"
+manifest_gate() { # manifest_gate <user manager state> [options...]: the manifest step against the stubs
+    local state="$1"
+    shift
+    : >"$LOG"
+    PATH="$WORK/capbin:$PATH" GATE_TEST_SYSTEMD_STATE="$state" \
+        bash "$GATE" --root "$FIXTURE" --tmp-parent "$PARENT" --step manifest "$@" >"$WORK/out" 2>&1
+}
+scoped_bun() { # scoped_bun <MemoryMax>: three bun commands, each after its scope
+    [[ "$(grep -c "^systemd-run --user --scope --quiet -p MemoryMax=$1 -p MemorySwapMax=0\$" "$LOG")" -eq 3 \
+        && "$(sed -n 1p "$LOG")" == systemd-run* && "$(sed -n 2p "$LOG")" == "bun run generate:validate" \
+        && "$(sed -n 6p "$LOG")" == "bun test" ]]
+}
+bare_bun() { [[ "$(cat "$LOG")" == $'bun run generate:validate\nbun run generate --diff\nbun test' ]]; }
+check "a user manager: the manifest step passes" manifest_gate running
+check "a user manager: each bun command runs in a scope capped at 4G, without swap" scoped_bun 4G
+check "a user manager: the run says so" grep -q "runs in a user scope capped at 4G" "$WORK/out"
+check "a user manager: each step's log line names the command and the cap" \
+    grep -qx 'run_gate: \[manifest: bun test\] bun test (in a user scope, MemoryMax=4G)' "$WORK/out"
+check "--bun-memory-max sets the cap" manifest_gate running --bun-memory-max 512M
+check "--bun-memory-max 512M reaches the scope" scoped_bun 512M
+check "a degraded user manager still caps" manifest_gate degraded
+check "a degraded user manager: the commands are scoped" \
+    test "$(grep -c '^systemd-run ' "$LOG")" -eq 3
+check "no user manager: the manifest step passes" manifest_gate offline
+check "no user manager: bun runs bare" bare_bun
+check "no user manager: the log line is the command alone" grep -qx 'run_gate: \[manifest: bun test\] bun test' "$WORK/out"
+check "no user manager: the run says so" grep -q "no systemd user manager (offline); the bun commands run without a memory cap" "$WORK/out"
+check "--bun-memory-max none: the manifest step passes" manifest_gate running --bun-memory-max none
+check "--bun-memory-max none: bun runs bare" bare_bun
+check "removes the gate root after the capped steps" parent_empty
+# A real scope, where a user manager runs with the memory controller:
+# a bun that outgrows a 64M cap is killed, and the gate names the cap.
+cat >"$WORK/oombin/bun" <<'STUB'
+#!/usr/bin/env bash
+exec python3 -I -c 'a = bytearray(300 * 1024 * 1024)'
+STUB
+chmod +x "$WORK/oombin/bun"
+user_state="$(systemctl --user is-system-running 2>/dev/null)" || true
+user_cgroup="/sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers"
+if command -v systemd-run >/dev/null 2>&1 && [[ "$user_state" == running || "$user_state" == degraded ]] \
+    && grep -qw memory "$user_cgroup" 2>/dev/null; then
+    rc=0
+    PATH="$WORK/oombin:$PATH" bash "$GATE" --root "$FIXTURE" --tmp-parent "$PARENT" --step manifest \
+        --bun-memory-max 64M >"$WORK/out" 2>&1 || rc=$?
+    check "a real scope: a bun over the cap fails the gate" test "$rc" -eq 1
+    check "a real scope: the gate names the cap" grep -q "reached the bun memory cap (64M)" "$WORK/out"
+    check "a real scope: the summary names the step" grep -q "FAIL  manifest: bun test" "$WORK/out"
+    check "removes the gate root after a capped kill" parent_empty
+else
+    echo "  skip a real scope: no systemd user manager with the memory controller here"
+fi
 
 echo "run_gate: usage"
 usage_rc() {
@@ -177,6 +253,8 @@ check "--step with a command is bad usage" usage_rc 2 --step policy -- true
 check "an unknown step is bad usage" usage_rc 2 --step bogus
 check "an unknown option is bad usage" usage_rc 2 --bogus
 check "a missing --tmp-parent is bad usage" usage_rc 2 --tmp-parent "$WORK/missing"
+check "a --bun-memory-max that isn't a size is bad usage" usage_rc 2 --bun-memory-max 4GiB
+check "a missing --bun-memory-max is bad usage" usage_rc 2 --bun-memory-max
 check "--help exits 0" usage_rc 0 --help
 
 echo
