@@ -41,7 +41,11 @@ e07_resolve() {
 }
 
 step_E07() {
-    local dir ws pane tab call t0 pid name alias reg_ts reg_epoch before after
+    local dir ws pane tab call t0 pid name alias reg_ts reg_epoch before after mock start
+    # The mock's log is the run's, shared by its steps: E07 reads only the
+    # requests made after this line.
+    mock="$SANDBOX_EVIDENCE/mock-requests.jsonl"
+    start="$(wc -l <"$mock" 2>/dev/null || echo 0)"
     dir="$HOME/e07"
     mkdir -p "$dir" && git -C "$dir" init -q || { echo "FAIL E07: the project"; return; }
     sandbox_claude_prepare "$dir" >/dev/null
@@ -92,8 +96,9 @@ step_E07() {
     # the mock handed out the tool call (the request whose reply asked for
     # it), so the first poll that shows the name may come at most 2 s
     # after that request; the mock's log has whole seconds, so 3 s here.
+    tail -n +"$((start + 1))" "$mock" >"$SANDBOX_EVIDENCE/e07-mock-requests.jsonl" 2>/dev/null
     reg_ts="$(jq -r 'select((.tool_calls // []) | index("mcp__agent-mail__macro_start_session")) | .ts' \
-        "$SANDBOX_EVIDENCE/mock-requests.jsonl" | head -n 1)"
+        "$SANDBOX_EVIDENCE/e07-mock-requests.jsonl" | head -n 1)"
     reg_epoch="$(date -d "$reg_ts" +%s 2>/dev/null || echo 0)"
     echo "### the registration was asked for at $reg_ts ($reg_epoch)"
     check "E07: its pane is renamed within 2 s of the registration" \
@@ -107,7 +112,7 @@ step_E07() {
             ((.user_text // \"\") | test(\"Register in Agent Mail\")))] | length" "$1") -ge 1 &&
             $(jq -s "[.[] | select(.path == \"/v1/messages\" and (.tool_results // 0) == 0 and
             ((.user_text // \"\") | test(\"Your Agent Mail identity|nhm context\")))] | length" "$1") -eq 0 ]]' \
-            _ "$SANDBOX_EVIDENCE/mock-requests.jsonl"
+            _ "$SANDBOX_EVIDENCE/e07-mock-requests.jsonl"
     e07_json status nhm status e07 --json
     # nhm's guard states have no "active": configured is the hook in
     # place, the nearest form for an agent nhm did not launch

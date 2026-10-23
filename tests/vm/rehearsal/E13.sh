@@ -53,15 +53,17 @@ e13_row() {
     nhm list --json 2>/dev/null | jq -c --arg n "$1" 'first(.result.agents[]? | select(.binding.mail_name == $n)) // empty'
 }
 
-# e13_codex_limit_record: Codex's own limit record, as Codex writes it: a
-# token_count event at the limit of its five-hour window, in a session log.
-e13_codex_limit_record() {
-    local now day
+# e13_codex_record PERCENT [TYPE]: Codex's own rate-limit record, as Codex
+# writes it: a token_count event with its five-hour window at PERCENT, and
+# rate_limit_reached_type TYPE when given, in a session log.
+e13_codex_record() {
+    local now day reached=""
     now="$(date -u +%s)"
     day="$CODEX_HOME/sessions/$(date -u +%Y/%m/%d)"
     mkdir -p "$day" || return 1
-    printf '{"timestamp":"%s","type":"event_msg","payload":{"type":"token_count","rate_limits":{"plan_type":"pro","primary":{"used_percent":100.0,"window_minutes":300,"resets_at":%d},"secondary":{"used_percent":20.0,"window_minutes":10080,"resets_at":%d},"rate_limit_reached_type":"primary"}}}\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$((now + 3600))" "$((now + 259200))" \
+    [[ -z "${2:-}" ]] || reached="$(printf ',"rate_limit_reached_type":"%s"' "$2")"
+    printf '{"timestamp":"%s","type":"event_msg","payload":{"type":"token_count","rate_limits":{"plan_type":"pro","primary":{"used_percent":%s,"window_minutes":300,"resets_at":%d},"secondary":{"used_percent":20.0,"window_minutes":10080,"resets_at":%d}%s}}}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" "$1" "$((now + 3600))" "$((now + 259200))" "$reached" \
         >>"$day/rollout-$(date -u +%Y-%m-%dT%H-%M-%S)-e13-limit.jsonl"
 }
 
@@ -97,20 +99,19 @@ step_E13() {
     e13_json limit-send nhm send e13 "Go on."$'\n'"mock-reply: $limit" --name "$l" --json
     settle "$pl"
     herdr pane read "$pl" --source visible --lines 25 >"$SANDBOX_EVIDENCE/e13-limit-screen.txt" 2>&1
-    # With its default 15 lines nhm limits misses the line: a short
-    # session's screen has blank lines above Claude's prompt box (nhm-1q7).
-    # This check fails until nhm reads past them; the dry run mails nothing
-    # and leaves the line unseen. The passes below read 40 lines.
+    # A short session's screen has blank lines above Claude's prompt box;
+    # nhm limits reads past them since v0.1.13 (nhm-1q7). The dry run mails
+    # nothing and leaves the line unseen.
     e13_json limits-default nhm limits e13 --once --dry-run --json
-    check "E13: nhm limits sees a new agent's limit with its default --lines (nhm-1q7)" \
-        jq -e --arg n "$l" '[.result.reports[]? | select(.name == $n)] | length == 1' "$(e13_file limits-default)"
-    e13_json limits-1 nhm limits e13 --once --lines 40 --mail-from "$oper" --json
+    check "E13: a dry run sees a new agent's limit with the default --lines (nhm-1q7)" \
+        jq -e --arg n "$l" '[.result.reports[]? | select(.name == $n and (.mailed | not))] | length == 1' "$(e13_file limits-default)"
+    e13_json limits-1 nhm limits e13 --once --mail-from "$oper" --json
     check "E13: nhm limits --json reports the limit in one pass" \
         jq -e --arg n "$l" '[.result.reports[]? | select(.name == $n and (.line | test("hit your limit")))] | length == 1' \
             "$(e13_file limits-1)"
     check "E13: and mails it" \
         jq -e --arg n "$l" '[.result.reports[]? | select(.name == $n and .mailed)] | length == 1' "$(e13_file limits-1)"
-    e13_json limits-2 nhm limits e13 --once --lines 40 --mail-from "$oper" --json
+    e13_json limits-2 nhm limits e13 --once --mail-from "$oper" --json
     check "E13: a second pass reports it no more (after the first did)" \
         bash -c 'jq -e --arg n "$3" "[.result.reports[]? | select(.name == \$n)] | length == 1" "$1" >/dev/null &&
             jq -e --arg n "$3" "[.result.reports[]? | select(.name == \$n)] | length == 0" "$2" >/dev/null' \
@@ -150,7 +151,7 @@ step_E13() {
         "Go on."$'\n'"mock-reply: You've hit your usage limit. Upgrade to Pro or try again at 5:00 PM." --name "$x" --json
     settle "$px"
     herdr pane read "$px" --source visible --lines 40 >"$SANDBOX_EVIDENCE/e13-cod-limit-screen.txt" 2>&1
-    e13_json cod-limits nhm limits e13c --once --lines 40 --mail-from "$oper" --json
+    e13_json cod-limits nhm limits e13c --once --mail-from "$oper" --json
     check "E13 b: nhm limits reports the Codex's limit line and mails it" \
         jq -e --arg n "$x" '[.result.reports[]? | select(.name == $n and .kind == "codex" and .mailed)] | length == 1' \
             "$(e13_file cod-limits)"
@@ -209,7 +210,7 @@ step_E13() {
         bash -c 'grep -q "^exit 1$" "$1" && grep -Eq "replaced|continuity_lost" "$1"' _ "$SANDBOX_EVIDENCE/e13-old-wait.json"
 
     # --- b: Codex's own limit record (after casr, which reads the logs) ----
-    e13_codex_limit_record || echo "FAIL E13: could not write the Codex record"
+    e13_codex_record 100.0 primary || echo "FAIL E13: could not write the Codex record"
     e13_json quota-codex nhm quota --json
     check "E13 b: Codex's record makes the codex pool limited" \
         jq -e '[.result.pools[]? | select(.pool_id == "codex" and .limit_reached != null and (.limit_reached.stale | not))] | length == 1' \
@@ -220,6 +221,14 @@ step_E13() {
             "$(e13_file attention-quota)"
     e13_json refuse-codex nhm spawn e13s --cod=1 --allow-unguarded --prompt "say hi" --dry-run --json
     check "E13 b: a Codex spawn is refused at the limit" test "$(e13_decision "$(e13_file refuse-codex)")" = refuse
+    # The window resets: Codex's next record has no limit, and the pool is
+    # open again (the later steps of a run share this HOME).
+    sleep 1
+    e13_codex_record 10.0 || echo "FAIL E13: could not write the Codex record"
+    e13_json quota-codex-reset nhm quota --json
+    check "E13 b: a newer record without the limit opens the codex pool again" \
+        jq -e '[.result.pools[]? | select(.pool_id == "codex" and .limit_reached == null)] | length == 1' \
+            "$(e13_file quota-codex-reset)"
 
     # --- a: a caam switch (last: it puts stand-in credentials in place) ----
     # The sandbox's Claude has an API key and no credentials file; caam

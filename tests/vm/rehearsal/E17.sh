@@ -58,19 +58,24 @@ e17_do() {
 e17_op() { jq -r '.operation_id // empty' "$SANDBOX_EVIDENCE/e17-$1.json" 2>/dev/null; }
 
 # e17_round R: one round of the puppet's actions (E14, E09, E10). The
-# puppet waits for its review by the send's operation (--after-op,
-# --until complete): a worker in a pane nobody views ends its turn in
-# herdr's done, which the native --until idle never matches (nhm-y56). A
-# wake's nudges are operations without receipts, which --after-op refuses
-# (nhm-qaa), so the woken turns are waited for by state, in the robot
-# form, whose idle is ntm's: idle or done.
+# puppet waits for each turn it started by its operation (--after-op): the
+# review's send (--until complete), and each nudge of the wake pass (a
+# nudge has receipts since nhm v0.1.13, nhm-qaa). A nudged turn can end
+# before the puppet's wait starts, and complete then reads ambiguous
+# (nhm saw no turn start); --until idle, herdr's idle or done after the
+# nudge's baseline, reads it as it is.
 e17_round() {
-    local r="$1" op
+    local r="$1" op ops
     e17_do "$r-robot-status" "nhm --robot-status" &&
         e17_do "$r-attention" "nhm attention --json" &&
-        e17_do "$r-wake" "am mail send --project $(printf %q "$dir") --from $oper --to $w1,$w2 -s $r -b $(printf %q "round $r") --json >/dev/null && nhm wake --once --json" &&
-        e17_do "$r-woken" "nhm --robot-wait=e17w --condition=idle --type=claude --wait-timeout=90s" &&
-        e17_do "$r-review" "nhm send e17w --cc --state between $(printf %q "Review round $r."$'\n'"mock-reply: review $r ok") --json" ||
+        e17_do "$r-wake" "am mail send --project $(printf %q "$dir") --from $oper --to $w1,$w2 -s $r -b $(printf %q "round $r") --json >/dev/null && nhm wake --once --json" ||
+        return 1
+    ops="$(jq -r '[.result.decisions[]? | .operation_id // empty] | join(" ")' "$SANDBOX_EVIDENCE/e17-$r-wake.json" 2>/dev/null)"
+    if [[ -n "$ops" ]]; then
+        e17_do "$r-woken" "rc=0; for op in $ops; do nhm wait e17w --after-op \$op --until idle --timeout 90s --json || rc=1; done; (exit \$rc)" ||
+            return 1
+    fi
+    e17_do "$r-review" "nhm send e17w --cc --state between $(printf %q "Review round $r."$'\n'"mock-reply: review $r ok") --json" ||
         return 1
     op="$(e17_op "$r-review")"
     [[ -n "$op" ]] || { echo "### $r-review: no operation id"; return 1; }

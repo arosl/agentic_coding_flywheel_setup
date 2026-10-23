@@ -393,12 +393,20 @@ sandbox_codex_trust_herdr() {
     local hooks="$CODEX_HOME/hooks.json" lib="$SANDBOX_LIB_DIR/../../../scripts/lib/nhm_hooks.sh" spec codex
     [[ -f "$hooks" ]] || { sandbox_die "sandbox_codex_trust_herdr: no $hooks (run herdr integration install codex first)"; return 1; }
     codex="$(command -v codex)" || { sandbox_die "sandbox_codex_trust_herdr: no codex in the sandbox"; return 1; }
-    # The driver trusts only entries exactly like its spec: herdr's group
-    # holds its one handler and no matcher.
-    spec="$(jq -c '[.hooks.SessionStart[]? | select(.matcher == null and (.hooks | length) == 1) | .hooks[0]
-        | select(.type == "command" and (.command | test("herdr-agent-state\\.sh")))
-        | {event: "SessionStart", command, matcher: "", timeout}]' "$hooks")" || return 1
-    [[ "$spec" != "[]" ]] || { sandbox_die "sandbox_codex_trust_herdr: $hooks holds no herdr state hook"; return 1; }
+    # Every hook in hooks.json, not only herdr's: the steps of one run share
+    # the sandbox HOME, so an earlier step's hook (E01's dcg guard) is still
+    # there, and sandbox_codex_prepare's new config.toml no longer trusts
+    # it; Codex would stop at its hooks review. The driver trusts only
+    # entries exactly like its spec: a group with a matcher (dcg's Bash
+    # guard) by its first handler, a group without one (herdr's) by its
+    # one handler.
+    spec="$(jq -c '[.hooks // {} | to_entries[] | .key as $event | .value[]?
+        | select((.hooks | length) >= 1 and .hooks[0].type == "command")
+        | if (.matcher // "") != "" then {event: $event, command: .hooks[0].command, matcher, first: true}
+          elif (.hooks | length) == 1 then {event: $event, command: .hooks[0].command, matcher: "", timeout: .hooks[0].timeout}
+          else empty end]' "$hooks")" || return 1
+    jq -e 'any(.[]; .event == "SessionStart" and (.command | test("herdr-agent-state\\.sh")))' <<<"$spec" >/dev/null ||
+        { sandbox_die "sandbox_codex_trust_herdr: $hooks holds no herdr state hook"; return 1; }
     (
         # shellcheck source=../../../scripts/lib/nhm_hooks.sh
         source "$lib" || exit 1
@@ -408,9 +416,12 @@ sandbox_codex_trust_herdr() {
         return 1
     }
     # The driver exits 0 when it finds no entry like the spec, so check
-    # that the trust is in config.toml.
-    grep -Fq 'hooks.json:session_start:' "$CODEX_HOME/config.toml" || {
-        sandbox_die "sandbox_codex_trust_herdr: config.toml holds no trust for herdr's hook"
+    # that config.toml trusts as many entries as the spec names.
+    local want got
+    want="$(jq 'length' <<<"$spec")"
+    got="$(grep -c '^trusted_hash = ' "$CODEX_HOME/config.toml")"
+    ((got >= want)) || {
+        sandbox_die "sandbox_codex_trust_herdr: config.toml trusts $got of the $want hooks in $hooks"
         return 1
     }
 }

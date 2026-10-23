@@ -14,13 +14,12 @@
 #   the palette's entrypoint as a tab with the context the action hands
 #   it, and drives it by its screen: fresh_review to target 2 sends once,
 #   to the captured project's two Claudes only; Esc sends nothing;
-# - b: a context without a workspace opens the picker with both projects
-#   (the Go palette, [ui] palette = "go"; v0.1.12's default fzf palette
-#   takes its pane's workspace).
-# The matrix's confirmation popup is not in nhm's palettes (both send at
-# the target key). What only a client shows (the popup in the
-# invoking client, the board over the attention feed, the spawn wizard's
-# prompts, the Mac's key path) stays MANUAL. A third project, e18c, starts
+# - b: a context without a workspace opens the picker with both projects.
+# The palette is nhm's Go palette, its only one since v0.1.13
+# (nhm-qbi.12). The matrix's confirmation popup is not in it: it sends at
+# the target key, as ntm's does. What only a client shows (the popup in
+# the invoking client, the board over the attention feed, the menu's
+# spawn wizard, the Mac's key path) stays MANUAL. A third project, e18c, starts
 # its Claude with nhm's --trust-folder, newproj's path, which fails in
 # the sandbox's 40-column panes until nhm-za8.
 
@@ -163,6 +162,10 @@ step_E18() {
     echo "### the invoking pane: $ctx"
     e18_json panes-before herdr pane list
     herdr pane read "$pa" --source visible --lines 30 >"$SANDBOX_EVIDENCE/e18-invoking-screen.txt" 2>&1
+    # herdr takes an action's context from the focused pane, as when a key
+    # or a command typed in that pane invokes it: focus e18a's first pane.
+    herdr workspace focus "${pa%%:*}" >/dev/null 2>&1
+    herdr tab focus "$(herdr pane get "$pa" 2>/dev/null | jq -r '.result.pane.tab_id // empty')" >/dev/null 2>&1
     e18_json invoke env HERDR_PANE_ID="$pa" HERDR_WORKSPACE_ID="${pa%%:*}" \
         herdr plugin action invoke palette --plugin nhm
     check "E18 a: herdr runs the palette action with the pane's context" \
@@ -182,26 +185,30 @@ step_E18() {
 
     # --- a: the palette's flow, driven without a client --------------------
     # The popup has no client to show in, so the step opens the palette's
-    # entrypoint as a tab of e18a, with the context the action hands it,
-    # and drives it by its screen: fresh_review, then target 2 (one kind).
+    # entrypoint as a tab of e18a, with the context the action hands it
+    # (the invoking pane's directory too: the palette's send job runs
+    # there), and drives it by its screen: fresh_review, then target 2.
     ctx="$(jq -cn --arg s "$HERDR_SOCKET_PATH" --arg i "$(jq -r '.scope.instance_id // empty' "$(e18_file spawn-a)")" \
-        --arg w "${pa%%:*}" --arg p "$pa" \
+        --arg w "${pa%%:*}" --arg p "$pa" --arg c "$da" \
         '{version: 1, instance_id: $i, socket_path: $s, workspace_id: $w, workspace_label: "e18a", pane_id: $p,
-          agent: "claude", invocation_source: "cli"}')"
+          agent: "claude", invocation_source: "cli", cwd: $c}')"
     e18_sends >"$SANDBOX_EVIDENCE/e18-sends-before.txt"
     pal="$(e18_palette "${pa%%:*}" "$ctx")"
-    check "E18 a: the palette opens with the captured context" e18_until "${pal:-none}" 'fresh_review|Fresh review'
+    check "E18 a: the palette opens with the captured context" e18_until "${pal:-none}" 'fresh_review|Fresh [Rr]eview'
     e18_screen "$pal" palette-list
     herdr pane send-text "$pal" "fresh" >/dev/null 2>&1
     sleep 1
     e18_screen "$pal" palette-filtered
     herdr pane send-keys "$pal" enter >/dev/null 2>&1
-    # fzf's "send to>" list, or the Go palette's target keys.
-    check "E18 a: fresh_review asks for its targets" e18_until "$pal" 'send to>|every claude agent|all agents|one kind'
+    # The Go palette's "Select Target" screen (v0.1.12's fzf palette said
+    # "send to>").
+    check "E18 a: fresh_review asks for its targets" e18_until "$pal" 'Select Target|send to>|every claude agent'
     e18_screen "$pal" palette-targets
     herdr pane send-text "$pal" "2" >/dev/null 2>&1
     e18_until "$pal" '(submitted|sent|receipt|Sent|Submitted)' || true
     e18_screen "$pal" palette-result
+    # The palette sends through a job (nhm ui run): its file, log and result.
+    find "$HOME/.local/state/nhm" -path '*ui/jobs*' -type f -exec cp {} "$SANDBOX_EVIDENCE/" \; 2>/dev/null
     e18_sends >"$SANDBOX_EVIDENCE/e18-sends-after.txt"
     echo "### the palette's send"
     diff "$SANDBOX_EVIDENCE/e18-sends-before.txt" "$SANDBOX_EVIDENCE/e18-sends-after.txt"
@@ -214,7 +221,7 @@ step_E18() {
     # Esc on a fresh palette sends nothing.
     e18_sends >"$SANDBOX_EVIDENCE/e18-sends-esc-before.txt"
     pal="$(e18_palette "${pa%%:*}" "$ctx")"
-    check "E18 a: a second palette opens" e18_until "${pal:-none}" 'fresh_review|Fresh review'
+    check "E18 a: a second palette opens" e18_until "${pal:-none}" 'fresh_review|Fresh [Rr]eview'
     herdr pane send-keys "${pal:-none}" esc >/dev/null 2>&1
     sleep 2
     e18_screen "${pal:-none}" palette-esc
@@ -227,7 +234,7 @@ step_E18() {
     # e18a's Claudes.
     e18_sends >"$SANDBOX_EVIDENCE/e18-sends-cross-before.txt"
     pal="$(e18_palette "${pb%%:*}" "$ctx")"
-    e18_until "${pal:-none}" 'fresh_review|Fresh' || true
+    e18_until "${pal:-none}" 'fresh_review|Fresh [Rr]eview' || true
     pid="$(pgrep -nf 'ui palette-popup')"
     { [[ -n "$pid" ]] && tr '\0' '\n' <"/proc/$pid/environ" | grep -E '^(NHM_CONTEXT|HERDR_PLUGIN_CONTEXT_JSON|HERDR_WORKSPACE_ID|HERDR_PANE_ID)='; } \
         >"$SANDBOX_EVIDENCE/e18-palette-env.txt" 2>&1
@@ -236,7 +243,7 @@ step_E18() {
     herdr pane send-text "${pal:-none}" "fresh" >/dev/null 2>&1
     sleep 1
     herdr pane send-keys "${pal:-none}" enter >/dev/null 2>&1
-    e18_until "${pal:-none}" 'send to>|every claude agent|all agents|one kind' || true
+    e18_until "${pal:-none}" 'Select Target|send to>|every claude agent' || true
     e18_screen "${pal:-none}" palette-cross-targets
     herdr pane send-text "${pal:-none}" "2" >/dev/null 2>&1
     e18_until "${pal:-none}" '(submitted|Submitted)' || true
@@ -248,12 +255,8 @@ step_E18() {
             want="$(jq -r "[.result.agents[].binding_id] | sort | join(\",\")" "$3")"
             [[ "$(wc -l <<<"$new")" == 1 && "${new#* }" == "$want" ]]' \
             _ "$SANDBOX_EVIDENCE/e18-sends-cross-before.txt" "$SANDBOX_EVIDENCE/e18-sends-cross-after.txt" "$(e18_file spawn-a)"
-    # A context without a workspace: the Go palette asks for one first
-    # (ntm's session selector), with both projects; Esc there sends
-    # nothing. v0.1.12's default palette is the fzf one, which takes its
-    # pane's workspace instead; the Go palette is the default after it
-    # (nhm-qbi.12), and [ui] palette = "go" selects it before.
-    mkdir -p "$HOME/.config/nhm" && printf '\n[ui]\npalette = "go"\n' >>"$HOME/.config/nhm/config.toml"
+    # A context without a workspace: the palette asks for one first (ntm's
+    # session selector), with both projects; Esc there sends nothing.
     pal="$(e18_palette "${pa%%:*}" "$(jq -c 'del(.workspace_id, .workspace_label, .pane_id, .agent)' <<<"$ctx")")"
     check "E18 b: a missing context opens the picker, with both projects" \
         bash -c 'for i in $(seq 1 40); do
@@ -269,6 +272,6 @@ step_E18() {
         cmp -s "$SANDBOX_EVIDENCE/e18-sends-cross-after.txt" "$SANDBOX_EVIDENCE/e18-sends-picker-after.txt"
     e18_json panes-after herdr pane list
     manual "E18 a: the palette's popup shows in the invoking client, and its keys reach it there (needs a herdr client)"
-    manual "E18 b: prefix+d opens the board over the attention feed without changing either client's Agent view; nhm spawn S --interactive runs its prompts in a popup (needs a herdr client)"
+    manual "E18 b: prefix+d opens the board over the attention feed without changing either client's Agent view; the menu's spawn wizard (prefix+m) runs in its popup (needs a herdr client)"
     manual "E18: from the Mac, the verified key path (herdr --remote) reaches the palette; no Mac keybinding was installed before the evidence"
 }
