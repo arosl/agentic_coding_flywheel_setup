@@ -7485,7 +7485,8 @@ acfs_legacy_module_selected() {
 
 # Runs one module's manifest-mapped installer from a hand-written phase body,
 # rather than a second copy of its steps. The generated function applies the
-# module selection itself. Records a failure in ACFS_MODULE_FAILURES and
+# module selection itself. Records a failure in ACFS_MODULE_FAILURES, with
+# the reason the generated function set, as the generated dispatch does, and
 # returns 1 when the installer is missing or fails.
 # acfs_get_module_installer can't serve here: it returns nothing unless the
 # module's category is on the generated path, and these phases run exactly
@@ -7505,7 +7506,8 @@ acfs_legacy_run_manifest_module() {
         return 1
     fi
     if ! "$installer"; then
-        ACFS_MODULE_FAILURES+=("$module_id (installer execution)")
+        ACFS_MODULE_FAILURES+=("$module_id (${ACFS_LAST_MODULE_FAILURE_REASON:-installer execution})")
+        ACFS_LAST_MODULE_FAILURE_REASON=""
         return 1
     fi
     return 0
@@ -10308,12 +10310,15 @@ UNIT_EOF
         try_step "Installing CM" acfs_run_verified_upstream_script_as_target "cm" "bash" --easy-mode --verify || acfs_optional_module_install_failed "cm" "CM"
     fi
 
-    # CAAM (Coding Agent Account Manager)
-    if binary_installed "caam"; then
+    # CAAM (Coding Agent Account Manager), the arosl fork. Its manifest
+    # installer passes the release tag and the archive pins from
+    # checksums.yaml. Without the pins the fork's installer needs cosign,
+    # which Ubuntu 24.04 doesn't package (acfs-tqh9). The installed_check
+    # names the pinned version, so an older caam is replaced.
+    if acfs_should_skip_module "stack.caam"; then
         log_detail "CAAM already installed"
     else
-        log_detail "Installing CAAM"
-        try_step "Installing CAAM" acfs_run_verified_upstream_script_as_target "caam" "bash" || acfs_optional_module_install_failed "caam" "CAAM"
+        acfs_legacy_run_manifest_module "stack.caam" || stack_phase_rc=1
     fi
 
     # SLB (Simultaneous Launch Button)
@@ -10335,12 +10340,15 @@ UNIT_EOF
         try_step "Installing SLB (upstream)" acfs_run_verified_upstream_script_as_target "slb" "bash" || acfs_optional_module_install_failed "slb" "SLB"
     fi
 
-    # RU (Repo Updater)
-    if binary_installed "ru"; then
+    # RU (Repo Updater), the arosl fork. Its manifest installer sets
+    # RU_VERSION, which pins the release, and RU_INSTALLER_NO_SELF_REFRESH=1.
+    # Without that, ru's installer, read from stdin as the hand-written
+    # runner feeds it, fetches main's install.sh, unverified, and runs that
+    # in place of the pinned one (acfs-tqh9).
+    if acfs_should_skip_module "stack.ru"; then
         log_detail "RU already installed"
     else
-        log_detail "Installing RU"
-        try_step "Installing RU" acfs_run_verified_upstream_script_as_target_with_env "ru" "bash" "RU_NON_INTERACTIVE=1" || acfs_optional_module_install_failed "ru" "RU"
+        acfs_legacy_run_manifest_module "stack.ru" || stack_phase_rc=1
     fi
 
     # RCH (Remote Compilation Helper)
