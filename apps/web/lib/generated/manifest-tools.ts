@@ -191,7 +191,7 @@ export const manifestTools: ManifestWebTool[] = [
     stars: 28,
     cliName: "brenner",
     cliAliases: [],
-    commandExample: "brenner cockpit start --thread-id RS-001 --to Claude,Codex ...",
+    commandExample: "brenner cockpit start --skip-ntm --skip-broadcast ...",
   },
   {
     id: "stack-caam",

@@ -1021,7 +1021,7 @@ sections with §n anchors), multi-model syntheses (Opus, GPT, Gemini), and full 
 - Evidence packs: import papers, datasets, prior sessions with stable EV-NNN citations
 
 **Cockpit Runtime:**
-- Role-specific prompts for each research agent (hypothesis_generator, test_designer, adversarial_critic); on ACFS the cockpit starts the agents in herdr through nhm, in ntm's place
+- Role-specific prompts for each research agent (hypothesis_generator, test_designer, adversarial_critic); ACFS starts the cockpit with --skip-ntm, and you run the agents in herdr panes
 - Thread ID is global join key: ties Agent Mail, artifacts, beads
 - Session state machine with phase detection (awaiting_responses → partially_complete → awaiting_compilation)
 - Artifact compiler with 50+ validation rules: third alternative checks, potency controls, citation anchors

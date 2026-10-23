@@ -2421,7 +2421,7 @@ modules:
       - 'test -x "${NHM_BIN_DIR:-$HOME/.local/bin}/nhm-hook"'
     notes:
       - "checksums.yaml pins nhm's install.sh at the release tag; the installer checks the archive against ACFS's per-platform SHA-256 pin, then against SHA256SUMS of the same tagged release"
-      - "install.sh (finalize, once the acfs command is in place) and acfs update make nhm the owner of the default herdr server: nhm_hooks.sh owner take runs nhm admin takeover, a dry run first, which imports ACFS's Bash state or refuses with nothing changed; acfs doctor reports the owner (stack.nhm.owner), and without stack.nhm ACFS's Bash (acfs agents) stays the owner"
+      - "nhm 0.1 observes: ACFS's Bash (acfs agents) keeps owning the herdr instance until the takeover, so nhm's hooks only record evidence"
       - "install.sh and acfs update register the nhm-hook lines for Claude Code and Codex (scripts/lib/nhm_hooks.sh) and record Codex's trust for them through Codex's app-server; doctor reports a line Codex does not trust, and Codex's /hooks also trusts it"
       - "install.sh and acfs update install nhm-maintain.timer (scripts/lib/nhm_maintain_timer.sh), a systemd --user timer that runs nhm maintain --once every 15 s, once the installed nhm has maintain; a masked timer is left alone, and doctor's stack.nhm.maintain reports it"
 
@@ -3077,7 +3077,7 @@ modules:
       language: "TypeScript"
       stars: 28
       cli_name: "brenner"
-      command_example: "brenner cockpit start --thread-id RS-001 --to Claude,Codex ..."
+      command_example: "brenner cockpit start --skip-ntm --skip-broadcast ..."
     dependencies:
       - lang.rust
       - stack.cass  # for session search integration
@@ -3098,9 +3098,9 @@ modules:
     verify:
       - brenner --version || brenner --help
     notes:
-      - "ACFS installs the arosl fork, whose cockpit runs its agents through nhm in ntm's place: `brenner cockpit start` starts them in herdr with `nhm spawn <thread>` and sends the kickoff through Agent Mail and `nhm send <thread> --all`; `brenner doctor` checks nhm (`nhm version`)"
-      - "nhm drives agents once it owns the herdr server, which install.sh and acfs update arrange; acfs doctor reports it (stack.nhm.owner)"
-      - "Without stack.nhm, start the agents in herdr panes yourself and run `brenner cockpit start --skip-ntm --skip-broadcast` (Agent Mail kickoff only) and `brenner doctor --skip-ntm`; `herdr agent prompt` tells an idle agent to read its inbox"
+      - "ACFS installs no ntm: start research sessions with `brenner cockpit start --skip-ntm --skip-broadcast` (or `brenner session start`), which only send the Agent Mail kickoff"
+      - "The agents run in herdr panes and read the kickoff from Agent Mail; `herdr agent prompt` tells an idle agent to read its inbox"
+      - "Run `brenner doctor --skip-ntm`, since brenner's doctor checks for ntm by default"
 
   - id: stack.rch
     description: Remote Compilation Helper - transparent build offloading for AI coding agents

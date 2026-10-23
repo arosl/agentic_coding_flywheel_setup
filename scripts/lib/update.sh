@@ -7578,54 +7578,23 @@ update_herdr_integrations() {
     return 0
 }
 
-# nhm owns the herdr server on every install (acfs-9hkh.93): after
-# update_nhm, nhm_hooks.sh owner take runs nhm's takeover, a dry run
-# first. It imports what ACFS's Bash keeps (tokens, wake state, the agents
-# it spawned). When it would leave an agent or a token behind it refuses,
-# nothing changes, and the log names nhm's reason and the dry run that
-# shows it all (acfs doctor's stack.nhm.owner names the fix too). Without
-# nhm (stack.nhm not selected), ACFS's Bash stays the owner. It runs
-# before update_herdr_palette_key, whose nhm bind needs nhm as the owner.
-# Never fails the update.
-update_nhm_owner() {
-    local desc="herdr server owner" target_home="" nhm_hooks="" bash_bin="" out="" rc=0
-
-    update_binary_exists nhm || return 0
-    target_home="$(update_target_home "$(update_target_user 2>/dev/null || true)" 2>/dev/null || true)"
-    [[ -n "$target_home" && "$target_home" == /* ]] || return 0
-    nhm_hooks="$target_home/.acfs/scripts/lib/nhm_hooks.sh"
-    [[ -f "$nhm_hooks" ]] || return 0
-    bash_bin="$(update_system_binary_path bash 2>/dev/null || true)"
-    [[ -n "$bash_bin" ]] || return 0
-    if update_is_read_only_mode; then
-        log_item "skip" "$desc" "dry-run: would run nhm's takeover (nhm_hooks.sh owner take)"
-        return 0
-    fi
-    out="$(update_run_in_target_context "" "$bash_bin" "$nhm_hooks" owner take 2>&1)" || rc=$?
-    out="${out##*$'\n'}"
-    out="${out#nhm_hooks: }"
-    case "$rc" in
-        0) log_item "ok" "$desc" "$out" ;;
-        3) ;;
-        *) log_item "warn" "$desc" "${out:-the takeover failed}" ;;
-    esac
-    return 0
-}
-
 # herdr opens the command palette in a popup on prefix+a, as ntm's F6 did
 # in tmux. With nhm (stack.nhm), its herdr plugin is linked and `nhm bind`
 # binds the keys in [keys] of nhm's config (its palette, agent board and
 # menu), in place of ACFS's palette block (nhm_hooks.sh plugin bind,
-# acfs-9hkh.50). It runs after update_nhm and update_nhm_owner, so a new
-# nhm release binds in the same update. nhm bind refuses while ACFS's Bash
-# owns the herdr server, and when the user's config uses one of the keys:
-# then nothing is bound, and the log says why (acfs-9hkh.93). A user who
-# opted out of nhm's keys (nhm_hooks.sh exit 6) keeps that (acfs-uetm F1).
-# Without nhm nothing is bound. A running herdr server reloads its config.
-# Never fails the update.
+# acfs-9hkh.50). It runs after update_nhm, so a new nhm release binds in
+# the same update. nhm bind refuses while ACFS's Bash owns the herdr
+# server (nhm's palette cannot send before the takeover) or when the
+# user's config uses one of the keys; ACFS's palette then keeps prefix+a
+# (palette.sh bind --auto): unless the target user's herdr config already
+# has the palette's block (bound, or unbound by `acfs palette unbind`),
+# opens the palette some other way, or uses prefix+a. A user who opted out
+# of nhm's keys (nhm_hooks.sh exit 6) gets neither (acfs-uetm F1). A
+# running herdr server reloads its config. Never fails the update.
 update_herdr_palette_key() {
     local herdr_bin=""
     local target_home=""
+    local palette_script=""
     local nhm_hooks=""
     local bash_bin=""
     local out=""
@@ -7633,26 +7602,46 @@ update_herdr_palette_key() {
 
     herdr_bin="$(update_binary_path herdr 2>/dev/null || true)"
     [[ -n "$herdr_bin" ]] || return 0
-    update_binary_exists nhm || return 0
     target_home="$(update_target_home "$(update_target_user 2>/dev/null || true)" 2>/dev/null || true)"
     [[ -n "$target_home" && "$target_home" == /* ]] || return 0
-    nhm_hooks="$target_home/.acfs/scripts/lib/nhm_hooks.sh"
-    [[ -f "$nhm_hooks" ]] || return 0
     bash_bin="$(update_system_binary_path bash 2>/dev/null || true)"
     [[ -n "$bash_bin" ]] || return 0
 
+    nhm_hooks="$target_home/.acfs/scripts/lib/nhm_hooks.sh"
+    if [[ -f "$nhm_hooks" ]] && update_binary_exists nhm; then
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log_item "skip" "herdr keys" "dry-run: would link nhm's herdr plugin and run nhm bind"
+            return 0
+        fi
+        out="$(update_run_in_target_context "" "$bash_bin" "$nhm_hooks" plugin bind 2>&1)" || rc=$?
+        out="${out##*$'\n'}"
+        out="${out#nhm_hooks: }"
+        case "$rc" in
+            0)
+                log_item "ok" "herdr keys" "$out"
+                return 0
+                ;;
+            3) ;;
+            5) log_item "skip" "herdr keys" "$out; ACFS's palette keeps prefix+a" ;;
+            6)
+                log_item "skip" "herdr keys" "$out"
+                return 0
+                ;;
+            *) log_item "warn" "herdr keys" "${out:-the plugin or nhm bind failed}; ACFS's palette keeps prefix+a" ;;
+        esac
+    fi
+
+    palette_script="$target_home/.acfs/scripts/lib/palette.sh"
+    [[ -f "$palette_script" ]] || return 0
     if [[ "$DRY_RUN" == "true" ]]; then
-        log_item "skip" "herdr keys" "dry-run: would link nhm's herdr plugin and run nhm bind"
+        log_item "skip" "herdr palette key" "dry-run: would run palette.sh bind --auto"
         return 0
     fi
-    out="$(update_run_in_target_context "" "$bash_bin" "$nhm_hooks" plugin bind 2>&1)" || rc=$?
-    out="${out##*$'\n'}"
-    out="${out#nhm_hooks: }"
-    case "$rc" in
-        0) log_item "ok" "herdr keys" "$out" ;;
-        3|5|6) log_item "skip" "herdr keys" "$out" ;;
-        *) log_item "warn" "herdr keys" "${out:-the plugin or nhm bind failed}" ;;
-    esac
+    if out="$(update_run_in_target_context "" "$bash_bin" "$palette_script" bind --auto 2>&1)"; then
+        log_item "ok" "herdr palette key" "${out%%$'\n'*}"
+    else
+        log_item "skip" "herdr palette key" "${out%%$'\n'*}"
+    fi
     return 0
 }
 
@@ -8242,7 +8231,6 @@ update_stack() {
     # nhm (stack.nhm) - install the release that the pinned installer URL
     # names, then make sure the default herdr server is enrolled.
     update_nhm
-    update_nhm_owner
     update_herdr_palette_key
 
     # minisign (issue #375): the MCP Agent Mail installer fails closed

@@ -13,11 +13,10 @@
 #
 # Inside herdr, prefix+a (ctrl+b, then a) opens it in a popup over the
 # current tab, as ntm's F6 did in tmux: `acfs palette bind` writes that
-# [[keys.command]] into herdr's config.toml, and the
+# [[keys.command]] into herdr's config.toml (the installer and acfs update
+# run `bind --auto`), and the
 # popup's HERDR_ACTIVE_* variables say which workspace and directory it was
-# opened over. Anywhere else, run `acfs palette`. The installer and acfs
-# update no longer bind it: they bind nhm's palette, board and menu with
-# `nhm bind` (acfs-9hkh.93).
+# opened over. Anywhere else, run `acfs palette`.
 #
 # Palette files, first key wins: --file (or ACFS_PALETTE_FILE) alone when
 # given; otherwise ./command_palette.md in the current directory and at its
