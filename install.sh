@@ -8029,11 +8029,33 @@ acfs_zshrc_is_managed_loader() {
     ' "$file" 2>/dev/null
 }
 
-# True when root would write another user's dotfile through a symlink. The
-# user decides where it points, so root would write, or create, any file
-# there, say /etc/profile.d/x.sh. Root never writes through one (acfs-573x).
-acfs_dotfile_link_unsafe_for_root() {
-    [[ "$(id -u)" -eq 0 && "${TARGET_USER:-}" != "root" && -L "${1:-}" ]]
+# setup_shell writes the target user's ~/.zshrc, ~/.profile and ~/.zprofile
+# with the user's own rights, so root never opens those paths. A symlink the
+# user points there, or swaps in mid-run, reaches only what the user could
+# write anyway, not /etc/profile.d (acfs-k9a9).
+
+# Writes stdin to the target user's dotfile $1 as that user; with --append
+# as $2, appends. Returns tee's status.
+acfs_dotfile_write_as_target() {
+    if [[ "${2:-}" == "--append" ]]; then
+        run_as_target tee -a "$1" >/dev/null
+    else
+        run_as_target tee "$1" >/dev/null
+    fi
+}
+
+# A regular dotfile that root left behind goes to the user first, so the
+# user's own write can change it. -h: a link swapped in after the test is
+# changed itself, not followed (acfs-573x).
+acfs_dotfile_own_for_target() {
+    [[ -f "$1" && ! -L "$1" ]] || return 0
+    $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$1" 2>/dev/null || true
+}
+
+# Names dotfile $1 that the user couldn't write, and line $2 to add by hand.
+acfs_dotfile_warn_unwritten() {
+    log_warn "Couldn't write $1 as $TARGET_USER. Add this line to it:"
+    log_warn "$2"
 }
 
 setup_shell() {
@@ -8127,39 +8149,40 @@ setup_shell() {
         try_step "Setting p10k config ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/.p10k.zsh" || return 1
     fi
 
-    # Configure ~/.zshrc for the target user.
+    # Configure ~/.zshrc for the target user, with the user's rights (acfs-k9a9).
     local user_zshrc="$TARGET_HOME/.zshrc"
-    if [[ "$ACFS_DISTRO_FAMILY" == "arch" ]] && acfs_dotfile_link_unsafe_for_root "$user_zshrc"; then
-        log_warn "$user_zshrc is a symlink, so ACFS doesn't write through it as root. Add this line to it:"
-        # shellcheck disable=SC2016  # The user's shell expands $HOME, not this one.
-        log_warn '[[ -f "$HOME/.acfs/zsh/acfs.zshrc" ]] && source "$HOME/.acfs/zsh/acfs.zshrc"'
-    elif [[ "$ACFS_DISTRO_FAMILY" == "arch" ]]; then
+    # shellcheck disable=SC2016  # The user's shell expands $HOME, not this one.
+    local zshrc_loader_line='[[ -f "$HOME/.acfs/zsh/acfs.zshrc" ]] && source "$HOME/.acfs/zsh/acfs.zshrc"'
+    acfs_dotfile_own_for_target "$user_zshrc"
+    if [[ "$ACFS_DISTRO_FAMILY" == "arch" ]]; then
         # Arch/Omarchy: NEVER replace an existing ~/.zshrc (users often manage
         # their own prompt, e.g. starship). Create a minimal file only when
         # absent, then append a single guarded loader line (idempotent).
         if [[ ! -f "$user_zshrc" ]]; then
-            cat > "$user_zshrc" << 'EOF'
+            acfs_dotfile_write_as_target "$user_zshrc" << 'EOF' || true
 # ~/.zshrc: executed by zsh for interactive shells
 EOF
         fi
-        if ! grep -Fq '.acfs/zsh/acfs.zshrc' "$user_zshrc"; then
-            {
+        if ! grep -Fq '.acfs/zsh/acfs.zshrc' "$user_zshrc" 2>/dev/null; then
+            if {
                 echo ""
                 echo "# Added by ACFS"
-                echo '[[ -f "$HOME/.acfs/zsh/acfs.zshrc" ]] && source "$HOME/.acfs/zsh/acfs.zshrc"'
-            } >> "$user_zshrc"
-            log_detail "Appended ACFS loader to $user_zshrc"
+                echo "$zshrc_loader_line"
+            } | acfs_dotfile_write_as_target "$user_zshrc" --append; then
+                log_detail "Appended ACFS loader to $user_zshrc"
+            else
+                acfs_dotfile_warn_unwritten "$user_zshrc" "$zshrc_loader_line"
+            fi
         fi
-        try_step "Setting .zshrc ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$user_zshrc" || return 1
     else
         # Ubuntu: create the minimal managed loader (backup existing if needed)
-        if acfs_dotfile_link_unsafe_for_root "$user_zshrc"; then
-            # The backup is the link itself, so root neither reads nor
-            # writes its target.
+        if [[ -L "$user_zshrc" ]]; then
+            # The backup is the link itself, so the file it points at, say a
+            # dotfiles repo's zshrc, keeps its content (acfs-573x).
             local backup
             backup="$user_zshrc.pre-acfs.$(date +%Y%m%d%H%M%S)"
             log_warn "$user_zshrc is a symlink; moving the link aside to $(basename "$backup")"
-            try_step "Moving symlinked .zshrc aside" mv -T "$user_zshrc" "$backup" || return 1
+            try_step "Moving symlinked .zshrc aside" run_as_target mv -T "$user_zshrc" "$backup" || return 1
         elif [[ -f "$user_zshrc" ]] && ! acfs_zshrc_is_managed_loader "$user_zshrc"; then
             local backup
             backup="$user_zshrc.pre-acfs.$(date +%Y%m%d%H%M%S)"
@@ -8168,15 +8191,17 @@ EOF
             else
                 log_warn "Existing .zshrc found; backing up to $(basename "$backup")"
             fi
-            $SUDO cp "$user_zshrc" "$backup"
-            $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$backup" 2>/dev/null || true
+            try_step "Backing up existing .zshrc" run_as_target cp "$user_zshrc" "$backup" || return 1
         fi
 
-        cat > "$user_zshrc" << 'EOF'
+        if ! acfs_dotfile_write_as_target "$user_zshrc" << 'EOF'
 # ACFS loader
 source "$HOME/.acfs/zsh/acfs.zshrc"
 EOF
-        try_step "Setting .zshrc ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$user_zshrc" || return 1
+        then
+            log_error "Couldn't write the ACFS loader to $user_zshrc as $TARGET_USER"
+            return 1
+        fi
     fi
 
     # Ensure core user-installed tool paths are present for login shells.
@@ -8186,20 +8211,21 @@ EOF
     local legacy_profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
     # shellcheck disable=SC2016  # We want $HOME/$PATH to expand when .profile is sourced, not during install.
     local profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
-    if acfs_dotfile_link_unsafe_for_root "$user_profile"; then
-        log_warn "$user_profile is a symlink, so ACFS doesn't write through it as root. Add this line to it:"
-        log_warn "$profile_path_line"
-    elif [[ ! -f "$user_profile" ]]; then
+    # Ensure correct ownership (handles edge case where file was created by
+    # root) before the user's own write; acfs-k9a9 writes as the user.
+    acfs_dotfile_own_for_target "$user_profile"
+    if [[ ! -f "$user_profile" ]]; then
         # Create new .profile
         {
             echo "# ~/.profile: executed by bash for login shells"
             echo ""
             echo "# User binary paths"
             echo "$profile_path_line"
-        } > "$user_profile"
-        $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$user_profile"
+        } | acfs_dotfile_write_as_target "$user_profile" \
+            || acfs_dotfile_warn_unwritten "$user_profile" "$profile_path_line"
     elif grep -Fxq "$legacy_profile_path_line" "$user_profile" 2>/dev/null; then
-        sed -i "s|^$(profile_path_sed_literal "$legacy_profile_path_line")$|$profile_path_line|" "$user_profile"
+        run_as_target sed -i "s|^$(profile_path_sed_literal "$legacy_profile_path_line")$|$profile_path_line|" "$user_profile" \
+            || acfs_dotfile_warn_unwritten "$user_profile" "$profile_path_line"
     elif ! profile_path_has_fragment "$user_profile" '.local/bin' || \
          ! profile_path_has_fragment "$user_profile" '.atuin/bin'; then
         # Append to existing .profile
@@ -8207,34 +8233,32 @@ EOF
             echo ""
             echo "# Added by ACFS - user binary paths"
             echo "$profile_path_line"
-        } >> "$user_profile"
+        } | acfs_dotfile_write_as_target "$user_profile" --append \
+            || acfs_dotfile_warn_unwritten "$user_profile" "$profile_path_line"
     fi
-    # Ensure correct ownership (handles edge case where file was created by root)
-    [[ -f "$user_profile" ]] && $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$user_profile" 2>/dev/null || true
 
     # zsh login shells do not read ~/.profile, so mirror the login PATH there.
-    if acfs_dotfile_link_unsafe_for_root "$user_zprofile"; then
-        log_warn "$user_zprofile is a symlink, so ACFS doesn't write through it as root. Add this line to it:"
-        log_warn "$profile_path_line"
-    elif [[ ! -f "$user_zprofile" ]]; then
+    acfs_dotfile_own_for_target "$user_zprofile"
+    if [[ ! -f "$user_zprofile" ]]; then
         {
             echo "# ~/.zprofile: executed by zsh for login shells"
             echo ""
             echo "# User binary paths"
             echo "$profile_path_line"
-        } > "$user_zprofile"
-        $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$user_zprofile"
+        } | acfs_dotfile_write_as_target "$user_zprofile" \
+            || acfs_dotfile_warn_unwritten "$user_zprofile" "$profile_path_line"
     elif grep -Fxq "$legacy_profile_path_line" "$user_zprofile" 2>/dev/null; then
-        sed -i "s|^$(profile_path_sed_literal "$legacy_profile_path_line")$|$profile_path_line|" "$user_zprofile"
+        run_as_target sed -i "s|^$(profile_path_sed_literal "$legacy_profile_path_line")$|$profile_path_line|" "$user_zprofile" \
+            || acfs_dotfile_warn_unwritten "$user_zprofile" "$profile_path_line"
     elif ! profile_path_has_fragment "$user_zprofile" '.local/bin' || \
          ! profile_path_has_fragment "$user_zprofile" '.atuin/bin'; then
         {
             echo ""
             echo "# Added by ACFS - user binary paths"
             echo "$profile_path_line"
-        } >> "$user_zprofile"
+        } | acfs_dotfile_write_as_target "$user_zprofile" --append \
+            || acfs_dotfile_warn_unwritten "$user_zprofile" "$profile_path_line"
     fi
-    [[ -f "$user_zprofile" ]] && $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$user_zprofile" 2>/dev/null || true
 
     # The generated manifest path calls this same helper. A failed or unverifiable
     # account change must fail the phase, preserving the original shell for recovery.

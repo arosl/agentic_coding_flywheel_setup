@@ -6,18 +6,22 @@
 # write and the chown gets root to chown the link's target, say /etc/shadow.
 # acfs-573x: every such chown passes -h, which changes the link itself.
 #
-# setup_shell writes ~/.zshrc, ~/.profile and ~/.zprofile with shell
-# redirects, which follow a link too. A dangling ~/.profile pointing at
-# /etc/profile.d/x.sh would have root create that file; a link to an
-# existing file would have root append to it. So as root it never writes
-# through a link there.
+# setup_shell writes ~/.zshrc, ~/.profile and ~/.zprofile. As root, a write
+# through a link the user planted there, or swapped in mid-run, would create
+# or change any file, say /etc/profile.d/x.sh. acfs-k9a9: those writes run
+# as the target user, so a link reaches only what the user could write.
 
 setup() {
     PROJECT_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
     TARGET_HOME="$BATS_TEST_TMPDIR/home"
-    # Stands in for a root-owned directory such as /etc/profile.d.
+    # Stands in for a root-owned directory such as /etc: the user can't
+    # write it, and nor can this test once it's locked.
     ROOT_DIR="$BATS_TEST_TMPDIR/etc"
     mkdir -p "$TARGET_HOME" "$ROOT_DIR"
+}
+
+teardown() {
+    chmod -R u+w "$BATS_TEST_TMPDIR" 2>/dev/null || true
 }
 
 # Each code line of install.sh whose chown gives a path to $TARGET_USER.
@@ -36,17 +40,40 @@ target_user_chowns() {
     [[ -z "$missing" ]]
 }
 
-# Runs install.sh's setup_shell with stubs, as uid FAKE_UID, for
-# ACFS_DISTRO_FAMILY (ubuntu unless set). Prints its warnings and its rc.
+@test "setup_shell itself never writes the user's dotfiles; run_as_target does" {
+    local body
+    body="$(sed -n '/^setup_shell() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
+    [[ -n "$body" ]]
+    # No redirect into a dotfile from install.sh's own shell.
+    ! grep -nE '>>? *"\$user_(zshrc|profile|zprofile)"' <<<"$body"
+    # Every sed -i, mv or cp of a dotfile runs as the target user.
+    local edits
+    edits="$(grep -nE '(sed -i|mv -T| cp ).*"\$user_(zshrc|profile|zprofile)"' <<<"$body")"
+    [[ -n "$edits" ]]
+    ! grep -v 'run_as_target' <<<"$edits"
+}
+
+# Makes the home read-only to this shell, as root's view would be if root
+# never wrote there: only a command through run_as_target may write it.
+lock_home() {
+    find "$TARGET_HOME" \( -type d -o -type f \) -exec chmod a-w {} +
+}
+unlock_home() {
+    find "$TARGET_HOME" \( -type d -o -type f \) -exec chmod u+w {} +
+}
+
+# Runs install.sh's setup_shell with stubs for ACFS_DISTRO_FAMILY (ubuntu
+# unless set), the home locked and ROOT_DIR unwritable. Prints its warnings,
+# its errors and its rc.
 run_setup_shell() {
     local fn
     for fn in profile_path_has_fragment profile_path_sed_literal \
-        acfs_zshrc_is_managed_loader acfs_dotfile_link_unsafe_for_root setup_shell; do
+        acfs_zshrc_is_managed_loader acfs_dotfile_write_as_target \
+        acfs_dotfile_own_for_target acfs_dotfile_warn_unwritten setup_shell; do
         eval "$(sed -n "/^$fn() {\$/,/^}\$/p" "$PROJECT_ROOT/install.sh")"
         [[ "$(type -t "$fn")" == "function" ]]
     done
 
-    id() { if [[ "${1:-}" == "-u" ]]; then printf '%s\n' "$FAKE_UID"; else command id "$@"; fi; }
     set_phase() { :; }
     log_step() { :; }
     log_detail() { :; }
@@ -60,7 +87,14 @@ run_setup_shell() {
     try_step_optional() { shift; "$@"; }
     install_asset() { return 0; }
     acfs_chown_tree() { :; }
-    run_as_target() { :; }
+    # The target user's rights: the home is writable while the command runs.
+    run_as_target() {
+        local rc=0
+        unlock_home
+        "$@" || rc=$?
+        lock_home
+        return "$rc"
+    }
     acfs_run_verified_upstream_script_as_target() { :; }
     set_default_shell() { return 0; }
     chown() { :; }
@@ -75,41 +109,55 @@ run_setup_shell() {
     mkdir -p "$TARGET_HOME/.oh-my-zsh/custom/themes/powerlevel10k" \
         "$TARGET_HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions" \
         "$TARGET_HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+    chmod -R a-w "$ROOT_DIR"
+    lock_home
 
     local rc=0
     setup_shell || rc=$?
+    unlock_home
     printf 'rc=%s\n' "$rc"
 }
 
-@test "as root, a dangling ~/.profile or ~/.zprofile link gets no file created through it" {
+@test "a fresh home gets ~/.zshrc, ~/.profile and ~/.zprofile, all written as the user" {
+    run run_setup_shell
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"rc=0"* ]]
+    [[ "$output" != *"WARN:"* && "$output" != *"ERROR:"* ]]
+    [[ "$(cat "$TARGET_HOME/.zshrc")" == '# ACFS loader'$'\n''source "$HOME/.acfs/zsh/acfs.zshrc"' ]]
+    grep -Fq 'export PATH="$HOME/.local/bin:' "$TARGET_HOME/.profile"
+    grep -Fq 'export PATH="$HOME/.local/bin:' "$TARGET_HOME/.zprofile"
+}
+
+@test "a dangling ~/.profile or ~/.zprofile link into a root directory gets no file created" {
     mkdir -p "$ROOT_DIR/profile.d"
     ln -s "$ROOT_DIR/profile.d/x.sh" "$TARGET_HOME/.profile"
     ln -s "$ROOT_DIR/zprofile" "$TARGET_HOME/.zprofile"
-    FAKE_UID=0 run run_setup_shell
+    run run_setup_shell
     [[ "$status" -eq 0 ]]
     [[ "$output" == *"rc=0"* ]]
     [[ ! -e "$ROOT_DIR/profile.d/x.sh" ]]
     [[ ! -e "$ROOT_DIR/zprofile" ]]
     [[ -L "$TARGET_HOME/.profile" && -L "$TARGET_HOME/.zprofile" ]]
-    [[ "$output" == *"WARN: $TARGET_HOME/.profile is a symlink"* ]]
-    [[ "$output" == *"WARN: $TARGET_HOME/.zprofile is a symlink"* ]]
+    [[ "$output" == *"WARN: Couldn't write $TARGET_HOME/.profile as tester. Add this line to it:"* ]]
+    [[ "$output" == *"WARN: Couldn't write $TARGET_HOME/.zprofile as tester. Add this line to it:"* ]]
     [[ "$output" == *'WARN: export PATH="$HOME/.local/bin:'* ]]
 }
 
-@test "as root, a ~/.profile or ~/.zprofile link to an existing file leaves that file as it was" {
+@test "a ~/.profile or ~/.zprofile link to a root file leaves that file as it was" {
     printf 'root content\n' > "$ROOT_DIR/bash.bashrc"
     ln -s "$ROOT_DIR/bash.bashrc" "$TARGET_HOME/.profile"
     ln -s "$ROOT_DIR/bash.bashrc" "$TARGET_HOME/.zprofile"
-    FAKE_UID=0 run run_setup_shell
+    run run_setup_shell
     [[ "$status" -eq 0 ]]
     [[ "$output" == *"rc=0"* ]]
     [[ "$(cat "$ROOT_DIR/bash.bashrc")" == "root content" ]]
+    [[ "$output" == *"WARN: Couldn't write $TARGET_HOME/.profile as tester"* ]]
 }
 
-@test "as root on Ubuntu, a ~/.zshrc link is moved aside, and a regular loader takes its place" {
+@test "on Ubuntu, a ~/.zshrc link is moved aside, and a regular loader takes its place" {
     printf 'root content\n' > "$ROOT_DIR/zshrc"
     ln -s "$ROOT_DIR/zshrc" "$TARGET_HOME/.zshrc"
-    FAKE_UID=0 run run_setup_shell
+    run run_setup_shell
     [[ "$status" -eq 0 ]]
     [[ "$output" == *"rc=0"* ]]
     [[ "$(cat "$ROOT_DIR/zshrc")" == "root content" ]]
@@ -121,34 +169,49 @@ run_setup_shell() {
     [[ "$output" == *"WARN: $TARGET_HOME/.zshrc is a symlink; moving the link aside"* ]]
 }
 
-@test "as root on Ubuntu, a dangling ~/.zshrc link gets no file created through it" {
+@test "on Ubuntu, a dangling ~/.zshrc link gets no file created through it" {
     ln -s "$ROOT_DIR/zshrc" "$TARGET_HOME/.zshrc"
-    FAKE_UID=0 run run_setup_shell
+    run run_setup_shell
     [[ "$status" -eq 0 ]]
     [[ "$output" == *"rc=0"* ]]
     [[ ! -e "$ROOT_DIR/zshrc" ]]
     [[ -f "$TARGET_HOME/.zshrc" && ! -L "$TARGET_HOME/.zshrc" ]]
 }
 
-@test "as root on Arch, a ~/.zshrc link is left alone, with the loader line to add" {
-    ln -s "$ROOT_DIR/zshrc" "$TARGET_HOME/.zshrc"
-    ACFS_DISTRO_FAMILY=arch FAKE_UID=0 run run_setup_shell
+@test "on Ubuntu, an existing ~/.zshrc is backed up as a copy the user made" {
+    printf '# my zshrc\n' > "$TARGET_HOME/.zshrc"
+    run run_setup_shell
     [[ "$status" -eq 0 ]]
     [[ "$output" == *"rc=0"* ]]
-    [[ ! -e "$ROOT_DIR/zshrc" ]]
+    local backups=("$TARGET_HOME"/.zshrc.pre-acfs.*)
+    [[ ${#backups[@]} -eq 1 && -f "${backups[0]}" && ! -L "${backups[0]}" ]]
+    [[ "$(cat "${backups[0]}")" == "# my zshrc" ]]
+    [[ "$(head -n 1 "$TARGET_HOME/.zshrc")" == "# ACFS loader" ]]
+}
+
+@test "on Arch, a ~/.zshrc link to a root file is left alone, with the loader line to add" {
+    printf 'root content\n' > "$ROOT_DIR/zshrc"
+    ln -s "$ROOT_DIR/zshrc" "$TARGET_HOME/.zshrc"
+    ACFS_DISTRO_FAMILY=arch run run_setup_shell
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"rc=0"* ]]
+    [[ "$(cat "$ROOT_DIR/zshrc")" == "root content" ]]
     [[ -L "$TARGET_HOME/.zshrc" ]]
-    [[ "$output" == *"WARN: $TARGET_HOME/.zshrc is a symlink, so ACFS doesn't write through it as root"* ]]
+    [[ "$output" == *"WARN: Couldn't write $TARGET_HOME/.zshrc as tester. Add this line to it:"* ]]
     [[ "$output" == *'WARN: [[ -f "$HOME/.acfs/zsh/acfs.zshrc" ]] && source "$HOME/.acfs/zsh/acfs.zshrc"'* ]]
 }
 
-@test "run as the target user, setup_shell still writes through a dotfiles link" {
+@test "a dotfiles link the user owns is written through, and stays a link" {
     mkdir -p "$TARGET_HOME/dotfiles"
     printf '# my profile\n' > "$TARGET_HOME/dotfiles/profile"
+    printf '# my zshrc\n' > "$TARGET_HOME/dotfiles/zshrc"
     ln -s "$TARGET_HOME/dotfiles/profile" "$TARGET_HOME/.profile"
-    FAKE_UID=1000 run run_setup_shell
+    ln -s "$TARGET_HOME/dotfiles/zshrc" "$TARGET_HOME/.zshrc"
+    ACFS_DISTRO_FAMILY=arch run run_setup_shell
     [[ "$status" -eq 0 ]]
     [[ "$output" == *"rc=0"* ]]
-    [[ "$output" != *"is a symlink"* ]]
-    [[ -L "$TARGET_HOME/.profile" ]]
+    [[ "$output" != *"WARN:"* ]]
+    [[ -L "$TARGET_HOME/.profile" && -L "$TARGET_HOME/.zshrc" ]]
     grep -Fq 'export PATH="$HOME/.local/bin:' "$TARGET_HOME/dotfiles/profile"
+    grep -Fq '.acfs/zsh/acfs.zshrc' "$TARGET_HOME/dotfiles/zshrc"
 }
