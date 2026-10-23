@@ -143,10 +143,10 @@ pw_env ACFS_PLAYWRIGHT_MIRROR="$WORK/mirror" PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=m
 check "a caller's own mirror and platform are kept" \
     bash -c '[[ "$1" == "$2/mirror" && "$3" == mine ]]' _ "$pw_mirror" "$WORK" "$pw_platform"
 
-# The web step against stubs: bun does nothing, and the browser helper
-# records what it is asked for.
+# The web step against stubs: bun records its arguments, and the browser
+# helper records what it is asked for.
 mkdir -p "$FIXTURE/apps/web" "$WORK/bin"
-printf '#!/usr/bin/env bash\nexit 0\n' >"$WORK/bin/bun"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$GATE_TEST_LOG.bun"\n' >"$WORK/bin/bun"
 chmod +x "$WORK/bin/bun"
 cat >"$FIXTURE/scripts/tests/ensure_playwright_browsers.sh" <<'STUB'
 #!/usr/bin/env bash
@@ -154,12 +154,22 @@ printf '%s\n' "$*" >>"$GATE_TEST_LOG"
 STUB
 web_browsers() { # web_browsers [--browser-project NAME...]: the helper's arguments
     : >"$LOG"
+    : >"$LOG.bun"
     PATH="$WORK/bin:$PATH" ACFS_BROWSER_GATE_LOCK="$WORK/browser.lock" \
         bash "$GATE" --root "$FIXTURE" --tmp-parent "$PARENT" --step web --bun-memory-max none "$@" >"$WORK/out" 2>&1 || true
     cat "$LOG"
 }
-check "web: every project by default, so every browser" \
-    test "$(web_browsers)" = "--web $FIXTURE/apps/web chromium firefox webkit"
+# The projects of the last web step's Playwright run, comma-separated.
+web_projects() {
+    sed -n 's/^run test -- //p' "$LOG.bun" | sed 's/ --project=/,/g; s/^--project=//'
+}
+check "web: CI's matrix by default, so chromium and firefox (acfs-5wv6)" \
+    test "$(web_browsers)" = "--web $FIXTURE/apps/web chromium firefox"
+check "web: the default runs chromium, firefox and Mobile Chrome" \
+    test "$(web_projects)" = "chromium,firefox,Mobile Chrome"
+# website.yml's line: project: [chromium, firefox, 'Mobile Chrome']
+check "web: the default is website.yml's matrix" \
+    test "$(web_projects)" = "$(sed -n "s/^ *project: \[\(.*\)\]$/\1/p" "$ROOT/.github/workflows/website.yml" | tr -d "'\"" | sed 's/, */,/g')"
 check "web: Mobile Chrome needs only chromium" \
     test "$(web_browsers --browser-project 'Mobile Chrome')" = "--web $FIXTURE/apps/web chromium"
 check "web: firefox and Mobile Safari add theirs" \

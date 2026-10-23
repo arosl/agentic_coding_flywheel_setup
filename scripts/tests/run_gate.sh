@@ -51,7 +51,8 @@ Options:
   --step NAME             Run only this step (repeatable): manifest,
                           policy, shellcheck, ci, web
   --browser-project NAME  Playwright project to run (repeatable;
-                          default: every project in the config)
+                          default: CI's matrix in website.yml, chromium,
+                          firefox and Mobile Chrome)
   --tmp-parent DIR        Where the temp root goes (default: /tmp, as
                           in CI; it must be traversable by other users)
   --bun-memory-max SIZE   The memory cap of each bun command of the
@@ -75,6 +76,10 @@ ROOT="$REPO_ROOT"
 SINCE=""
 STEPS=()
 BROWSER_PROJECTS=()
+# The projects CI runs (website.yml's matrix, acfs-wg62), the web step's
+# default; test_run_gate.sh keeps the two equal. webkit and Mobile Safari
+# stay in the config for --browser-project (acfs-5wv6).
+DEFAULT_BROWSER_PROJECTS=(chromium firefox "Mobile Chrome")
 TMP_PARENT="/tmp"
 KEEP=false
 COMMAND=()
@@ -314,17 +319,13 @@ step_web() {
     run_bun "web: type-check" "$dir" bun run type-check || true
     run_bun "web: lint" "$dir" bun run lint || true
     run_bun "web: build" "$dir" bun run build || true
-    local pw_args=() browsers=(chromium)
-    for project in "${BROWSER_PROJECTS[@]}"; do
-        pw_args+=("--project=$project")
-    done
+    local pw_args=() browsers=(chromium) projects=("${BROWSER_PROJECTS[@]}")
+    [[ ${#projects[@]} -gt 0 ]] || projects=("${DEFAULT_BROWSER_PROJECTS[@]}")
     # The browsers the run needs: chromium always (Mobile Chrome too),
-    # firefox and webkit when a project uses them, and every project does
-    # when none is named. A missing one comes from the zip mirror.
-    if [[ ${#BROWSER_PROJECTS[@]} -eq 0 ]]; then
-        browsers+=(firefox webkit)
-    fi
-    for project in "${BROWSER_PROJECTS[@]}"; do
+    # firefox and webkit when a project uses them. A missing one comes
+    # from the zip mirror.
+    for project in "${projects[@]}"; do
+        pw_args+=("--project=$project")
         case "$project" in
             firefox) browsers+=(firefox) ;;
             webkit|"Mobile Safari") browsers+=(webkit) ;;
