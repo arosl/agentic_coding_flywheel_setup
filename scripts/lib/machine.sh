@@ -19,8 +19,8 @@
 #
 # On macOS (acfs-ioo3.13) the Incus host is Colima's VM: `up` starts its
 # own Colima profile, acfs, with the Incus runtime and leaves the user's
-# default profile and current Incus remote alone. Once, it runs host-setup
-# in that VM and copies the pool host-setup recorded to the Mac. Then the
+# default profile and current Incus remote alone. It runs host-setup in
+# that VM and copies the pool host-setup recorded to the Mac. Then the
 # launcher runs against the remote colima-acfs.
 #
 # `verify` is the authenticated login checklist: for each configured tool
@@ -98,8 +98,8 @@ up       Create the swarm machine <name> as an unprivileged Incus container
                    where the install one-liner and the provider guides are.
   On macOS, a name without a remote runs in Colima: up starts the Colima
   profile acfs (--runtime incus, VZ), never the default profile, keeps the
-  current Incus remote, sets up its Incus for ACFS containers once, and
-  creates <name> on the remote colima-acfs. Colima 0.10.0 or newer routes
+  current Incus remote, sets up its Incus for ACFS containers (host-setup,
+  safe to re-run), and creates <name> on the remote colima-acfs. Colima 0.10.0 or newer routes
   the containers to the Mac; with an older one the SSH entry jumps through
   Colima's VM.
   --colima-cpus N, --colima-memory GIB, --colima-disk GIB
@@ -441,11 +441,12 @@ machine_colima_arch() {
 # bash the launcher runs on, Colima's version, VZ (macOS 13 or newer) and
 # the architecture.
 machine_colima_probe() {
-    local bash_major macos
+    local bash_version macos
     machine_require colima incus jq git
-    bash_major="$(bash -c 'echo "${BASH_VERSINFO[0]}"' 2>/dev/null || true)"
-    [[ "$bash_major" =~ ^[0-9]+$ ]] && ((bash_major >= 4)) \
-        || machine_die "the launcher needs bash 4 or newer as 'bash' on PATH, and macOS ships 3.2: brew install bash" 2
+    # 4.4: before it, set -u calls an empty "${array[@]}" unbound.
+    bash_version="$(bash -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"' 2>/dev/null || true)"
+    [[ "$bash_version" =~ ^[0-9]+\.[0-9]+$ ]] && machine_version_at_least "$bash_version" 4.4 \
+        || machine_die "the launcher needs bash 4.4 or newer as 'bash' on PATH, and macOS ships 3.2: brew install bash" 2
     MACHINE_COLIMA_VERSION="$(machine_colima version --profile "$MACHINE_COLIMA_PROFILE" 2>/dev/null \
         | sed -n 's/^colima version v\{0,1\}\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n 1 || true)"
     [[ -n "$MACHINE_COLIMA_VERSION" ]] \
@@ -550,28 +551,27 @@ rm -f "$d/scripts/lib/logging.sh" "$d/scripts/providers/incus_host.sh"
 rmdir "$d/scripts/lib" "$d/scripts/providers" "$d/scripts" "$d"
 exit "$s"'
 
-# The incus.env host-setup wrote in Colima's VM: empty until a setup there
-# finished, since host-setup writes it last.
+# The incus.env host-setup wrote in Colima's VM, which host-setup writes
+# last: empty unless a setup there finished.
 machine_colima_vm_env() {
     machine_colima ssh --profile "$MACHINE_COLIMA_PROFILE" -- \
         sh -c 'cat "${XDG_CONFIG_HOME:-$HOME/.config}/acfs/incus.env" 2>/dev/null || true' 2>/dev/null || true
 }
 
-# host-setup once in the VM, from this checkout's committed HEAD like the
-# install, then its pool in the Mac's incus.env, which the launcher reads
-# for every remote. A different pool recorded there is refused.
+# host-setup in the VM on every up, from this checkout's committed HEAD
+# like the install: it creates what is missing and only checks the rest,
+# so what a newer host-setup adds (an ACL, a rule) reaches a VM set up
+# earlier. Then its pool goes in the Mac's incus.env, which the launcher
+# reads for every remote. A different pool recorded there is refused.
 machine_colima_setup() {
     local vm_env repo pool file recorded tmp
+    repo="$(git -C "$(dirname "$MACHINE_LAUNCHER")" rev-parse --show-toplevel 2>/dev/null)" \
+        || machine_die "the launcher $MACHINE_LAUNCHER isn't in a git checkout, whose HEAD host-setup comes from" 2
+    machine_note "Colima: setting up its Incus for ACFS containers (host-setup --storage default, in Colima's VM)"
+    git -C "$repo" archive --format=tar HEAD scripts/lib/logging.sh scripts/providers/incus_host.sh \
+        | colima ssh --profile "$MACHINE_COLIMA_PROFILE" -- sh -c "$MACHINE_COLIMA_SETUP_SCRIPT" >&2 \
+        || machine_die "host-setup in Colima's VM failed. A command it names runs in that VM: colima ssh --profile $MACHINE_COLIMA_PROFILE -- <command>. Then re-run (host-setup is safe to re-run)" 1
     vm_env="$(machine_colima_vm_env)"
-    if [[ -z "$vm_env" ]]; then
-        repo="$(git -C "$(dirname "$MACHINE_LAUNCHER")" rev-parse --show-toplevel 2>/dev/null)" \
-            || machine_die "the launcher $MACHINE_LAUNCHER isn't in a git checkout, whose HEAD host-setup comes from" 2
-        machine_note "Colima: setting up its Incus for ACFS containers (host-setup --storage default, in Colima's VM)"
-        git -C "$repo" archive --format=tar HEAD scripts/lib/logging.sh scripts/providers/incus_host.sh \
-            | colima ssh --profile "$MACHINE_COLIMA_PROFILE" -- sh -c "$MACHINE_COLIMA_SETUP_SCRIPT" >&2 \
-            || machine_die "host-setup in Colima's VM failed; fix the cause and re-run (host-setup is safe to re-run)" 1
-        vm_env="$(machine_colima_vm_env)"
-    fi
     pool="$(sed -n 's/^ACFS_INCUS_POOL=//p' <<<"$vm_env" | tail -n 1)"
     [[ "$pool" =~ ^[A-Za-z0-9_.-]+$ ]] \
         || machine_die "Colima's VM holds no incus.env with a usable ACFS_INCUS_POOL after host-setup" 1

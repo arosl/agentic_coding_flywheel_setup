@@ -473,7 +473,7 @@ echo '{"name":"acfs","status":"Running","runtime":"incus","address":"192.168.64.
 run_colima up dev --colima-cpus 8
 check "exits 0" rc_is 0
 check "starts nothing" colima_not_called '^start'
-check "runs no host-setup" bash -c '[[ ! -e "$1" ]]' _ "$CASE/calls-host-setup"
+check "runs host-setup again, so what a newer one adds reaches the VM" bash -c '[[ "$(cat "$1")" == "--storage default" ]]' _ "$CASE/calls-host-setup"
 check "says the sizes are ignored for an existing profile" err_has 'ignored: the profile acfs exists'
 check "the launcher gets the remote-qualified name" launcher_args_are "colima-acfs:dev"
 
@@ -529,6 +529,15 @@ unset STUB_COLIMA_VERSION
 check "Colima 0.6.9: exits 2" rc_is 2
 check "Colima 0.6.9: says 0.7.0 is needed" err_has 'needs 0.7.0 or newer'
 check "Colima 0.6.9: starts nothing" colima_not_called '^start'
+colima_case colima-bash-43
+# A bash on PATH that reports 4.3 to the probe and runs everything else.
+mkdir -p "$CASE/wrap"
+printf '#!%s\n[[ "${1:-} ${2:-}" == "-c "*BASH_VERSINFO* ]] && { echo 4.3; exit 0; }\nexec %q "$@"\n' \
+    "$(command -v bash)" "$(command -v bash)" >"$CASE/wrap/bash"
+chmod +x "$CASE/wrap/bash"
+PATH_PREFIX="$CASE/wrap" run_colima up dev
+check "bash 4.3 on PATH: exits 2, naming 4.4" bash -c '[[ "$1" -eq 2 ]] && grep -q "needs bash 4.4 or newer" "$2"' _ "$RC" "$CASE/err"
+check "bash 4.3 on PATH: starts nothing" colima_not_called '^start'
 colima_case colima-macos-12
 export STUB_MACOS=12.7.4
 run_colima up dev
@@ -564,6 +573,7 @@ run_colima up dev
 unset STUB_HOST_SETUP_EXIT
 check "a failed host-setup: exits 1 and launches nothing" bash -c '[[ "$1" -eq 1 ]] && [[ ! -e "$2" ]]' _ "$RC" "$CASE/calls-launcher"
 check "a failed host-setup: the message doesn't end in the exit code" err_lacks 're-run) 1$'
+check "a failed host-setup: says a command it names runs in Colima's VM" err_has 'runs in that VM: colima ssh --profile acfs -- <command>'
 check "a failed host-setup: writes no incus.env on the Mac" bash -c '[[ ! -e "$1" ]]' _ "$CASE/home/.config/acfs/incus.env"
 check "a failed host-setup: leaves no temp files in the VM" vm_tmp_empty
 colima_case colima-env-conflict
