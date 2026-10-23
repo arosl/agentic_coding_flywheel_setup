@@ -741,7 +741,7 @@ If a session name or question is missing, ask for them first.`,
     description: "Read and acknowledge your unread Agent Mail",
     category: "Agent Coordination",
     fullText: `Be sure to check your agent mail and to promptly respond if needed to any messages, and also acknowledge any contact requests; make sure you know the names of all active agents using the MCP Agent Mail system.
-Run \`acfs agents inbox --agent <your Agent Mail name>\` to read every unread message sent to you, oldest first, which also marks each one read; then acknowledge each message it lists as ack pending.`,
+Run \`nhm mail inbox --agent <your Agent Mail name>\` to read every unread message sent to you, oldest first, which also marks each one read; then acknowledge each message it lists as ack pending.`,
   },
   {
     id: "introduce_to_fellow_agents",
