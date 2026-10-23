@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="0905fc6e4b88fd4b1d53688c371e5355101807cc17ad9f4c1ee8c19d49d17a55"
+ACFS_MANIFEST_SHA256="3b7e7a20f7d39fd541184b608624ff7a549fc4ba2c8c25f9adbd6392fffe5a1a"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -776,7 +776,7 @@ done
   ['cloud.vercel']='command -v vercel'
   ['tools.herdr']='command -v herdr'
   ['stack.mcp_agent_mail']='command -v am'
-  ['stack.nhm']='"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" version --json 2>/dev/null | grep -q '\''"version": "0.1.10"'\'''
+  ['stack.nhm']='"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" version --json 2>/dev/null | grep -q '\''"version": "0.1.11"'\'''
   ['stack.meta_skill']='command -v ms'
   ['stack.automated_plan_reviser']='command -v apr'
   ['stack.jeffreysprompts']='command -v jfp'
