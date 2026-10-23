@@ -647,6 +647,86 @@ run_helper spawn --codex 2 --cwd "$WORK/repo" --no-prompt --trust-folder --json
 check "a second dialog after the trust answer stops spawn as agent_not_ready" \
     test "$RC/$(jq -r '.agents[0].status' <<<"$OUT")/$(count_calls '^mcp create_agent_identity')" = "1/agent_not_ready/1"
 
+# acfs-nvok: Claude Code wraps its trust question in a pane under about 70
+# columns; the answers do not wrap. The dialog in a pane $1 (40 or 60)
+# columns wide, as nhm-za8's TestTrustKeysWrapped has it, with answer lines
+# $2 (printf %b).
+claude_trust_wrapped() {
+    local rule
+    printf -v rule '%*s' "$1" ''
+    printf '%s\n' "${rule// /─}"
+    case "$1" in
+        40) cat <<'EOF'
+ Accessing workspace:
+
+ /srv/project
+
+ Quick safety check: Is this a project
+ you created or one you trust? (Like
+ your own code, a well-known open
+ source project, or work from your
+ team). If not, take a moment to review
+ what's in this folder first.
+
+ Claude Code'll be able to read, edit,
+ and execute files here.
+
+ Security guide
+
+EOF
+            ;;
+        60) cat <<'EOF'
+ Accessing workspace:
+
+ /srv/project
+
+ Quick safety check: Is this a project you created or one
+ you trust? (Like your own code, a well-known open source
+ project, or work from your team). If not, take a moment to
+ review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files
+ here.
+
+ Security guide
+
+EOF
+            ;;
+    esac
+    printf '%b\n\n Enter to confirm · Esc to cancel\n' "$2"
+}
+# Case $1: spawn one agent of kind $2 with --trust-folder, at a dialog
+# whose screen is on stdin.
+trust_case() {
+    reset_stub "$1"
+    touch "$STUB_DIR/not_ready_alphafox"
+    cat >"$STUB_DIR/screen_alphafox"
+    run_helper spawn "--$2" 1 --cwd "$WORK/repo" --no-prompt --trust-folder
+}
+sent_keys() { grep '^herdr agent send-keys' "$STUB_DIR/calls" || true; }
+
+for cols in 40 60; do
+    trust_case "wrapno$cols" claude < <(claude_trust_wrapped "$cols" ' ❯ No, exit\n   Yes, I trust this folder')
+    check "Claude's question wrapped at $cols columns, cursor on 'No, exit': Down then Enter" \
+        test "$RC/$(sent_keys)" = "0/herdr agent send-keys alphafox down enter"
+    trust_case "wrapyes$cols" claude < <(claude_trust_wrapped "$cols" '   No, exit\n ❯ Yes, I trust this folder')
+    check "Claude's question wrapped at $cols columns, cursor on 'Yes': Enter" \
+        test "$RC/$(sent_keys)" = "0/herdr agent send-keys alphafox enter"
+    trust_case "wrapother$cols" claude < <(claude_trust_wrapped "$cols" ' ❯ Something else')
+    check "Claude's question wrapped at $cols columns without the trust answers gets no keys" \
+        test "$RC/$(sent_keys)" = "1/"
+done
+trust_case wrapcodex codex < <(claude_trust_wrapped 40 ' ❯ No, exit\n   Yes, I trust this folder')
+check "Codex never answers Claude's wrapped dialog" test "$RC/$(sent_keys)" = "1/"
+trust_case codex40 codex \
+    < <(printf '  /srv/project\n  Trust this folder? Codex can read,\n  edit, and run files here.\n› 1. Trust and continue\n  2. Quit\n')
+check "Codex's dialog at 40 columns gets Enter" test "$RC/$(sent_keys)" = "0/herdr agent send-keys alphafox enter"
+trust_case boxed claude < <(printf '%s\n' '╭──────────────────────────────────────╮' \
+    '│ Quick safety check: Is this a project│' '│ you created or one you trust?        │' \
+    '╰──────────────────────────────────────╯' ' ❯ No, exit' '   Yes, I trust this folder')
+check "a box's borders drop out of the question" \
+    test "$RC/$(sent_keys)" = "0/herdr agent send-keys alphafox down enter"
+
 # acfs-zsz: herdr refuses agent start while a new tab's shell is still
 # running its startup files (agent_pane_busy).
 reset_stub busyonce

@@ -752,14 +752,28 @@ herdr_agents_explain_stall() {
 # spawn
 # ------------------------------------------------------------
 
+# Screen $1's words in order, one space apart: line breaks and runs of
+# spaces become one space, and box-drawing characters (U+2500 to U+257F, a
+# dialog's borders) drop out. A question that a narrow pane wraps reads as
+# it does in a wide one (acfs-nvok, after nhm-za8's flatScreen).
+herdr_agents_flat_screen() {
+    local flat
+    flat="$(LC_ALL=C sed $'s/\xe2[\x94\x95][\x80-\xbf]/ /g' <<<"$1" | LC_ALL=C tr -s '[:space:]' ' ')"
+    flat="${flat# }"
+    printf '%s\n' "${flat% }"
+}
+
 # The keys that answer a recognised folder-trust dialog with "trust": $1 is
 # the kind, $2 the visible screen. Claude Code's dialog defaults to "No, exit";
-# Codex's to "Trust and continue". Anything else is not ours to answer.
+# Codex's to "Trust and continue". Anything else is not ours to answer. The
+# question is looked for on the flat screen, because a narrow pane wraps it;
+# the answers are short and keep their lines.
 herdr_agents_trust_keys() {
-    local kind="$1" screen="$2"
+    local kind="$1" screen="$2" flat=""
+    flat="$(herdr_agents_flat_screen "$screen")"
     case "$kind" in
         claude)
-            [[ "$screen" == *"Is this a project you created or one you trust?"* ]] || return 1
+            [[ "$flat" == *"Is this a project you created or one you trust?"* ]] || return 1
             if grep -Eq '❯ *No, exit' <<<"$screen" && grep -Eq '^ *Yes, I trust this folder' <<<"$screen"; then
                 printf 'down enter\n'
             elif grep -Eq '❯ *Yes, I trust this folder' <<<"$screen"; then
@@ -769,7 +783,7 @@ herdr_agents_trust_keys() {
             fi
             ;;
         codex)
-            [[ "$screen" == *"Trust this folder?"* ]] && grep -Eq '› *1\. Trust and continue' <<<"$screen" || return 1
+            [[ "$flat" == *"Trust this folder?"* ]] && grep -Eq '› *1\. Trust and continue' <<<"$screen" || return 1
             printf 'enter\n'
             ;;
         *) return 1 ;;
