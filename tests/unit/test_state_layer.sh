@@ -16,7 +16,9 @@
 # without --replace, refuses a tampered archive
 # and an unfenced move, and resumes after an interruption; a --move
 # export fences the lease; lease check's four cases; repair; doctor's
-# JSON; setup-guest's unit, drop-ins and HostKey drop-in.
+# JSON, its modes rule (only a row top that lets another account in,
+# through other access or a shared group) and its coverage; setup-guest's
+# unit, drop-ins and HostKey drop-in.
 #
 # Usage: bash tests/unit/test_state_layer.sh
 # ============================================================
@@ -155,6 +157,31 @@ cat >"$BIN/claude" <<'STUB'
 #!/usr/bin/env bash
 echo "${CLAUDE_VERSION:-2.0.0 (Claude Code)}"
 STUB
+
+# stat: OFF_DEVICE names a file that reports another device for %d, as
+# a mount over it would; everything else goes to the real stat.
+cat >"$BIN/stat" <<'STUB'
+#!/usr/bin/env bash
+if [[ -n "${OFF_DEVICE:-}" && "$*" == "-c %d $OFF_DEVICE" ]]; then
+    echo 4242
+    exit 0
+fi
+PATH="${PATH#*:}" exec stat "$@"
+STUB
+
+# getent: the user's primary group is the user's alone, unless
+# GROUP_MEMBERS lists members or PASSWD_EXTRA adds an account (the
+# runner's own groups vary).
+cat >"$BIN/getent" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+    group) printf 'grp:x:%s:%s\n' "$2" "${GROUP_MEMBERS:-}" ;;
+    passwd)
+        printf '%s:x:%s:%s::/home/u:/bin/sh\n' "$(id -un)" "$(id -u)" "$(id -g)"
+        [[ -z "${PASSWD_EXTRA:-}" ]] || printf '%s\n' "$PASSWD_EXTRA" ;;
+    *) exit 2 ;;
+esac
+STUB
 chmod +x "$BIN"/*
 
 # --- Fixture machines ---------------------------------------------------
@@ -247,6 +274,8 @@ check "manifest lists login, cache and root rows" \
 run "$A" manifest --json
 check "manifest --json is valid and has a private claude row" \
     bash -c 'jq -e ".[] | select(.id == \"claude\" and .policy == \"private\")" "$1" >/dev/null' _ "$OUT"
+check "manifest --json: claude-json has no marker; jfp, opencode and caam have a login's" \
+    bash -c 'jq -e "(.[] | select(.id == \"claude-json\") | .markers == []) and (.[] | select(.id == \"jfp\") | .markers == [\".config/jfp/credentials.json\"]) and (.[] | select(.id == \"opencode\") | .markers == [\".local/share/opencode/auth.json\"]) and (.[] | select(.id == \"caam\") | .markers == [\".local/share/caam/vault\"])" "$1" >/dev/null' _ "$OUT"
 
 echo "export: refusals"
 run "$A" export devbox
@@ -509,19 +538,46 @@ check "repair leaves asis rows alone" \
     bash -c '[[ "$(stat -c %a "$1/home/.config/systemd/user/x.service")" == 664 ]]' _ "$A"
 
 echo "doctor"
-chmod 0644 "$A/home/.codex/auth.json"
+# A umask-002 user's file inside a row whose top is 0700: no other
+# account reaches it. Plus a row, an asis row and known paths that the
+# coverage check must not list.
+chmod 0664 "$A/home/.codex/auth.json"
+mkdir -p "$A/home/.local/share/caam/vault" "$A/home/.config/nhm" "$A/home/.config/agent-mail/identity" \
+    "$A/home/.local/share/sbh/ballast" "$A/home/.local/share/claude/versions"
+chmod 0700 "$A/home/.local/share/caam"
+: >"$A/home/.zshrc.bak.1791688739"
+run "$A" doctor --json
+check "doctor passes umask-002 files below a 0700 row top" \
+    bash -c 'jq -e ".[] | select(.id == \"state.modes\" and .status == \"pass\")" "$1" >/dev/null' _ "$OUT"
+check "doctor reports the unknown dot-directory, and no row or known path" \
+    bash -c 'jq -e ".[] | select(.id == \"state.unknown\" and .status == \"warn\" and (.details | contains(\".weirdtool\")) and (.details | test(\"caam|nhm|agent-mail|sbh|share/claude|zshrc\") | not))" "$1" >/dev/null' _ "$OUT"
+check "doctor passes the credentials when every one is on the home's filesystem" \
+    bash -c 'jq -e ".[] | select(.id == \"state.credentials\" and .status == \"pass\")" "$1" >/dev/null' _ "$OUT"
+OFF_DEVICE="$A/home/.claude.json" run "$A" doctor --json
+check "doctor fails the credentials when a mount covers ~/.claude.json" \
+    bash -c 'jq -e ".[] | select(.id == \"state.credentials\" and .status == \"fail\" and .details == \"on another filesystem than the home: .claude.json\")" "$1" >/dev/null' _ "$OUT"
+chmod 0755 "$A/home/.codex"
 run "$A" doctor --json
 check "doctor --json is an array of {id,label,status,details,fix}" \
     bash -c 'jq -e "type == \"array\" and all(.[]; has(\"id\") and has(\"label\") and has(\"status\") and has(\"details\") and has(\"fix\"))" "$1" >/dev/null' _ "$OUT"
 check "doctor passes the layer when every path is a mount" \
     bash -c 'jq -e ".[] | select(.id == \"state.layer\" and .status == \"pass\")" "$1" >/dev/null' _ "$OUT"
-check "doctor warns on a group-readable login and names repair" \
-    bash -c 'jq -e ".[] | select(.id == \"state.modes\" and .status == \"warn\" and (.details | contains(\"codex\")) and .fix == \"sudo acfs state repair\")" "$1" >/dev/null' _ "$OUT"
-check "doctor reports the unknown dot-directory" \
-    bash -c 'jq -e ".[] | select(.id == \"state.unknown\" and .status == \"warn\" and (.details | contains(\".weirdtool\")))" "$1" >/dev/null' _ "$OUT"
+check "doctor warns on a login row other accounts can enter, and names repair" \
+    bash -c 'jq -e ".[] | select(.id == \"state.modes\" and .status == \"warn\" and .details == \"open to other accounts at the top, or a foreign owner, in: codex\" and .fix == \"sudo acfs state repair\")" "$1" >/dev/null' _ "$OUT"
 check "doctor's lease check passes on an active, successful unit" \
     bash -c 'jq -e ".[] | select(.id == \"state.lease\" and .status == \"pass\")" "$1" >/dev/null' _ "$OUT"
 check "doctor never prints a secret" bash -c '! grep -q secret "$1"' _ "$OUT"
+chmod 0770 "$A/home/.codex"
+run "$A" doctor --json
+check "doctor passes a row top open only to the user's private group" \
+    bash -c 'jq -e ".[] | select(.id == \"state.modes\" and .status == \"pass\")" "$1" >/dev/null' _ "$OUT"
+GROUP_MEMBERS="$(id -un),other" run "$A" doctor --json
+check "doctor warns on it when the group has another member" \
+    bash -c 'jq -e ".[] | select(.id == \"state.modes\" and .status == \"warn\" and (.details | contains(\"codex\")))" "$1" >/dev/null' _ "$OUT"
+PASSWD_EXTRA="other:x:4242:$(id -g)::/home/o:/bin/sh" run "$A" doctor --json
+check "doctor warns on it when another account has the group as its own" \
+    bash -c 'jq -e ".[] | select(.id == \"state.modes\" and .status == \"warn\" and (.details | contains(\"codex\")))" "$1" >/dev/null' _ "$OUT"
+chmod 0700 "$A/home/.codex"
 LEASE_ACTIVE=failed LEASE_RESULT=exit-code run "$A" doctor --json
 check "doctor fails the lease when its unit failed" \
     bash -c 'jq -e ".[] | select(.id == \"state.lease\" and .status == \"fail\")" "$1" >/dev/null' _ "$OUT"

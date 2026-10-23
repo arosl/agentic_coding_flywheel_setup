@@ -64,7 +64,7 @@ STATE_LEASE_UNIT="acfs-state-lease.service"
 
 # Processes that write login or session state. Export and import
 # refuse while one of them still runs as the user after the quiesce.
-STATE_WRITERS=(claude codex agy gemini pi herdr am mcp-agent-mail cass cm atuin)
+STATE_WRITERS=(claude codex agy gemini pi opencode herdr am mcp-agent-mail cass cm atuin)
 
 # --- The export manifest (plan 4.7.1) -------------------------------
 # id|class|base|path|policy|markers
@@ -73,9 +73,10 @@ STATE_WRITERS=(claude codex agy gemini pi herdr am mcp-agent-mail cass cm atuin)
 #            empty for a whole root row
 #   policy:  private: no group or other access, except *.pub at 0644
 #            (hooks keep their execute bits); asis: left as it is
-#   markers: comma-separated files that mean "a login is here". Only a
-#            completed login writes one: ~/.claude.json is none, since
-#            Claude Code writes it on its first start
+#   markers: comma-separated files (or caam's vault directory) that mean
+#            "a login is here". Only a completed login writes one:
+#            ~/.claude.json is none, since Claude Code writes it on its
+#            first start, and jfp writes its registry cache without one
 ROWS=(
     "claude-json|login|home|.claude.json|private|"
     "claude|login|home|.claude|private|.claude/.credentials.json"
@@ -96,7 +97,17 @@ ROWS=(
     "supabase|login|home|.supabase|private|"
     "grok|login|home|.grok|private|"
     "cursor|login|home|.cursor|private|"
+    "opencode|login|home|.local/share/opencode|private|.local/share/opencode/auth.json"
+    "caam|login|home|.local/share/caam|private|.local/share/caam/vault"
+    "jfp|login|home|.config/jfp|private|.config/jfp/credentials.json"
+    "acfs-config|login|home|.config/acfs|private|"
     "systemd-user|login|home|.config/systemd/user|asis|"
+    "nhm-config|login|home|.config/nhm|asis|"
+    "opencode-config|login|home|.config/opencode|asis|"
+    "rch-config|login|home|.config/rch|asis|"
+    "sbh-config|login|home|.config/sbh|asis|"
+    "dcg-config|login|home|.config/dcg|asis|"
+    "lazygit-config|login|home|.config/lazygit|asis|"
     "dotfiles|login|home|dotfiles|asis|"
     "gitconfig|login|home|.gitconfig|asis|"
     "zshenv|login|home|.zshenv|asis|"
@@ -116,12 +127,24 @@ STATE_KNOWN_NONSTATE=(
     .bash_history .bash_logout .zsh_history .zcompdump .lesshst .wget-hsts
     .viminfo .python_history .node_repl_history .sudo_as_admin_successful
     .vscode-server .docker .duckdb .p10k.zsh .tmux.conf .zshrc.local
-    .bashrc.d .acfs-import-
+    .bashrc.d .acfs-import- .atuin .opencode .zfunc .pki .sigstore
+    .bashrc.bak .zshrc.bak .zshrc.pre-acfs
     .config/btop .config/htop .config/nvim .config/fish .config/lsd .config/bat
     .config/direnv .config/atuin .config/zsh .config/uv .config/go
+    .config/matplotlib .config/Ultralytics .config/ubs .config/bv
+    .config/google-chrome-for-testing
+    # Agent Mail's pane names, which belong to one herdr server, and the
+    # installer's TMPDIR for this machine
+    .config/agent-mail .config/environment.d
     .local/share/nvim .local/share/zsh .local/share/zoxide .local/share/man
     .local/share/applications .local/share/fonts .local/share/bash-completion
     .local/share/direnv .local/share/uv .local/share/mise .local/share/pnpm
+    # Installed releases and models, telemetry, timer stamps, sbh's
+    # ballast files, nhm's command history (like .zsh_history), the
+    # trash, and vitest's token for this machine
+    .local/share/claude .local/share/frankensearch .local/share/mcp-agent-mail
+    .local/share/nhm .local/share/pfr .local/share/rch .local/share/sbh
+    .local/share/systemd .local/share/ubs .local/share/Trash .local/share/vitest
 )
 
 # --- Helpers ---------------------------------------------------------
@@ -542,6 +565,35 @@ state_owner_problems() {
     local target="$1" uid="$2"
     [[ -e "$target" || -L "$target" ]] || return 0
     find "$target" ! -uid "$uid" -printf '%U %p\n' 2>/dev/null || true
+}
+
+# The user's primary group when it is the user's alone: no other
+# account has it as its primary group or is listed as a member. Empty
+# when it is shared or can't be read.
+state_private_gid() {
+    local gid entry members member
+    gid="$(state_gid 2>/dev/null)" || return 0
+    entry="$(getent group "$gid" 2>/dev/null)" || return 0
+    members="${entry##*:}"
+    for member in ${members//,/ }; do
+        [[ "$member" == "$STATE_USER" ]] || return 0
+    done
+    getent passwd 2>/dev/null | awk -F: -v gid="$gid" -v user="$STATE_USER" \
+        '$4 == gid && $1 != user { shared = 1 } END { exit shared }' || return 0
+    printf '%s\n' "$gid"
+}
+
+# A row's top when another account can reach what is below it: it
+# grants other access, or group access through a group that isn't the
+# user's private one. Below a top that grants neither, modes expose
+# nothing (a umask-002 file inside a 0700 directory).
+state_top_exposure() {
+    local target="$1" private_gid="$2"
+    local -a group=(-perm /0070)
+    [[ -e "$target" ]] || return 0
+    [[ -n "$private_gid" ]] && group+=(! -gid "$private_gid")
+    find "$target" -maxdepth 0 \( -type f -o -type d \) \( -perm /0007 -o \( "${group[@]}" \) \) \
+        -printf '%m %p\n' 2>/dev/null || true
 }
 
 state_fix_modes() {
@@ -1325,30 +1377,38 @@ state_cmd_doctor() {
     fi
 
     # Modes and owners of the home rows (root rows need root to read).
-    local row id class base path policy markers target bad=() uid
+    # Only what another account can reach counts: repair still makes
+    # every file private, but the doctor warns only on a private row
+    # whose top lets another account in, or on a foreign owner.
+    local row id class base path policy markers target bad=() uid private_gid
     uid="$(state_uid 2>/dev/null || echo -1)"
+    private_gid="$(state_private_gid)"
     for row in "${ROWS[@]}"; do
         IFS='|' read -r id class base path policy markers <<<"$row"
         # Cache rows hold no login and are too big to walk on every run.
         [[ "$base" == "home" && "$class" != "cache" ]] || continue
         target="$(state_row_target "$base" "$path")"
         [[ -e "$target" ]] || continue
-        if [[ "$policy" == "private" && -n "$(state_mode_problems "$target" | head -1)" ]]; then bad+=("$id"); continue; fi
+        if [[ "$policy" == "private" && -n "$(state_top_exposure "$target" "$private_gid")" ]]; then bad+=("$id"); continue; fi
         [[ -n "$(state_owner_problems "$target" "$uid" | head -1)" ]] && bad+=("$id")
     done
     if [[ ${#bad[@]} -eq 0 ]]; then
-        state_doctor_item state.modes "State modes" pass "login rows have no group or other access and belong to $STATE_USER"
+        state_doctor_item state.modes "State modes" pass "no other account can reach a login row, and every one belongs to $STATE_USER"
     else
-        state_doctor_item state.modes "State modes" warn "group or other access, or a foreign owner, in: ${bad[*]}" "sudo acfs state repair"
+        state_doctor_item state.modes "State modes" warn "open to other accounts at the top, or a foreign owner, in: ${bad[*]}" "sudo acfs state repair"
     fi
 
-    # Credentials that sit on another filesystem than the home.
-    local marker dev_home dev off=()
+    # Credentials that sit on another filesystem than the home: every
+    # marker, and a private row that is one file (~/.claude.json, which
+    # holds Claude Code's account state but is no marker).
+    local marker dev_home dev off=() files
     dev_home="$(stat -c %d "$STATE_HOME" 2>/dev/null || echo "")"
     for row in "${ROWS[@]}"; do
         IFS='|' read -r id class base path policy markers <<<"$row"
         [[ "$base" == "home" ]] || continue
-        for marker in ${markers//,/ }; do
+        files="${markers//,/ }"
+        [[ "$policy" == "private" && -f "$STATE_HOME/$path" ]] && files+=" $path"
+        for marker in $files; do
             [[ -f "$STATE_HOME/$marker" ]] || continue
             dev="$(stat -c %d "$STATE_HOME/$marker" 2>/dev/null || echo "")"
             [[ -n "$dev_home" && "$dev" != "$dev_home" ]] && off+=("$marker")
