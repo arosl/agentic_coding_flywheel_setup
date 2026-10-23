@@ -1,16 +1,17 @@
 # Command Palette (`command_palette.md`)
 #
 # This file holds ready-made prompts to send to coding agents running in herdr.
-# It started as ntm's palette; the prompts that called ntm now use herdr,
-# `acfs agents` and Agent Mail instead.
+# It started as ntm's palette; the prompts that called ntm now call nhm, the
+# herdr wrapper that runs the agents, or Agent Mail.
 #
-# Usage:
-#   - One agent: `herdr agent prompt <herdr name> "<prompt text>"`. The herdr name
-#     is the agent's Agent Mail name in lowercase (`herdr agent list` shows them).
-#   - Several agents: `acfs agents send (--all | --kind K | --name N) "<prompt text>"`.
-#   - A prompt from this file by its key: `acfs agents send --all --template fresh_review`.
-#     `{{session}}`, `{{agent}}`, `{{herdr}}` and `{{thread}}` (from `--thread`) are filled in per agent.
-#   - New agents: `acfs agents spawn` sends `default_new_agent` as their first prompt.
+# Usage (the session is the herdr workspace's label; `nhm status <session>`
+# lists its agents):
+#   - One agent: `nhm send <session> --name <Agent Mail name> "<prompt text>"`.
+#   - Several agents: `nhm send <session> [--cc | --cod | --agy] "<prompt text>"`.
+#     Without a selector, the prompt goes to every agent of the session but you.
+#   - A prompt from this file by its key: `nhm send <session> -t fresh_review`.
+#     `nhm palette --list` lists the keys.
+#   - New agents: `nhm add <session> --cc=N` sends `default_new_agent` as their first prompt.
 #   - Or open this file, copy a prompt and paste it into an agent's pane.
 #
 # Format:
@@ -63,26 +64,24 @@ I also want you to do a spectacular job building absolutely world-class UI/UX co
 ## Ensemble
 
 ### ensemble_list | Ensemble Presets (Core)
-An ensemble is a few agents that each answer the same question from a different angle, which you then synthesize. herdr has no preset catalog, so propose one: run `acfs agents list` to see who is already running, then suggest a core lineup of two or three agents for the task at hand (agent kind and the angle each one takes). List larger or more expensive lineups separately and keep the main list core-only.
+Run `nhm ensemble list` and summarize the core presets available. If the output includes advanced/experimental presets, call them out separately and keep the main list core-only.
 
 ### ensemble_run | Ensemble Run (Pick Preset + Prompt)
-Pick the most appropriate lineup for the task at hand (see Ensemble Presets), then start it in this herdr workspace:
-`acfs agents spawn --claude <N> --codex <N> --no-prompt`
-Then send each new agent the question with its own angle:
-`acfs agents send --name <herdr name> "<question> Approach it as: <angle>"`
-If the question is missing, ask for it first.
+Pick the most appropriate ensemble preset for the task at hand, then run a new ensemble session using:
+`nhm ensemble spawn <session> --preset <preset> --question "<question>"`
+If a session name or question is missing, ask for them first.
 
 ### ensemble_status | Ensemble Status
-Run `acfs agents list` and summarize the ensemble agents: each one's status (working, blocked, idle or done) and the angle it was given. Say whether all of them have finished and the ensemble is ready to synthesize. To wait for one, run `herdr agent wait <herdr name>` (without `--until`, it returns on idle, done or blocked).
+Run `nhm ensemble status <session>` for the current ensemble session and summarize status counts, assignments, and synthesis readiness.
 
 ### ensemble_synthesize | Ensemble Synthesize
-For each ensemble agent, collect its answer with `herdr agent read <herdr name> --source recent --lines 200`. Then synthesize: where the answers agree, where they disagree and why, and a recommendation. Summarize the result at a high level.
+Run `nhm ensemble synthesize <session> --format=json` and summarize the synthesized output at a high level.
 
 ### ensemble_modes_core | Ensemble Modes (Core)
-herdr has no list of reasoning modes. Suggest the three or four angles most useful for the current task (for example first principles, the user's view, an adversarial reviewer, the simplest thing that could work), one line each, to hand out to ensemble agents.
+Run `nhm modes list --tier core` and summarize the core reasoning modes most relevant to the current task.
 
 ### ensemble_modes_advanced | Ensemble Modes (Advanced)
-Warning: advanced angles increase token spend (more agents, longer runs). If approved, suggest further angles for a larger ensemble (for example security, performance, failure modes and migration risk), and say which agent kind suits each.
+Warning: Advanced modes increase token spend. If approved, run `nhm modes list --tier advanced` and summarize the advanced reasoning modes.
 
 ## Documentation
 

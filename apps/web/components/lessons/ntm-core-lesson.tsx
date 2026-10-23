@@ -100,8 +100,8 @@ export function NtmCoreLesson() {
               />
             </div>
             <Paragraph>
-              Agent names must be unique across herdr, so prefix them with the project. herdr takes
-              only lowercase names: a lowercase letter first, then lowercase letters, digits,{" "}
+              Agent names must be unique across herdr. herdr takes only lowercase names: a lowercase
+              letter first, then lowercase letters, digits,{" "}
               <code>-</code> or <code>_</code>, 32 characters at most. An agent that also has an
               Agent Mail name (CamelCase, such as <code>IcyKnoll</code>) uses it lowercased in herdr
               (<code>icyknoll</code>), so other agents can find it in both.

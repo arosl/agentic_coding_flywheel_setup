@@ -51,7 +51,7 @@ This creates, in your current workspace:
 - 1 Codex pane
 - 1 Gemini pane
 
-Agent names must be unique across herdr, so prefix them with the project.
+Agent names must be unique across herdr.
 herdr takes only lowercase names: a lowercase letter first, then lowercase
 letters, digits, `-` or `_`, 32 characters at most. An agent that also has
 an Agent Mail name (CamelCase, such as `IcyKnoll`) uses it lowercased in

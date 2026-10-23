@@ -588,49 +588,47 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
   {
     id: "ensemble_list",
     title: "Ensemble Presets (Core)",
-    description: "Propose a core lineup of agents for an ensemble",
+    description: "Summarize the core ensemble presets",
     category: "Ensemble",
-    fullText: `An ensemble is a few agents that each answer the same question from a different angle, which you then synthesize. herdr has no preset catalog, so propose one: run \`acfs agents list\` to see who is already running, then suggest a core lineup of two or three agents for the task at hand (agent kind and the angle each one takes). List larger or more expensive lineups separately and keep the main list core-only.`,
+    fullText: `Run \`nhm ensemble list\` and summarize the core presets available. If the output includes advanced/experimental presets, call them out separately and keep the main list core-only.`,
   },
   {
     id: "ensemble_run",
     title: "Ensemble Run (Pick Preset + Prompt)",
-    description: "Start an ensemble and give each agent its angle",
+    description: "Start an ensemble session from the best preset",
     category: "Ensemble",
-    params: "+ the question",
-    fullText: `Pick the most appropriate lineup for the task at hand (see Ensemble Presets), then start it in this herdr workspace:
-\`acfs agents spawn --claude <N> --codex <N> --no-prompt\`
-Then send each new agent the question with its own angle:
-\`acfs agents send --name <herdr name> "<question> Approach it as: <angle>"\`
-If the question is missing, ask for it first.`,
+    params: "+ session and question",
+    fullText: `Pick the most appropriate ensemble preset for the task at hand, then run a new ensemble session using:
+\`nhm ensemble spawn <session> --preset <preset> --question "<question>"\`
+If a session name or question is missing, ask for them first.`,
   },
   {
     id: "ensemble_status",
     title: "Ensemble Status",
-    description: "Summarize each ensemble agent's state and angle",
+    description: "Summarize the ensemble session's status and readiness",
     category: "Ensemble",
-    fullText: `Run \`acfs agents list\` and summarize the ensemble agents: each one's status (working, blocked, idle or done) and the angle it was given. Say whether all of them have finished and the ensemble is ready to synthesize. To wait for one, run \`herdr agent wait <herdr name>\` (without \`--until\`, it returns on idle, done or blocked).`,
+    fullText: `Run \`nhm ensemble status <session>\` for the current ensemble session and summarize status counts, assignments, and synthesis readiness.`,
   },
   {
     id: "ensemble_synthesize",
     title: "Ensemble Synthesize",
-    description: "Collect the ensemble's answers and synthesize them",
+    description: "Summarize the ensemble's synthesized output",
     category: "Ensemble",
-    fullText: `For each ensemble agent, collect its answer with \`herdr agent read <herdr name> --source recent --lines 200\`. Then synthesize: where the answers agree, where they disagree and why, and a recommendation. Summarize the result at a high level.`,
+    fullText: `Run \`nhm ensemble synthesize <session> --format=json\` and summarize the synthesized output at a high level.`,
   },
   {
     id: "ensemble_modes_core",
     title: "Ensemble Modes (Core)",
-    description: "Suggest the most useful angles for the current task",
+    description: "Summarize the core reasoning modes for the task",
     category: "Ensemble",
-    fullText: `herdr has no list of reasoning modes. Suggest the three or four angles most useful for the current task (for example first principles, the user's view, an adversarial reviewer, the simplest thing that could work), one line each, to hand out to ensemble agents.`,
+    fullText: `Run \`nhm modes list --tier core\` and summarize the core reasoning modes most relevant to the current task.`,
   },
   {
     id: "ensemble_modes_advanced",
     title: "Ensemble Modes (Advanced)",
-    description: "Suggest further angles for a larger ensemble",
+    description: "Summarize the advanced reasoning modes (more tokens)",
     category: "Ensemble",
-    fullText: `Warning: advanced angles increase token spend (more agents, longer runs). If approved, suggest further angles for a larger ensemble (for example security, performance, failure modes and migration risk), and say which agent kind suits each.`,
+    fullText: `Warning: Advanced modes increase token spend. If approved, run \`nhm modes list --tier advanced\` and summarize the advanced reasoning modes.`,
   },
   // Documentation
   {
