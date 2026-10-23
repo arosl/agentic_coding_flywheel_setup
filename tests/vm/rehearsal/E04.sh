@@ -33,9 +33,10 @@ e04_row() {
 
 # e04_name_back POLLS EPOCH: the poll log's first line at or after EPOCH
 # whose herdr name is the binding's comes within 5 s of it (plus the
-# mock log's one-second rounding).
+# mock log's one-second rounding). No such line fails.
 e04_name_back() {
-    awk -v t="$2" '$1 >= t && $2 == "match" { exit !($1 - t <= 6) } END { if (NR == 0) exit 1 }' "$1"
+    awk -v t="$2" '$1 >= t && $2 == "match" { found = 1; ok = ($1 - t <= 6); exit }
+        END { exit !(found && ok) }' "$1"
 }
 
 step_E04() {
