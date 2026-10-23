@@ -298,6 +298,15 @@ run_machine() {
             command -v "$b" >/dev/null 2>&1 && ln -sf "$(command -v "$b")" "$CASE/bin-min/$b"
         done
         path="$CASE/bin-min"
+    elif [[ -n "${NO_TIMEOUT:-}" ]]; then
+        # Every stub and what machine.sh uses, but no timeout(1), as on macOS.
+        mkdir -p "$CASE/bin-nt"
+        ln -sf "$WORK"/bin/* "$CASE/bin-nt/"
+        local t
+        for t in bash sh jq stat sed awk grep cat tr wc mkdir chmod rm mktemp head tail cut sort uname readlink dirname date ls env git; do
+            command -v "$t" >/dev/null 2>&1 && ln -sf "$(command -v "$t")" "$CASE/bin-nt/$t"
+        done
+        path="$CASE/bin-nt"
     fi
     set +e
     PATH="$path" STUB_DIR="$CASE" STUB_ROOTFS="$CASE/rootfs" HOME="$CASE/home" \
@@ -1003,6 +1012,33 @@ run_machine verify dev
 unset STUB_GUEST_EXIT
 check "a failing guest check: exits 1" rc_is 1
 check "a failing guest check: is reported as such" status_is codex fail
+
+echo "== verify <name> without timeout(1), as on macOS, and a bare name on macOS"
+new_case verify-named-no-timeout
+installed_machine
+printf 'Host dev\n    HostName 192.0.2.20\n' >"$CASE/home/.ssh/config"
+NO_TIMEOUT=1 run_machine verify dev
+check "no timeout(1): exits 0" rc_is 0
+check "no timeout(1): the SSH entry is still checked" status_is ssh-entry ok
+check "no timeout(1): ssh runs with keepalive limits, in batch mode" \
+    grep -q -- '-o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o BatchMode=yes -o ConnectTimeout=10 dev true' "$CASE/calls-ssh"
+NO_TIMEOUT=1 run_machine verify
+check "no timeout(1): the local checklist exits 2, naming timeout" bash -c '[[ "$1" -eq 2 ]] && grep -q "timeout is required" "$2"' _ "$RC" "$CASE/err"
+new_case verify-darwin
+installed_machine
+UNAME=Darwin run_machine verify dev
+check "macOS: a bare name exits 0" rc_is 0
+check "macOS: asks Colima's Incus first" incus_called '^info colima-acfs:$'
+check "macOS: a bare name is the instance on colima-acfs" incus_called '^exec colima-acfs:dev --env HOME=/home/ubuntu -- runuser -u ubuntu -- bash -s -- verify --json --timeout 90$'
+check "macOS: the lease is read there" status_is instance-lease ok
+export STUB_INCUS_INFO_EXIT=1
+UNAME=Darwin run_machine verify dev
+unset STUB_INCUS_INFO_EXIT
+check "macOS, Colima down: exits 1, saying how to start it" bash -c '[[ "$1" -eq 1 ]] && grep -q "colima start --profile acfs" "$2"' _ "$RC" "$CASE/err"
+: >"$CASE/calls-incus"
+UNAME=Darwin run_machine verify far:dev
+check "macOS: a named remote is used as given" incus_called '^exec far:dev --env HOME=/home/ubuntu'
+check "macOS: a named remote doesn't ask Colima" incus_not_called '^info '
 
 echo "== acfs machine routes to machine.sh (doctor.sh's main)"
 [[ "$(tail -n 1 "$DOCTOR")" == 'main "$@"' ]] || { echo "doctor.sh no longer ends in 'main \"\$@\"'" >&2; exit 1; }

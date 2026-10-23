@@ -123,7 +123,8 @@ verify   The authenticated login checklist: per configured tool its stored
   <name>           Run the checklist inside the Incus instance <name>, as
                    the target user (this script is streamed in, so the
                    machine's ACFS needn't be current), plus the host-side
-                   checks (the lease key, the SSH entry).
+                   checks (the lease key, the SSH entry). On macOS a name
+                   without a remote is on colima-acfs.
   --read-only      Only the local, unpaid parts: files and modes, the host
                    key, the lease, the credential search, the tool lists.
   --json           A JSON array of {check, status, detail} on stdout. A
@@ -1109,6 +1110,18 @@ machine_verify_local() {
     machine_check_credential_search
 }
 
+# Whether `ssh <host> true` logs in: under timeout(1) where there is one
+# (macOS has none), and within ssh's own connect and keepalive limits
+# either way.
+machine_ssh_logs_in() {
+    local args=(-o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o BatchMode=yes -o ConnectTimeout=10 "$1" true)
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$MACHINE_VERIFY_TIMEOUT" ssh "${args[@]}" </dev/null >/dev/null 2>&1
+    else
+        ssh "${args[@]}" </dev/null >/dev/null 2>&1
+    fi
+}
+
 # Host side, for an instance: the lease key is set, and the SSH entry the
 # launcher printed still logs in without a host-key warning.
 machine_verify_host_side() {
@@ -1121,7 +1134,7 @@ machine_verify_host_side() {
     fi
     if ! grep -qsE "^Host[[:space:]]+$name([[:space:]]|$)" "$HOME/.ssh/config"; then
         machine_record ssh-entry not-configured "no Host $name in ~/.ssh/config here (the launcher prints the entry)"
-    elif timeout "$MACHINE_VERIFY_TIMEOUT" ssh -o BatchMode=yes -o ConnectTimeout=10 "$name" true </dev/null >/dev/null 2>&1; then
+    elif machine_ssh_logs_in "$name"; then
         machine_record ssh-entry ok "ssh $name logs in with no host-key warning"
     else
         machine_record ssh-entry fail "ssh $name fails: a changed host key, a changed address or no key here (re-run the launcher to print the entry again)"
@@ -1175,11 +1188,20 @@ machine_verify() {
                 ;;
         esac
     done
-    machine_require timeout
     if [[ -n "$name" ]]; then
         machine_split_target "$name"
+        # On macOS a bare name is on Colima's remote, where `up` puts it.
+        if [[ "$MACHINE_UNAME" == Darwin && -z "$MACHINE_REMOTE" ]]; then
+            MACHINE_REMOTE="$MACHINE_COLIMA_REMOTE"
+            machine_require incus
+            machine_incus info "$MACHINE_COLIMA_REMOTE:" >/dev/null 2>&1 \
+                || machine_die "Colima's Incus doesn't answer (incus info $MACHINE_COLIMA_REMOTE:); start it with: colima start --profile $MACHINE_COLIMA_PROFILE" 1
+        fi
         machine_verify_in_instance "$MACHINE_NAME" || true
     else
+        # The local checklist cuts each request off with timeout(1); the
+        # host side of a named machine needs none.
+        machine_require timeout
         machine_verify_local
     fi
     [[ -z "$MACHINE_VERIFY_JSON" ]] || machine_print_json
