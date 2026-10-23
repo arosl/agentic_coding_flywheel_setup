@@ -570,7 +570,7 @@ machine_colima_setup() {
     machine_note "Colima: setting up its Incus for ACFS containers (host-setup --storage default, in Colima's VM)"
     git -C "$repo" archive --format=tar HEAD scripts/lib/logging.sh scripts/providers/incus_host.sh \
         | colima ssh --profile "$MACHINE_COLIMA_PROFILE" -- sh -c "$MACHINE_COLIMA_SETUP_SCRIPT" >&2 \
-        || machine_die "host-setup in Colima's VM failed. A command it names runs in that VM: colima ssh --profile $MACHINE_COLIMA_PROFILE -- <command>. Then re-run (host-setup is safe to re-run)" 1
+        || machine_die "host-setup in Colima's VM failed. Run a command it names in a shell in that VM (colima ssh --profile $MACHINE_COLIMA_PROFILE, then paste it), then re-run (host-setup is safe to re-run)" 1
     vm_env="$(machine_colima_vm_env)"
     pool="$(sed -n 's/^ACFS_INCUS_POOL=//p' <<<"$vm_env" | tail -n 1)"
     [[ "$pool" =~ ^[A-Za-z0-9_.-]+$ ]] \

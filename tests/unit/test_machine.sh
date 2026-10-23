@@ -573,7 +573,7 @@ run_colima up dev
 unset STUB_HOST_SETUP_EXIT
 check "a failed host-setup: exits 1 and launches nothing" bash -c '[[ "$1" -eq 1 ]] && [[ ! -e "$2" ]]' _ "$RC" "$CASE/calls-launcher"
 check "a failed host-setup: the message doesn't end in the exit code" err_lacks 're-run) 1$'
-check "a failed host-setup: says a command it names runs in Colima's VM" err_has 'runs in that VM: colima ssh --profile acfs -- <command>'
+check "a failed host-setup: says to run a command it names in a shell in Colima's VM" err_has 'in a shell in that VM (colima ssh --profile acfs, then paste it)'
 check "a failed host-setup: writes no incus.env on the Mac" bash -c '[[ ! -e "$1" ]]' _ "$CASE/home/.config/acfs/incus.env"
 check "a failed host-setup: leaves no temp files in the VM" vm_tmp_empty
 colima_case colima-env-conflict
