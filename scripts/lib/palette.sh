@@ -743,8 +743,8 @@ palette_unbind() {
 # ------------------------------------------------------------
 
 # Once nhm owns this herdr server, `acfs agents send` refuses, so the
-# interactive palette is nhm's: nhm-palette is this script ported to
-# `nhm send`, with the same files, steps and keys (acfs-f2mc.5.3). The
+# interactive palette is nhm's: `nhm palette` opens nhm's own, which reads
+# the same palette files and sends through nhm (acfs-f2mc.5.3). The
 # workspace $1, the directory and a --file carry over. Returns only while
 # the Bash commands still drive the agents (`acfs agents owner`).
 palette_hand_to_nhm() {

@@ -484,7 +484,7 @@ run_menu
 check "a failed send is the palette's status, and records no recent" \
     bash -c '[[ "$1" -eq 1 && "$(head -1 "$2/recents")" == my_prompt ]]' _ "$RC" "$WORK/state"
 
-# nhm: records its arguments and the directory nhm-palette is told to use.
+# nhm: records its arguments and the directory nhm's palette is told to use.
 cat >"$WORK/bin/nhm" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_DIR/nhm_calls"
@@ -499,7 +499,7 @@ check "nhm owns the server: the palette is nhm's, for this workspace" \
     bash -c '[[ "$1" -eq 0 && "$(cat "$2/nhm_calls")" == "palette --workspace w1" ]]' _ "$RC" "$STUB_DIR"
 check "nhm owns the server: nothing goes through acfs agents send, and no menu opens here" \
     bash -c '[[ ! -e "$1/sends" && ! -e "$1/fzf_n" ]]' _ "$STUB_DIR"
-check "nhm owns the server: nhm-palette reads the files of the directory the palette was opened in" \
+check "nhm owns the server: nhm's palette reads the files of the directory the palette was opened in" \
     bash -c '[[ "$(cat "$1/nhm_cwd")" == "$2" ]]' _ "$STUB_DIR" "$WORK/repo/sub"
 check "nhm owns the server: a ~/.config/acfs palette gets a note to move it" \
     grep -qF "reads ~/.config/nhm/command_palette.md, not ~/.config/acfs/command_palette.md" <<<"$ERR"
