@@ -2167,8 +2167,12 @@ cleanup() {
         log_error ""
         # A run this process opened in state.json (state_init or a phase
         # start) that ends here, by a signal or an error main did not catch,
-        # failed: install_status must not stay in_progress.
-        if [[ "${ACFS_STATE_INSTALL_OPEN:-false}" == "true" ]] && type -t state_install_finish &>/dev/null; then
+        # failed: install_status must not stay in_progress. Only in the file
+        # it opened: a failed Ubuntu-upgrade preparation opens its own state
+        # file, then points ACFS_STATE_FILE back at the install's, whose
+        # status this run never touched (acfs-vd2j).
+        if [[ "${ACFS_STATE_INSTALL_OPEN:-false}" == "true" ]] && type -t state_install_finish &>/dev/null \
+            && [[ -n "${ACFS_STATE_INSTALL_OPEN_FILE:-}" && "$(state_get_file 2>/dev/null)" == "$ACFS_STATE_INSTALL_OPEN_FILE" ]]; then
             state_install_finish true 2>/dev/null || true
         fi
         # Print precise resume hint if available (bd-31ps.9.1)
