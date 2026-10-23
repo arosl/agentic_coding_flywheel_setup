@@ -1232,7 +1232,7 @@ acfs_log_init() {
 
     # Fix ownership so target user can read logs
     if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
-        chown "${TARGET_USER}:${TARGET_USER}" "$log_dir" "$ACFS_LOG_FILE" 2>/dev/null || true
+        chown -h "${TARGET_USER}:${TARGET_USER}" "$log_dir" "$ACFS_LOG_FILE" 2>/dev/null || true
     fi
 
     # Tee stderr: all stderr output goes to both terminal and log file.
@@ -1309,7 +1309,7 @@ acfs_log_close() {
 
         # Fix ownership
         if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
-            chown "${TARGET_USER}:${TARGET_USER}" "$ACFS_LOG_FILE" 2>/dev/null || true
+            chown -h "${TARGET_USER}:${TARGET_USER}" "$ACFS_LOG_FILE" 2>/dev/null || true
         fi
     fi
     ACFS_LOG_INITIALIZED=false
@@ -1419,7 +1419,7 @@ acfs_performance_budget_emit() {
     export ACFS_PERFORMANCE_BUDGET_FILE
 
     if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
-        chown "${TARGET_USER}:${TARGET_USER}" "$budget_file" 2>/dev/null || true
+        chown -h "${TARGET_USER}:${TARGET_USER}" "$budget_file" 2>/dev/null || true
     fi
 
     log_detail "Performance budget: $budget_file"
@@ -1529,7 +1529,7 @@ acfs_summary_emit() {
 
     # Fix ownership so target user can read
     if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
-        chown "${TARGET_USER}:${TARGET_USER}" "$ACFS_SUMMARY_FILE" 2>/dev/null || true
+        chown -h "${TARGET_USER}:${TARGET_USER}" "$ACFS_SUMMARY_FILE" 2>/dev/null || true
     fi
 
     acfs_performance_budget_emit "$ACFS_SUMMARY_FILE" 2>/dev/null || true
@@ -7881,7 +7881,7 @@ normalize_user() {
         if [[ ! -d "$runtime_dir" ]]; then
             log_detail "Creating XDG_RUNTIME_DIR: $runtime_dir"
             $SUDO mkdir -p "$runtime_dir"
-            $SUDO chown "$TARGET_USER:$TARGET_USER" "$runtime_dir"
+            $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$runtime_dir"
             $SUDO chmod 700 "$runtime_dir"
         fi
     fi
@@ -7929,7 +7929,7 @@ setup_filesystem() {
     # Install AGENTS.md template to /data/projects for agent guidance
     log_detail "Installing AGENTS.md template"
     try_step_optional "Installing AGENTS.md" install_asset "acfs/AGENTS.md" "/data/projects/AGENTS.md" || true
-    try_step_optional "Setting AGENTS.md ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "/data/projects/AGENTS.md" || true
+    try_step_optional "Setting AGENTS.md ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "/data/projects/AGENTS.md" || true
 
     # CRITICAL: Fix home directory ownership FIRST, before any run_as_target calls
     # Some cloud images (e.g., Hetzner) have /home/ubuntu owned by root after user creation
@@ -7955,7 +7955,7 @@ setup_filesystem() {
     # base.filesystem's verify requires the ACFS-owned copy of the workspace
     # AGENTS.md template, which only the generated installer wrote (acfs-qe94).
     try_step "Installing AGENTS.md template (~/.acfs/docs)" install_asset "acfs/AGENTS.md" "$ACFS_HOME/docs/AGENTS.workspace.md" || return 1
-    try_step_optional "Setting AGENTS.md template ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/docs/AGENTS.workspace.md" || true
+    try_step_optional "Setting AGENTS.md template ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/docs/AGENTS.workspace.md" || true
 
     # Install essential ACFS scripts early so `acfs doctor` works even after early failures.
     # This is critical for debugging failed installs - users need `acfs doctor` to work
@@ -8017,6 +8017,13 @@ acfs_zshrc_is_managed_loader() {
             exit 1
         }
     ' "$file" 2>/dev/null
+}
+
+# True when root would write another user's dotfile through a symlink. The
+# user decides where it points, so root would write, or create, any file
+# there, say /etc/profile.d/x.sh. Root never writes through one (acfs-573x).
+acfs_dotfile_link_unsafe_for_root() {
+    [[ "$(id -u)" -eq 0 && "${TARGET_USER:-}" != "root" && -L "${1:-}" ]]
 }
 
 setup_shell() {
@@ -8095,7 +8102,7 @@ setup_shell() {
     # Copy ACFS zshrc
     log_detail "Installing ACFS zshrc"
     try_step "Installing ACFS zshrc" install_asset "acfs/zsh/acfs.zshrc" "$ACFS_HOME/zsh/acfs.zshrc" || return 1
-    try_step "Setting zshrc ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/zsh/acfs.zshrc" || return 1
+    try_step "Setting zshrc ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/zsh/acfs.zshrc" || return 1
 
     # Install pre-configured Powerlevel10k theme settings (Ubuntu path only).
     # This prevents the p10k configuration wizard from launching on first login
@@ -8107,12 +8114,16 @@ setup_shell() {
             try_step_optional "Backing up existing p10k config" $SUDO cp -a "$TARGET_HOME/.p10k.zsh" "$TARGET_HOME/.p10k.zsh.pre-acfs.$(date +%Y%m%d%H%M%S)" || log_warn "Could not back up existing ~/.p10k.zsh"
         fi
         try_step "Installing p10k config" install_asset "acfs/zsh/p10k.zsh" "$TARGET_HOME/.p10k.zsh" || return 1
-        try_step "Setting p10k config ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/.p10k.zsh" || return 1
+        try_step "Setting p10k config ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/.p10k.zsh" || return 1
     fi
 
     # Configure ~/.zshrc for the target user.
     local user_zshrc="$TARGET_HOME/.zshrc"
-    if [[ "$ACFS_DISTRO_FAMILY" == "arch" ]]; then
+    if [[ "$ACFS_DISTRO_FAMILY" == "arch" ]] && acfs_dotfile_link_unsafe_for_root "$user_zshrc"; then
+        log_warn "$user_zshrc is a symlink, so ACFS doesn't write through it as root. Add this line to it:"
+        # shellcheck disable=SC2016  # The user's shell expands $HOME, not this one.
+        log_warn '[[ -f "$HOME/.acfs/zsh/acfs.zshrc" ]] && source "$HOME/.acfs/zsh/acfs.zshrc"'
+    elif [[ "$ACFS_DISTRO_FAMILY" == "arch" ]]; then
         # Arch/Omarchy: NEVER replace an existing ~/.zshrc (users often manage
         # their own prompt, e.g. starship). Create a minimal file only when
         # absent, then append a single guarded loader line (idempotent).
@@ -8129,10 +8140,17 @@ EOF
             } >> "$user_zshrc"
             log_detail "Appended ACFS loader to $user_zshrc"
         fi
-        try_step "Setting .zshrc ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_zshrc" || return 1
+        try_step "Setting .zshrc ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$user_zshrc" || return 1
     else
         # Ubuntu: create the minimal managed loader (backup existing if needed)
-        if [[ -f "$user_zshrc" ]] && ! acfs_zshrc_is_managed_loader "$user_zshrc"; then
+        if acfs_dotfile_link_unsafe_for_root "$user_zshrc"; then
+            # The backup is the link itself, so root neither reads nor
+            # writes its target.
+            local backup
+            backup="$user_zshrc.pre-acfs.$(date +%Y%m%d%H%M%S)"
+            log_warn "$user_zshrc is a symlink; moving the link aside to $(basename "$backup")"
+            try_step "Moving symlinked .zshrc aside" mv -T "$user_zshrc" "$backup" || return 1
+        elif [[ -f "$user_zshrc" ]] && ! acfs_zshrc_is_managed_loader "$user_zshrc"; then
             local backup
             backup="$user_zshrc.pre-acfs.$(date +%Y%m%d%H%M%S)"
             if [[ "${ACFS_CI:-false}" == "true" ]]; then
@@ -8141,14 +8159,14 @@ EOF
                 log_warn "Existing .zshrc found; backing up to $(basename "$backup")"
             fi
             $SUDO cp "$user_zshrc" "$backup"
-            $SUDO chown "$TARGET_USER:$TARGET_USER" "$backup" 2>/dev/null || true
+            $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$backup" 2>/dev/null || true
         fi
 
         cat > "$user_zshrc" << 'EOF'
 # ACFS loader
 source "$HOME/.acfs/zsh/acfs.zshrc"
 EOF
-        try_step "Setting .zshrc ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_zshrc" || return 1
+        try_step "Setting .zshrc ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$user_zshrc" || return 1
     fi
 
     # Ensure core user-installed tool paths are present for login shells.
@@ -8158,7 +8176,10 @@ EOF
     local legacy_profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
     # shellcheck disable=SC2016  # We want $HOME/$PATH to expand when .profile is sourced, not during install.
     local profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
-    if [[ ! -f "$user_profile" ]]; then
+    if acfs_dotfile_link_unsafe_for_root "$user_profile"; then
+        log_warn "$user_profile is a symlink, so ACFS doesn't write through it as root. Add this line to it:"
+        log_warn "$profile_path_line"
+    elif [[ ! -f "$user_profile" ]]; then
         # Create new .profile
         {
             echo "# ~/.profile: executed by bash for login shells"
@@ -8166,7 +8187,7 @@ EOF
             echo "# User binary paths"
             echo "$profile_path_line"
         } > "$user_profile"
-        $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_profile"
+        $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$user_profile"
     elif grep -Fxq "$legacy_profile_path_line" "$user_profile" 2>/dev/null; then
         sed -i "s|^$(profile_path_sed_literal "$legacy_profile_path_line")$|$profile_path_line|" "$user_profile"
     elif ! profile_path_has_fragment "$user_profile" '.local/bin' || \
@@ -8179,17 +8200,20 @@ EOF
         } >> "$user_profile"
     fi
     # Ensure correct ownership (handles edge case where file was created by root)
-    [[ -f "$user_profile" ]] && $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_profile" 2>/dev/null || true
+    [[ -f "$user_profile" ]] && $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$user_profile" 2>/dev/null || true
 
     # zsh login shells do not read ~/.profile, so mirror the login PATH there.
-    if [[ ! -f "$user_zprofile" ]]; then
+    if acfs_dotfile_link_unsafe_for_root "$user_zprofile"; then
+        log_warn "$user_zprofile is a symlink, so ACFS doesn't write through it as root. Add this line to it:"
+        log_warn "$profile_path_line"
+    elif [[ ! -f "$user_zprofile" ]]; then
         {
             echo "# ~/.zprofile: executed by zsh for login shells"
             echo ""
             echo "# User binary paths"
             echo "$profile_path_line"
         } > "$user_zprofile"
-        $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_zprofile"
+        $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$user_zprofile"
     elif grep -Fxq "$legacy_profile_path_line" "$user_zprofile" 2>/dev/null; then
         sed -i "s|^$(profile_path_sed_literal "$legacy_profile_path_line")$|$profile_path_line|" "$user_zprofile"
     elif ! profile_path_has_fragment "$user_zprofile" '.local/bin' || \
@@ -8200,7 +8224,7 @@ EOF
             echo "$profile_path_line"
         } >> "$user_zprofile"
     fi
-    [[ -f "$user_zprofile" ]] && $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_zprofile" 2>/dev/null || true
+    [[ -f "$user_zprofile" ]] && $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$user_zprofile" 2>/dev/null || true
 
     # The generated manifest path calls this same helper. A failed or unverifiable
     # account change must fail the phase, preserving the original shell for recovery.
@@ -9014,7 +9038,7 @@ install_agy_locked_launchers() {
     try_step "Installing agy PATH shim" install_asset "scripts/lib/agy_locked.py" "$ACFS_BIN_DIR/agy" || return 1
     try_step "Installing gmi Antigravity launcher" install_asset "scripts/lib/agy_locked.py" "$ACFS_BIN_DIR/gmi" || return 1
     try_step "Setting agy launcher permissions" $SUDO chmod 0755 "$ACFS_BIN_DIR/agy-locked" "$ACFS_BIN_DIR/agy" "$ACFS_BIN_DIR/gmi" || return 1
-    try_step "Setting agy launcher ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_BIN_DIR/agy-locked" "$ACFS_BIN_DIR/agy" "$ACFS_BIN_DIR/gmi" || return 1
+    try_step "Setting agy launcher ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_BIN_DIR/agy-locked" "$ACFS_BIN_DIR/agy" "$ACFS_BIN_DIR/gmi" || return 1
     try_step "Priming agy locked settings and dcg hook" run_as_target "$ACFS_BIN_DIR/agy-locked" --acfs-prime-settings || return 1
 }
 
@@ -9971,7 +9995,7 @@ install_stack_phase() {
         if install_asset "acfs/onboard/docs/ntm/command_palette.md" "$palette_dst"; then
             # Fix ownership for target user
             if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
-                chown "${TARGET_USER}:${TARGET_USER}" "$palette_dst" 2>/dev/null || true
+                chown -h "${TARGET_USER}:${TARGET_USER}" "$palette_dst" 2>/dev/null || true
             fi
             log_success "Command palette installed"
         else
@@ -11322,7 +11346,7 @@ finalize() {
     # Install acfs-update wrapper command
     try_step "Installing acfs-update" install_asset "scripts/acfs-update" "$ACFS_HOME/bin/acfs-update" || return 1
     try_step "Setting acfs-update permissions" $SUDO chmod 755 "$ACFS_HOME/bin/acfs-update" || return 1
-    try_step "Setting acfs-update ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/acfs-update" || return 1
+    try_step "Setting acfs-update ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/acfs-update" || return 1
     try_step "Linking acfs-update command" acfs_link_primary_bin_command "$ACFS_HOME/bin/acfs-update" "acfs-update" || return 1
     try_step "Linking global acfs-update command" acfs_link_global_bin_command "$ACFS_HOME/bin/acfs-update" "acfs-update" || return 1
 
@@ -11333,7 +11357,7 @@ finalize() {
     # (`acfs agents install ...`) and is never done automatically.
     if try_step_optional "Installing flywheel-update-agents-md" install_asset "scripts/generate-root-agents-md.sh" "$ACFS_HOME/bin/flywheel-update-agents-md"; then
         try_step_optional "Setting flywheel-update-agents-md permissions" $SUDO chmod 755 "$ACFS_HOME/bin/flywheel-update-agents-md" || true
-        try_step_optional "Setting flywheel-update-agents-md ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/flywheel-update-agents-md" || true
+        try_step_optional "Setting flywheel-update-agents-md ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/flywheel-update-agents-md" || true
         try_step_optional "Linking flywheel-update-agents-md command" $SUDO ln -sf "$ACFS_HOME/bin/flywheel-update-agents-md" "/usr/local/bin/flywheel-update-agents-md" || true
         # Run in the target user's context so user-local tools
         # (~/.local/bin, ~/go/bin) are detected correctly.
@@ -11393,19 +11417,19 @@ finalize() {
     try_step "Installing acfs.manifest.yaml" install_asset "acfs.manifest.yaml" "$ACFS_HOME/acfs.manifest.yaml" || return 1
     try_step "Installing checksums.yaml" install_checksums_yaml "$ACFS_HOME/checksums.yaml" || return 1
     try_step "Installing VERSION" install_asset "VERSION" "$ACFS_HOME/VERSION" || return 1
-    try_step "Setting metadata ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" \
+    try_step "Setting metadata ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" \
         "$ACFS_HOME/acfs.manifest.yaml" "$ACFS_HOME/checksums.yaml" "$ACFS_HOME/VERSION" || true
     # `acfs changelog` reads it from here. Documentation only, and archives
     # built from the runtime subset may omit it, so never fatal.
     if [[ -f "${ACFS_BOOTSTRAP_DIR:-${SCRIPT_DIR:-}}/CHANGELOG.md" ]]; then
         try_step_optional "Installing CHANGELOG.md" install_asset "CHANGELOG.md" "$ACFS_HOME/CHANGELOG.md" || true
-        $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/CHANGELOG.md" 2>/dev/null || true
+        $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/CHANGELOG.md" 2>/dev/null || true
     fi
 
     # Legacy: Install doctor as acfs binary (for backwards compat)
     try_step "Installing acfs CLI" install_asset "scripts/lib/doctor.sh" "$ACFS_HOME/bin/acfs" || return 1
     try_step "Setting acfs permissions" $SUDO chmod 755 "$ACFS_HOME/bin/acfs" || return 1
-    try_step "Setting acfs ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/acfs" || return 1
+    try_step "Setting acfs ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/acfs" || return 1
     try_step "Linking acfs command" acfs_link_primary_bin_command "$ACFS_HOME/bin/acfs" "acfs" || return 1
     # nhm's takeover reads the Bash's state with the acfs command just
     # installed, and nhm's keys need nhm as the owner (acfs-9hkh.93).
@@ -11546,7 +11570,7 @@ CLAUDE_RETENTION_EOF
     # Legacy state file (only if state.sh is unavailable)
     if type -t state_load &>/dev/null; then
         if [[ -f "$ACFS_STATE_FILE" ]]; then
-            $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_STATE_FILE" || true
+            $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_STATE_FILE" || true
         fi
     else
         cat > "$ACFS_STATE_FILE" << EOF
@@ -11564,7 +11588,7 @@ CLAUDE_RETENTION_EOF
   "completed_phases": [1, 2, 3, 4, 5, 6, 7, 8, 9]
 }
 EOF
-        $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_STATE_FILE"
+        $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_STATE_FILE"
     fi
 
     # This phase can run after an earlier phase failed because main deliberately
@@ -12873,21 +12897,21 @@ main() {
             if [[ -f "$metadata_source_root/checksums.yaml" ]]; then
                 log_detail "Ensuring checksums.yaml is up to date"
                 install_checksums_yaml "$ACFS_HOME/checksums.yaml" || true
-                $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/checksums.yaml" 2>/dev/null || true
+                $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/checksums.yaml" 2>/dev/null || true
             fi
             if [[ -f "$metadata_source_root/VERSION" ]]; then
                 log_detail "Ensuring VERSION is up to date"
                 install_asset "VERSION" "$ACFS_HOME/VERSION" || true
-                $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/VERSION" 2>/dev/null || true
+                $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/VERSION" 2>/dev/null || true
             fi
             if [[ -f "$metadata_source_root/CHANGELOG.md" ]]; then
                 install_asset "CHANGELOG.md" "$ACFS_HOME/CHANGELOG.md" || true
-                $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/CHANGELOG.md" 2>/dev/null || true
+                $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/CHANGELOG.md" 2>/dev/null || true
             fi
             if [[ -f "$metadata_source_root/acfs.manifest.yaml" ]]; then
                 log_detail "Ensuring acfs.manifest.yaml is up to date"
                 install_asset "acfs.manifest.yaml" "$ACFS_HOME/acfs.manifest.yaml" || true
-                $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/acfs.manifest.yaml" 2>/dev/null || true
+                $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/acfs.manifest.yaml" 2>/dev/null || true
             fi
         fi
 
