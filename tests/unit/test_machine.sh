@@ -379,8 +379,8 @@ check "the launcher runs with the name first and the options as given" launcher_
 check "the launcher's stdout is the command's stdout" out_has 'launcher stdout: the attach block'
 check "no incus call of its own" bash -c '[[ ! -s "$1" ]]' _ "$CASE/calls-incus"
 new_case up-remote
-run_machine up far:dev --ssh-key k --vm
-check "a remote-qualified name reaches the launcher as given" launcher_args_are "far:dev --ssh-key k --vm"
+run_machine up far:dev --ssh-key k --acl my-egress
+check "a remote-qualified name reaches the launcher as given" launcher_args_are "far:dev --ssh-key k --acl my-egress"
 new_case up-dashdash
 run_machine up dev -- --ssh-key k
 check "arguments after -- go to the launcher" launcher_args_are "dev --ssh-key k"
@@ -396,7 +396,7 @@ new_case up-target-bogus
 run_machine up --target bogus dev
 check "--target bogus: exits 2" rc_is 2
 new_case up-noname
-run_machine up --vm
+run_machine up --replace
 check "no name: exits 2" rc_is 2
 check "no name: says so" err_has 'up needs the machine'
 new_case up-badname
@@ -553,10 +553,6 @@ colima_case colima-broken
 echo '{"name":"acfs","status":"Broken","runtime":"incus"}' >"$CASE/colima-list.json"
 run_colima up dev
 check "a broken profile: exits 1, naming its status" bash -c '[[ "$1" -eq 1 ]] && grep -q "profile acfs is Broken" "$2"' _ "$RC" "$CASE/err"
-colima_case colima-vm
-run_colima up dev --vm
-check "--vm: exits 2" rc_is 2
-check "--vm: starts no Colima" bash -c '[[ ! -e "$1" ]]' _ "$CASE/calls-colima"
 colima_case colima-start-fails
 export STUB_COLIMA_START_EXIT=1
 run_colima up dev
