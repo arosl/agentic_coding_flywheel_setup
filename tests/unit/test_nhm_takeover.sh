@@ -56,6 +56,7 @@ BASEPATH="/usr/bin:/bin"
 #   garbage   exit 1 with no JSON
 #   yes-race  the dry run passes; --yes finds nhm the owner already
 #   yes-refuse the dry run passes; --yes refuses (the import changed)
+#   refuse-two exit 2 with two reasons on two lines, as nhm joins them
 # With ~/nhm-owner, every dry run exits 2: nhm owns it already. It records
 # each call, and the ACFS_BIN it got, in ~/nhm-calls.
 fixture() {
@@ -92,6 +93,7 @@ case "$(cat "$HOME/nhm-takeover-mode" 2>/dev/null)" in
     yes-refuse)
         [[ "$3" == --yes ]] || reply 0 acfs-bash 0 ""
         reply 2 acfs-bash 0 "the import changed between the check and the takeover (the Bash stays the owner)" ;;
+    refuse-two) reply 2 acfs-bash 0 "$(printf 'refused: the token of AlphaFox is not imported\nrefused: the token of BetaOwl is not imported')" ;;
     *) exit 1 ;;
 esac
 EOF
@@ -172,6 +174,11 @@ mode yes-refuse
 helper owner take
 check "--yes refuses after the dry run passed: exit 5 with its reason" \
     bash -c '[[ "$1" -eq 5 && "$2" == *"refused, so ACFS'"'"'s Bash keeps"*"the import changed"* ]]' _ "$RC" "$OUT"
+fixture
+mode refuse-two
+helper owner take
+check "a refusal with two reasons: one note line that names both" \
+    bash -c '[[ "$1" -eq 5 && "$2" != *$'"'"'\n'"'"'* && "$2" == *"refused, so ACFS'"'"'s Bash keeps"*"AlphaFox is not imported; refused: the token of BetaOwl"* ]]' _ "$RC" "$OUT"
 
 fixture
 helper owner
@@ -217,6 +224,10 @@ mode refuse
 run_update
 check "a refusal warns with nhm's reason and the dry run, and never fails the update" \
     bash -c '[[ "$1" == *"ITEM warn|herdr server owner|nhm'"'"'s takeover refused, so ACFS'"'"'s Bash keeps"*"; see: "*"admin takeover --dry-run --socket "*"RC 0"* ]]' _ "$OUT"
+mode refuse-two
+run_update
+check "a refusal with two reasons: the update's warning keeps both" \
+    bash -c '[[ "$1" == *"ITEM warn|herdr server owner|nhm'"'"'s takeover refused"*"AlphaFox"*"BetaOwl"* ]]' _ "$OUT"
 mode error
 run_update
 check "a failed takeover warns, and never fails the update" \
