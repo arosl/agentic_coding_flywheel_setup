@@ -35,7 +35,19 @@ class RecoveryIntegrationTests(unittest.TestCase):
 '''
         anchor = '    if args[:2] == ["pane","process-info"]:\n'
         assert anchor in PROBE
-        (self.case.bin / "herdr").write_text(PROBE.replace(anchor, mutation + anchor))
+        # Recovery asks nhm about the server that herdr reports. This launch
+        # is acfs agents spawn's, so the fake nhm binds none of its panes, and
+        # the host's own nhm is never asked.
+        status = 'print("server:\\n  status: running"); sys.exit(0)'
+        assert status in PROBE
+        probe = PROBE.replace(anchor, mutation + anchor).replace(
+            status, 'print("server:\\n  status: running\\n  socket: " + str(root / "herdr.sock")); sys.exit(0)')
+        (self.case.bin / "herdr").write_text(probe)
+        (self.case.bin / "nhm").write_text(
+            '#!/usr/bin/env python3\nimport json, sys\n'
+            'print(json.dumps({"schema": "nhm.v1", "command": "resolve", "result": None,\n'
+            '                  "error": "bindings: no such binding: " + sys.argv[2]}))\nsys.exit(1)\n')
+        (self.case.bin / "nhm").chmod(0o755)
 
     def unconfirmed(self):
         code, preview = self.case.invoke(self.case.launch_args)

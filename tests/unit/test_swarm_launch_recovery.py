@@ -72,10 +72,26 @@ if args[:2] == ["pane", "process-info"]:
     ok({"process_info": {"pane_id": pane, "shell_pid": a["shell_pid"],
         "foreground_processes": [{"name": a["foreground"], "pid": a["shell_pid"] + 1,
                                   "argv": [a.get("argv0", a["foreground"])]}]}})
+if args[:2] == ["status", "server"]:
+    print("status: running\nsocket: " + str(root / "herdr.sock"))
+    sys.exit(0)
+if args[:1] == ["resolve"]:
+    # The same fixture serves as nhm: a pane's binding, or nhm's not-found error.
+    envelope = {"schema": "nhm.v1", "command": "resolve", "result": None, "warnings": []}
+    if mode == "nhm-error":
+        print(json.dumps({**envelope, "error": "no herdr socket: give --socket or run inside herdr"}))
+        sys.exit(1)
+    binding = state.get("bindings", {}).get(args[1])
+    if binding is None:
+        print(json.dumps({**envelope, "error": "bindings: no such binding: " + args[1]}))
+        sys.exit(1)
+    print(json.dumps({**envelope, "result": {"binding": binding,
+        "verification": {"verdict": state.get("verdict", "verified"), "checks": []}}}))
+    sys.exit(0)
 sys.exit(95)
 '''
 READ_ONLY = (["workspace", "list"], ["tab", "list"], ["agent", "list"], ["pane", "process-info"],
-             ["agents", "list"])
+             ["agents", "list"], ["status", "server"], ["resolve"])
 
 
 def encode(value):
@@ -95,7 +111,7 @@ class RecoveryTests(unittest.TestCase):
         self.result = Path(str(self.intent) + ".result.json")
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        for name in ("herdr", "am"):
+        for name in ("herdr", "am", "nhm"):
             (self.bin / name).write_text(FIXTURE)
             (self.bin / name).chmod(0o755)
         self.request = {"repo": str(self.repo), "session": "swarm-demo", "receipt": str(self.intent),
@@ -110,7 +126,8 @@ class RecoveryTests(unittest.TestCase):
         self.workspaces = [{"workspace_id": "w1", "label": "someone-elses"},
                            {"workspace_id": "w9", "label": self.label()}]
         self.save_state()
-        self.env = {**os.environ, "PATH": str(self.bin) + os.pathsep + os.environ.get("PATH", ""),
+        # Only the fixtures and the system's tools: the host's own nhm stays out.
+        self.env = {**os.environ, "PATH": os.pathsep.join([str(self.bin), "/usr/bin", "/bin"]),
             "RECOVERY_FIXTURE": str(self.root), "RECOVERY_INTENT": str(self.intent)}
 
     def label(self):
@@ -131,7 +148,23 @@ class RecoveryTests(unittest.TestCase):
         state = {"workspaces": self.workspaces, "agents": self.agents}
         if getattr(self, "registered", None) is not None:
             state["registered"] = self.registered
+        if getattr(self, "bindings", None) is not None:
+            state["bindings"] = self.bindings
         (self.root / "herdr.json").write_text(json.dumps(state))
+
+    def nhm_launch(self, slots):
+        """The agents as nhm starts them: one shared tab, named after the
+        project's directory, and a binding per pane with its slot."""
+        names = {a["pane_id"]: a["label"] for a in self.agents}
+        self.registered = list(names.values())
+        self.bindings = {}
+        for agent, slot in zip(self.agents, slots):
+            agent.update(tab_id="w9:t5", label=self.repo.name)
+            self.bindings[agent["pane_id"]] = {"status": "active", "mail_name": names[agent["pane_id"]],
+                "mail_project_key": str(self.repo), "workspace_id": "w9", "tab_id": "w9:t5",
+                "pane_id": agent["pane_id"], "herdr_alias": names[agent["pane_id"]].lower(),
+                "kind": agent["agent"], "slot": slot}
+        self.save_state()
 
     def invoke(self, *args, code=0, mode=""):
         (self.root / "commands.jsonl").write_text("")
@@ -143,7 +176,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertFalse(report["starts_agents"])
         self.assertFalse(report["work_dispatched"])
         for call in self.calls():
-            self.assertIn(call[:2], READ_ONLY)
+            self.assertTrue(any(call[:len(r)] == r for r in READ_ONLY), call)
         return report
 
     def calls(self):
@@ -242,6 +275,75 @@ class RecoveryTests(unittest.TestCase):
         self.assertIn("Agent Mail identity", report["error"])
         self.assertIn(["agents", "list", "--project", str(self.repo), "--json"], self.calls())
         self.assertFalse(self.result.exists())
+
+    def test_nhm_launch_names_and_slots_come_from_its_bindings(self):
+        # Slots sort as numbers: 29.2, 29.9, 29.10 (acfs-aahj).
+        self.nhm_launch(["29.10", "29.9", "29.2"])
+        self.adopt()
+        saved = json.loads(self.result.read_text())
+        self.assertEqual([(t["slot"], t["agent_name"], t["pane_id"], t["agent_mail_name"], t["herdr_name"], t["tab_id"])
+                          for t in saved["targets"]],
+                         [(1, "Reviewer", "w9:p2", "BlueLake", "bluelake", "w9:t5"),
+                          (2, "Builder", "w9:p3", "AmberFox", "amberfox", "w9:t5"),
+                          (3, "Tester", "w9:p7", "OnyxField", "onyxfield", "w9:t5")])
+        # nhm answers for the server herdr reports.
+        socket = str(self.root / "herdr.sock")
+        self.assertIn(["resolve", "w9:p7", "--socket", socket, "--json"], self.calls())
+
+    def test_shared_tab_without_nhm_bindings_is_refused(self):
+        # The tab label is the project's directory, not a name: refused, not guessed.
+        self.nhm_launch(["5.1", "5.2", "5.3"])
+        self.bindings = {}
+        self.save_state()
+        self.invoke(code=2)
+        self.assertFalse(self.result.exists())
+
+    def test_nhm_binding_only_some_agents_is_refused(self):
+        self.nhm_launch(["5.1", "5.2", "5.3"])
+        del self.bindings["w9:p3"]
+        self.save_state()
+        report = self.invoke(code=2)
+        self.assertIn("only some", report["error"])
+        self.assertFalse(self.result.exists())
+
+    def test_nhm_binding_that_does_not_match_is_refused(self):
+        changes = [("status", "displaced"), ("mail_project_key", str(self.root)), ("pane_id", "w9:p9"),
+                   ("tab_id", "w9:t6"), ("workspace_id", "w8"), ("herdr_alias", "someoneelse"),
+                   ("mail_name", "not a name"), ("slot", "5"), ("slot", "-1.2")]
+        for key, value in changes:
+            with self.subTest(key=key, value=value):
+                self.nhm_launch(["5.1", "5.2", "5.3"])
+                self.bindings["w9:p7"][key] = value
+                self.save_state()
+                self.invoke(code=2)
+                self.assertFalse(self.result.exists())
+
+    def test_unverified_nhm_binding_is_refused(self):
+        self.nhm_launch(["5.1", "5.2", "5.3"])
+        state = json.loads((self.root / "herdr.json").read_text())
+        state["verdict"] = "failed"
+        (self.root / "herdr.json").write_text(json.dumps(state))
+        self.invoke(code=2)
+        self.assertFalse(self.result.exists())
+
+    def test_nhm_binding_name_must_be_registered(self):
+        self.nhm_launch(["5.1", "5.2", "5.3"])
+        self.registered = ["AmberFox", "BlueLake"]
+        self.save_state()
+        report = self.invoke(code=2)
+        self.assertIn("Agent Mail identity", report["error"])
+
+    def test_nhm_that_cannot_answer_is_refused_not_ignored(self):
+        report = self.invoke(code=2, mode="nhm-error")
+        self.assertIn("nhm could not report", report["error"])
+        self.assertFalse(self.result.exists())
+
+    def test_without_nhm_tab_labels_are_used_and_nhm_is_not_asked(self):
+        (self.bin / "nhm").unlink()
+        self.adopt()
+        self.assertFalse([c for c in self.calls() if c[:1] == ["resolve"] or c[:2] == ["status", "server"]])
+        saved = json.loads(self.result.read_text())
+        self.assertEqual([t["agent_mail_name"] for t in saved["targets"]], ["BlueLake", "AmberFox", "OnyxField"])
 
     def test_launch_state_is_not_part_of_approval(self):
         # A dialog answered between preview and adoption doesn't void the review.
