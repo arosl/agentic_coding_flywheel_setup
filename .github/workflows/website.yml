@@ -130,7 +130,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [chromium, firefox, webkit, 'Mobile Chrome', 'Mobile Safari']
+        # No webkit or Mobile Safari: without a GPU, WebKit renders the site's
+        # backdrop blurs at about one frame a second, and the tests time out
+        # waiting for frames. playwright.config.ts keeps both (acfs-wg62).
+        project: [chromium, firefox, 'Mobile Chrome']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
