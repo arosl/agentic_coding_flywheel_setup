@@ -73,9 +73,11 @@ STATE_WRITERS=(claude codex agy gemini pi herdr am mcp-agent-mail cass cm atuin)
 #            empty for a whole root row
 #   policy:  private: no group or other access, except *.pub at 0644
 #            (hooks keep their execute bits); asis: left as it is
-#   markers: comma-separated files that mean "a login is here"
+#   markers: comma-separated files that mean "a login is here". Only a
+#            completed login writes one: ~/.claude.json is none, since
+#            Claude Code writes it on its first start
 ROWS=(
-    "claude-json|login|home|.claude.json|private|.claude.json"
+    "claude-json|login|home|.claude.json|private|"
     "claude|login|home|.claude|private|.claude/.credentials.json"
     "anthropic|login|home|.config/anthropic|private|"
     "codex|login|home|.codex|private|.codex/auth.json"

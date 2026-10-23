@@ -12,7 +12,8 @@
 # stopped; the archive is 0600, ends with manifest.json, leaves cache
 # out unless --with-cache and leaves out a symlink that leaves its row;
 # import restores files, links, modes and root rows, writes the lease,
-# refuses a held login without --replace, refuses a tampered archive
+# takes a fresh ~/.claude.json for no login but refuses a held login
+# without --replace, refuses a tampered archive
 # and an unfenced move, and resumes after an interruption; a --move
 # export fences the lease; lease check's four cases; repair; doctor's
 # JSON; setup-guest's unit, drop-ins and HostKey drop-in.
@@ -232,8 +233,10 @@ A="$WORK/a"
 B="$WORK/b"
 make_machine "$A"
 make_machine "$B"
-# B is a fresh machine: no logins, its own host keys.
-rm -rf "$B/home/.claude" "$B/home/.claude.json" "$B/home/.codex" "$B/home/.config/gh"
+# B is a fresh machine: no logins, its own host keys, and the
+# ~/.claude.json that Claude Code writes on its first start.
+rm -rf "$B/home/.claude" "$B/home/.codex" "$B/home/.config/gh"
+echo '{"firstStartTime":"b-fresh"}' >"$B/home/.claude.json"
 echo b-private >"$B/ssh/ssh_host_ed25519_key"
 UID_NOW="$(id -u)"
 
@@ -318,6 +321,8 @@ check "--snapshot-pool snapshots acfs-state-<name> through the host remote" \
 echo "import"
 INSTANCE_LEASE="lease-b" run "$B" import devbox "$WORK/a.tar.age"
 check "import into a fresh machine succeeds" bash -c '[[ "$1" -eq 0 ]]' _ "$RC"
+check "a fresh ~/.claude.json is no login: the archive's replaces it, the old copy kept" \
+    bash -c 'grep -q projects "$1/home/.claude.json" && grep -q b-fresh "$1"/home/.acfs-import-*/old/.claude.json' _ "$B"
 check "logins arrive with their contents" \
     bash -c 'grep -q claude-secret "$1/home/.claude/.credentials.json" && grep -q codex-secret "$1/home/.codex/auth.json"' _ "$B"
 check "the hook keeps its execute bit, with no group or other access" \
@@ -341,7 +346,7 @@ check "home rows are chowned to the user, root rows to root" \
 
 INSTANCE_LEASE="lease-b" run "$B" import devbox "$WORK/a.tar.age"
 check "a second import refuses the login this machine now holds" \
-    bash -c '[[ "$1" -ne 0 ]] && grep -q "already holds a login" "$2" && grep -q ".claude/.credentials.json" "$2"' _ "$RC" "$ERR"
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "already holds a login" "$2" && grep -q ".claude/.credentials.json" "$2" && ! grep -q "/\.claude\.json$" "$2"' _ "$RC" "$ERR"
 echo changed >"$B/home/.codex/auth.json"
 INSTANCE_LEASE="lease-b" run "$B" import devbox "$WORK/a.tar.age" --replace
 check "--replace replaces it and keeps the old copy" \
