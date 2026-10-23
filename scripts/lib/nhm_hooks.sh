@@ -68,6 +68,12 @@ Usage:
                                              (bind nothing); status prints
                                              no-plugin, unlinked, linked,
                                              bound or opted-out
+  nhm_hooks.sh owner take                    nhm admin takeover of the default
+                                             herdr server, a dry run first; 0
+                                             nhm owns it (now or already), 3
+                                             no nhm, 5 the takeover refused
+                                             (the Bash stays the owner), 1 it
+                                             failed
   nhm_hooks.sh statusline claude check|set|remove [FILE]
                                              Claude Code's statusLine runs
                                              nhm quota record-claude (default
@@ -918,12 +924,12 @@ nhm_hooks_learning_profile() {
 # default herdr server: the keys in [keys] of nhm's config (prefix+a the
 # palette, prefix+d the agent board, prefix+m the menu by default), in
 # place of ACFS's palette block. nhm bind refuses while ACFS's Bash owns
-# the server (nhm's palette cannot send before the takeover) or when the
-# user's config uses one of the keys; the caller then keeps ACFS's
-# palette. A user who opted out (`nhm bind --unbind` or `acfs palette
-# unbind` left an "unbound by" block) gets neither: `bind` exits 6, and
-# nhm bind exits 5 for the same reason (acfs-uetm F1). `status` changes
-# nothing.
+# the server (nhm's palette cannot send before the takeover, which `owner
+# take` below runs) or when the user's config uses one of the keys: `bind`
+# exits 5, and nothing is bound (acfs-9hkh.93). A user who opted out
+# (`nhm bind --unbind` or `acfs palette unbind` left an "unbound by"
+# block) gets no keys either: `bind` exits 6, and nhm bind exits 5 for the
+# same reason (acfs-uetm F1). `status` changes nothing.
 
 nhm_hooks_plugin_dir() { printf '%s/nhm/plugin\n' "${XDG_DATA_HOME:-$HOME/.local/share}"; }
 nhm_hooks_plugin_herdr_dir() { printf '%s/herdr\n' "${XDG_CONFIG_HOME:-$HOME/.config}"; }
@@ -1046,6 +1052,61 @@ nhm_hooks_plugin() {
     return 0
 }
 
+# ------------------------------------------------------------
+# nhm owns the default herdr server (acfs-9hkh.93): every install ends
+# with nhm as the owner, so nhm bind can bind its keys. install.sh runs
+# `owner take` once nhm is enrolled and the acfs command is in place, and
+# acfs update runs it after update_nhm. nhm's takeover imports what ACFS's
+# Bash keeps (`acfs agents export`: tokens, wake state, the keep list) and
+# the agents it spawned. With no herdr server running, as on a fresh
+# install, it goes on only when the Bash keeps nothing. The dry run goes
+# first, and --yes checks everything again before it writes: a refusal
+# (an agent or a token it would leave behind) changes nothing, and the
+# Bash stays the owner. 0 nhm owns the server (now or already), 3 no nhm,
+# 5 the takeover refused, 1 it failed.
+# ------------------------------------------------------------
+nhm_hooks_owner() {
+    local verb="${1:-}" nhm="" socket="" acfs="${ACFS_BIN:-}" pass="" out="" rc=0 err="" done_line=""
+    [[ "$verb" == take && $# -eq 1 ]] || { nhm_hooks_usage >&2; return 2; }
+    nhm="$(nhm_hooks_plugin_bin nhm)"
+    if [[ -z "$nhm" ]]; then
+        nhm_hooks_note "nhm is not installed"
+        return 3
+    fi
+    socket="$(nhm_hooks_plugin_herdr_dir)/herdr.sock"
+    # nhm reads the Bash's state with the acfs command: ACFS's own copy
+    # first, since install runs this before ~/.local/bin is on PATH.
+    if [[ -z "$acfs" && -x "${ACFS_HOME:-$HOME/.acfs}/bin/acfs" ]]; then
+        acfs="${ACFS_HOME:-$HOME/.acfs}/bin/acfs"
+    fi
+    for pass in --dry-run --yes; do
+        rc=0
+        out="$(ACFS_BIN="$acfs" "$nhm" admin takeover "$pass" --socket "$socket" --json </dev/null 2>/dev/null)" || rc=$?
+        [[ "$rc" -eq 0 ]] || break
+    done
+    err="$(jq -r '.error // empty' <<<"$out" 2>/dev/null || true)"
+    case "$rc" in
+        0)
+            done_line="$(jq -r '"generation \(.result.owner.generation); agents imported: \(.result.bindings.imported // 0)"' <<<"$out" 2>/dev/null || true)"
+            nhm_hooks_note "nhm owns the default herdr server now (${done_line:-taken over})"
+            return 0
+            ;;
+        2)
+            # A refusal that finds nhm the owner already is done.
+            if [[ "$(jq -r '.result.owner.owner // empty' <<<"$out" 2>/dev/null || true)" == nhm ]]; then
+                nhm_hooks_note "nhm owns the default herdr server already"
+                return 0
+            fi
+            nhm_hooks_note "nhm's takeover refused, so ACFS's Bash keeps the default herdr server: ${err:-no reason given}; see: $nhm admin takeover --dry-run --socket $socket"
+            return 5
+            ;;
+        *)
+            nhm_hooks_note "nhm's takeover failed, so ACFS's Bash keeps the default herdr server: ${err:-nhm admin takeover $pass exited $rc}"
+            return 1
+            ;;
+    esac
+}
+
 # Claude Code's statusLine (acfs-5917). nhm learns Claude's five-hour and
 # weekly windows only from the rate_limits that Claude Code hands its
 # statusLine command, and `nhm add` refuses a kind at 90 % of a window. So
@@ -1155,6 +1216,7 @@ nhm_hooks_main() {
         codex-dcg) nhm_hooks_codex_dcg "$@" ;;
         learning-profile) nhm_hooks_learning_profile "$@" ;;
         plugin) nhm_hooks_plugin "$@" ;;
+        owner) nhm_hooks_owner "$@" ;;
         statusline) nhm_hooks_statusline "$@" ;;
         -h|--help|help) nhm_hooks_usage ;;
         *) nhm_hooks_usage >&2; return 2 ;;

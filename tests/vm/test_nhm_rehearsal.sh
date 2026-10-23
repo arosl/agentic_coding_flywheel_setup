@@ -13,7 +13,7 @@
 #
 # Usage: tests/vm/test_nhm_rehearsal.sh --authorised RUN-ID
 #            (--nhm-version X.Y.Z | --nhm-build DIR)
-#            [--release 0.1|0.2|0.3|0.4] [--steps E00,E01,...] [--root DIR] [--takeover]
+#            [--release 0.1|0.2|0.3|0.4] [--steps E00,E01,...] [--root DIR] [--takeover | --owner]
 #
 # --authorised is required, and names the run: sandbox runs are
 # authorised under F.12 (SageOak, 2026-10-12), and each run's id goes into
@@ -38,6 +38,11 @@
 # an unbound Bash token refusing both modes, and --exclude letting the
 # takeover pass. Without it, a later release's first step takes the
 # server over itself, as on the plan's disposable instance.
+#
+# --owner runs ACFS's own takeover (tests/vm/rehearsal/OWNER.sh;
+# acfs-9hkh.93) alone, on a fresh sandbox, instead of a release's steps:
+# the step install.sh and acfs update run, on a fresh install and on an
+# upgrade whose Bash keeps an agent. It takes no --steps or --takeover.
 #
 # --root is the sandbox root (default $NHM_SANDBOX_PARENT/$USER/
 # nhm-rehearsal/RUN-ID, NHM_SANDBOX_PARENT defaulting to /data/tmp). It
@@ -65,6 +70,7 @@ ROOT=""
 NHM_VERSION=""
 NHM_BUILD=""
 TAKEOVER=0
+OWNER=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --authorised) [[ $# -ge 2 ]] || usage; AUTHORISED="$2"; shift 2 ;;
@@ -74,6 +80,7 @@ while [[ $# -gt 0 ]]; do
         --nhm-version) [[ $# -ge 2 ]] || usage; NHM_VERSION="$2"; shift 2 ;;
         --nhm-build) [[ $# -ge 2 ]] || usage; NHM_BUILD="$2"; shift 2 ;;
         --takeover) TAKEOVER=1; shift ;;
+        --owner) OWNER=1; shift ;;
         -h|--help) usage ;;
         *) echo "unknown argument: $1" >&2; usage ;;
     esac
@@ -120,6 +127,13 @@ if [[ "$TAKEOVER" == 1 ]]; then
     done
     RUN_STEPS="${before# } TAKEOVER$after"
     RUN_STEPS="${RUN_STEPS# }"
+fi
+if [[ "$OWNER" == 1 ]]; then
+    if [[ -n "$STEPS" || "$TAKEOVER" == 1 ]]; then
+        echo "--owner runs alone: drop --steps and --takeover" >&2
+        exit 2
+    fi
+    RUN_STEPS="OWNER"
 fi
 ROOT="${ROOT:-${NHM_SANDBOX_PARENT:-/data/tmp}/${USER:-rehearsal}/nhm-rehearsal/$AUTHORISED}"
 if [[ -e "$ROOT" ]]; then

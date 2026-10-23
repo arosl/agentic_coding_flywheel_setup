@@ -50,6 +50,8 @@ run 2 "an unknown release" --authorised r1 --nhm-version 0.1.2 --release 0.9
 run 2 "a step outside the release" --authorised r1 --nhm-version 0.1.2 --steps E02
 run 2 "an unknown argument" --authorised r1 --nhm-version 0.1.2 --force
 run 2 "a positional argument (no instance any more)" --authorised r1 --nhm-version 0.1.2 rehearsal-1
+run 2 "--owner with --steps" --authorised r1 --nhm-version 0.1.2 --owner --steps E00
+run 2 "--owner with --takeover" --authorised r1 --nhm-version 0.1.2 --owner --takeover
 
 echo "== an existing root"
 mkdir -p "$SANDBOX"
