@@ -1,7 +1,7 @@
 # Agentic Coding Flywheel Setup (ACFS)
 
 <div align="center">
-  <img src="docs/assets/acfs_illustration.webp" alt="Agentic Coding Flywheel Setup (ACFS) - From zero to fully-configured agentic coding VPS in 30 minutes">
+  <img src="docs/assets/acfs_fork_header.svg" alt="ACFS, the arosl fork: install.sh sets up an Ubuntu VPS or an Incus container, where Claude Code, Codex and agy run in herdr panes that nhm starts and wakes, coordinate through Agent Mail, br and bv, are guarded by dcg and ubs, and remember through cass and cm">
 </div>
 
 ![Version](https://img.shields.io/badge/Version-0.7.0-bd93f9?style=for-the-badge)
