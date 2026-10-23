@@ -1,32 +1,42 @@
 # shellcheck shell=bash
-# E13 Rate limit, caam, CASR (METHOD-MATRIX E13; acfs-9hkh.94): a
-# simulated limit, the replacement spawn's admission, and a session casr
-# converts and nhm adopts. Pass conditions: nhm limits --json reports the
-# limit within one pass and mails once; a replacement spawn on a plan
-# with headroom is admitted, one at 90 % is refused; casr's dry run
-# writes nothing; nhm resolve shows the converted session's provider and
-# native session; the adopted session has a new generation, and a wait
-# on the old one fails.
+# E13 Rate limit, caam, CASR (METHOD-MATRIX E13; acfs-9hkh.94). a: a
+# Claude; b: a Codex. Pass conditions, with plan-v8's contracts where the
+# matrix predates them:
+# - a fake limit line on an agent's screen yields one report and one mail
+#   from nhm limits and an attention item (agent_at_limit), and changes no
+#   admission: an agent can print a fake line, so a match only reports;
+# - the provider's own limit record (Codex's session log) makes its pool
+#   limited (quota_limited) and refuses a spawn of that kind;
+# - a spawn on a plan at 90 % or more is refused with exit 3 (plan-v8's
+#   code for an admission refusal; the matrix's quota_exhausted predates
+#   it) and starts nothing, and one with headroom is admitted;
+# - after a caam switch the earlier observation of that pool is unknown,
+#   so the spawn the old 92 % refused is admitted with a warning;
+# - casr's dry run writes nothing; the converted session, adopted with nhm
+#   adopt, has a new generation, nhm resolve shows its kind, model and
+#   native session, and a wait on the old generation fails.
 #
-# The limit is a usage-limit line in the Claude's reply (the mock's
-# 'mock-reply:' line): nhm limits reads the screen, and an agent can print
-# a fake limit line, which is why a match only reports.
-# casr runs in the sandbox from the host's binary, bound when the step
-# file is sourced. The caam switch is not automated yet.
+# The limit lines are the agents' replies (the mock's 'mock-reply:' line).
+# casr and caam run in the sandbox from the host's binaries, bound when
+# the step file is sourced; the fork's caam keeps upstream's backup and
+# activate.
 
-# At source time (outside the sandbox): casr.
-if [[ -n "${SANDBOX_HOME:-}" ]] && command -v casr >/dev/null 2>&1; then
-    sandbox_bin casr
+# At source time (outside the sandbox): casr and caam.
+if [[ -n "${SANDBOX_HOME:-}" ]]; then
+    if command -v casr >/dev/null 2>&1; then sandbox_bin casr; fi
+    if command -v caam >/dev/null 2>&1; then sandbox_bin caam; fi
 fi
 
 # e13_json LABEL CMD...: runs CMD in the project, saves its output as
-# e13-LABEL.json and shows it.
+# e13-LABEL.json and its exit code as e13-LABEL.rc, and shows both.
 e13_json() {
-    local label="$1" out
+    local label="$1" out rc
     shift
     out="$(cd "$HOME/e13" && "$@" 2>&1)"
+    rc=$?
     printf '%s\n' "$out" >"$SANDBOX_EVIDENCE/e13-$label.json"
-    echo "### $label: $*"
+    printf '%s\n' "$rc" >"$SANDBOX_EVIDENCE/e13-$label.rc"
+    echo "### $label (exit $rc): $*"
     echo "$out"
 }
 e13_file() { printf '%s/e13-%s.json\n' "$SANDBOX_EVIDENCE" "$1"; }
@@ -43,9 +53,24 @@ e13_row() {
     nhm list --json 2>/dev/null | jq -c --arg n "$1" 'first(.result.agents[]? | select(.binding.mail_name == $n)) // empty'
 }
 
+# e13_codex_limit_record: Codex's own limit record, as Codex writes it: a
+# token_count event at the limit of its five-hour window, in a session log.
+e13_codex_limit_record() {
+    local now day
+    now="$(date -u +%s)"
+    day="$CODEX_HOME/sessions/$(date -u +%Y/%m/%d)"
+    mkdir -p "$day" || return 1
+    printf '{"timestamp":"%s","type":"event_msg","payload":{"type":"token_count","rate_limits":{"plan_type":"pro","primary":{"used_percent":100.0,"window_minutes":300,"resets_at":%d},"secondary":{"used_percent":20.0,"window_minutes":10080,"resets_at":%d},"rate_limit_reached_type":"primary"}}}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$((now + 3600))" "$((now + 259200))" \
+        >>"$day/rollout-$(date -u +%Y-%m-%dT%H-%M-%S)-e13-limit.jsonl"
+}
+
+# e13_decision FILE: the admission decision in a spawn's JSON.
+e13_decision() { jq -r '[.. | objects | select(has("admission")) | .admission.decision][0] // empty' "$1" 2>/dev/null; }
+
 step_E13() {
-    local dir oper l pl limit x px bx gen sess t waitpid i
-    for tool in codex casr am; do
+    local dir oper l pl limit x px bx gen sess t waitpid i cred
+    for tool in codex casr caam am; do
         command -v "$tool" >/dev/null 2>&1 || { echo "FAIL E13: $tool is not in the sandbox (is it on the host's PATH?)"; return; }
     done
     dir="$HOME/e13"
@@ -57,7 +82,7 @@ step_E13() {
     claude_guards
     nhm_owner || { echo "FAIL E13: nhm could not take the server over"; return; }
 
-    # --- The simulated limit ---------------------------------------------
+    # --- a: a fake limit line --------------------------------------------
     e13_json oper am agents create --project "$dir" --program operator --model none --json
     oper="$(jq -r '.name // .agent.name // empty' "$(e13_file oper)")"
     check "E13: the operator's Agent Mail identity" test -n "$oper"
@@ -94,19 +119,26 @@ step_E13() {
     check "E13: the operator has one message about it (mailed once)" \
         jq -e --arg n "$l" '[.messages[]? | select(((.subject // "") + (.body_md // "")) | contains($n))] | length == 1' \
             "$(e13_file inbox)"
+    e13_json attention-limit nhm attention --json
+    check "E13: the line is an attention item (agent_at_limit)" \
+        jq -e --arg n "$l" '[.result[]? | select(.kind == "agent_at_limit" and ((.mail_name // "") == $n or (.detail | contains($n))))]
+            | length == 1' "$(e13_file attention-limit)"
 
-    # --- The replacement spawn's admission --------------------------------
+    # --- a: the replacement spawn's admission ----------------------------
     e13_quota 50
     e13_json admit-50 nhm spawn e13r --cc=1 --prompt "say hi" --dry-run --json
-    check "E13: a replacement spawn with headroom (50 %) is admitted" \
-        jq -e '[.. | objects | select(has("admission")) | .admission.decision][0] == "admit"' "$(e13_file admit-50)"
+    check "E13: the fake line changes no admission: with headroom (50 %) a spawn is admitted" \
+        test "$(e13_decision "$(e13_file admit-50)")" = admit
     e13_quota 92
-    e13_json admit-92 nhm spawn e13r --cc=1 --prompt "say hi" --dry-run --json
-    check "E13: one at 92 % is refused" \
-        jq -e '[.. | objects | select(has("admission")) | .admission.decision][0] == "refuse"' "$(e13_file admit-92)"
+    e13_json refuse-92 nhm spawn e13r --cc=1 --prompt "say hi" --json
+    # The refused spawn lists its targets as planned, with no pane.
+    check "E13: at 92 % a spawn is refused with exit 3 and starts nothing" \
+        bash -c '[[ "$2" == refuse && "$(cat "${1%.json}.rc")" == 3 ]] &&
+            jq -e "[.result.agents[]? | select((.pane_id // \"\") != \"\" or .status != \"planned\")] | length == 0" "$1" >/dev/null' \
+            _ "$(e13_file refuse-92)" "$(e13_decision "$(e13_file refuse-92)")"
     e13_quota 10
 
-    # --- casr: a Codex's session converted for Claude, adopted -------------
+    # --- b: a Codex's fake limit line ------------------------------------
     e13_json cod nhm spawn e13c --cod=1 --allow-unguarded --prompt "say hi" --json
     x="$(jq -r '.result.agents[0].mail_name // empty' "$(e13_file cod)")"
     px="$(jq -r '.result.agents[0].pane_id // empty' "$(e13_file cod)")"
@@ -114,6 +146,16 @@ step_E13() {
     check "E13: the Codex starts, ready" jq -e '.result.agents[0].ready == true' "$(e13_file cod)"
     [[ -n "$x" ]] || return
     settle "$px"
+    e13_json cod-limit-send nhm send e13c \
+        "Go on."$'\n'"mock-reply: You've hit your usage limit. Upgrade to Pro or try again at 5:00 PM." --name "$x" --json
+    settle "$px"
+    herdr pane read "$px" --source visible --lines 40 >"$SANDBOX_EVIDENCE/e13-cod-limit-screen.txt" 2>&1
+    e13_json cod-limits nhm limits e13c --once --lines 40 --mail-from "$oper" --json
+    check "E13 b: nhm limits reports the Codex's limit line and mails it" \
+        jq -e --arg n "$x" '[.result.reports[]? | select(.name == $n and .kind == "codex" and .mailed)] | length == 1' \
+            "$(e13_file cod-limits)"
+
+    # --- casr: the Codex's session converted for Claude, adopted -----------
     gen="$(e13_row "$x" | jq -r '.binding.generation // empty')"
     sess="$(e13_row "$x" | jq -r '.agent_session.value // empty')"
     echo "### $x in $px ($bx, generation $gen), Codex session $sess"
@@ -144,15 +186,15 @@ step_E13() {
     t="$(jq -r '.target_session_id // empty' "$(e13_file casr)")"
     check "E13: casr converts the session" test -n "$t"
     e13_json resume herdr agent start converted --kind claude --pane "$px" --timeout 60000 -- \
-        --dangerously-skip-permissions --resume "$t"
+        --dangerously-skip-permissions --model sonnet --resume "$t"
     check "E13: Claude resumes the converted session in the Codex's pane" \
         jq -e '.result.agent.agent_status | test("idle|done")' "$(e13_file resume)"
-    e13_json adopt nhm adopt "$x" --pane "$px" --handoff-from "$bx" --kind claude --json
+    e13_json adopt nhm adopt "$x" --pane "$px" --handoff-from "$bx" --kind claude --model sonnet --json
     check "E13: nhm adopt takes it over with a new generation" \
         jq -e --argjson g "${gen:-0}" '.error == null and .result.binding.generation == ($g + 1)' "$(e13_file adopt)"
     nhm resolve "$px" --json >"$SANDBOX_EVIDENCE/e13-resolve.json" 2>&1
-    check "E13: nhm resolve shows the provider and the native session" \
-        jq -e --arg n "$x" --arg t "$t" '.result.binding | .mail_name == $n and .kind == "claude"
+    check "E13: nhm resolve shows the kind, the model and the native session" \
+        jq -e --arg n "$x" --arg t "$t" '.result.binding | .mail_name == $n and .kind == "claude" and .model == "sonnet"
             and (.native_session_json // .native_session | (if type == "string" then fromjson else . end) | .value == $t)' \
             "$SANDBOX_EVIDENCE/e13-resolve.json"
     for i in $(seq 1 60); do
@@ -166,5 +208,41 @@ step_E13() {
     check "E13: the wait on the old generation fails" \
         bash -c 'grep -q "^exit 1$" "$1" && grep -Eq "replaced|continuity_lost" "$1"' _ "$SANDBOX_EVIDENCE/e13-old-wait.json"
 
-    echo "FAIL E13: the caam switch is not automated yet (acfs-9hkh.94)"
+    # --- b: Codex's own limit record (after casr, which reads the logs) ----
+    e13_codex_limit_record || echo "FAIL E13: could not write the Codex record"
+    e13_json quota-codex nhm quota --json
+    check "E13 b: Codex's record makes the codex pool limited" \
+        jq -e '[.result.pools[]? | select(.pool_id == "codex" and .limit_reached != null and (.limit_reached.stale | not))] | length == 1' \
+            "$(e13_file quota-codex)"
+    e13_json attention-quota nhm attention --json
+    check "E13 b: and is an attention item (quota_limited)" \
+        jq -e '[.result[]? | select(.kind == "quota_limited" and (.detail | startswith("codex")))] | length >= 1' \
+            "$(e13_file attention-quota)"
+    e13_json refuse-codex nhm spawn e13s --cod=1 --allow-unguarded --prompt "say hi" --dry-run --json
+    check "E13 b: a Codex spawn is refused at the limit" test "$(e13_decision "$(e13_file refuse-codex)")" = refuse
+
+    # --- a: a caam switch (last: it puts stand-in credentials in place) ----
+    # The sandbox's Claude has an API key and no credentials file; caam
+    # backs up and restores the file, so two stand-ins make two accounts.
+    cred="$HOME/.claude/.credentials.json"
+    printf '{"claudeAiOauth":{"accessToken":"e13-account-a"}}\n' >"$cred.new" && mv -f "$cred.new" "$cred"
+    e13_json caam-a caam backup claude e13a
+    printf '{"claudeAiOauth":{"accessToken":"e13-account-b"}}\n' >"$cred.new" && mv -f "$cred.new" "$cred"
+    e13_json caam-b caam backup claude e13b
+    e13_json caam-on-a caam activate claude e13a
+    e13_quota 92
+    e13_json switch-before nhm spawn e13r --cc=1 --prompt "say hi" --dry-run --json
+    check "E13: on account a at 92 % a spawn is refused" test "$(e13_decision "$(e13_file switch-before)")" = refuse
+    e13_json caam-switch caam activate claude e13b
+    e13_json caam-status caam status claude --json
+    check "E13: caam switches Claude to account b" \
+        jq -e '[.tools[]? | select(.tool == "claude") | .active_profile][0] == "e13b"' "$(e13_file caam-status)"
+    e13_json switch-quota nhm quota --json
+    check "E13: after the switch the earlier Claude observation is unknown (nhm-kyt)" \
+        jq -e '[.result.pools[]? | select(.pool_id == "claude") | .observed_at][0] == null' "$(e13_file switch-quota)"
+    e13_json switch-after nhm spawn e13r --cc=1 --prompt "say hi" --dry-run --json
+    check "E13: so the spawn account a's 92 % refused is admitted, with a warning (nhm-kyt)" \
+        bash -c '[[ "$2" == admit ]] && jq -e "[.. | objects | select(has(\"admission\")) | .admission.warnings // [] | length][0] > 0" "$1" >/dev/null' \
+            _ "$(e13_file switch-after)" "$(e13_decision "$(e13_file switch-after)")"
+    e13_quota 10
 }
