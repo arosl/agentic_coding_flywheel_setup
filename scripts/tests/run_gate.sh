@@ -23,8 +23,8 @@
 # rch offloads Rust builds, not bun's. So where a systemd user manager
 # runs, the manifest and web steps run each bun command, Playwright
 # aside, in a user scope with a memory cap (--bun-memory-max); one that
-# reaches it is killed and named (acfs-dpvr). Without a user manager, as
-# in CI, they run without a cap.
+# reaches it is killed and named (acfs-dpvr). Without a user manager,
+# they run without a cap.
 #
 # Run it in the gate worktree at the commit you push, after
 # 'bun install --frozen-lockfile': the CI steps write into the tree.
@@ -209,8 +209,9 @@ run_cmd_shown() {
 # step: a systemd user scope capped at BUN_MEMORY_MAX, or nothing.
 BUN_SCOPE=()
 BUN_SCOPE_DECIDED=false
-# Runs in the scope: the step, then a note when the kernel killed a
-# process in the scope at the cap while it ran.
+# Runs in the scope: the step, then, when the kernel killed a process in
+# the scope at the cap while it ran, a note, and the end of the step's
+# other processes (what OOMPolicy=stop did, without its race).
 # shellcheck disable=SC2016 # expanded by the scope's bash
 BUN_SCOPE_RUNNER='
 cap="$1"
@@ -223,6 +224,9 @@ rc=$?
 if [[ "$(oom_kills)" != "$before" ]]; then
     echo "run_gate: the step reached the bun memory cap ($cap), and the kernel killed a process in it; --bun-memory-max raises the cap" >&2
     ((rc != 0)) || rc=1
+    while read -r pid; do
+        [[ "$pid" == "$$" ]] || kill "$pid" 2>/dev/null || true
+    done <"${events%/memory.events}/cgroup.procs"
 fi
 exit "$rc"'
 
@@ -240,8 +244,13 @@ bun_scope_decide() {
         return 0
     fi
     echo "run_gate: each bun command but Playwright runs in a user scope capped at $BUN_MEMORY_MAX" >&2
-    BUN_SCOPE=(systemd-run --user --scope --quiet -p "MemoryMax=$BUN_MEMORY_MAX" -p MemorySwapMax=0
-        -- bash -c "$BUN_SCOPE_RUNNER" run_gate_bun "$BUN_MEMORY_MAX")
+    # --expand-environment=no: systemd-run would expand ${...} and $$ in
+    # the runner itself. OOMPolicy=continue: a scope's default
+    # (DefaultOOMPolicy=stop) has systemd terminate the whole scope after
+    # an OOM kill, and that can kill the runner before it reports
+    # (acfs-x6cj).
+    BUN_SCOPE=(systemd-run --user --scope --quiet --expand-environment=no -p "MemoryMax=$BUN_MEMORY_MAX"
+        -p MemorySwapMax=0 -p OOMPolicy=continue -- bash -c "$BUN_SCOPE_RUNNER" run_gate_bun "$BUN_MEMORY_MAX")
 }
 
 # run_bun <label> <dir> <command...>: run_cmd, under the bun memory cap.

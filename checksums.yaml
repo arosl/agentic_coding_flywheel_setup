@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-10-23T15:59:19+00:00
+# checksums.yaml - Auto-generated 2026-10-23T18:57:09+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -67,8 +67,8 @@ installers:
     sha256: "f22f92d30d8afea5c54c63d2515b35df415c6174e4a804200339293fe7ef155c"
 
   dcg:
-    url: "https://raw.githubusercontent.com/arosl/destructive_command_guard/a17f5a739df931c66801165b389efd84f1bac7a4/install.sh"
-    sha256: "a349e8f081c2414f9c14aee75897de78d7bdff0c2882d9fd79f81f54dec63a77"
+    url: "https://raw.githubusercontent.com/arosl/destructive_command_guard/4275b028f53d197128ca9d4e879dba6cf3a32c70/install.sh"
+    sha256: "9ea485942ada5cdf085cedaaefc72f28f173c896044dbf485ac8bf3acb5618e3"
 
   dsr:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/doodlestein_self_releaser/main/install.sh"
@@ -168,7 +168,7 @@ installers:
 
   rch:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/remote_compilation_helper/main/install.sh"
-    sha256: "4b5112b91665e4521688adcdd0d809cd1eaf1403460381571e2c06329dcc6cc4"
+    sha256: "298328b17de2b49fb19ec812b352ffbc40ba2fb25340474c4121fdd7ef883076"
 
   ru:
     url: "https://raw.githubusercontent.com/arosl/repo_updater/v1.5.0-nhm.2/install.sh"

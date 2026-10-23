@@ -198,13 +198,13 @@ manifest_gate() { # manifest_gate <user manager state> [options...]: the manifes
         bash "$GATE" --root "$FIXTURE" --tmp-parent "$PARENT" --step manifest "$@" >"$WORK/out" 2>&1
 }
 scoped_bun() { # scoped_bun <MemoryMax>: three bun commands, each after its scope
-    [[ "$(grep -c "^systemd-run --user --scope --quiet -p MemoryMax=$1 -p MemorySwapMax=0\$" "$LOG")" -eq 3 \
+    [[ "$(grep -c "^systemd-run --user --scope --quiet --expand-environment=no -p MemoryMax=$1 -p MemorySwapMax=0 -p OOMPolicy=continue\$" "$LOG")" -eq 3 \
         && "$(sed -n 1p "$LOG")" == systemd-run* && "$(sed -n 2p "$LOG")" == "bun run generate:validate" \
         && "$(sed -n 6p "$LOG")" == "bun test" ]]
 }
 bare_bun() { [[ "$(cat "$LOG")" == $'bun run generate:validate\nbun run generate --diff\nbun test' ]]; }
 check "a user manager: the manifest step passes" manifest_gate running
-check "a user manager: each bun command runs in a scope capped at 4G, without swap" scoped_bun 4G
+check "a user manager: each bun command runs in a scope capped at 4G, without swap, that an OOM kill doesn't stop" scoped_bun 4G
 check "a user manager: the run says so" grep -q "runs in a user scope capped at 4G" "$WORK/out"
 check "a user manager: each step's log line names the command and the cap" \
     grep -qx 'run_gate: \[manifest: bun test\] bun test (in a user scope, MemoryMax=4G)' "$WORK/out"
@@ -222,21 +222,39 @@ check "--bun-memory-max none: bun runs bare" bare_bun
 check "removes the gate root after the capped steps" parent_empty
 # A real scope, where a user manager runs with the memory controller:
 # a bun that outgrows a 64M cap is killed, and the gate names the cap.
+# Each bun leaves a stray child, which the scope's runner ends.
 cat >"$WORK/oombin/bun" <<'STUB'
 #!/usr/bin/env bash
+sleep 300 &
+echo "$!" >>"$GATE_TEST_STRAYS"
 exec python3 -I -c 'a = bytearray(300 * 1024 * 1024)'
 STUB
 chmod +x "$WORK/oombin/bun"
+strays_ended() { # every stray is gone, or a zombie, within 2 seconds
+    local pid i state
+    [[ -s "$WORK/strays" ]] || return 1
+    while read -r pid; do
+        for ((i = 0; i < 20; i++)); do
+            state="$(sed -n 's/^State:[[:space:]]*\([A-Z]\).*/\1/p' "/proc/$pid/status" 2>/dev/null)"
+            [[ -z "$state" || "$state" == Z ]] && continue 2
+            sleep 0.1
+        done
+        return 1
+    done <"$WORK/strays"
+}
 user_state="$(systemctl --user is-system-running 2>/dev/null)" || true
 user_cgroup="/sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers"
 if command -v systemd-run >/dev/null 2>&1 && [[ "$user_state" == running || "$user_state" == degraded ]] \
     && grep -qw memory "$user_cgroup" 2>/dev/null; then
     rc=0
-    PATH="$WORK/oombin:$PATH" bash "$GATE" --root "$FIXTURE" --tmp-parent "$PARENT" --step manifest \
-        --bun-memory-max 64M >"$WORK/out" 2>&1 || rc=$?
+    PATH="$WORK/oombin:$PATH" GATE_TEST_STRAYS="$WORK/strays" bash "$GATE" --root "$FIXTURE" \
+        --tmp-parent "$PARENT" --step manifest --bun-memory-max 64M >"$WORK/out" 2>&1 || rc=$?
     check "a real scope: a bun over the cap fails the gate" test "$rc" -eq 1
     check "a real scope: the gate names the cap" grep -q "reached the bun memory cap (64M)" "$WORK/out"
     check "a real scope: the summary names the step" grep -q "FAIL  manifest: bun test" "$WORK/out"
+    check "a real scope: the killed step's other processes end" strays_ended
+    # shellcheck disable=SC2046 # one pid per line
+    kill $(cat "$WORK/strays" 2>/dev/null) 2>/dev/null || true
     check "removes the gate root after a capped kill" parent_empty
 else
     echo "  skip a real scope: no systemd user manager with the memory controller here"
