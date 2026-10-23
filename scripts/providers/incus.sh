@@ -318,8 +318,9 @@ check_managed_bridge() {
 }
 
 # An existing ACL is never changed. The VM's ACL is created when absent;
-# any other must exist already: the swarm ACL allows the host's API and
-# the test bridge by address, which host-setup knows and this doesn't.
+# any other must exist already: the swarm ACL allows the host's API, the
+# rch workers and (with host-setup --test-project) the test bridge by
+# address, which host-setup knows and this doesn't.
 ensure_acl() {
     if incus_run network acl show "$(qualified "$acl_name")" >/dev/null 2>&1; then
         log_info "Using the existing network ACL $acl_name as it is (its rules aren't checked)"
