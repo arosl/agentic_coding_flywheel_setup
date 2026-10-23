@@ -4206,14 +4206,41 @@ _acfs_doctor_incus_extensions() {
 # (tools.lazygit, tools.lazydocker). Installs made before acfs-x2c9 extracted
 # them without --no-same-owner, so they belong to the tarball's uid, and on
 # a host where that uid is a real account it could replace a binary on
-# root's PATH. acfs update re-owns them (update_root_tool_ownership mirrors
-# this list); the doctor only reports (acfs-u0wy).
+# root's PATH. acfs update warns about the same list
+# (update_root_tool_ownership); neither changes them (acfs-u0wy, acfs-ea2d).
 DOCTOR_ROOT_TOOL_BINARIES=(/usr/local/bin/lazygit /usr/local/bin/lazydocker)
 
 # "<uid>:<octal mode>" of a file, or nothing. A function, so a test can
 # answer for a fixture file no test user could own.
 doctor_file_owner_mode() {
     stat -c '%u:%a' "$1" 2>/dev/null
+}
+
+# The mode (vibe or safe) the installed state.json records. safe when it
+# records none or there is none, never the vibe that ACFS_MODE falls back
+# to: a command that reruns install.sh passes it, and vibe would turn a
+# safe install's agents to vibe settings (acfs-ea2d). update.sh's
+# update_installed_mode answers the same way.
+doctor_installed_mode() {
+    local state_file="" mode=""
+
+    state_file="$(_acfs_doctor_find_project_path "state.json" 2>/dev/null || true)"
+    if [[ -n "$state_file" ]]; then
+        mode="$(_acfs_doctor_read_json_string_key "$state_file" "mode" 2>/dev/null || true)"
+    fi
+    case "$mode" in
+        vibe|safe) printf '%s\n' "$mode" ;;
+        *) printf 'safe\n' ;;
+    esac
+}
+
+# The command that reinstalls tool $1 (lazygit, lazydocker) from its pinned
+# release, word for word update.sh's update_root_tool_fix_command: --no-deps
+# keeps --force-reinstall to that one module, --mode keeps the install's
+# mode, and install.sh's finalize also redeploys ~/.acfs from main.
+doctor_root_tool_fix_command() {
+    printf 'curl -fsSL https://raw.githubusercontent.com/%s/%s/main/install.sh | bash -s -- --yes --mode %s --no-deps --force-reinstall --only tools.%s\n' \
+        "${ACFS_REPO_OWNER:-arosl}" "${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}" "$(doctor_installed_mode)" "$1"
 }
 
 check_root_tool_ownership() {
@@ -4243,14 +4270,14 @@ check_root_tool_ownership() {
         # Re-owning a binary another account could write would only hide
         # that it may have been altered, so the fix is a reinstall from the
         # pinned release (acfs-ea2d); acfs update warns the same way.
-        fix="curl -fsSL https://raw.githubusercontent.com/${ACFS_REPO_OWNER:-arosl}/${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}/main/install.sh | bash -s -- --yes --force-reinstall --only tools.$name"
+        fix="$(doctor_root_tool_fix_command "$name")"
         if [[ "$uid" != 0 ]]; then
             check "tools.$name.owner" "$path is root's" "warn" \
-                "owned by uid $uid, the release tarball's owner; an account with that uid could have replaced it, so its contents can't be trusted" \
+                "owned by uid $uid, the release tarball's owner; an account with that uid could have replaced it, so its contents can't be trusted. The fix reinstalls it from the pinned release (this also brings ACFS up to date from main)" \
                 "$fix"
         elif (( (8#$mode & 8#022) != 0 )); then
             check "tools.$name.owner" "$path is root's" "warn" \
-                "mode $mode lets group or other write it, so its contents can't be trusted" \
+                "mode $mode lets group or other write it, so its contents can't be trusted. The fix reinstalls it from the pinned release (this also brings ACFS up to date from main)" \
                 "$fix"
         else
             check "tools.$name.owner" "$path is root's" "pass" "root:root, mode $mode" ""

@@ -596,27 +596,25 @@ update_source_stack_lib() {
     return 1
 }
 
-update_preferred_user_bin_dir() {
-    local state_file=""
-    local bin_dir=""
+# Sets the array named by $1 to the state.json files that exist, most
+# authoritative first: ACFS_STATE_FILE, $ACFS_HOME/state.json, the target
+# user's ~/.acfs/state.json, $HOME/.acfs/state.json when the target user
+# runs the update, then the system state.
+update_state_file_candidates() {
+    local -n _state_files_ref="$1"
+    local candidate=""
     local target_user=""
     local target_home=""
     local current_user=""
     local current_state_file=""
     local acfs_home_state_file=""
     local target_state_file=""
-    local explicit_bin_dir=""
     local explicit_state_file=""
     local sanitized_acfs_home=""
 
+    _state_files_ref=()
     target_user="$(update_target_user)"
     target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
-    explicit_bin_dir="$(update_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$target_home" 2>/dev/null || true)"
-    if [[ -n "$explicit_bin_dir" ]]; then
-        printf '%s\n' "$explicit_bin_dir"
-        return 0
-    fi
-
     current_user="$(update_current_user)"
     explicit_state_file="$(update_sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
     sanitized_acfs_home="$(update_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
@@ -626,14 +624,35 @@ update_preferred_user_bin_dir() {
         current_state_file="$HOME/.acfs/state.json"
     fi
 
-    for state_file in \
+    for candidate in \
         "$explicit_state_file" \
         "$acfs_home_state_file" \
         "$target_state_file" \
         "$current_state_file" \
         "/var/lib/acfs/state.json"; do
-        [[ -n "$state_file" && -f "$state_file" ]] || continue
+        [[ -n "$candidate" && -f "$candidate" ]] && _state_files_ref+=("$candidate")
+    done
+    return 0
+}
 
+update_preferred_user_bin_dir() {
+    local state_file=""
+    local bin_dir=""
+    local target_user=""
+    local target_home=""
+    local explicit_bin_dir=""
+    local -a state_files=()
+
+    target_user="$(update_target_user)"
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    explicit_bin_dir="$(update_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$target_home" 2>/dev/null || true)"
+    if [[ -n "$explicit_bin_dir" ]]; then
+        printf '%s\n' "$explicit_bin_dir"
+        return 0
+    fi
+
+    update_state_file_candidates state_files
+    for state_file in "${state_files[@]}"; do
         bin_dir="$(update_read_state_string_from_file "$state_file" "bin_dir" 2>/dev/null || true)"
 
         bin_dir="$(update_validate_bin_dir_for_home "$bin_dir" "$target_home" 2>/dev/null || true)"
@@ -7686,11 +7705,36 @@ update_file_owner_mode() {
     stat -c '%u:%a' "$1" 2>/dev/null
 }
 
+# The mode (vibe or safe) recorded in the first of
+# update_state_file_candidates' files. safe when that file records none or
+# there is none, never install.sh's vibe default: a command that reruns
+# install.sh passes it, and vibe would turn a safe install's agents to
+# vibe settings (acfs-ea2d). The doctor's doctor_installed_mode answers the
+# same way.
+update_installed_mode() {
+    local mode=""
+    local -a state_files=()
+
+    update_state_file_candidates state_files
+    if ((${#state_files[@]} > 0)); then
+        mode="$(update_read_state_string_from_file "${state_files[0]}" "mode" 2>/dev/null || true)"
+    fi
+    case "$mode" in
+        vibe|safe) printf '%s\n' "$mode" ;;
+        *) printf 'safe\n' ;;
+    esac
+}
+
 # The command that reinstalls tool $1 (lazygit, lazydocker) from its pinned
-# release through install.sh's own module path, run by the user.
+# release through install.sh's own module path, run by the user. --no-deps
+# keeps --force-reinstall to that one module (lazydocker's closure would
+# reinstall tools.docker and restart the daemon), and --mode keeps the
+# install's mode. install.sh's finalize redeploys ~/.acfs from main, so the
+# warning says the command updates ACFS too. The doctor's
+# check_root_tool_ownership prints the same command (acfs-ea2d).
 update_root_tool_fix_command() {
-    printf 'curl -fsSL https://raw.githubusercontent.com/%s/%s/main/install.sh | bash -s -- --yes --force-reinstall --only tools.%s\n' \
-        "${ACFS_REPO_OWNER:-arosl}" "${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}" "$1"
+    printf 'curl -fsSL https://raw.githubusercontent.com/%s/%s/main/install.sh | bash -s -- --yes --mode %s --no-deps --force-reinstall --only tools.%s\n' \
+        "${ACFS_REPO_OWNER:-arosl}" "${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}" "$(update_installed_mode)" "$1"
 }
 
 # Warns about exactly those binaries when they aren't root's or are
@@ -7729,7 +7773,7 @@ update_root_tool_ownership() {
     for entry in "${wrong[@]}"; do
         path="${entry%%|*}"
         reason="${entry#*|}"
-        log_item "warn" "$desc" "$path is $reason, so another account could have replaced it; reinstall it from the pinned release: $(update_root_tool_fix_command "${path##*/}")"
+        log_item "warn" "$desc" "$path is $reason, so another account could have replaced it; reinstall it from the pinned release (this also brings ACFS up to date from main): $(update_root_tool_fix_command "${path##*/}")"
     done
     return 0
 }
