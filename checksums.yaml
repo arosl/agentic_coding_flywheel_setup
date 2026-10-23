@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-10-23T14:00:00+00:00
+# checksums.yaml - Auto-generated 2026-10-23T14:13:32+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -119,16 +119,16 @@ installers:
     sha256: "5b31fc2d1bb03c2f0d4b805639f07ee5525e71bc6562bc59cc601ea87893c405"
 
   nhm:
-    url: "https://raw.githubusercontent.com/arosl/nhm/v0.1.8/install.sh"
+    url: "https://raw.githubusercontent.com/arosl/nhm/v0.1.10/install.sh"
     sha256: "dc92eb69d5a1ed4a14b5807a2071d941147b37df2366be7e00869316375b2cf2"
 
   nhm_archive_linux_amd64:
-    url: "https://github.com/arosl/nhm/releases/download/v0.1.8/nhm-0.1.8-linux-amd64.tar.zst"
-    sha256: "d56a7607169254f319d01de9a06c7929e1f14636d4b96a63de920f66716a948b"
+    url: "https://github.com/arosl/nhm/releases/download/v0.1.10/nhm-0.1.10-linux-amd64.tar.zst"
+    sha256: "563b950739ce205332f3f3815209ccea21d763d4d5a19c67718730d2e9f9ca31"
 
   nhm_archive_linux_arm64:
-    url: "https://github.com/arosl/nhm/releases/download/v0.1.8/nhm-0.1.8-linux-arm64.tar.zst"
-    sha256: "9ae5aa1026ff02573539d6f923d61253a3256c431dbaf72229e2a8c74a38ca57"
+    url: "https://github.com/arosl/nhm/releases/download/v0.1.10/nhm-0.1.10-linux-arm64.tar.zst"
+    sha256: "b4b5ebb958e218e48ddcdec94ce646f5eb7ee2f05dc497e94b0a30639b564947"
 
   nvm:
     url: "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh"
