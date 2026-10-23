@@ -8512,7 +8512,8 @@ update_stack() {
 
     # RANO - opt-in (utils.rano): update when installed, or install with --force
     if update_binary_exists rano || [[ "$FORCE_MODE" == "true" ]]; then
-        run_cmd "RANO" update_run_verified_installer rano
+        # rano's installer keeps its files in TMPDIR when it ends (acfs-i5s0).
+        run_cmd "RANO" update_run_verified_installer_with_target_tmpdir rano
     fi
 
     # MDWB (Markdown Web Browser) - always install/update

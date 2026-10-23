@@ -379,8 +379,8 @@ check "the launcher runs with the name first and the options as given" launcher_
 check "the launcher's stdout is the command's stdout" out_has 'launcher stdout: the attach block'
 check "no incus call of its own" bash -c '[[ ! -s "$1" ]]' _ "$CASE/calls-incus"
 new_case up-remote
-run_machine up far:dev --ssh-key k --vm
-check "a remote-qualified name reaches the launcher as given" launcher_args_are "far:dev --ssh-key k --vm"
+run_machine up far:dev --ssh-key k --acl my-egress
+check "a remote-qualified name reaches the launcher as given" launcher_args_are "far:dev --ssh-key k --acl my-egress"
 new_case up-dashdash
 run_machine up dev -- --ssh-key k
 check "arguments after -- go to the launcher" launcher_args_are "dev --ssh-key k"
@@ -396,7 +396,7 @@ new_case up-target-bogus
 run_machine up --target bogus dev
 check "--target bogus: exits 2" rc_is 2
 new_case up-noname
-run_machine up --vm
+run_machine up --replace
 check "no name: exits 2" rc_is 2
 check "no name: says so" err_has 'up needs the machine'
 new_case up-badname
@@ -553,10 +553,6 @@ colima_case colima-broken
 echo '{"name":"acfs","status":"Broken","runtime":"incus"}' >"$CASE/colima-list.json"
 run_colima up dev
 check "a broken profile: exits 1, naming its status" bash -c '[[ "$1" -eq 1 ]] && grep -q "profile acfs is Broken" "$2"' _ "$RC" "$CASE/err"
-colima_case colima-vm
-run_colima up dev --vm
-check "--vm: exits 2" rc_is 2
-check "--vm: starts no Colima" bash -c '[[ ! -e "$1" ]]' _ "$CASE/calls-colima"
 colima_case colima-start-fails
 export STUB_COLIMA_START_EXIT=1
 run_colima up dev
@@ -573,7 +569,7 @@ run_colima up dev
 unset STUB_HOST_SETUP_EXIT
 check "a failed host-setup: exits 1 and launches nothing" bash -c '[[ "$1" -eq 1 ]] && [[ ! -e "$2" ]]' _ "$RC" "$CASE/calls-launcher"
 check "a failed host-setup: the message doesn't end in the exit code" err_lacks 're-run) 1$'
-check "a failed host-setup: says a command it names runs in Colima's VM" err_has 'runs in that VM: colima ssh --profile acfs -- <command>'
+check "a failed host-setup: says to run a command it names in a shell in Colima's VM" err_has 'in a shell in that VM (colima ssh --profile acfs, then paste it)'
 check "a failed host-setup: writes no incus.env on the Mac" bash -c '[[ ! -e "$1" ]]' _ "$CASE/home/.config/acfs/incus.env"
 check "a failed host-setup: leaves no temp files in the VM" vm_tmp_empty
 colima_case colima-env-conflict

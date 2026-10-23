@@ -1871,8 +1871,8 @@ herdr agent prompt <agent> "Your marching orders prompt here"`}
 
             <P>
               ACFS adds its own layer on top of herdr: a <strong>swarm machine</strong> to run in, a
-              capacity check before anything starts, and one command that spawns the agents, names
-              them in Agent Mail and opens each in its own herdr tab:
+              capacity check before anything starts, and nhm, the herdr wrapper, whose one command
+              spawns the agents, names them in Agent Mail and opens each in a herdr pane:
             </P>
 
             <CodeBlock
@@ -1888,14 +1888,17 @@ acfs machine verify dev            # every configured login still answers
 acfs capacity --recommend-herdr
 acfs swarm plan --agents 8 --profile balanced --workload standard
 
-# Start them: each agent gets an Agent Mail name, a herdr tab labelled
-# with it, and its marching orders from the command palette
-acfs agents spawn --claude 6 --codex 2
-acfs agents send --all --template default_new_agent
+# Start them: each agent gets an Agent Mail name, a herdr pane bound to
+# it, and its marching orders (the command palette's default_new_agent)
+nhm spawn myproject --cc=6 --cod=2
 
-# Later: who is working, and a nudge to read their mail
-acfs agents list
-acfs agents wake`}
+# Send a prompt to every agent, or to one kind
+nhm send myproject "Your marching orders prompt here"
+nhm send myproject --cc "Focus on the API layer"
+
+# Later: who is working, and a nudge to agents with unread mail
+nhm status myproject
+nhm wake`}
             />
 
             <P>

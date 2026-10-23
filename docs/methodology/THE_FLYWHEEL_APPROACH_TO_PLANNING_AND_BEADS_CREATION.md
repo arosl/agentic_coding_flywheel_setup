@@ -208,7 +208,7 @@ The key supporting pieces:
 - **AGENTS.md** is the shared operating manual every agent can reload after compaction.
 - **Agent Mail** is the coordination layer.
 - **`bv`** is the graph-theoretic routing layer.
-- **[herdr](https://herdr.dev)**, with `acfs agents`, is the launch and lifecycle layer.
+- **[herdr](https://herdr.dev)**, with nhm, is the launch and lifecycle layer.
 - **CASS / CM / UBS** are the memory, pattern-extraction, and quality-feedback layers.
 
 > "More agents -> more sessions -> better memory -> better coordination -> safer speed -> better output -> more sessions."
@@ -344,7 +344,7 @@ myproject/
 └── .gitignore         # Standard ignores
 ```
 
-`acfs newproj` prepares the project structure; `acfs agents spawn` starts agents in herdr.
+`acfs newproj` prepares the project structure; `nhm spawn` starts agents in herdr.
 
 ---
 
@@ -946,30 +946,34 @@ Once beads are polished, it's time to unleash the swarm.
 
 ### [herdr](https://herdr.dev): The Agent Cockpit
 
-herdr is a terminal workspace manager for coding agents: workspaces, tabs and panes that survive a dropped SSH connection, and each agent's state (working, blocked, done or idle). ACFS's `acfs agents` commands use it to orchestrate several agents:
+herdr is a terminal workspace manager for coding agents: workspaces, tabs and panes that survive a dropped SSH connection, and each agent's state (working, blocked, done or idle). nhm, the herdr wrapper (what ntm is to tmux), is the command center for orchestrating several agents in it:
 
 ```bash
-# Spawn agents, each in its own tab of the current herdr workspace
-# (--workspace ID from outside herdr). Each gets an Agent Mail identity;
-# its tab is labelled with that name.
-acfs agents spawn --claude 2 --codex 1 --agy 1
+# Spawn a multi-agent session
+nhm spawn myproject --cc=2 --cod=1 --agy=1
+
+# This creates:
+# - A herdr workspace labelled "myproject"
+# - 2 Claude Code panes
+# - 1 Codex pane
+# - 1 Antigravity pane
+# each bound to the agent's Agent Mail name
 
 # Send a prompt to ALL agents
-acfs agents send --all "Your marching orders prompt here"
+nhm send myproject "Your marching orders prompt here"
 
-# Send to one kind of agent, or to one agent by name
-acfs agents send --kind claude "Focus on the API layer"
-acfs agents send --kind codex "Focus on the frontend"
+# Send to specific agent type
+nhm send myproject --cc "Focus on the API layer"
+nhm send myproject --cod "Focus on the frontend"
 
-# List the agents and their state
-acfs agents list
+# List the agents, their state and unread mail
+nhm status myproject
 
 # Attach to watch progress
 herdr
 
-# The command palette (battle-tested prompts) is a file;
-# send one of its prompts with acfs agents send
-less ~/.acfs/onboard/docs/ntm/command_palette.md
+# Open the command palette (battle-tested prompts): Ctrl-b a in herdr
+acfs palette
 ```
 
 herdr is useful, but it is not mandatory. The methodology needs a way to run multiple agents, send them prompts quickly, and keep them coordinated. It does not require tmux specifically.
@@ -1030,7 +1034,7 @@ First read ALL of the AGENTS.md file and README.md file super carefully and unde
 
 Newcomers often understand each individual tool but still do not have a clean picture of the first live operating loop. In practice, the first 10 minutes usually look like this:
 
-1. Your session manager creates the agent terminals, whether that is `acfs agents spawn` in herdr, WezTerm mux, or something equivalent.
+1. Your session manager creates the agent terminals, whether that is `nhm spawn` in herdr, WezTerm mux, or something equivalent.
 2. You send the marching-orders prompt above.
 3. Each agent reads `AGENTS.md` and the repo docs, inspects the codebase, and joins Agent Mail.
 4. Each agent checks who else is active, acknowledges any waiting messages, and learns the bead-thread naming conventions.
@@ -1198,7 +1202,7 @@ Taken to its endpoint, this design supports full autonomy: one puppet master age
 
 > "I might be building towards having one puppet master agent that replaces me completely by controlling ntm via robot mode..."
 
-In this fork, herdr's agent commands (`herdr agent prompt`, `wait` and `read`) and `acfs agents` play the part of ntm's robot mode.
+In this fork, nhm, the herdr wrapper, has ntm's robot mode (`nhm --robot-spawn`, `--robot-send`, `--robot-status`, `--robot-wait` and the rest), and herdr's own agent commands (`herdr agent prompt`, `wait` and `read`) work beneath it.
 
 ### bv Graph Metrics: A Decision Framework
 
@@ -1658,7 +1662,7 @@ That last point matters. A Flywheel session is only truly landable when a future
 
 | Tool | Command | Purpose | Key Feature |
 |------|---------|---------|-------------|
-| **[herdr](https://herdr.dev)** | `herdr`, `acfs agents` | Agent workspace manager | Agent cockpit: spawn/send/list, each agent's state |
+| **[herdr](https://herdr.dev)** | `herdr`, `nhm` | Agent workspace manager | Agent cockpit: spawn/send/status, each agent's state |
 | **[MCP Agent Mail](https://github.com/Dicklesworthstone/mcp_agent_mail)** | `am` | Agent coordination | Identities, inbox/outbox, file reservations |
 | **[UBS](https://github.com/Dicklesworthstone/ultimate_bug_scanner)** | `ubs` | Ultimate Bug Scanner | 1000+ patterns, pre-commit guardrails |
 | **[Beads](https://github.com/Dicklesworthstone/beads_rust)** | `br` | Issue tracking | Dependency-aware, JSONL+SQLite hybrid |
@@ -1703,7 +1707,7 @@ Skills provide the prompts, procedures, anti-pattern guidance, and tool-specific
 ### The Flywheel Interactions
 
 ```
-acfs agents spawn --> Agents read AGENTS.md
+nhm spawns agents --> Agents read AGENTS.md
                   --> Agents register with Agent Mail
                   --> Agents query bv for task priority
                   --> Agents claim beads via br
@@ -1768,7 +1772,7 @@ Think of it like **RaptorQ fountain codes**: beads are "blobs" in a stream, any 
 1. Bead remains marked `in_progress`
 2. Any other agent can resume it (or mark it `blocked`)
 3. No dependency on the specific dead agent
-4. Replacement: `acfs agents spawn --claude 1`, which gives it the standard init prompt, and continue
+4. Replacement: `nhm add PROJECT --cc=1`, which gives it the standard init prompt, and continue
 
 ### 5. Shared Workspace Over Worktrees
 
@@ -1935,7 +1939,7 @@ The human's role during implementation is a repeating cycle:
 1. **Check bead progress** (`br list --status in_progress --json` or `bv --robot-triage`). Are agents making steady progress? Are any beads stuck?
 2. **Handle compactions.** When you see an agent acting confused or repeating itself, send: "Reread AGENTS.md so it's still fresh in your mind." This is the single most common intervention. It takes 5 seconds.
 3. **Run periodic reviews.** Every 30-60 minutes, pick an agent and send the "fresh eyes" review prompt. This catches bugs before they compound.
-4. **Manage rate limits.** When an agent gets rate-limited, switch its account with `caam activate claude backup-2` or start a new agent with `acfs agents spawn --claude 1`.
+4. **Manage rate limits.** When an agent gets rate-limited, switch its account with `caam activate claude backup-2` or start a new agent with `nhm add PROJECT --cc=1`.
 5. **Commit periodically.** Every 1-2 hours, designate one agent to do the organized commit prompt. This keeps the git history clean and ensures all agents see each other's work.
 6. **Handle surprises.** Occasionally something comes up during implementation that wasn't anticipated in the plan. Create a new bead for it, or if it's a plan-level issue, update the plan and create new beads.
 
@@ -2449,14 +2453,14 @@ onboard
 # 6. Create your first project
 acfs newproj my-first-project --interactive
 
-# 7. Spawn agents (newproj's last screen offers to; or, from a pane in herdr:)
-acfs agents spawn --claude 2 --codex 1 --agy 1
+# 7. Spawn agents (newproj's last screen offers to)
+nhm spawn my-first-project --cc=2 --cod=1 --agy=1
 
 # 8. Start building!
-acfs agents send --all "Let's build something awesome."
+nhm send my-first-project "Let's build something awesome."
 ```
 
-For a real project, that last `acfs agents send` line quickly gets replaced by the canonical marching-orders prompt from Section 24 once you have an actual plan and bead graph. The short example above is just enough to get the first session moving.
+For a real project, that last `nhm send` line quickly gets replaced by the canonical marching-orders prompt from Section 24 once you have an actual plan and bead graph. The short example above is just enough to get the first session moving.
 
 ---
 
@@ -2588,7 +2592,7 @@ want you to very carefully review and analyze these using `br` and `bv`.
 First read ALL of the AGENTS.md file and README.md file super carefully and understand ALL of both! Then use your code investigation agent mode to fully understand the code, and technical architecture and purpose of the project. Then register with MCP Agent Mail and introduce yourself to the other agents. Be sure to check your agent mail and to promptly respond if needed to any messages; then proceed meticulously with your next assigned beads, working on the tasks systematically and meticulously and tracking your progress via beads and agent mail messages. Don't get stuck in "communication purgatory" where nothing is getting done; be proactive about starting tasks that need to be done, but inform your fellow agents via messages when you do so and mark beads appropriately. When you're not sure what to do next, us the bv tool mentioned in AGENTS.md to prioritize the best beads to work on next; pick the next one that you can usefully work on and get started. Make sure to acknowledge all communication requests from other agents and that you are aware of all active agents and their names. *CRITICAL*: All cargo builds and tests and other CPU intensive operations MUST be done using rch to offload them!!! see AGENTS.md for details on how to do this!!!
 ```
 
-**Where:** Every agent in the swarm (via `acfs agents send`)
+**Where:** Every agent in the swarm (via `nhm send`)
 
 **Why it works:** This is the closest thing to a canonical swarm kickoff packet. It front-loads the shared operating context, forces the agent to establish social presence through Agent Mail, and then immediately pivots it away from passive waiting and toward actual execution. The line about "communication purgatory" matters because swarm failure often comes from over-coordination rather than under-coordination.
 

@@ -1148,24 +1148,22 @@ Deployment creates the destination only when it is absent. If the destination al
 
 Discovery scopes worth knowing: Codex reads global guidance from `~/.codex/AGENTS.md` and project guidance from the project root down to the working directory; filesystem-root `/AGENTS.md` is **not** automatically read by any major harness, which is exactly why ACFS no longer writes it.
 
-### `acfs agents spawn|send|list` — Agents in herdr
+### `nhm` — Agents in herdr
 
-herdr has no multi-agent spawn and no broadcast, so `acfs agents` provides both on top of herdr's own commands. It keeps no state of its own.
+nhm (`stack.nhm`) is the herdr wrapper of the flywheel, what ntm is to tmux, with ntm's grammar. It owns the herdr server: it starts the agents, sends them prompts, and keeps each agent's Agent Mail name bound to its pane. Once nhm owns the server, `acfs agents spawn` and `send` refuse.
 
 ```bash
-acfs agents spawn --claude 2 --codex 1   # one tab per agent in the current herdr workspace
-acfs agents spawn --kind agy --count 1 --workspace w2 --prompt "Review the open beads."
-acfs agents spawn --claude 1 --dry-run   # print the plan; create nothing
-acfs agents send --kind codex "Check your Agent Mail inbox."
-acfs agents send --all --wait --timeout 600000 "Report your status."
-acfs agents send --name AlphaFox --template fresh_review   # a command palette prompt, by its key
-acfs agents send --name AlphaFox --with-memory --with-cass "Fix the flaky send test."
-acfs agents list [--workspace w1] [--kind claude] [--json]
+nhm spawn myproject --cc=2 --cod=1          # agents in the herdr workspace labelled myproject
+nhm add myproject --agy=1 --prompt "Review the open beads."   # more agents in an existing workspace
+nhm spawn myproject --cc=1 --dry-run        # print the plan and the admission; create nothing
+nhm send myproject --cod "Check your Agent Mail inbox."
+nhm send myproject --all --wait --timeout 10m "Report your status."
+nhm send myproject --name AlphaFox -t fresh_review   # a command palette prompt, by its key
+nhm send myproject --name AlphaFox --with-memory --with-cass "Fix the flaky send test."
+nhm status myproject                        # each agent's name, kind, state and unread mail
 ```
 
-`spawn` registers each agent in Agent Mail first and takes the name Agent Mail returns. The herdr name is that name lowercased, and the tab is labelled with it. Then it runs `herdr tab create` and `herdr agent start` in the new tab's pane. By default it sends each agent its identity followed by the command palette's `default_new_agent` prompt; `--prompt` replaces the palette text and `--no-prompt` sends nothing. In a folder they haven't seen before, both Claude Code and Codex first ask whether you trust it. `spawn` shows any such dialog and stops instead of answering it, unless you pass `--trust-folder`: then it answers exactly that folder-trust question with "trust", and still stops at any other dialog. `send` prompts every matching agent except the one it runs in. An agent that is blocked at an approval or question is skipped and reported, never answered, and the exit code is nonzero. `send --template KEY|FILE` sends a command palette prompt (by its heading key) or a file instead of typed text. It fills in `{{session}}` (the workspace label), `{{agent}}` (the Agent Mail name), `{{herdr}}` and `{{thread}}` (from `--thread`) for each agent, and refuses before sending anything if the template has any other placeholder.
-
-`send` and `spawn` take `--with-memory` and `--with-cass`, which put context before the prompt, as ntm's flags of the same names did. `--with-memory` adds up to five of cm's rules for the prompt (`cm context`), under `## Project rules`. `--with-cass` adds excerpts of up to three past sessions from the last 30 days (`cass search`), with secrets redacted and a note that they are historical data, not instructions. The context is looked up once per command, from the prompt as typed (or the template before it is filled in). Neither ever stops a send: when cm or cass is missing, fails, finds nothing or takes over five seconds, the prompt goes as it is, and a one-line note says why. With `spawn`, the context goes after the identity line, and `--no-prompt` refuses both flags.
+`spawn` registers each agent in Agent Mail first and takes the name Agent Mail returns; the herdr name is that name lowercased. Each agent gets a pane, up to six to a tab (`--per-tab 1` gives each its own tab), and nhm records the binding of name to pane. By default it sends each agent its identity followed by the command palette's `default_new_agent` prompt; `--prompt` replaces the palette text. Admission runs first: a quota at 90 % or a known limit refuses, as `nhm quota` shows. In a folder they haven't seen before, Claude Code and Codex first ask whether you trust it; `--trust-folder` answers exactly that question. `send` prompts every agent of the session but the one it runs in, unless a selector (`--all`, `--cc`, `--cod`, `--agy`, `--name`) narrows it. An agent blocked at an approval or question is refused, never answered, and a send herdr couldn't confirm is reported as possibly submitted, never sent again. `-t KEY` sends a command palette prompt by its heading key, and `--with-memory` and `--with-cass` put cm's rules and cass's past sessions before the prompt, as ntm's flags of the same names did. `nhm --help` lists the rest: `retire`, `recycle`, `reap`, `wait`, `read`, `quota`.
 
 Tool detection always runs in the target user's context (including under `sudo`, resolved via `SUDO_USER` with `~/.local/bin`, `~/go/bin`, etc. on PATH), so user-local tools are reported accurately.
 
@@ -1181,9 +1179,9 @@ acfs palette bind --key prefix+space  # open it on another herdr key (default pr
 acfs palette unbind                   # remove the key; acfs update leaves it removed
 ```
 
-The first step lists the prompts by category, pinned (`ctrl-p`) and recent ones first, with a preview; type to filter, `ctrl-e` edits a prompt before it goes and `ctrl-n` writes a new one. The second step offers every agent in the workspace (`1`), each kind (`2` and up), or single agents marked with `tab`, each with its herdr status and a preview of its screen. The send is `acfs agents send --template`, so the placeholders, the skipping of blocked agents and the submit check are the ones described above; the palette asks for `{{thread}}` when a prompt uses it.
+The first step lists the prompts by category, pinned (`ctrl-p`) and recent ones first, with a preview; type to filter, `ctrl-e` edits a prompt before it goes and `ctrl-n` writes a new one. The second step offers every agent in the workspace (`1`), each kind (`2` and up), or single agents marked with `tab`, each with its herdr status and a preview of its screen. Where nhm owns the herdr server, `acfs palette` opens nhm's palette (`nhm palette`), whose send is `nhm send <workspace> -t`, so the placeholders and the refusal of blocked agents are nhm's, described above; the palette asks for `{{thread}}` when a prompt uses it. Where ACFS's Bash still drives the agents, the send is `acfs agents send --template`.
 
-Prompts come from `./command_palette.md` (in the current directory and at its git root), `~/.config/acfs/command_palette.md`, and the installed `~/.acfs/onboard/docs/ntm/command_palette.md`, first key wins. Pins, favorites and recents live under `~/.local/state/acfs/palette/`. The key is a `[[keys.command]]` popup in herdr's `config.toml`, between `# >>> acfs palette >>>` markers. The installer and `acfs update` add it only when the file has no such block, doesn't open the palette some other way, and doesn't use `prefix+a` already. `bind` writes through a symlinked `config.toml` and keeps the file's mode, and leaves the file unchanged when `herdr config check` would report a new issue (the key in conflict, or TOML herdr couldn't parse).
+Prompts come from `./command_palette.md` (in the current directory and at its git root), `~/.config/acfs/command_palette.md`, and the installed `~/.acfs/onboard/docs/ntm/command_palette.md`, first key wins; nhm's palette reads `~/.config/nhm/command_palette.md` in place of the `~/.config/acfs` file. Pins, favorites and recents live under `~/.local/state/acfs/palette/`. The key is a `[[keys.command]]` popup in herdr's `config.toml`, between `# >>> acfs palette >>>` markers. The installer and `acfs update` add it only when the file has no such block, doesn't open the palette some other way, and doesn't use `prefix+a` already. `bind` writes through a symlinked `config.toml` and keeps the file's mode, and leaves the file unchanged when `herdr config check` would report a new issue (the key in conflict, or TOML herdr couldn't parse).
 
 The key is in the herdr server's config. A client attached from another machine with `herdr --remote` uses that machine's keys, and herdr doesn't send local custom commands to the server, so attach with `herdr --remote <host> --remote-keybindings server` to get Ctrl-b a from a laptop.
 
@@ -3883,11 +3881,11 @@ Agent B: reserve_paths(["src/api/*"]) → GRANTED
 
 ### The herdr Orchestration Pattern
 
-`acfs agents spawn` is the **one-command swarm spawn**. It starts each agent in its own [herdr](https://herdr.dev) tab, labelled with the agent's Agent Mail name:
+nhm, the herdr wrapper, enables the **one-command swarm spawn**. It starts each agent in its own [herdr](https://herdr.dev) pane, bound to the agent's Agent Mail name:
 
 ```bash
-# Spawn 5 agents, each in its own herdr tab
-acfs agents spawn --claude 3 --codex 1 --agy 1
+# Spawn 5 agents in the herdr workspace my-project
+nhm spawn my-project --cc=3 --cod=1 --agy=1
 ```
 
 Result:

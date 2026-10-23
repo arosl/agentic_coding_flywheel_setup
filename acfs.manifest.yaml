@@ -2378,11 +2378,11 @@ modules:
     # matching SHA256SUMS (acfs-9hkh.42, acfs-9hkh.47).
     installed_check:
       run_as: target_user
-      command: '"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" version --json 2>/dev/null | grep -q ''"version": "0.1.10"'''
+      command: '"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" version --json 2>/dev/null | grep -q ''"version": "0.1.12"'''
     verified_installer:
       tool: nhm
       runner: bash
-      args: ["--", "--version", "0.1.10"]
+      args: ["--", "--version", "0.1.12"]
       checksum_args:
         - { flag: "--archive-sha256", prefix: "linux-amd64=", checksum: nhm_archive_linux_amd64 }
         - { flag: "--archive-sha256", prefix: "linux-arm64=", checksum: nhm_archive_linux_arm64 }
@@ -3982,6 +3982,9 @@ modules:
       tool: rano
       runner: bash
       url: "https://raw.githubusercontent.com/Dicklesworthstone/rano/main/install.sh"
+      # rano's installer keeps its files in TMPDIR when it ends, so it gets a
+      # TMPDIR of its own, which ACFS removes (acfs-i5s0).
+      env: ["TMPDIR=$TARGET_HOME/.cache/acfs/installer-tmp/rano.XXXXXX"]
     install: []
     verify:
       - rano --help || rano --version

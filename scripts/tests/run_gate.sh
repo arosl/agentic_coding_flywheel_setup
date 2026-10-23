@@ -20,6 +20,12 @@
 #               browser is installed from the zip mirror
 #               (ensure_playwright_browsers.sh)
 #
+# rch offloads Rust builds, not bun's. So where a systemd user manager
+# runs, the manifest and web steps run each bun command, Playwright
+# aside, in a user scope with a memory cap (--bun-memory-max); one that
+# reaches it is killed and named (acfs-dpvr). Without a user manager, as
+# in CI, they run without a cap.
+#
 # Run it in the gate worktree at the commit you push, after
 # 'bun install --frozen-lockfile': the CI steps write into the tree.
 # ============================================================
@@ -48,6 +54,9 @@ Options:
                           default: every project in the config)
   --tmp-parent DIR        Where the temp root goes (default: /tmp, as
                           in CI; it must be traversable by other users)
+  --bun-memory-max SIZE   The memory cap of each bun command of the
+                          manifest and web steps, Playwright aside, in
+                          systemd's units (default: 4G), or none
   --keep                  Keep the temp root, for debugging a failure
   -h, --help              Show this help
 
@@ -69,6 +78,11 @@ BROWSER_PROJECTS=()
 TMP_PARENT="/tmp"
 KEEP=false
 COMMAND=()
+# Peaks measured on 2026-10-23, each command alone in a scope (cgroup
+# memory.peak): manifest bun test 0.3 GiB, web type-check 1.1, lint 1.2,
+# build 1.0 to 2.2. The cap leaves room above them and stops a runaway.
+# Playwright isn't capped: its browsers, not bun, hold its memory.
+BUN_MEMORY_MAX="4G"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -83,6 +97,10 @@ while [[ $# -gt 0 ]]; do
             shift 2 ;;
         --browser-project) [[ $# -ge 2 ]] || { echo "run_gate: --browser-project needs a name" >&2; exit 2; }; BROWSER_PROJECTS+=("$2"); shift 2 ;;
         --tmp-parent) [[ $# -ge 2 ]] || { echo "run_gate: --tmp-parent needs a directory" >&2; exit 2; }; TMP_PARENT="$2"; shift 2 ;;
+        --bun-memory-max)
+            [[ $# -ge 2 && "$2" =~ ^([1-9][0-9]*[KMGT]|none)$ ]] \
+                || { echo "run_gate: --bun-memory-max needs a size such as 4G, or none" >&2; exit 2; }
+            BUN_MEMORY_MAX="$2"; shift 2 ;;
         --keep) KEEP=true; shift ;;
         -h|--help) usage; exit 0 ;;
         --) shift; COMMAND=("$@"); break ;;
@@ -169,8 +187,16 @@ PASSED=()
 run_cmd() {
     local label="$1" dir="$2"
     shift 2
+    run_cmd_shown "$label" "$dir" "$*" "$@"
+}
+
+# run_cmd_shown <label> <dir> <what the log says> <command...>: run_cmd,
+# logging the command as given.
+run_cmd_shown() {
+    local label="$1" dir="$2" shown="$3"
+    shift 3
     new_home
-    echo "run_gate: [$label] $*" >&2
+    echo "run_gate: [$label] $shown" >&2
     if (cd "$dir" && HOME="$STEP_HOME" "$@"); then
         PASSED+=("$label")
         return 0
@@ -179,11 +205,59 @@ run_cmd() {
     return 1
 }
 
+# The bun steps' memory cap. BUN_SCOPE is what goes in front of a bun
+# step: a systemd user scope capped at BUN_MEMORY_MAX, or nothing.
+BUN_SCOPE=()
+BUN_SCOPE_DECIDED=false
+# Runs in the scope: the step, then a note when the kernel killed a
+# process in the scope at the cap while it ran.
+# shellcheck disable=SC2016 # expanded by the scope's bash
+BUN_SCOPE_RUNNER='
+cap="$1"
+shift
+events="/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/memory.events"
+oom_kills() { sed -n "s/^oom_kill //p" "$events" 2>/dev/null || true; }
+before="$(oom_kills)"
+"$@"
+rc=$?
+if [[ "$(oom_kills)" != "$before" ]]; then
+    echo "run_gate: the step reached the bun memory cap ($cap), and the kernel killed a process in it; --bun-memory-max raises the cap" >&2
+    ((rc != 0)) || rc=1
+fi
+exit "$rc"'
+
+bun_scope_decide() {
+    local state
+    [[ "$BUN_SCOPE_DECIDED" == false ]] || return 0
+    BUN_SCOPE_DECIDED=true
+    if [[ "$BUN_MEMORY_MAX" == none ]]; then
+        echo "run_gate: the bun commands run without a memory cap (--bun-memory-max none)" >&2
+        return 0
+    fi
+    state="$(systemctl --user is-system-running 2>/dev/null)" || true
+    if ! command -v systemd-run >/dev/null 2>&1 || [[ "$state" != running && "$state" != degraded ]]; then
+        echo "run_gate: no systemd user manager (${state:-none}); the bun commands run without a memory cap" >&2
+        return 0
+    fi
+    echo "run_gate: each bun command but Playwright runs in a user scope capped at $BUN_MEMORY_MAX" >&2
+    BUN_SCOPE=(systemd-run --user --scope --quiet -p "MemoryMax=$BUN_MEMORY_MAX" -p MemorySwapMax=0
+        -- bash -c "$BUN_SCOPE_RUNNER" run_gate_bun "$BUN_MEMORY_MAX")
+}
+
+# run_bun <label> <dir> <command...>: run_cmd, under the bun memory cap.
+run_bun() {
+    local label="$1" dir="$2"
+    shift 2
+    bun_scope_decide
+    run_cmd_shown "$label" "$dir" "$*${BUN_SCOPE[*]:+ (in a user scope, MemoryMax=$BUN_MEMORY_MAX)}" \
+        "${BUN_SCOPE[@]}" "$@"
+}
+
 step_manifest() {
     local dir="$ROOT/packages/manifest"
-    run_cmd "manifest: generate:validate" "$dir" bun run generate:validate || true
-    run_cmd "manifest: generate --diff" "$dir" bun run generate --diff || true
-    run_cmd "manifest: bun test" "$dir" bun test || true
+    run_bun "manifest: generate:validate" "$dir" bun run generate:validate || true
+    run_bun "manifest: generate --diff" "$dir" bun run generate --diff || true
+    run_bun "manifest: bun test" "$dir" bun test || true
 }
 
 step_policy() {
@@ -228,9 +302,9 @@ free_port() {
 
 step_web() {
     local dir="$ROOT/apps/web" port project
-    run_cmd "web: type-check" "$dir" bun run type-check || true
-    run_cmd "web: lint" "$dir" bun run lint || true
-    run_cmd "web: build" "$dir" bun run build || true
+    run_bun "web: type-check" "$dir" bun run type-check || true
+    run_bun "web: lint" "$dir" bun run lint || true
+    run_bun "web: build" "$dir" bun run build || true
     local pw_args=() browsers=(chromium)
     for project in "${BROWSER_PROJECTS[@]}"; do
         pw_args+=("--project=$project")

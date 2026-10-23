@@ -12,6 +12,11 @@
 #   3. A run that main closed as complete and that exits 0 stays complete.
 #   4. acfs_summary_emit's failure object names every failed phase.
 #   5. main records install_status before any success output or summary.
+#   6. A failed Ubuntu-upgrade preparation, which opened its own state file
+#      and pointed ACFS_STATE_FILE back at the install's, exits 1: the
+#      install's complete status stays complete (acfs-vd2j).
+#   7. The same preparation succeeding exits 0 for its reboot: its state
+#      stays in_progress.
 # ============================================================
 set -uo pipefail
 
@@ -145,6 +150,36 @@ summary_line="$(awk -v after="${report_line:-0}" 'NR > after && /print_summary/ 
 assert "5. main: smoke test < state_install_finish < success report < summary ($smoke_line < $finish_line < $report_line < $summary_line)" \
     "$([[ -n "$finish_line" && -n "$smoke_line" && -n "$report_line" && -n "$summary_line" ]] \
         && (( smoke_line < finish_line && finish_line < report_line && report_line < summary_line )) && echo true || echo false)"
+
+# 6. run_ubuntu_upgrade_phase's failure path: it opens its own state file
+#    (state_init), then restore_previous_acfs_state_file points
+#    ACFS_STATE_FILE back at the install's, and main exits 1.
+rc="$(run_scenario upgrade_restore <<'EOF'
+printf '%s\n' '{"schema_version":3,"version":"0.7.0","mode":"safe","completed_phases":["user_setup","filesystem","shell_setup","cli_tools","languages","agents","cloud_db","stack","finalize"],"install_status":"complete"}' > "$ACFS_STATE_FILE"
+previous_state_file="$ACFS_STATE_FILE"
+export ACFS_STATE_FILE="$ACFS_HOME/upgrade-state.json"
+state_init || exit 3
+restore_previous_acfs_state_file true "$previous_state_file"
+exit 1
+EOF
+)"
+assert "6a. the failed preparation exits 1" "$([[ "$rc" == "1" ]] && echo true || echo false)"
+assert "6b. the install's complete status is left alone" \
+    "$([[ "$(state_value upgrade_restore '.install_status')" == "complete" ]] && echo true || echo false)"
+assert "6c. the upgrade's own state file was opened (state_init ran)" \
+    "$([[ -f "$TMPROOT/upgrade_restore/home/.acfs/upgrade-state.json" ]] && echo true || echo false)"
+
+# 7. The same preparation succeeding: it exits 0 for its reboot, and the
+#    run it opened stays in_progress for the install that follows.
+rc="$(run_scenario upgrade_reboot <<'EOF'
+export ACFS_STATE_FILE="$ACFS_HOME/upgrade-state.json"
+state_init || exit 3
+exit 0
+EOF
+)"
+assert "7a. the preparation exits 0 for its reboot" "$([[ "$rc" == "0" ]] && echo true || echo false)"
+assert "7b. its state stays in_progress" \
+    "$([[ "$(jq -r '.install_status' "$TMPROOT/upgrade_reboot/home/.acfs/upgrade-state.json" 2>/dev/null)" == "in_progress" ]] && echo true || echo false)"
 
 if [[ "$FAIL" -ne 0 ]]; then
     for log in "$TMPROOT"/*/out.log; do

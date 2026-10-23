@@ -11,7 +11,8 @@ It listens on 127.0.0.1 only. --port 0 (the default) takes a free port;
 --ready FILE receives {"port", "pid", "url"} once it listens. Any API key
 is accepted, and none is ever logged: --log FILE gets one JSON line per
 request with the path, model, stream flag and the whole last user text,
-never a header.
+never a header; for the Messages API also each message's role and block
+types (shape), and the tool calls asked for or results read.
 
 Replies: --script FILE is a JSON list, one entry per turn in order, each a
 string (the reply text) or {"text": ..., "delay": seconds}; after the last
@@ -25,6 +26,27 @@ a compaction (Claude Code's /compact, Codex's checkpoint) and a session
 title, are answered at once and never consume a turn. They are known by
 their prompts' wording (COMPACTION, TITLE), so a prompt that only asks
 for a summary is an ordinary turn.
+
+Tool calls (acfs-9hkh.94): each line of the prompt that reads
+'mock-tool: {"name": ..., "input": {...}}', at the start of the line,
+adds that call to the turn's reply, so the CLI runs the tool: a tool_use
+block with stop reason tool_use (Messages API; Claude Code's Write or
+Bash), or a function_call item whose arguments are the input (Responses
+API; Codex 0.162's exec_command takes {"cmd": ...}). The name "shell"
+with {"cmd": ...} is either one, so one prompt works for both kinds. The
+request that carries the tools' results gets a short closing text and
+takes no turn. A helper request never calls a tool, and a compaction
+that carries tool results (one in the middle of a turn) is answered as
+a compaction.
+
+Reply: a prompt line 'mock-reply: TEXT', at the start of the line, makes
+TEXT the turn's reply on either API, ahead of the script (the turn still
+counts), so a step can put a line on the agent's screen.
+
+Context (Messages API): a prompt line 'mock-context: N' has the turn's
+reply report N input tokens, so Claude Code finds its context full and
+compacts before it sends the tool results, in the middle of the turn,
+as it does when a real turn fills the context (E04).
 
 Pointing the CLIs at it (as exp.3 and exp.4 did):
 - Claude Code: ANTHROPIC_BASE_URL=<url> and any ANTHROPIC_API_KEY.
@@ -63,9 +85,57 @@ TITLE = ("generate a concise, single-line task title",
          "write the title in the predominant language of the session")
 
 
+# A prompt line that asks for a tool call. Only at a line's start, so a
+# prompt that quotes one (nhm's CASS excerpt of an earlier session) asks
+# for nothing.
+TOOL_LINE = re.compile(r"^mock-tool: (\{.*\})[ \t]*$", re.M)
+# A prompt line that has the turn's reply report that many input tokens,
+# so Claude Code finds its context full and compacts before it goes on.
+CONTEXT_LINE = re.compile(r"^mock-context: ([0-9]{1,9})[ \t]*$", re.M)
+# A prompt line whose text is the turn's reply (a line on the agent's
+# screen, such as a usage-limit message).
+REPLY_LINE = re.compile(r"^mock-reply: (.+?)[ \t]*$", re.M)
+
+
 def says(text, word):
     """Whether text holds word as a whole word."""
     return re.search(rf"\b{word}\b", text) is not None
+
+
+def is_helper(text):
+    """Whether text is a tool's own helper request (a compaction or a title)."""
+    lower = text.lower()
+    return any(p in lower for p in COMPACTION + TITLE)
+
+
+def shell_call(api, inp):
+    """The 'shell' alias as the API's own shell tool: Claude Code's Bash
+    (Messages) or Codex's exec_command (Responses), so one prompt works for
+    both kinds. None without a "cmd" string."""
+    cmd = inp.get("cmd")
+    if not isinstance(cmd, str):
+        return None
+    if api == "responses":
+        return {"name": "exec_command", "input": {"cmd": cmd}}
+    return {"name": "Bash", "input": {"command": cmd, "description": str(inp.get("description") or "Run the mock's command")}}
+
+
+def tool_calls(text, api="messages"):
+    """The tool calls a prompt asks for, one per 'mock-tool: {json}' line
+    with a name and an input object; any other line is no call. The name
+    'shell' with {"cmd": ...} is the API's own shell tool (shell_call)."""
+    calls = []
+    for m in TOOL_LINE.finditer(text):
+        try:
+            call = json.loads(m.group(1))
+        except ValueError:
+            continue
+        if not (isinstance(call, dict) and isinstance(call.get("name"), str) and isinstance(call.get("input"), dict)):
+            continue
+        call = shell_call(api, call["input"]) if call["name"] == "shell" else {"name": call["name"], "input": call["input"]}
+        if call:
+            calls.append(call)
+    return calls
 
 
 class State:
@@ -98,6 +168,9 @@ class State:
         with self.lock:
             self.turn += 1
             n = self.turn
+        asked = REPLY_LINE.search(text)
+        if asked:
+            return asked.group(1), self.delay
         if n <= len(self.script):
             entry = self.script[n - 1]
             if isinstance(entry, str):
@@ -121,6 +194,42 @@ def anthropic_user_text(body):
         if texts:
             return texts[-1]
     return ""
+
+
+def anthropic_last_user(body):
+    """The last message, when it is the user's: all its text, and how many
+    tool results it carries (Claude Code's answer to a tool call). The
+    system messages Claude Code 2.1 puts after it are passed over."""
+    for msg in reversed(body.get("messages") or []):
+        if not isinstance(msg, dict) or msg.get("role") == "system":
+            continue
+        if msg.get("role") != "user":
+            return "", 0
+        content = msg.get("content")
+        if isinstance(content, str):
+            return content, 0
+        blocks = [c for c in content or [] if isinstance(c, dict)]
+        text = "\n".join(c.get("text", "") for c in blocks if c.get("type") == "text")
+        return text, sum(1 for c in blocks if c.get("type") == "tool_result")
+    return "", 0
+
+
+def responses_last_user(body):
+    """The input's last turn: the last user message's text, and how many
+    function call outputs follow it (Codex's answer to a tool call)."""
+    inp = body.get("input")
+    if isinstance(inp, str):
+        return inp, 0
+    results = 0
+    for item in reversed(inp or []):
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "function_call_output":
+            results += 1
+        elif item.get("role") == "user":
+            texts = [c["text"] for c in item.get("content") or [] if isinstance(c, dict) and c.get("text")]
+            return "\n".join(texts), results
+    return "", results
 
 
 def responses_user_text(body):
@@ -210,16 +319,40 @@ class Handler(BaseHTTPRequestHandler):
     # The Anthropic Messages API (exp.4).
     def _messages(self, path, body):
         text = anthropic_user_text(body)
-        self.state.record({"method": "POST", "path": path, "model": body.get("model"), "stream": body.get("stream"),
-                           "n_messages": len(body.get("messages") or []), "user_text": text})
-        reply, delay = self.state.reply(text)
+        last_text, results = anthropic_last_user(body)
+        # A compaction in the middle of a turn carries the tool results
+        # too: it is answered as the helper it is.
+        helper = is_helper(text)
+        calls = [] if results or helper else tool_calls(last_text)
+        full = None if results or helper else CONTEXT_LINE.search(last_text)
+        rec = {"method": "POST", "path": path, "model": body.get("model"), "stream": body.get("stream"),
+               "n_messages": len(body.get("messages") or []), "user_text": text,
+               # Each message's role and block types, never their text.
+               "shape": [[m.get("role"), "text" if isinstance(m.get("content"), str) else
+                          [c.get("type") for c in m.get("content") or [] if isinstance(c, dict)]]
+                         for m in body.get("messages") or [] if isinstance(m, dict)]}
+        if calls:
+            rec["tool_calls"] = [c["name"] for c in calls]
+        if results:
+            rec["tool_results"] = results
+        if full:
+            rec["context_tokens"] = int(full.group(1))
+        self.state.record(rec)
+        if results and not helper:
+            # The tools ran: close the turn they belong to.
+            reply, delay = f"mock: read {results} tool result(s)", self.state.delay
+        else:
+            reply, delay = self.state.reply(text)
+        uses = [{"type": "tool_use", "id": "toolu_" + uuid.uuid4().hex[:24], **c} for c in calls]
+        stop = "tool_use" if uses else "end_turn"
         msg_id = "msg_" + uuid.uuid4().hex[:24]
         model = body.get("model") or "claude-mock"
-        usage = {"input_tokens": 42, "output_tokens": 8, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        usage = {"input_tokens": rec.get("context_tokens", 42), "output_tokens": 8,
+                 "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
         if not body.get("stream"):
             time.sleep(delay)
             self._json(200, {"id": msg_id, "type": "message", "role": "assistant", "model": model,
-                             "content": [{"type": "text", "text": reply}], "stop_reason": "end_turn",
+                             "content": [{"type": "text", "text": reply}, *uses], "stop_reason": stop,
                              "stop_sequence": None, "usage": usage})
             return
         self._stream()
@@ -236,26 +369,50 @@ class Handler(BaseHTTPRequestHandler):
             self._event("content_block_delta", {"type": "content_block_delta", "index": 0,
                                                 "delta": {"type": "text_delta", "text": w}})
         self._event("content_block_stop", {"type": "content_block_stop", "index": 0})
-        self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None},
-                                      "usage": {"output_tokens": 8}})
+        for i, use in enumerate(uses, 1):
+            self._event("content_block_start", {"type": "content_block_start", "index": i,
+                                                "content_block": {**use, "input": {}}})
+            self._event("content_block_delta", {"type": "content_block_delta", "index": i,
+                                                "delta": {"type": "input_json_delta",
+                                                          "partial_json": json.dumps(use["input"])}})
+            self._event("content_block_stop", {"type": "content_block_stop", "index": i})
+        self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": stop, "stop_sequence": None},
+                                      "usage": {**usage, "output_tokens": 8}})
         self._event("message_stop", {"type": "message_stop"})
 
     # The OpenAI Responses API (exp.3).
     def _responses(self, path, body):
         text = responses_user_text(body)
-        self.state.record({"method": "POST", "path": path, "model": body.get("model"), "stream": body.get("stream"),
-                           "user_text": text})
-        reply, delay = self.state.reply(text)
+        last_text, results = responses_last_user(body)
+        helper = is_helper(text)
+        calls = [] if results or helper else tool_calls(last_text, "responses")
+        rec = {"method": "POST", "path": path, "model": body.get("model"), "stream": body.get("stream"),
+               "user_text": text,
+               # The tools Codex offers and its input items' types, never their text.
+               "tools": [t.get("name") or t.get("type") for t in body.get("tools") or [] if isinstance(t, dict)],
+               "shape": [i.get("type") or i.get("role") for i in body.get("input") or [] if isinstance(i, dict)]}
+        if calls:
+            rec["tool_calls"] = [c["name"] for c in calls]
+        if results:
+            rec["tool_results"] = results
+        self.state.record(rec)
+        if results and not helper:
+            # The tools ran: close the turn they belong to.
+            reply, delay = f"mock: read {results} tool result(s)", self.state.delay
+        else:
+            reply, delay = self.state.reply(text)
         rid = "resp_" + uuid.uuid4().hex[:24]
         item_id = "msg_" + uuid.uuid4().hex[:24]
         item = {"type": "message", "role": "assistant", "id": item_id, "status": "completed",
                 "content": [{"type": "output_text", "text": reply, "annotations": []}]}
+        fcalls = [{"type": "function_call", "id": "fc_" + uuid.uuid4().hex[:24], "call_id": "call_" + uuid.uuid4().hex[:24],
+                   "name": c["name"], "arguments": json.dumps(c["input"]), "status": "completed"} for c in calls]
         usage = {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0},
                  "output_tokens": 5, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 15}
         if not body.get("stream"):
             time.sleep(delay)
             self._json(200, {"id": rid, "object": "response", "status": "completed", "model": body.get("model"),
-                             "output": [item], "usage": usage})
+                             "output": [item, *fcalls], "usage": usage})
             return
         self._stream()
         self._event("response.created", {"type": "response.created", "response": {"id": rid}})
@@ -268,6 +425,16 @@ class Handler(BaseHTTPRequestHandler):
             self._event("response.output_text.delta", {"type": "response.output_text.delta", "output_index": 0,
                                                        "content_index": 0, "item_id": item_id, "delta": w})
         self._event("response.output_item.done", {"type": "response.output_item.done", "output_index": 0, "item": item})
+        for i, fc in enumerate(fcalls, 1):
+            self._event("response.output_item.added", {"type": "response.output_item.added", "output_index": i,
+                                                       "item": {**fc, "arguments": "", "status": "in_progress"}})
+            self._event("response.function_call_arguments.delta", {
+                "type": "response.function_call_arguments.delta", "output_index": i, "item_id": fc["id"],
+                "delta": fc["arguments"]})
+            self._event("response.function_call_arguments.done", {
+                "type": "response.function_call_arguments.done", "output_index": i, "item_id": fc["id"],
+                "arguments": fc["arguments"]})
+            self._event("response.output_item.done", {"type": "response.output_item.done", "output_index": i, "item": fc})
         self._event("response.completed", {"type": "response.completed", "response": {"id": rid, "usage": usage}})
 
 

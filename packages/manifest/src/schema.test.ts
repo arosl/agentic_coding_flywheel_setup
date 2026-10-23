@@ -505,6 +505,7 @@ describe("ModuleSchema", () => {
       { tool: "s2p", entry: "RU_NON_INTERACTIVE=1" },
       { tool: "grok", entry: "GROK_BIN_DIR=$TARGET_HOME/.local/bin" },
       { tool: "cass", entry: "TMPDIR=$TARGET_HOME/.cache/acfs/installer-tmp/cass.XXXXXX" },
+      { tool: "rano", entry: "TMPDIR=$TARGET_HOME/.cache/acfs/installer-tmp/rano.XXXXXX" },
     ];
 
     for (const { tool, entry } of allowedContracts) {
@@ -562,6 +563,8 @@ describe("ModuleSchema", () => {
       { tool: "cass", env: ["TMPDIR=$TARGET_HOME/.cache/acfs/installer-tmp/cass.XXXXXY"] },
       { tool: "cass", env: ["TMPDIR=$TARGET_HOME/.cache/acfs/installer-tmp/other.XXXXXX"] },
       { tool: "cass", env: ["TMPDIR=$TARGET_HOME/.cache/acfs/../installer-tmp/cass.XXXXXX"] },
+      { tool: "rano", env: ["TMPDIR=$TARGET_HOME/.cache/acfs/installer-tmp/cass.XXXXXX"] },
+      { tool: "rano", env: ["TMPDIR=/tmp/rano.XXXXXX"] },
       { tool: "grok", env: ["GROK_BIN_DIR=$TARGET_HOME/.grok/bin"] },
       { tool: "grok", env: ["RU_NON_INTERACTIVE=1"] },
       { tool: "s2p", env: ["RU_VERSION=1.5.0-nhm.1"] },

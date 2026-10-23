@@ -65,6 +65,10 @@ function isAllowedVerifiedInstallerEnv(tool: string, entry: string): boolean {
   if (tool === "cass") {
     return entry === "TMPDIR=$TARGET_HOME/.cache/acfs/installer-tmp/cass.XXXXXX";
   }
+  // rano's installer keeps its files in TMPDIR when it ends (acfs-i5s0).
+  if (tool === "rano") {
+    return entry === "TMPDIR=$TARGET_HOME/.cache/acfs/installer-tmp/rano.XXXXXX";
+  }
   return false;
 }
 

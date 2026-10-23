@@ -8,8 +8,8 @@
 #
 # `up` creates (or resumes) a machine through scripts/providers/incus.sh,
 # the launcher, which installs this checkout's committed HEAD in it; every
-# option it doesn't know goes to the launcher (--ssh-key, --jump, --vm,
-# --acl, the sizes). With --replace it rebuilds a machine on its own state
+# option it doesn't know goes to the launcher (--ssh-key, --jump, --acl,
+# the sizes). With --replace it rebuilds a machine on its own state
 # and data volumes: stop the old instance (the quiesce), snapshot both
 # volumes, export its root (--instance-only), take its volumes off it,
 # rename it <name>-old, launch <name> anew with the lease copied from the
@@ -90,10 +90,10 @@ Usage: acfs machine up [--target incus|vps] [--replace] [<remote>:]<name> [<laun
 up       Create the swarm machine <name> as an unprivileged Incus container
          through scripts/providers/incus.sh and install ACFS in it; a re-run
          resumes an unfinished install. Options the launcher knows pass
-         through: --ssh-key FILE, --jump HOST, --vm, --acl NAME, --root-size,
+         through: --ssh-key FILE, --jump HOST, --acl NAME, --root-size,
          --state-size, --data-size. It runs from a checkout of the
          repository, whose committed HEAD is what gets installed.
-  --target incus   The default: an Incus container (or VM with --vm).
+  --target incus   The default: an Incus container.
   --target vps     Not created here: a VPS comes from its provider. Prints
                    where the install one-liner and the provider guides are.
   On macOS, a name without a remote runs in Colima: up starts the Colima
@@ -570,7 +570,7 @@ machine_colima_setup() {
     machine_note "Colima: setting up its Incus for ACFS containers (host-setup --storage default, in Colima's VM)"
     git -C "$repo" archive --format=tar HEAD scripts/lib/logging.sh scripts/providers/incus_host.sh \
         | colima ssh --profile "$MACHINE_COLIMA_PROFILE" -- sh -c "$MACHINE_COLIMA_SETUP_SCRIPT" >&2 \
-        || machine_die "host-setup in Colima's VM failed. A command it names runs in that VM: colima ssh --profile $MACHINE_COLIMA_PROFILE -- <command>. Then re-run (host-setup is safe to re-run)" 1
+        || machine_die "host-setup in Colima's VM failed. Run a command it names in a shell in that VM (colima ssh --profile $MACHINE_COLIMA_PROFILE, then paste it), then re-run (host-setup is safe to re-run)" 1
     vm_env="$(machine_colima_vm_env)"
     pool="$(sed -n 's/^ACFS_INCUS_POOL=//p' <<<"$vm_env" | tail -n 1)"
     [[ "$pool" =~ ^[A-Za-z0-9_.-]+$ ]] \
@@ -679,9 +679,6 @@ machine_up() {
     machine_split_target "$target"
     machine_require_launcher
     if [[ "$MACHINE_UNAME" == Darwin && ( -z "$MACHINE_REMOTE" || "$MACHINE_REMOTE" == "$MACHINE_COLIMA_REMOTE" ) ]]; then
-        if machine_has_arg --vm "${launcher_args[@]}"; then
-            machine_usage_die "--vm: an Incus VM in Colima would run inside Colima's own VM; on macOS a machine is a container"
-        fi
         machine_colima_up
         MACHINE_REMOTE="$MACHINE_COLIMA_REMOTE"
         target="$(machine_qualified "$MACHINE_NAME")"

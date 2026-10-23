@@ -434,6 +434,8 @@ exit "$status"
 STUB
 cat >"$WORK/bin/send_stub" <<'STUB'
 #!/usr/bin/env bash
+# `owner` says who drives the agents: STUB_OWNER, by default the Bash.
+if [[ "${1:-}" == owner ]]; then echo "${STUB_OWNER:-acfs-bash}"; exit 0; fi
 printf '%s\n' "$*" >>"$STUB_DIR/sends"
 for arg; do [[ -f "$arg" ]] && cp "$arg" "$STUB_DIR/sent_text"; done
 exit "$(cat "$STUB_DIR/send_status" 2>/dev/null || echo 0)"
@@ -481,6 +483,41 @@ echo 1 >"$STUB_DIR/send_status"
 run_menu
 check "a failed send is the palette's status, and records no recent" \
     bash -c '[[ "$1" -eq 1 && "$(head -1 "$2/recents")" == my_prompt ]]' _ "$RC" "$WORK/state"
+
+# nhm: records its arguments and the directory nhm-palette is told to use.
+cat >"$WORK/bin/nhm" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_DIR/nhm_calls"
+printf '%s\n' "${NHM_PALETTE_CWD:-}" >"$STUB_DIR/nhm_cwd"
+STUB
+chmod +x "$WORK/bin/nhm"
+
+menu_case "prompt 0 - ^fix_bug" "target 0 - ^group	all"
+rm -f "$STUB_DIR/nhm_calls" "$STUB_DIR/nhm_cwd"
+STUB_OWNER=nhm run_menu
+check "nhm owns the server: the palette is nhm's, for this workspace" \
+    bash -c '[[ "$1" -eq 0 && "$(cat "$2/nhm_calls")" == "palette --workspace w1" ]]' _ "$RC" "$STUB_DIR"
+check "nhm owns the server: nothing goes through acfs agents send, and no menu opens here" \
+    bash -c '[[ ! -e "$1/sends" && ! -e "$1/fzf_n" ]]' _ "$STUB_DIR"
+check "nhm owns the server: nhm-palette reads the files of the directory the palette was opened in" \
+    bash -c '[[ "$(cat "$1/nhm_cwd")" == "$2" ]]' _ "$STUB_DIR" "$WORK/repo/sub"
+check "nhm owns the server: a ~/.config/acfs palette gets a note to move it" \
+    grep -qF "reads ~/.config/nhm/command_palette.md, not ~/.config/acfs/command_palette.md" <<<"$ERR"
+rm -f "$STUB_DIR/nhm_calls"
+STUB_OWNER=nhm run_menu --file "$WORK/repo/command_palette.md"
+check "nhm owns the server: --file carries over" \
+    bash -c '[[ "$(cat "$1/nhm_calls")" == "palette --workspace w1 --file $2" ]]' _ "$STUB_DIR" "$WORK/repo/command_palette.md"
+check "nhm owns the server: with --file, no note about ~/.config/acfs" \
+    bash -c '! grep -qF "~/.config/acfs/command_palette.md" <<<"$1"' _ "$ERR"
+rm -f "$STUB_DIR/nhm_calls"
+NHM_BIN="$WORK/nowhere/nhm" STUB_OWNER=nhm run_menu
+check "nhm owns the server but isn't installed: refuses, naming nhm" \
+    bash -c '[[ "$1" -ne 0 && ! -e "$3/nhm_calls" && ! -e "$3/sends" ]] && grep -qF "nhm isn'"'"'t on PATH" <<<"$2"' _ "$RC" "$ERR" "$STUB_DIR"
+menu_case "prompt 0 - ^fix_bug" "target 0 - ^group	all"
+rm -f "$STUB_DIR/nhm_calls"
+run_menu
+check "the Bash drives the agents: the palette sends itself, and nhm isn't called" \
+    bash -c '[[ "$1" -eq 0 && "$(cat "$2/sends")" == "send --workspace w1 --all --template "* && ! -e "$2/nhm_calls" ]]' _ "$RC" "$STUB_DIR"
 
 menu_case "prompt 0 - ^fix_bug"
 RC=0

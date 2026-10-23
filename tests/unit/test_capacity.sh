@@ -163,7 +163,7 @@ test_high_capacity_json() {
       .herdr.recommended == true and
       .herdr.agent_count == 44 and
       (.herdr.profiles | length) == 4 and
-      (.herdr.profiles[] | select(.agents == 25 and .status == "pass" and .command == "acfs agents spawn --claude=10 --codex=10 --agy=5")) and
+      (.herdr.profiles[] | select(.agents == 25 and .status == "pass" and .command == "nhm spawn myproject --label swarm-25 --cc=10 --cod=10 --agy=5 --assign --stagger-mode=smart")) and
       (.herdr.profiles[] | select(.agents == 50 and .status == "warn" and (.rch_policy | contains("rch exec --")))) and
       (has("ntm") | not)
     ' <<<"$output" >/dev/null || return 1

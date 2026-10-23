@@ -147,9 +147,12 @@ STATE_KNOWN_NONSTATE=(
     .local/share/systemd .local/share/ubs .local/share/Trash .local/share/vitest
     # nhm's instance (its bindings, owner record and transcripts) and
     # herdr's plugin state belong to one herdr server, and a new
-    # machine's nhm enrolls its own; then locks, leases, editor and pager
-    # history, and install records
-    .local/state/nhm .local/state/herdr .local/state/claude .local/state/rch
+    # machine's nhm enrolls its own; ACFS's own (the palette's pins, the
+    # update rollback record, acfs machine's journals and root exports,
+    # which must never ride in an export); then locks, leases, editor
+    # and pager history, and install records
+    .local/state/nhm .local/state/herdr .local/state/acfs
+    .local/state/claude .local/state/rch
     .local/state/lazygit .local/state/lesshst .local/state/nvim
     .local/state/opencode .local/state/pi-agent-rust
 )

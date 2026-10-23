@@ -580,8 +580,10 @@ EOF
 
     state_sync_path_if_enabled "$state_dir"
 
-    # This process has an install open until state_install_finish closes it.
+    # This process has an install open until state_install_finish closes it,
+    # in this file.
     ACFS_STATE_INSTALL_OPEN=true
+    ACFS_STATE_INSTALL_OPEN_FILE="$state_file"
     return 0
 }
 
@@ -1956,8 +1958,10 @@ state_phase_start() {
         .interrupted = false |
         .install_status = "in_progress"
     ' --arg phase "$phase_id" --arg step "$step" --argjson start "$start_time" || return 1
-    # This process has an install open until state_install_finish closes it.
+    # This process has an install open, in this file, until
+    # state_install_finish closes it.
     ACFS_STATE_INSTALL_OPEN=true
+    ACFS_STATE_INSTALL_OPEN_FILE="$(state_get_file 2>/dev/null || true)"
 }
 
 # Record a named step without discarding other failures in the same phase.
@@ -2273,8 +2277,10 @@ state_phase_fail() {
 # work is still unresolved (state_has_required_failures), from this run or an
 # earlier one. complete: every phase has completed or was skipped.
 # in_progress: phases remain, as after an --only run.
-# state_init and state_phase_start set ACFS_STATE_INSTALL_OPEN; this clears
-# it, so an EXIT trap can tell that a run it opened ended without a result.
+# state_init and state_phase_start set ACFS_STATE_INSTALL_OPEN, and
+# ACFS_STATE_INSTALL_OPEN_FILE to the file they opened; this clears both,
+# so an EXIT trap can tell that a run it opened ended without a result, and
+# in which file.
 # Usage: state_install_finish <run_failed: true|false>
 state_install_finish() {
     local run_failed="false"
@@ -2298,6 +2304,7 @@ state_install_finish() {
         )
     ' --argjson run_failed "$run_failed" --arg phase_ids "$phase_ids" || return 1
     ACFS_STATE_INSTALL_OPEN=false
+    ACFS_STATE_INSTALL_OPEN_FILE=""
 }
 
 # Mark a phase as skipped

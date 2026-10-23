@@ -36,10 +36,17 @@ MAIL_NAME = r"[A-Za-z][A-Za-z0-9_-]{0,63}"
 AGENT_TYPES = ("claude", "codex", "agy")
 PROFILES = ("balanced", "codex-heavy", "review-heavy", "docs-heavy")
 WORKLOADS = ("light", "standard", "heavy")
+# A herdr pane id: the workspace id, then :p and herdr's base-36 counter.
+PANE_ID = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,50}:p[0-9A-Z]{1,12}"
+STARTUP_SHELLS = ("bash", "zsh", "sh", "dash", "fish")
 
 
 class RecoveryError(Exception):
     pass
+
+
+class PaneNotReady(RecoveryError):
+    """Only agents still missing or a known startup shell are safe to poll."""
 
 
 def require(condition, message):
@@ -163,6 +170,13 @@ def validate_request(intent, receipt):
 
 
 def run(argv, repo, timeout, failure="Unable to observe the launch's herdr workspace."):
+    code, data = run_code(argv, repo, timeout)
+    require(code == 0, failure)
+    return data
+
+
+def run_code(argv, repo, timeout):
+    """The command's exit code and bounded stdout; stderr is never read."""
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         process = subprocess.Popen(argv, cwd=repo, stdin=subprocess.DEVNULL,
             stdout=out, stderr=err, start_new_session=True)
@@ -176,8 +190,7 @@ def run(argv, repo, timeout, failure="Unable to observe the launch's herdr works
             require(os.fstat(out.fileno()).st_size + os.fstat(err.fileno()).st_size <= LIMIT,
                     "Pane observation exceeds 1 MiB.")
             out.seek(0)
-            require(process.returncode == 0, failure)
-            return out.read(LIMIT + 1)
+            return process.returncode, out.read(LIMIT + 1)
         finally:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
@@ -208,6 +221,52 @@ def registered_names(request, timeout):
     return {a["name"] for a in value}
 
 
+def nhm_bindings(herdr, request, workspace_id, rows, timeout):
+    """nhm's binding of each observed pane, keyed by pane, or {} for a launch
+    nhm didn't make. nhm puts up to six agents in one tab and names a shared
+    tab after the project (acfs-aahj), so there the binding, not the tab
+    label, keeps each agent's Agent Mail name and its slot N.M."""
+    found = shutil.which("nhm")
+    if found is None:
+        return {}
+    nhm = os.path.abspath(found)
+    # nhm must answer for the server herdr itself reports, not one it guesses.
+    try:
+        status = run([herdr, "status", "server"], request["repo"], timeout).decode("utf-8")
+    except UnicodeError:
+        raise RecoveryError("Unrecognized herdr observation.") from None
+    reported = [line.split(":", 1)[1].strip() for line in status.splitlines() if line.strip().startswith("socket:")]
+    require(len(reported) == 1, "Unable to find the herdr server's socket for nhm.")
+    socket_path = str(clean_path(reported[0]))
+    bound = {}
+    for row in rows:
+        code, data = run_code([nhm, "resolve", row["pane_id"], "--socket", socket_path, "--json"],
+                              request["repo"], timeout)
+        value = parse(data)
+        require(isinstance(value, dict) and value.get("schema") == "nhm.v1" and value.get("command") == "resolve",
+                "Unrecognized nhm observation.")
+        if code == 1 and value.get("result") is None and isinstance(value.get("error"), str) \
+                and value["error"].startswith("bindings: no such binding"):
+            continue
+        require(code == 0 and isinstance(value.get("result"), dict),
+                "nhm could not report an agent's binding; recovery will not guess.")
+        binding, verification = value["result"].get("binding"), value["result"].get("verification")
+        require(isinstance(binding, dict) and binding.get("status") == "active"
+                and binding.get("pane_id") == row["pane_id"] and binding.get("tab_id") == row["tab_id"]
+                and binding.get("workspace_id") == workspace_id
+                and binding.get("mail_project_key") == request["repo"]
+                and isinstance(binding.get("mail_name"), str) and re.fullmatch(MAIL_NAME, binding["mail_name"])
+                and binding.get("herdr_alias") == binding["mail_name"].lower()
+                and isinstance(binding.get("slot"), str) and re.fullmatch(r"[0-9]{1,6}\.[0-9]{1,6}", binding["slot"])
+                and isinstance(verification, dict) and verification.get("verdict") == "verified",
+                "nhm's binding of an agent doesn't match its pane or this repository; recovery will not guess.")
+        bound[row["pane_id"]] = binding
+    # One launch has one maker: nhm binds every agent it started.
+    require(not bound or len(bound) == len(rows),
+            "nhm binds only some of this launch's agents; recovery will not guess.")
+    return bound
+
+
 def runs_agent(process, agent_type):
     # agy-locked runs agy-real under the name agy (acfs-zg0), so check argv[0] too.
     if not isinstance(process, dict):
@@ -217,10 +276,36 @@ def runs_agent(process, agent_type):
     return process.get("name") == agent_type or Path(first).name == agent_type
 
 
-def observe(request, timeout):
+def startup_shell(processes):
+    """A pane whose agent has not replaced its shell yet."""
+    return bool(processes) and all(isinstance(p, dict) and p.get("name") in STARTUP_SHELLS for p in processes)
+
+
+def target_bindings(values, request):
+    """Bind every saved slot to an exact herdr pane, or keep the layout policy."""
+    if not values:
+        return None
+    require(len(values) == len(request["agents"]),
+            "Supply exactly one --target SLOT:PANE for every saved launch slot.")
+    chosen = {}
+    for value in values:
+        match = re.fullmatch(r"([1-9][0-9]?):(" + PANE_ID + ")", value)
+        require(match is not None, "Use --target SLOT:PANE with a herdr pane id, such as 1:w2:p3.")
+        slot, pane = int(match[1]), match[2]
+        require(slot not in chosen and pane not in chosen.values(),
+                "Recovery target slots and panes must be distinct.")
+        chosen[slot] = pane
+    require(set(chosen) == set(range(1, len(request["agents"]) + 1)),
+            "Recovery targets must cover every saved launch slot exactly once.")
+    return chosen
+
+
+def observe(request, timeout, chosen=None):
     """The launch's agents, keyed by pane. Names are reported, never trusted:
-    herdr can drop an agent's name (acfs-i7p); the tab label keeps the Agent
-    Mail name spawn gave it."""
+    herdr can drop an agent's name (acfs-i7p). acfs agents spawn gives each
+    agent a tab labelled with its Agent Mail name; nhm keeps the name in its
+    binding of the pane. chosen maps each slot to a pane (--target); other
+    agents in the workspace are then left alone, but never hide a duplicate."""
     found = shutil.which("herdr")
     require(found is not None, "herdr is unavailable.")
     herdr = os.path.abspath(found)
@@ -237,52 +322,109 @@ def observe(request, timeout):
     require(isinstance(tabs, list) and isinstance(agents, list), "Unrecognized herdr observation.")
     labels = {t.get("tab_id"): t.get("label") for t in tabs if isinstance(t, dict)}
     rows = [a for a in agents if isinstance(a, dict) and a.get("workspace_id") == workspace_id]
-    require(len(rows) == len(request["agents"]), "Observed agent count does not match the saved launch.")
-    observed = []
+    if chosen is None:
+        # Fewer agents may still be starting (--wait); more is never this launch.
+        require(len(rows) <= len(request["agents"]), "Observed agent count exceeds the saved launch.")
     for row in rows:
-        require(row.get("agent") in AGENT_TYPES
-                and all(isinstance(row.get(k), str) and re.fullmatch(HERDR_ID, row[k]) for k in ("pane_id", "tab_id"))
+        require(all(isinstance(row.get(k), str) and re.fullmatch(HERDR_ID, row[k]) for k in ("pane_id", "tab_id"))
                 and re.fullmatch(r".*:t[0-9A-Z]{1,12}", row["tab_id"])
                 and isinstance(row.get("terminal_id"), str) and re.fullmatch(TERMINAL_ID, row["terminal_id"]),
-                "Every observed agent must be a live native agent in the launch workspace.")
-        mail_name = labels.get(row["tab_id"])
+                "Invalid agent identity in the launch workspace.")
+    # An agent left out by --target must not share a selected agent's identity.
+    for key in ("pane_id", "terminal_id"):
+        require(len({r[key] for r in rows}) == len(rows), "Observed agents are not distinct.")
+    selected = rows if chosen is None else [r for r in rows if r["pane_id"] in chosen.values()]
+    slot_of = {pane: slot for slot, pane in (chosen or {}).items()}
+    for row in selected:
+        require(row.get("agent") in AGENT_TYPES, "Every selected agent must be a native agent in the launch workspace.")
+        # Checked here, not only per slot below: another agent still starting
+        # must not turn a wrong binding into a retry.
+        require(chosen is None or row["agent"] == request["agents"][slot_of[row["pane_id"]] - 1]["agent_type"],
+                "Selected pane does not match its saved slot's agent type.")
+    bound = nhm_bindings(herdr, request, workspace_id, selected, timeout)
+    observed, pending = [], False
+    for row in selected:
+        binding = bound.get(row["pane_id"])
+        mail_name = binding["mail_name"] if binding else labels.get(row["tab_id"])
         require(isinstance(mail_name, str) and re.fullmatch(MAIL_NAME, mail_name)
                 and re.fullmatch(HERDR_NAME, mail_name.lower()),
                 "An agent's tab no longer carries its Agent Mail name; recovery will not guess it.")
         require(row.get("name") in (None, "", "-", mail_name.lower()),
-                "An agent's herdr name differs from its tab's Agent Mail name; recovery will not guess.")
+                "An agent's herdr name differs from its Agent Mail name; recovery will not guess.")
         current, repo = clean_path(row.get("cwd")).resolve(strict=True), Path(request["repo"])
         require(current == repo or repo in current.parents, "A native agent is outside the saved repository.")
         info = herdr_result(herdr, ["pane", "process-info", "--pane", row["pane_id"]], request, timeout).get("process_info")
         require(isinstance(info, dict) and info.get("pane_id") == row["pane_id"]
                 and type(info.get("shell_pid")) is int and info["shell_pid"] > 0
-                and isinstance(info.get("foreground_processes"), list)
-                and any(runs_agent(p, row["agent"]) for p in info["foreground_processes"]),
-                "An observed pane is not running the native agent it reports.")
+                and isinstance(info.get("foreground_processes"), list),
+                "Unrecognized pane process observation.")
+        if not any(runs_agent(p, row["agent"]) for p in info["foreground_processes"]):
+            require(startup_shell(info["foreground_processes"]),
+                    "An observed pane is not running the native agent it reports.")
+            pending = True
         observed.append({"agent_type": row["agent"], "agent_mail_name": mail_name, "herdr_name": mail_name.lower(),
             "workspace_id": workspace_id, "workspace_label": label, "tab_id": row["tab_id"],
             "pane_id": row["pane_id"], "terminal_id": row["terminal_id"], "shell_pid": info["shell_pid"],
             "launched_state": "blocked" if row.get("agent_status") == "blocked" else "ready",
-            # herdr counts tabs past 9 with capitals (w1:t9, w1:tA, ...); base 36
-            # orders those the way herdr created them. int(..., 36) ignores case,
-            # so lowercase ids, whose order isn't known, are refused above.
-            "order": int(row["tab_id"].rsplit(":t", 1)[1], 36)})
-    for key in ("pane_id", "tab_id", "terminal_id", "shell_pid", "herdr_name", "order"):
+            # nhm's slot N.M is the order it started its agents in. Otherwise
+            # each agent has its own tab: herdr counts tabs past 9 with capitals
+            # (w1:t9, w1:tA, ...), and base 36 orders those the way herdr created
+            # them. int(..., 36) ignores case, so lowercase ids, whose order
+            # isn't known, are refused above.
+            "order": tuple(int(n) for n in binding["slot"].split(".")) if binding
+                     else int(row["tab_id"].rsplit(":t", 1)[1], 36)})
+    # nhm shares a tab among its agents; acfs agents spawn gives each its own.
+    for key in ("pane_id", "terminal_id", "shell_pid", "herdr_name", "order", *(() if bound else ("tab_id",))):
         require(len({o[key] for o in observed}) == len(observed), "Observed agents are not distinct.")
     # A tab label is editable; only a name Agent Mail has for this repository counts.
     require({o["agent_mail_name"] for o in observed} <= registered_names(request, timeout),
-            "An agent's tab label is not an Agent Mail identity of this repository; recovery will not guess.")
-    require(Counter(o["agent_type"] for o in observed)
-            == Counter(a["agent_type"] for a in request["agents"]), "Observed native-agent mix changed.")
-    # Sequential start made tab creation order the slot order.
+            "An agent's name is not an Agent Mail identity of this repository; recovery will not guess.")
+    expected, native = Counter(a["agent_type"] for a in request["agents"]), Counter(o["agent_type"] for o in observed)
+    require(not (native - expected), "Observed native-agent mix changed.")
+    # Every row is inspected before readiness is decided: a starting agent
+    # must not hide a malformed row, a duplicate identity or a wrong agent.
+    if pending or len(observed) < len(request["agents"]):
+        raise PaneNotReady("Some of the launch's agents are missing or still starting.")
+    require(native == expected, "Observed native-agent mix changed.")
+    # Sequential start made the start order (nhm's slots, or tab creation) the slot order.
     ordered = sorted(observed, key=lambda o: o["order"])
     by_type = {kind: iter([o for o in ordered if o["agent_type"] == kind]) for kind in AGENT_TYPES}
+    by_pane = {o["pane_id"]: o for o in observed}
     targets = []
     for slot, agent in enumerate(request["agents"], 1):
-        target = next(by_type[agent["agent_type"]]).copy()
+        target = (by_pane[chosen[slot]] if chosen is not None else next(by_type[agent["agent_type"]])).copy()
+        require(target["agent_type"] == agent["agent_type"], "Selected pane does not match its saved slot's agent type.")
         target.pop("order")
         targets.append({**target, "slot": slot, "agent_name": agent["agent_name"]})
     return targets
+
+
+def preview_observation(request, timeout, chosen, wait):
+    """Read-only readiness polling under one overall deadline, never a launch."""
+    if not wait:
+        return observe(request, timeout, chosen), 1
+    deadline = time.monotonic() + wait
+    previous, attempts = None, 0
+    while True:
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, "Recovery readiness deadline expired; no result was created.")
+        attempts += 1
+        try:
+            targets = observe(request, min(timeout, remaining), chosen)
+        except PaneNotReady:
+            previous = None
+        else:
+            require(time.monotonic() < deadline, "Recovery readiness deadline expired; no result was created.")
+            # As approval does, ignore the launch state: a dialog may open or close.
+            if identity(targets) == previous:
+                return targets, attempts
+            previous = identity(targets)
+        # The sleep spends the same budget as the observations. Other errors
+        # are never retried, and a waiting preview needs two consecutive
+        # identical observations.
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, "Recovery readiness deadline expired; no result was created.")
+        time.sleep(min(0.25, remaining))
 
 
 def identity(targets):
@@ -307,37 +449,54 @@ def main(arguments=None):
         description="Recover an unconfirmed launch by explicitly adopting its observed native panes. "
                     "Preview first. Never launches agents, sends work, or replaces an existing result.")
     parser.add_argument("--receipt", required=True, help="Existing private launch intent, not its result")
+    parser.add_argument("--target", action="append", default=[], metavar="SLOT:PANE",
+                        help="Bind every saved slot to an exact herdr pane; leave the workspace's other agents alone")
     parser.add_argument("--adopt", action="store_true", help="Create the missing result for the exact reviewed topology")
     parser.add_argument("--expect-sha256", help="Recovery digest from this command's preview, not the original launch digest")
     parser.add_argument("--timeout", type=int, choices=range(1, 31), default=10, metavar="1..30")
+    parser.add_argument("--wait", type=int, choices=range(0, 301), default=0, metavar="0..300",
+                        help="Preview only: wait this many seconds for two identical observations of the agents")
     args = parser.parse_args(arguments)
+    require(not (args.adopt and args.wait), "--wait is preview-only; review the observed identities before adopting.")
     require(not args.adopt or args.expect_sha256 is not None, "Preview recovery first, then use --adopt --expect-sha256.")
     receipt = clean_path(os.path.abspath(args.receipt))
     result_name = receipt.name + ".result.json"
     with locked_parent(receipt) as (fd, parent_info):
         raw, intent_info = read_private(fd, receipt.name)
         request = validate_request(parse(raw), receipt)
+        chosen = target_bindings(args.target, request)
+        selection = "explicit" if chosen is not None else "layout"
         no_result(fd, result_name)
-        targets = observe(request, args.timeout)
+        targets, observations = preview_observation(request, args.timeout, chosen, args.wait)
+        # A wait may outlast another writer: never offer a preview for an
+        # intent or directory that changed meanwhile.
+        current, current_info = read_private(fd, receipt.name)
+        require(current == raw and os.path.samestat(current_info, intent_info), "Launch intent changed during recovery.")
+        directory(receipt.parent)
+        require(os.path.samestat(receipt.parent.stat(), parent_info), "Receipt parent changed during recovery.")
+        no_result(fd, result_name)
         approval = {"schema": RECOVERY_SCHEMA, "intent_sha256": digest(raw),
-            "request": request, "targets": identity(targets),
+            "request": request, "targets": identity(targets), "selection": selection,
             "policy_sha256": digest(Path(__file__).read_bytes())}
         review_hash = digest(encode(approval))
         require(args.expect_sha256 is None or args.expect_sha256 == review_hash,
                 "Recovery request or native pane identities changed; preview recovery again.")
         report = {"schema": RECOVERY_SCHEMA, "status": "preview", "receipt": str(receipt),
-            "review_sha256": review_hash, "targets": targets, "starts_agents": False,
+            "review_sha256": review_hash, "targets": targets, "selection": selection, "starts_agents": False,
             "work_dispatched": False, "agent_mail_registered": True,
             "original_launch_verified": False, "result_created": False,
+            "readiness_observations": observations,
             "note": "Approval adopts these current native agents, not proof of the original spawn. "
-                    "Agent Mail names are read from each agent's tab label, where spawn put them, "
+                    "Agent Mail names are read from nhm's binding of each pane when nhm started the "
+                    "agents, otherwise from each agent's tab label, where acfs agents spawn put them, "
                     "and confirmed registered under the repository's project key."}
         if not args.adopt:
             report["adopt_command"] = shlex.join(["acfs", "swarm", "launch", "--recover",
                 "--receipt", str(receipt), "--timeout", str(args.timeout),
+                *[part for slot, pane in sorted((chosen or {}).items()) for part in ("--target", f"{slot}:{pane}")],
                 "--adopt", "--expect-sha256", review_hash])
         else:
-            targets = observe(request, args.timeout)
+            targets = observe(request, args.timeout, chosen)
             require(identity(targets) == approval["targets"], "Native agent identities changed during recovery.")
             current, current_info = read_private(fd, receipt.name)
             require(current == raw and os.path.samestat(current_info, intent_info), "Launch intent changed during recovery.")
@@ -346,11 +505,11 @@ def main(arguments=None):
             no_result(fd, result_name)
             publish(fd, result_name, {"schema": SCHEMA, "request": request, "targets": targets,
                 "recovery": {"schema": RECOVERY_SCHEMA, "review_sha256": review_hash,
-                    "intent_sha256": digest(raw), "original_launch_verified": False,
+                    "intent_sha256": digest(raw), "selection": selection, "original_launch_verified": False,
                     "adopted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}})
             report.update(status="ready", result_created=True)
             try:
-                require(identity(observe(request, args.timeout)) == approval["targets"],
+                require(identity(observe(request, args.timeout, chosen)) == approval["targets"],
                         "Native agents changed after result publication.")
             except (RecoveryError, OSError, UnicodeError) as exc:
                 report.update(status="unconfirmed", error=str(exc) if isinstance(exc, RecoveryError)

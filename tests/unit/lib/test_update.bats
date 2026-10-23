@@ -1585,7 +1585,8 @@ _opt_in_stack_fixture() {
     # INSTALLED lists the binaries the host already has.
     update_binary_exists() { [[ " ${INSTALLED:-} " == *" $1 "* ]]; }
     update_run_verified_installer() { printf '%s\n' "${1:-}" >> "$HOME/installers-run"; return 0; }
-    update_run_verified_installer_with_env() { return 0; }
+    # rano reaches it through update_run_verified_installer_with_target_tmpdir.
+    update_run_verified_installer_with_env() { printf '%s\n' "${1:-}" >> "$HOME/installers-run"; return 0; }
     update_run_slb_verified_install() { return 0; }
     update_run_fsfs_installer() { return 0; }
     : > "$HOME/installers-run"
@@ -1617,6 +1618,27 @@ _opt_in_stack_fixture() {
     assert_success
     grep -qx xf "$HOME/installers-run"
     grep -qx rano "$HOME/installers-run"
+}
+
+# acfs-i5s0: rano's installer keeps its files in TMPDIR when it ends, so
+# update runs it with a TMPDIR under the target's cache and removes it.
+@test "update_stack runs rano with a TMPDIR of its own and removes it" {
+    _opt_in_stack_fixture
+    INSTALLED="rano"
+    update_run_verified_installer_with_env() {
+        if [[ "${1:-}" == rano ]]; then
+            printf '%s\n' "${2:-}" > "$HOME/rano-env"
+            [[ -d "${2#TMPDIR=}" ]] && : > "$HOME/rano-tmpdir-existed"
+        fi
+        return 0
+    }
+    run update_stack
+    assert_success
+    local seen=""
+    seen="$(<"$HOME/rano-env")"
+    [[ "$seen" == "TMPDIR=$HOME/.cache/acfs/installer-tmp/rano."* ]] || fail "rano ran with '$seen'"
+    [[ -e "$HOME/rano-tmpdir-existed" ]]
+    [[ ! -e "${seen#TMPDIR=}" ]] || fail "rano's TMPDIR left behind: ${seen#TMPDIR=}"
 }
 
 @test "update_stack records MCP Agent Mail target-home failure and continues" {
@@ -3076,6 +3098,72 @@ EOF
     [[ -e "$tmpdir_seen_marker" ]]
     [[ ! -e "$target_tmpdir" ]] || fail "failed run left its TMPDIR behind: $target_tmpdir"
     [[ ! -e "$warn_file" ]] || fail "unexpected cleanup warning: $(<"$warn_file")"
+}
+
+# acfs-i5s0: rano's installer keeps its files in TMPDIR when it ends, so the
+# wrapper gives it a TMPDIR under the target's cache even with room on /tmp,
+# and removes it. Another tool with room on /tmp keeps the inherited TMPDIR.
+@test "install.sh verified installer wrapper gives rano a TMPDIR of its own" {
+    local installer="$PROJECT_ROOT/install.sh"
+    local trusted_df="$BATS_TEST_TMPDIR/trusted-df"
+    local runner_args_file="$BATS_TEST_TMPDIR/runner-args"
+    local tmpdir_seen_marker="$BATS_TEST_TMPDIR/tmpdir-existed-during-run"
+    local warn_file="$BATS_TEST_TMPDIR/wrapper-warnings"
+    local sha="1111111111111111111111111111111111111111111111111111111111111111"
+    local target_tmpdir=""
+    local -a runner_args=()
+
+    # 8 GiB free on /tmp: no low-space reason to stage elsewhere.
+    cat > "$trusted_df" <<'EOF'
+#!/usr/bin/env bash
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+printf 'mock 16777216 1 8388608 1%% /tmp\n'
+EOF
+    chmod +x "$trusted_df"
+
+    eval "$(sed -n '/^acfs_run_verified_upstream_script_as_target_with_env()/,/^}$/p' "$installer")"
+
+    declare -gA ACFS_UPSTREAM_URLS=([rano]="https://example.com/rano/install.sh" [example]="https://example.com/example/install.sh")
+    declare -gA ACFS_UPSTREAM_SHA256=([rano]="$sha" [example]="$sha")
+    acfs_load_upstream_checksums() { return 0; }
+    acfs_early_system_binary_path() {
+        case "${1:-}" in
+            df) printf '%s\n' "$trusted_df" ;;
+            awk) printf '/usr/bin/awk\n' ;;
+            mkdir) printf '/bin/mkdir\n' ;;
+            mktemp) printf '/usr/bin/mktemp\n' ;;
+            rm) printf '/usr/bin/rm\n' ;;
+            *) return 1 ;;
+        esac
+    }
+    _acfs_install_asset_has_symlink_component_under_prefix() { return 1; }
+    run_as_target() { "$@"; }
+    acfs_stage_verified_installer() { printf -v "$1" '%s' "$BATS_TEST_TMPDIR/staged-installer"; }
+    _acfs_remove_temp_files() { :; }
+    run_as_target_runner() {
+        printf '%s\0' "$@" > "$runner_args_file"
+        [[ "${2:-}" == TMPDIR=* && -d "${2#TMPDIR=}" ]] && : > "$tmpdir_seen_marker"
+        return 0
+    }
+    log_detail() { :; }
+    log_error() { :; }
+    log_warn() { printf '%s\n' "$*" >> "$warn_file"; }
+    : > "$BATS_TEST_TMPDIR/staged-installer"
+
+    acfs_run_verified_upstream_script_as_target_with_env rano bash ""
+    mapfile -d '' -t runner_args < "$runner_args_file"
+    assert_equal "${runner_args[0]}" "env"
+    [[ "${runner_args[1]}" == "TMPDIR=$TARGET_HOME/.cache/acfs/installer-tmp/acfs."* ]] \
+        || fail "rano ran with '${runner_args[1]}'"
+    assert_equal "${runner_args[2]}" "bash"
+    target_tmpdir="${runner_args[1]#TMPDIR=}"
+    [[ -e "$tmpdir_seen_marker" ]]
+    [[ ! -e "$target_tmpdir" ]] || fail "rano's TMPDIR left behind: $target_tmpdir"
+    [[ ! -e "$warn_file" ]] || fail "unexpected cleanup warning: $(<"$warn_file")"
+
+    acfs_run_verified_upstream_script_as_target_with_env example bash ""
+    mapfile -d '' -t runner_args < "$runner_args_file"
+    assert_equal "${runner_args[0]}" "bash"
 }
 
 @test "install.sh verified installer wrapper fails closed when cache staging fails" {

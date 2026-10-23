@@ -77,20 +77,21 @@ goes back a step.
 
 ### Option 2: Send Without The Menu (Power Move)
 
-The non-interactive sender is `acfs agents send`, and `--template` takes a
-palette prompt by its key:
+The non-interactive sender is `nhm send`, and `-t` takes a palette prompt by
+its key:
 
 ```bash
-# Send a one-off prompt to every agent in the workspace
-acfs agents send --all "Review the changes in src/ for edge cases"
+# Send a one-off prompt to every agent in the session
+nhm send myproject "Review the changes in src/ for edge cases"
 
 # Send a palette prompt (keys: acfs palette --list)
-acfs agents send --kind claude --template fresh_review
+nhm send myproject --cc -t fresh_review
 ```
 
-Same battle-tested prompts, no menu: `--all` targets every agent, or use
-`--kind claude`, `--kind codex`, `--kind agy` or `--name <agent>` to pick
-recipients. Agents blocked at a question are skipped, never answered.
+Same battle-tested prompts, no menu: `nhm send` targets every agent of the
+session but you by default, or use `--cc`, `--cod`, `--agy` or
+`--name <agent>` to pick recipients. Agents blocked at a question are refused,
+never answered.
 
 ---
 

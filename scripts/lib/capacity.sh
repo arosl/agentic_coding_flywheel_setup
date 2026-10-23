@@ -26,7 +26,7 @@ Options:
   --json                  Emit machine-readable JSON
   --workload <name>       light, standard, or heavy (default: standard)
   --profile <agents>      Check a target agent count, e.g. 25 or 25-agents
-  --recommend-herdr       Include a herdr launch recommendation (acfs agents spawn)
+  --recommend-herdr       Include an nhm launch recommendation
   --resource-profile      Report opt-in systemd resource profile wrappers
   --apply-resource-profile
                           Write opt-in ACFS wrapper files under ~/.acfs
@@ -1087,7 +1087,7 @@ capacity_emit_json() {
             herdr: {
                 recommended: $recommend_herdr,
                 agent_count: (if $recommend_herdr then $recommended_agents else null end),
-                launch_plan: (if $recommend_herdr then "Run acfs agents spawn inside the herdr workspace of the project, sized to the recommended agent count; each agent gets its own tab and the kickoff prompt from the command palette." else null end),
+                launch_plan: (if $recommend_herdr then "Create one coordinator session plus focused worker sessions sized to the recommended agent count." else null end),
                 profiles: (
                     if $recommend_herdr then
                         def profile_status($count):
@@ -1102,7 +1102,7 @@ capacity_emit_json() {
                             {agents: 50, cc: 20, cod: 20, agy: 10, label: "swarm-50"}
                         ] | map(. + {
                             status: profile_status(.agents),
-                            command: ("acfs agents spawn --claude=" + (.cc | tostring) + " --codex=" + (.cod | tostring) + " --agy=" + (.agy | tostring)),
+                            command: ("nhm spawn myproject --label " + .label + " --cc=" + (.cc | tostring) + " --cod=" + (.cod | tostring) + " --agy=" + (.agy | tostring) + " --assign --stagger-mode=smart"),
                             rch_policy: "Use rch exec -- for cargo build/test/check/clippy/bench/run/doc commands inside every agent pane.",
                             agent_mail: "Register agents, send a start message on the bead thread, and reserve files before edits.",
                             beads: "Use br ready --json and bv --robot-triage for assignment truth; never launch bare bv."
@@ -1153,15 +1153,15 @@ capacity_emit_human() {
 
     if [[ "$CAPACITY_RECOMMEND_HERDR" == "true" ]]; then
         echo ""
-        echo "herdr Recommendation"
+        echo "nhm Recommendation"
         echo "  Agent count:         $CAPACITY_RECOMMENDED_AGENTS"
-        echo "  Plan:                acfs agents spawn in the project's herdr workspace, one tab per agent"
+        echo "  Plan:                one coordinator session plus focused worker sessions"
         echo ""
         echo "Launch Profiles"
-        echo "  5 agents:            acfs agents spawn --claude=2 --codex=2 --agy=1"
-        echo "  10 agents:           acfs agents spawn --claude=4 --codex=4 --agy=2"
-        echo "  25 agents:           acfs agents spawn --claude=10 --codex=10 --agy=5"
-        echo "  50 agents:           acfs agents spawn --claude=20 --codex=20 --agy=10"
+        echo "  5 agents:            nhm spawn myproject --label swarm-5 --cc=2 --cod=2 --agy=1 --assign --stagger-mode=smart"
+        echo "  10 agents:           nhm spawn myproject --label swarm-10 --cc=4 --cod=4 --agy=2 --assign --stagger-mode=smart"
+        echo "  25 agents:           nhm spawn myproject --label swarm-25 --cc=10 --cod=10 --agy=5 --assign --stagger-mode=smart"
+        echo "  50 agents:           nhm spawn myproject --label swarm-50 --cc=20 --cod=20 --agy=10 --assign --stagger-mode=smart"
         echo ""
         echo "Coordination"
         echo "  RCH:                 use rch exec -- for CPU-heavy Rust build/test commands"

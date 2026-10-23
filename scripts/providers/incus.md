@@ -1,6 +1,6 @@
 # ACFS in an Incus container
 
-Run ACFS without renting a VPS. `scripts/providers/incus.sh` creates an unprivileged Ubuntu system container with [Incus](https://linuxcontainers.org/incus/), installs ACFS inside it, and prints what the machine you work from needs to attach to it as a herdr remote machine. With `--vm` it creates a VM instead ([below](#a-vm-instead-of-a-container)).
+Run ACFS without renting a VPS. `scripts/providers/incus.sh` creates an unprivileged Ubuntu system container with [Incus](https://linuxcontainers.org/incus/), installs ACFS inside it, and prints what the machine you work from needs to attach to it as a herdr remote machine. It makes containers only; for a VM of your own, use ACFS's other target, the [VPS install](../../README.md#quick-install).
 
 The installer runs **inside the container**, never on the machine that runs Incus (the hypervisor, called the host below).
 
@@ -8,7 +8,7 @@ The installer runs **inside the container**, never on the machine that runs Incu
 
 ## What you need
 
-- **A Linux host with Incus whose API has what a container needs:** the sub-path volume mounts (`disk_volume_subpath`), the `sysinfo` intercept (`container_syscall_intercept_sysinfo`) and restricted project networks (`projects_networks_restricted_access`). The launcher reads the server's `api_extensions` before it creates anything and names the missing one; it never judges by the version string. Ubuntu 26.04's own Incus 6.0.5 qualifies; it lacks the optional `instance_limits_oom` and `container_disk_tmpfs`, which the launcher notes and the profile then leaves unused. Check that `incus info` works for you; on many hosts that means being in `incus-admin`. A VM (`--vm`) needs `/dev/kvm` as well.
+- **A Linux host with Incus whose API has what a container needs:** the sub-path volume mounts (`disk_volume_subpath`), the `sysinfo` intercept (`container_syscall_intercept_sysinfo`) and restricted project networks (`projects_networks_restricted_access`). The launcher reads the server's `api_extensions` before it creates anything and names the missing one; it never judges by the version string. Ubuntu 26.04's own Incus 6.0.5 qualifies; it lacks the optional `instance_limits_oom` and `container_disk_tmpfs`, which the launcher notes and the profile then leaves unused. Check that `incus info` works for you; on many hosts that means being in `incus-admin`.
 - **Host setup, once:** `scripts/providers/incus.sh host-setup --storage <path|pool>` ([below](#host-setup)). Every launcher run reads what it records and stops without it. The launcher uses the default profile's managed bridge (`incusbr0`) for the NIC.
 - **A clone of this repository on that host.** The launcher installs the clone's committed `HEAD`.
 - **`git`, `jq` and `ssh-keygen` on that host.**
@@ -35,11 +35,13 @@ The new pool is called `acfs` unless you pass `--pool-name`. ACFS formats no dis
 **What it creates,** each only when absent:
 - **The profile `acfs-swarm`,** policy only: the security pins ([below](#the-containers-shape)), the `sysinfo` intercept, `limits.processes=30000`, `limits.kernel.nofile=1048576`, autostart, and the CPU rule. A container sees every host thread (no `limits.cpu`) and yields under contention: `limits.cpu.priority=0` and `limits.cpu.allowance=30%`, which Incus turns into a `cpu.weight` of 20 against the 100 of the host's own services.
 - **Memory,** with `--memory SIZE`: `limits.memory` on the profile. It is soft (the container is throttled and reclaimed, nothing is killed) when the host has swap, and hard (killed inside the container at the limit) when it has none; `--memory-enforce soft|hard` overrides that. Without `--memory` there is no limit.
-- **The egress ACLs** `acfs-swarm-egress`, `acfs-vm-egress` ([The network](#the-network)) and `acfs-sidecar-egress` ([the sidecar's](#the-tailnet-a-sidecar)). `--rch-worker ADDR` (repeatable) lets the containers reach an rch build worker over SSH.
-- **The test project,** only with `--test-project`: `acfs-tests` on its own bridge `acfstest0` ([below](#the-test-project)), and with `--client-cert FILE --client-name NAME` a client certificate trusted for that project only. Only ACFS's own tests use it, so without the flag there is no test project, bridge or certificate, and `acfs-swarm-egress` lets the containers reach no test instance.
+- **The egress ACLs** `acfs-swarm-egress` ([The network](#the-network)) and `acfs-sidecar-egress` ([the sidecar's](#the-tailnet-a-sidecar)). `--rch-worker ADDR` (repeatable) lets the containers reach an rch build worker over SSH.
+- **The test project,** only with `--test-project`: `acfs-tests` on its own bridge `acfstest0` behind the ACL `acfs-test-egress` ([below](#the-test-project)), and with `--client-cert FILE --client-name NAME` a client certificate trusted for that project only. Only ACFS's own tests use it, so without the flag there is no test project, bridge or certificate, and `acfs-swarm-egress` lets the containers reach no test instance.
 - **`~/.config/acfs/incus.env`** (`$XDG_CONFIG_HOME/acfs/incus.env`): `ACFS_INCUS_POOL` and `ACFS_INCUS_STORAGE_SOURCE`, and with `--test-project` also `ACFS_INCUS_PROJECT` and `ACFS_INCUS_BRIDGE_TESTS`. The launcher reads it on every run and stops without it.
 
 **Re-running it is safe.** What exists is checked against what these options would create and never changed: a difference stops the run and names the object, so change an existing profile or ACL yourself with `incus profile set` or `incus network acl edit`. For an ACL whose egress rules differ, the run lists the rules it would add and drop, and prints one command that takes them and keeps the ACL's description and ingress rules; run it, then run host setup again. A host set up before an ACL's rules changed in ACFS moves the same way. Host setup never deletes anything.
+
+**`acfs-vm-egress` from an earlier setup** (the ACL of the launcher's VMs, which are gone, and of the test project's NIC) is left as it is: host setup no longer makes or reads it. A test project whose NIC is still behind it stops host setup, with the one command that moves it to `acfs-test-egress`, the same rule under its new name. Once no NIC uses the old ACL (`incus network acl show acfs-vm-egress` lists them under `used_by`), you can delete it with `incus network acl delete acfs-vm-egress`.
 
 ## Create the container
 
@@ -49,7 +51,7 @@ scripts/providers/incus.sh dev --ssh-key laptop.pub --jump myhost
 
 - `dev` is the container's name.
 - `--jump myhost` is how your laptop reaches this host over SSH: a `Host` from your laptop's `~/.ssh/config`. Leave it out when you'll attach from the Incus host itself.
-- **Time:** for a VM, 10 to 12 minutes in all. Three complete runs took 616 to 697 s from the command to the printed block, with the image already cached (a one-time check on 2026-10-09). About half a minute of that is the VM booting. A container has not been timed yet.
+- **Time:** a container has not been timed yet. The launcher's earlier VMs took 10 to 12 minutes in all: three complete runs took 616 to 697 s from the command to the printed block, with the image already cached (a one-time check on 2026-10-09), about half a minute of it the VM booting.
 - **Output:** the installer's output streams to stderr. When it's done, stdout carries only this block:
 
 ```
@@ -81,7 +83,7 @@ On your laptop:
 | `dev-data`, a custom volume at `/data` | 60 GiB | `--data-size` |
 | Egress ACL on the NIC | `acfs-swarm-egress` | `--acl` |
 
-The state volume is why a rebuild keeps the logins: every tool's state is under the home, and the home is on the volume, not on the root disk. An install that stopped on a checksum failure near its end had used 12 GiB of the root (a VM, one-time check, 2026-10-09). The options apply only when the instance is created. To resize later:
+The state volume is why a rebuild keeps the logins: every tool's state is under the home, and the home is on the volume, not on the root disk. An install that stopped on a checksum failure near its end had used 12 GiB of the root (in one of the launcher's earlier VMs, a one-time check on 2026-10-09). The options apply only when the instance is created. To resize later:
 
 ```bash
 incus stop dev
@@ -101,6 +103,7 @@ Re-running the same command is safe:
 | doesn't exist | creates it, installs ACFS, prints the block. A volume of the same name that already exists is reused as it is, never resized. |
 | was created by the launcher, but its install never finished | starts it if it's stopped, and runs the installer again, which resumes where it stopped |
 | is installed | starts it if it's stopped and prints the block again. **It never reinstalls.** Update ACFS inside the container with `acfs update`. |
+| is a VM, from the launcher's earlier VM tier | refuses, exits 2, and touches nothing: a VM has no state volume, and the launcher no longer resumes or updates one |
 | is anything else | refuses, exits 2, and doesn't start, copy into or run anything in it |
 
 - **How it decides,** before it touches the instance, by two keys on it:
@@ -135,10 +138,9 @@ The instance sits on Incus's NAT bridge, so nothing outside reaches it except th
 
 **In the other direction,** an instance on a plain bridge can reach the host and everything the host can route to: its LAN, and its tailnet when the host runs Tailscale. The launcher limits that with an Incus network ACL on the instance's NIC:
 - **A container gets `acfs-swarm-egress`,** which host setup creates: the internet passes, and of the private ranges only the host's Incus API, DHCP lease renewals to the gateway, the test project's bridge (with `--test-project`) and the configured rch build workers. The launcher doesn't create it, since its allows name addresses only host setup knows; without it the launcher stops before creating anything.
-- **A VM gets `acfs-vm-egress`.** It rejects outgoing traffic to `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` (CGNAT, which includes tailnets), `169.254.0.0/16`, `fc00::/7` and `fe80::/10` (IPv6 link-local, on which the host and every other instance on the bridge are reachable). The launcher creates it on the first run if it doesn't exist.
-- **`--acl <name>`** puts another existing ACL on the NIC instead, for either type.
+- **`--acl <name>`** puts another existing ACL on the NIC instead.
 - **Everything else passes,** including the internet and the replies to your SSH sessions. The launcher never changes an existing ACL.
-- **The bridge's DHCP and DNS:** ahead of the ACL, Incus lets through a first lease request (DHCP from `0.0.0.0`), DHCPv6 and router solicitations, ARP and ND, and DNS to the bridge's own addresses (Incus 6.0.5's source). A lease renewal goes from the instance's address to the gateway, so the ACL decides: `acfs-swarm-egress` and `acfs-sidecar-egress` allow it (udp 67). `acfs-vm-egress` rejects it, and a VM renews by broadcast late in the lease instead.
+- **The bridge's DHCP and DNS:** ahead of the ACL, Incus lets through a first lease request (DHCP from `0.0.0.0`), DHCPv6 and router solicitations, ARP and ND, and DNS to the bridge's own addresses (Incus 6.0.5's source). A lease renewal goes from the instance's address to the gateway, so the ACL decides: `acfs-swarm-egress` and `acfs-sidecar-egress` allow it (udp 67). The test project's `acfs-test-egress` rejects it, and its instances renew by broadcast late in the lease instead.
 - **Where it applies:** the instance's own NIC (`security.acls`). Other instances keep their own ACLs. On a NIC, the ACL also filters the instance's traffic to the other instances on its bridge, not only traffic that leaves the bridge. Incus applies an ACL on a NIC only with its nftables firewall driver.
 - **It needs a managed bridge.** On any other network, the launcher stops before creating the instance.
 - **What it doesn't cover:** the host's addresses outside those ranges, such as a public IP, stay reachable from the instance. The host's sshd still needs a key the instance doesn't have.
@@ -149,7 +151,7 @@ The instance sits on Incus's NAT bridge, so nothing outside reaches it except th
   incus config device unset dev eth0 security.acls
   ```
 
-  `eth0` is the NIC's name in the default profile; `incus config device show dev` lists it. It takes effect on the running instance. Afterwards `dev` reaches everything the ACL rejected: the host on every address, its LAN and its tailnet. Other instances keep theirs. Re-running the launcher doesn't put it back; `incus config device set dev eth0 security.acls=acfs-swarm-egress` (or `acfs-vm-egress`) does, also on the running instance.
+  `eth0` is the NIC's name in the default profile; `incus config device show dev` lists it. It takes effect on the running instance. Afterwards `dev` reaches everything the ACL rejected: the host on every address, its LAN and its tailnet. Other instances keep theirs. Re-running the launcher doesn't put it back; `incus config device set dev eth0 security.acls=acfs-swarm-egress` does, also on the running instance.
 
 ## herdr versions
 
@@ -170,9 +172,9 @@ The instance sits on Incus's NAT bridge, so nothing outside reaches it except th
 
 The profile `acfs-swarm` carries the same pins, the limits and the `sysinfo` intercept, and no device: what is per machine (the root size, the volumes, the ACL on the NIC) is on the instance, set by the launcher. The profiles applied are `default` (for the NIC and the root device) and `acfs-swarm`, in that order.
 
-### What a container gives up against a VM
+### What a container gives up
 
-- **It shares the host's kernel.** The agents run with passwordless sudo in vibe mode, so they are root in the container. That root is unprivileged on the host, but the container's processes call the host kernel directly, and a kernel bug they can reach is a way onto the host. A VM runs its own kernel, behind KVM's much smaller interface. **Where agents run with loose permissions on a host you care about, use the VM.**
+- **It shares the host's kernel.** The agents run with passwordless sudo in vibe mode, so they are root in the container. That root is unprivileged on the host, but the container's processes call the host kernel directly, and a kernel bug they can reach is a way onto the host. A VM runs its own kernel, behind KVM's much smaller interface. **Where agents run with loose permissions on a host you care about, give them a VM of their own instead, through ACFS's other target, the [VPS install](../../README.md#quick-install).** The launcher makes no VMs.
 - **No kernel tunables, modules or swap.** The installer uses none: a read of `install.sh`, `scripts/lib/` and the generated installers on 2026-10-09 found no swap, sysctl, modprobe, mount, fstab, AppArmor or firewall step. Not yet confirmed by a real install in a container.
 - **Tailscale installs but can't connect from inside.** An unprivileged container has no `/dev/net/tun`, so `tailscaled` can't make its interface and `sudo tailscale up` fails. Attaching through the printed SSH entry doesn't need Tailscale; to put the machine on your tailnet, use the sidecar ([below](#the-tailnet-a-sidecar)), not `/dev/net/tun` in the container.
 - **The disk sizes depend on the storage pool.** On a `btrfs`, `zfs` or `lvm` pool, the root size and the volume sizes are enforced. On a `dir` pool they are enforced only on ext4 or XFS with project quotas. Otherwise Incus skips them with only a warning in its own log, and the container can fill the host's disk. `incus storage list` shows the driver; host setup warns when it makes a pool without enforced quotas.
@@ -180,7 +182,7 @@ The profile `acfs-swarm` carries the same pins, the limits and the `sysinfo` int
 
 ### Startup, disk and RAM
 
-`tests/vm/test_incus_provider.sh <name>` and `tests/vm/test_incus_provider.sh --vm <name>` each end by printing the instance's disk and memory use once installed, and the time from `incus start` to an SSH login. Run both on one host to compare. **No container run yet:** the container mode was written on a machine without Incus (2026-10-09, and again on 2026-10-10 for the profile, the volumes and the lease), so it is tested only against a stub `incus`. Two things a real run has to confirm: that cloud-init makes the `ubuntu` home on the mounted volume with the shell files the installer expects (the directory exists before the user does, so `useradd` copies no skeleton), and that `initial.uid` and `initial.gid` on the whole `dev-data` volume make `/data` the user's (the Incus documentation describes them for sub-paths).
+`tests/vm/test_incus_provider.sh <name>` ends by printing the container's disk and memory use once installed, and the time from `incus start` to an SSH login. **No container run yet:** the container mode was written on a machine without Incus (2026-10-09, and again on 2026-10-10 for the profile, the volumes and the lease), so it is tested only against a stub `incus`. Two things a real run has to confirm: that cloud-init makes the `ubuntu` home on the mounted volume with the shell files the installer expects (the directory exists before the user does, so `useradd` copies no skeleton), and that `initial.uid` and `initial.gid` on the whole `dev-data` volume make `/data` the user's (the Incus documentation describes them for sub-paths).
 
 ## A swarm machine
 
@@ -250,6 +252,7 @@ This makes `rch-w1` a build worker for rch (remote_compilation_helper), so the a
 Tests that need their own Incus instances run them in `acfs-tests`, a project that host setup makes and restricts when you pass `--test-project`. A host set up with it stays so: a later run without the flag stops and asks for it, because host setup never deletes anything.
 - **Restrictions:** no nesting, no privileged or shared-idmap containers, no syscall interception, no unix-char or GPU devices, disks and NICs only from managed pools and networks, only the bridge `acfstest0`, images only from `images.linuxcontainers.org`, and no snapshots or backups. The image restriction needs the API extension `projects_restricted_image_servers` (Incus 6.22, and 6.0.6 in the 6.0 LTS). On an older server, such as Ubuntu 26.04's 6.0.5, host setup warns and leaves that one key out; a run after the upgrade sets it.
 - **Limits:** 6 instances, 16 CPUs, 32 GiB of memory and 200 GiB of disk in all. Its default profile gives each instance 4 CPUs and 8 GiB, because a project with limits refuses instances that set none. Host setup sets these limits only when they are unset, so changes you make are kept.
+- **Network:** its default profile puts each instance's NIC on `acfstest0` behind `acfs-test-egress`, which rejects every private, CGNAT and link-local range: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`, `169.254.0.0/16`, `fc00::/7` and `fe80::/10`. The internet passes.
 
 **To let a machine use it:**
 1. **The certificate:** inside the machine, any `incus` command (`incus remote list`) creates its client certificate, `~/.config/incus/client.crt`. Copy that file to the host.
@@ -257,7 +260,7 @@ Tests that need their own Incus instances run them in `acfs-tests`, a project th
 3. **Expose the API:** host setup doesn't make Incus listen on the network. Set `core.https_address` to the gateway address of the machine's bridge, port 8443, and allow that port in the host's firewall. `acfs-swarm-egress` already lets the containers reach exactly that address and port.
 4. **Add the remote:** inside the machine, `incus remote add host https://<gateway>:8443`. Before you accept the server's certificate, compare its fingerprint with the host's own `incus info`. The machine then reaches the instances on `acfstest0` over SSH and ping, and nothing else of the host's.
 
-`tests/vm/test_incus_provider.sh <remote>:<name>` runs through such a remote: it makes the instance itself in the `acfs-tests` project (or `ACFS_TEST_PROJECT`), probes KVM on the server, and checks what the restricted certificate is refused. A real run of it is part of the devbox move (acfs-ioo3.9).
+`tests/vm/test_incus_provider.sh <remote>:<name>` runs through such a remote: it makes the container itself in the `acfs-tests` project (or `ACFS_TEST_PROJECT`) and checks what the restricted certificate is refused. A real run of it is part of the devbox move (acfs-ioo3.9).
 
 ## Next to podman
 
@@ -273,18 +276,6 @@ A host that also runs podman deployments shares its firewall, address space, uid
 | Host ports | proxy devices | published ports | one owner per port |
 
 A doctor check that runs these flows is acfs-ioo3.16.
-
-## A VM instead of a container
-
-```bash
-scripts/providers/incus.sh dev --ssh-key laptop.pub --jump myhost --vm
-```
-
-- **What you get:** a VM from the same cloud image, with its own kernel behind KVM, the launcher's fixed limits (4 vCPUs, 8 GiB of RAM, a 40 GiB root on the pool, `--root-size` to change it), the egress ACL `acfs-vm-egress`, the same keys and the same attach block. No profile beyond `default`, no state or data volume, no lease: its home is on its root disk, and a rebuild loses the logins.
-- **It needs `/dev/kvm`** on the host, and no particular Incus version: the launcher's server check is for containers.
-- **The type is fixed at creation.** On a re-run, an existing instance keeps its type, its ACL and its sizes: `--vm`, `--acl` and the size options on an existing instance are ignored with a warning.
-- **To resize later:** `incus stop dev; incus config set dev limits.cpu=8 limits.memory=16GiB; incus config device set dev root size=80GiB; incus start dev`.
-- `--vm` stays until the devbox has moved to a container and its rollback window has closed; then it goes.
 
 ## Incus on another host (unverified)
 
@@ -308,9 +299,8 @@ On macOS, `acfs machine up <name>` (`scripts/lib/machine.sh up <name> --ssh-key 
 - **Its own profile:** it starts the Colima profile `acfs` with `--runtime incus --vm-type vz --mount-type virtiofs` and the Mac's own `--arch`. The VM gets 4 CPUs, 8 GiB memory and a 160 GiB disk, or what `--colima-cpus`, `--colima-memory` and `--colima-disk` give; they apply only when `up` creates the profile. Your default profile is never used. A profile `acfs` with another runtime is refused.
 - **Your Incus remote stays:** Colima adds the remote `colima-acfs`. It starts with `--activate=false`, so your default remote stays current; if Colima switches it anyway, `up` switches it back. Colima also adds a `docker` OCI remote when there is none.
 - **No share of your Mac:** with Colima 0.10.0 or newer the VM mounts nothing (`--mount none`). An older Colima mounts an empty directory under `~/.local/state/acfs/machine`. The machine's volumes are on Incus's pool in the VM.
-- **Host setup, on every up:** `up` runs `host-setup --storage default` inside the VM, through `colima ssh`, on Colima's ZFS pool `default`, without `--test-project`. It is safe to re-run, so what a newer host-setup adds (an ACL, a rule) reaches a VM set up earlier. When it stops, the command it names runs in the VM: `colima ssh --profile acfs -- <command>`. host-setup and `logging.sh` come from the checkout's committed HEAD. The VM's image has no `jq`, so `up` installs it there first. Then `up` copies the VM's `incus.env` to `~/.config/acfs/incus.env` on the Mac, where the launcher reads it. If that file names another pool, `up` stops: the launcher reads one file for every remote.
+- **Host setup, on every up:** `up` runs `host-setup --storage default` inside the VM, through `colima ssh`, on Colima's ZFS pool `default`, without `--test-project`. It is safe to re-run, so what a newer host-setup adds (an ACL, a rule) reaches a VM set up earlier. When it stops, run the command it names in a shell in the VM: `colima ssh --profile acfs`, then paste it. (Passed to `colima ssh --profile acfs --`, only the first stage of a pipeline would run there.) host-setup and `logging.sh` come from the checkout's committed HEAD. The VM's image has no `jq`, so `up` installs it there first. Then `up` copies the VM's `incus.env` to `~/.config/acfs/incus.env` on the Mac, where the launcher reads it. If that file names another pool, `up` stops: the launcher reads one file for every remote.
 - **Attaching:** with Colima 0.10.0 or newer, `--network-address` gives the VM an address on the Mac, and Colima routes its bridge (192.168.100.0/24) through it. Colima asks for your password once to add that route. When the route goes through the VM, the SSH entry names the container's own address, for the Mac's `~/.ssh/config`. Otherwise `up` adds `--jump colima-acfs`, the VM's SSH host that `colima start` puts in `~/.ssh/config` (if it isn't there: `colima ssh-config --profile acfs >> ~/.ssh/config`). That is the case with a Colima older than 0.10.0, and when Colima skips the route because the subnet clashes with one of the Mac's networks. A `--jump` of your own is kept.
-- **Containers only:** `--vm` is refused. An Incus VM there would run inside Colima's own VM.
 - **Another remote:** a name with a remote, such as `far:dev`, doesn't start Colima.
 - **`acfs machine verify <name>` on a Mac** checks the machine on `colima-acfs` when the name has no remote, and stops early when Colima's Incus doesn't answer. Its SSH check runs without `timeout(1)`, which macOS lacks, under ssh's own connect and keepalive limits; only the local checklist (`verify` without a name) needs `timeout`.
 
@@ -324,4 +314,4 @@ On macOS, `acfs machine up <name>` (`scripts/lib/machine.sh up <name> --ssh-key 
 - `bash tests/unit/test_incus_provider_stub.sh`: the launcher's calls and output, against a stub `incus`.
 - `bash tests/unit/test_incus_host_setup.sh`, `bash tests/unit/test_incus_tailscale.sh` and `bash tests/unit/test_incus_rch_worker.sh`: host setup, the sidecar and the rch worker, against the same stub.
 - `bash tests/unit/test_state_layer.sh`: `acfs state` against a fixture home and volume.
-- `tests/vm/test_incus_provider.sh [--vm] [<remote>:]<new-name>`: a real container through the launcher, or with `--vm` or a remote an instance the harness makes itself in the `acfs-tests` project, checked through the printed block, then measured. It's opt-in and runs a full ACFS install. Its last line is `RESULT: pass`, `RESULT: fail` or `RESULT: skip (<why>)`, and a skip exits 77: without Incus, without KVM (for a VM, probed on the server) or without `images:`. A container run needs host setup first, and a VM or remote run host setup with `--test-project`.
+- `tests/vm/test_incus_provider.sh [<remote>:]<new-name>`: a real container through the launcher, or through a remote one the harness makes itself in the `acfs-tests` project, checked through the printed block, then measured. It's opt-in and runs a full ACFS install. Its last line is `RESULT: pass`, `RESULT: fail` or `RESULT: skip (<why>)`, and a skip exits 77: without Incus, without a usable test project (through a remote) or without `images:`. A run needs host setup first, and a remote run host setup with `--test-project`.

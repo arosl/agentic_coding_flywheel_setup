@@ -573,9 +573,11 @@ $status as $s
       mix: $mix,
       command:
         (if ($launch_agents // 0) > 0 then
-          "acfs agents spawn --claude=" + ($mix.cc | tostring)
-          + " --codex=" + ($mix.cod | tostring)
+          "nhm spawn myproject --label swarm-" + ($launch_agents | tostring)
+          + " --cc=" + ($mix.cc | tostring)
+          + " --cod=" + ($mix.cod | tostring)
           + " --agy=" + ($mix.agy | tostring)
+          + " --assign --stagger-mode=smart"
         else null end)
     },
     rch_policy: {
