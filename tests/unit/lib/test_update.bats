@@ -9651,6 +9651,7 @@ EOF
 
     printf "lesson-runtime\n" > "$repo_root/acfs/onboard/lessons/00_welcome.md"
     printf "palette-runtime\n" > "$repo_root/acfs/onboard/docs/ntm/command_palette.md"
+    printf "agents-template-runtime\n" > "$repo_root/acfs/AGENTS.md"
     printf "#!/usr/bin/env bash\nprintf 'onboard-runtime\\n'\n" > "$repo_root/packages/onboard/onboard.sh"
     printf "manifest-runtime\n" > "$repo_root/acfs.manifest.yaml"
     printf "zsh-completion-runtime\n" > "$repo_root/scripts/completions/_acfs"
@@ -9684,6 +9685,11 @@ EOF
     run cat "$deployed_home/onboard/docs/ntm/command_palette.md"
     assert_success
     assert_output "palette-runtime"
+    # The doctor's base.filesystem.2 requires the workspace template, which
+    # no install before acfs-qe94 wrote (acfs-uufr).
+    run cat "$deployed_home/docs/AGENTS.workspace.md"
+    assert_success
+    assert_output "agents-template-runtime"
     run cat "$deployed_home/acfs.manifest.yaml"
     assert_success
     assert_output "manifest-runtime"

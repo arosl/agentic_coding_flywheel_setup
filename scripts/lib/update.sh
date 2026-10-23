@@ -3520,8 +3520,9 @@ sync_acfs_deployed() {
     # need deploying on that topology (acfs/onboard/lessons/*.md ->
     # onboard/lessons/, packages/onboard/onboard.sh -> onboard/onboard.sh,
     # acfs/zsh/* -> zsh/*, acfs/onboard/docs/ntm/command_palette.md ->
-    # onboard/docs/ntm/), so do not bail out entirely; a per-file
-    # same-path guard below prevents any file from being copied onto itself.
+    # onboard/docs/ntm/, acfs/AGENTS.md -> docs/AGENTS.workspace.md), so do
+    # not bail out entirely; a per-file same-path guard below prevents any
+    # file from being copied onto itself.
 
     _acfs_deployed_path_is_git_tracked() {
         local deployed_root="$1"
@@ -3735,6 +3736,9 @@ sync_acfs_deployed() {
         "acfs/zsh/acfs.zshrc:zsh/acfs.zshrc"
         "acfs/zsh/p10k.zsh:zsh/p10k.zsh"
         "acfs/onboard/docs/ntm/command_palette.md:onboard/docs/ntm/command_palette.md"
+        # base.filesystem's verify and the doctor's base.filesystem.2 require
+        # it, and install.sh wrote it only from acfs-qe94 on (acfs-uufr).
+        "acfs/AGENTS.md:docs/AGENTS.workspace.md"
         "VERSION:VERSION"
         "CHANGELOG.md:CHANGELOG.md"
     )
