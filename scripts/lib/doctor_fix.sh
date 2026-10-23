@@ -1697,17 +1697,29 @@ dispatch_fix() {
         skip) return 0 ;;
     esac
 
-    # A lazygit or lazydocker that isn't root's is fixed only by the
-    # reinstall its check names, which the user runs; nothing here runs as
-    # root (acfs-ea2d). Listing that command applies nothing, so a bare
-    # --fix lists it too, ahead of the --yes gate below.
+    # Checks whose only fix is the command their check names, which the
+    # user runs; nothing here runs it. Listing a command applies nothing,
+    # so a bare --fix lists these too, ahead of the --yes gate below.
     case "$check_id" in
+        # A lazygit or lazydocker that isn't root's: the reinstall from the
+        # pinned release; nothing runs as root (acfs-ea2d).
         tools.lazygit.owner|tools.lazydocker.owner)
             if [[ -n "$fix_hint" ]]; then
                 FIXES_MANUAL+=("$check_id|Reinstall it from the pinned release (this also brings ACFS up to date from main)|$fix_hint")
             fi
             FIX_MANUAL=$((FIX_MANUAL + 1))
             return 0
+            ;;
+        # A core tool that is missing (check_core_tools): its install, for
+        # most an apt or pacman line as root, stays the user's step
+        # (acfs-vcuf). A check that names no fix goes on to the unknown
+        # case below.
+        tool.*)
+            if [[ -n "$fix_hint" ]]; then
+                FIXES_MANUAL+=("$check_id|Install it by hand; --fix does not run it|$fix_hint")
+                FIX_MANUAL=$((FIX_MANUAL + 1))
+                return 0
+            fi
             ;;
     esac
 

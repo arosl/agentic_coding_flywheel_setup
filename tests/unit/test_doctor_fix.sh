@@ -60,6 +60,7 @@ setup_test_env() {
     ACFS_SESSION_ID=""
     unset -f record_change 2>/dev/null || true
     unset -f sudo 2>/dev/null || true
+    unset -f apt-get pacman 2>/dev/null || true
     unset -f systemctl 2>/dev/null || true
     unset -f sshd 2>/dev/null || true
     unset -f git 2>/dev/null || true
@@ -141,6 +142,7 @@ cleanup_test_env() {
     ACFS_SESSION_ID=""
     unset -f record_change 2>/dev/null || true
     unset -f sudo 2>/dev/null || true
+    unset -f apt-get pacman 2>/dev/null || true
     unset -f systemctl 2>/dev/null || true
     unset -f sshd 2>/dev/null || true
     unset -f git 2>/dev/null || true
@@ -4495,6 +4497,64 @@ test_dispatch_fix_unknown_skipped() {
     return 0
 }
 
+# A missing core tool (check_core_tools' tool.*): --fix lists the install
+# its check names, apt's or pacman's, and runs nothing (acfs-vcuf).
+test_dispatch_fix_lists_missing_tool_install() {
+    setup_test_env
+
+    local ran="$ACFS_STATE_DIR/ran" output
+    sudo() { printf 'sudo %s\n' "$*" >>"$ran"; }
+    apt-get() { printf 'apt-get %s\n' "$*" >>"$ran"; }
+    pacman() { printf 'pacman %s\n' "$*" >>"$ran"; }
+
+    dispatch_fix "tool.bc" "fail" "sudo apt install bc" >/dev/null 2>&1
+    dispatch_fix "tool.age" "fail" "sudo pacman -S --needed age" >/dev/null 2>&1
+
+    if [[ $FIX_MANUAL -ne 2 || $FIX_SKIPPED -ne 0 || $FIX_APPLIED -ne 0 ]]; then
+        echo "  Expected 2 manual, 0 skipped, 0 applied; got $FIX_MANUAL, $FIX_SKIPPED, $FIX_APPLIED"
+        cleanup_test_env
+        return 1
+    fi
+    if [[ "${FIXES_MANUAL[0]:-}" != "tool.bc|Install it by hand; --fix does not run it|sudo apt install bc" ||
+        "${FIXES_MANUAL[1]:-}" != "tool.age|Install it by hand; --fix does not run it|sudo pacman -S --needed age" ]]; then
+        echo "  Unexpected manual fixes: ${FIXES_MANUAL[*]}"
+        cleanup_test_env
+        return 1
+    fi
+    if [[ -e "$ran" ]]; then
+        echo "  --fix ran an install: $(cat "$ran")"
+        cleanup_test_env
+        return 1
+    fi
+    output=$(print_fix_summary 2>&1)
+    if [[ "$output" != *"[tool.bc] Install it by hand"* || "$output" != *"Run: sudo apt install bc"* ||
+        "$output" != *"Run: sudo pacman -S --needed age"* ]]; then
+        echo "  The summary does not name both installs:"
+        echo "$output"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
+# A tool.* check that names no fix is skipped, as before.
+test_dispatch_fix_missing_tool_without_hint_skipped() {
+    setup_test_env
+
+    dispatch_fix "tool.example" "fail" "" >/dev/null 2>&1
+
+    if [[ $FIX_SKIPPED -ne 1 || $FIX_MANUAL -ne 0 || ${#FIXES_MANUAL[@]} -ne 0 ]]; then
+        echo "  Expected 1 skipped and no manual fix; got $FIX_SKIPPED skipped, $FIX_MANUAL manual"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
 # ============================================================
 # Test: print_fix_summary
 # ============================================================
@@ -5116,6 +5176,8 @@ main() {
     run_test test_dispatch_fix_symlink_uses_target_home
     run_test test_dispatch_fix_routes_manual
     run_test test_dispatch_fix_unknown_skipped
+    run_test test_dispatch_fix_lists_missing_tool_install
+    run_test test_dispatch_fix_missing_tool_without_hint_skipped
 
     # print_fix_summary tests
     run_test test_print_fix_summary_dry_run
