@@ -528,7 +528,13 @@ def bead_id_in_subject($id; $subject):
       | (($offset == 0) or ($before | test("[A-Za-z0-9._-]") | not))
         and (($offset + $width == ($body | length)) or
              ($after | test("[A-Za-z0-9._-]") | not)));
-def commits_for($id): [commit_list[]? | select(bead_id_in_subject($id; (.subject // "")))];
+# A subject that is not a string is malformed evidence, and fails the
+# report, as contains() made it before the exact match (acfs-it4y).
+def commit_subject:
+  (.subject // "") as $subject
+  | if ($subject | type) == "string" then $subject
+    else error("commits input: a commit subject must be a string") end;
+def commits_for($id): [commit_list[]? | select(bead_id_in_subject($id; commit_subject))];
 
 def criteria_from_description($description):
   (text($description) | split("\n")) as $lines

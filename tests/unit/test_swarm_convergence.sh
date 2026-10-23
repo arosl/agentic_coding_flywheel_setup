@@ -748,7 +748,8 @@ JSON
         and [.criteria[0].evidence[].match_score] == [3,3,2]
         and [.criteria[0].evidence[].status] == ["closed","closed","open"]
         and .criteria[0].evidence[0].title == "Quartz pipeline"
-        and .criteria[0].evidence[2].commit_subjects == ["Quartz tests bd-10 first \u0027proof\u0027","Quartz bd-1 second","bd-1 third"]
+        and .criteria[0].evidence[0].commit_subjects == ["Quartz tests bd-10 first \u0027proof\u0027"]
+        and .criteria[0].evidence[2].commit_subjects == ["Quartz bd-1 second","bd-1 third","bd-1 fourth"]
         and .criteria[1].evidence[0].status == "unknown"
         and .over_broad_children == [{bead_id:"bd-unrelated",title:"Billing",status:"closed"}]
         and .suggested_bead_titles == ["Add evidence for epic criterion: Xenon"]
