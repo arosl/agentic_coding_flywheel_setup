@@ -10576,12 +10576,14 @@ UNIT_EOF
         acfs_try_module_step "stack.beads_viewer" "Installing Beads Viewer" acfs_run_verified_upstream_script_as_target "bv" "bash" || acfs_optional_module_install_failed "bv" "Beads Viewer"
     fi
 
-    # CASS (Coding Agent Session Search)
+    # CASS (Coding Agent Session Search), through its generated installer.
+    # That one stages the installer's downloads in a TMPDIR of its own under
+    # ~/.cache/acfs/installer-tmp, as the manifest says; the hand-written
+    # runner does so only when /tmp has less than 2 GiB free (acfs-ltqj).
     if acfs_should_skip_module "stack.cass"; then
         log_detail "CASS already installed"
     else
-        log_detail "Installing CASS"
-        acfs_try_module_step "stack.cass" "Installing CASS" acfs_run_verified_upstream_script_as_target "cass" "bash" --easy-mode --verify || acfs_optional_module_install_failed "cass" "CASS"
+        acfs_legacy_run_manifest_module "stack.cass" || stack_phase_rc=1
     fi
 
     # CASS Memory System
@@ -10633,17 +10635,22 @@ UNIT_EOF
         acfs_legacy_run_manifest_module "stack.ru" || stack_phase_rc=1
     fi
 
-    # RCH (Remote Compilation Helper)
+    # RCH (Remote Compilation Helper). --easy-mode as in the manifest entry
+    # and acfs update: with no prompt, it enables rchd as a user service
+    # where the user's systemd manager runs, and adds rch's dir to PATH in
+    # ~/.bashrc. It stays on the hand-written runner, which feeds the
+    # installer on stdin: run from a file, the installer would look for its
+    # skill next to that file, in /tmp (acfs-ltqj).
     if binary_installed "rch"; then
         log_detail "RCH already installed"
     elif [[ "$(uname -m 2>/dev/null)" == aarch64 || "$(uname -m 2>/dev/null)" == arm64 ]]; then
         # RCH releases (v2.1.16) have no aarch64 Linux build, so its installer
         # compiles from source; the step is long and quiet, not hung.
         log_detail "Installing RCH: no ARM64 Linux release yet, building from source (the slowest step on ARM64)"
-        acfs_try_module_step "stack.rch" "Installing RCH" acfs_run_verified_upstream_script_as_target "rch" "bash" || acfs_optional_module_install_failed "rch" "RCH"
+        acfs_try_module_step "stack.rch" "Installing RCH" acfs_run_verified_upstream_script_as_target "rch" "bash" --easy-mode || acfs_optional_module_install_failed "rch" "RCH"
     else
         log_detail "Installing RCH"
-        acfs_try_module_step "stack.rch" "Installing RCH" acfs_run_verified_upstream_script_as_target "rch" "bash" || acfs_optional_module_install_failed "rch" "RCH"
+        acfs_try_module_step "stack.rch" "Installing RCH" acfs_run_verified_upstream_script_as_target "rch" "bash" --easy-mode || acfs_optional_module_install_failed "rch" "RCH"
     fi
 
     # FrankenSearch (fsfs)
@@ -10767,7 +10774,10 @@ UNIT_EOF
     else
         log_info "Installing DCG (Destructive Command Guard)..."
         log_detail "DCG blocks destructive git/fs commands before they run"
-        if acfs_try_module_step "stack.dcg" "Installing DCG" acfs_run_verified_upstream_script_as_target "dcg" "bash"; then
+        # --easy-mode as in the manifest entry and acfs update: the installer
+        # asks nothing on a terminal, and adds ~/.local/bin to PATH in
+        # ~/.zshrc and ~/.bashrc (acfs-ltqj). The hook registration below stays.
+        if acfs_try_module_step "stack.dcg" "Installing DCG" acfs_run_verified_upstream_script_as_target "dcg" "bash" --easy-mode; then
             log_success "DCG installed. Run 'dcg doctor' to verify."
         else
             acfs_optional_module_install_failed "dcg" "DCG"
@@ -10920,12 +10930,12 @@ UNIT_EOF
         acfs_try_module_step "utils.rano" "Installing RANO" acfs_run_verified_upstream_script_as_target "rano" "bash" || acfs_optional_module_install_failed "rano" "RANO"
     fi
 
-    # Source to Prompt TUI (s2p)
+    # Source to Prompt TUI (s2p), through its generated installer, which
+    # passes the manifest's --skip-cass and RU_NON_INTERACTIVE=1 (acfs-ltqj).
     if binary_installed "s2p"; then
         log_detail "S2P already installed"
     else
-        log_detail "Installing S2P"
-        acfs_try_module_step "utils.s2p" "Installing S2P" acfs_run_verified_upstream_script_as_target "s2p" "bash" || acfs_optional_module_install_failed "s2p" "S2P"
+        acfs_legacy_run_manifest_module "utils.s2p" || log_warn "S2P installation failed (see summary)"
     fi
 
     # System Resource Protection Script (srps)

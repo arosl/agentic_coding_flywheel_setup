@@ -261,9 +261,10 @@ legacy_setup() {
     phase="$(sed -n '/^install_stack_phase() {$/,/^}$/p' "$INSTALL_SH")"
     [[ -n "$phase" ]]
     run grep -c 'acfs_optional_module_install_failed "' <<< "$phase"
-    # mdwb went to its generated installer, which records an optional failure
-    # itself (acfs-2qhv); test_legacy_stack_manifest_pins.bats guards it.
-    (( output >= 36 ))
+    # mdwb (acfs-2qhv), cass and s2p (acfs-ltqj) went to their generated
+    # installers, which record a failure themselves;
+    # test_legacy_stack_manifest_pins.bats guards them.
+    (( output >= 34 ))
     # The only remaining "may have failed" text belongs to the REQUIRED Agent Mail module.
     run grep -E 'log_warn "[^"]* installation may have failed"' <<< "$phase"
     [[ "$status" -ne 0 ]]
@@ -305,7 +306,7 @@ legacy_setup() {
 
     # With the real index loaded, every legacy call site lands where the
     # manifest's optional flag says: required modules in the failure list, the
-    # rest in the optional-skip list. Guards the 36 sites against the manifest.
+    # rest in the optional-skip list. Guards the 34 sites against the manifest.
     local required_seen=0 optional_seen=0
     while IFS= read -r tool; do
         id="$(acfs_module_id_for_verified_installer_tool "$tool")"
@@ -326,8 +327,9 @@ legacy_setup() {
             }
         fi
     done < <(grep -o 'acfs_optional_module_install_failed "[a-z0-9_]*"' <<< "$phase" | sed -E 's/.*"([a-z0-9_]+)"/\1/' | sort -u)
-    # br bv cass cm dcg ms ubs are required today; the rest optional. caam and
-    # ru, also required, run through acfs_legacy_run_manifest_module (acfs-tqh9).
-    (( required_seen >= 7 ))
+    # br bv cm dcg ms ubs are required today; the rest optional. caam and ru
+    # (acfs-tqh9) and cass (acfs-ltqj), also required, run through
+    # acfs_legacy_run_manifest_module.
+    (( required_seen >= 6 ))
     (( optional_seen >= 25 ))
 }

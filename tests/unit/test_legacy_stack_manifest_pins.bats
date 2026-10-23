@@ -9,9 +9,60 @@
 # fresh Ubuntu 24.04 install failed stack.caam without cosign; the ru call
 # had no RU_INSTALLER_NO_SELF_REFRESH=1, so ru's installer fetched main's
 # install.sh, unverified, and ran it.
+# acfs-ltqj: every other hand-written call must pass the runner, env and
+# arguments of the module's generated installer. cass's TMPDIR, dcg's and
+# rch's --easy-mode, and s2p's --skip-cass and env were missing.
 
 setup() {
     PROJECT_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
+}
+
+# "<module>|<tool>|<runner>|<env>|<args>" for each generated installer's
+# verified-installer call, with quotes removed. A call that doesn't run the
+# staged file prints "?" as its runner.
+generated_calls() {
+    awk '
+        /^acfs_generated_install_[a-z0-9_]+\(\) \{$/ { module = ""; tool = ""; next }
+        /^    local module_id="/ { module = $0; sub(/^[^"]*"/, "", module); sub(/".*/, "", module) }
+        /^ *local tool="/ { tool = $0; sub(/^[^"]*"/, "", tool); sub(/".*/, "", tool) }
+        /^ *elif run_as_target_runner .*; then$/ {
+            call = $0
+            sub(/^ *elif run_as_target_runner /, "", call)
+            sub(/; then$/, "", call)
+            gsub(/["\047]/, "", call)
+            n = split(call, word, " ")
+            env = ""
+            i = 1
+            if (word[1] == "env") {
+                for (i = 2; i <= n && word[i] ~ /=/; i++) env = env (env == "" ? "" : " ") word[i]
+            }
+            runner = word[i]
+            if (word[i + 1] != "$verified_installer_file") runner = "?"
+            args = ""
+            for (i += 2; i <= n; i++) args = args (args == "" ? "" : " ") word[i]
+            print module "|" tool "|" runner "|" env "|" args
+        }
+    ' "$PROJECT_ROOT"/scripts/generated/install_*.sh
+}
+
+# "<line>|<tool>|<runner>|<env>|<args>" for each call of install.sh's
+# hand-written verified-installer runner, with quotes removed.
+hand_written_calls() {
+    grep -noE 'acfs_run_verified_upstream_script_as_target(_with_env)? "[^"]+" "[a-z]+"[^|;]*' \
+        "$PROJECT_ROOT/install.sh" | awk '{
+            line = $0
+            number = line
+            sub(/:.*/, "", number)
+            sub(/^[0-9]+:/, "", line)
+            gsub(/["\047]/, "", line)
+            n = split(line, word, " ")
+            env = ""
+            i = 4
+            if (word[1] ~ /_with_env$/) { env = word[4]; i = 5 }
+            args = ""
+            for (; i <= n; i++) args = args (args == "" ? "" : " ") word[i]
+            print number "|" word[2] "|" word[3] "|" env "|" args
+        }'
 }
 
 # "<module> <tool>" for each generated installer that passes archive pins
@@ -48,10 +99,45 @@ pinned_modules() {
     [[ -z "$failures" ]]
 }
 
+# Two calls differ on purpose. rano's TMPDIR comes from the hand-written
+# runner itself, which stages rano on real disk (acfs-i5s0). fsfs's
+# arguments are built at run time, and install.sh runs fsfs through
+# _stack_run_fsfs_installer when stack.sh has it.
+@test "each hand-written verified-installer call passes its generated installer's runner, env and arguments" {
+    local -A gen_runner=() gen_env=() gen_args=()
+    local module tool runner env args number failures="" count=0
+    while IFS='|' read -r module tool runner env args; do
+        gen_runner[$tool]="$runner"
+        gen_env[$tool]="$env"
+        gen_args[$tool]="$args"
+    done < <(generated_calls)
+    (( ${#gen_runner[@]} >= 40 ))
+    grep -qF '[[ "$tool" == rano ]]' "$PROJECT_ROOT/install.sh"
+
+    while IFS='|' read -r number tool runner env args; do
+        count=$((count + 1))
+        if [[ -z "${gen_runner[$tool]+set}" ]]; then
+            failures+="install.sh:$number: $tool has no generated installer call"$'\n'
+            continue
+        fi
+        [[ "$tool" != fsfs ]] || continue
+        local want_env="${gen_env[$tool]}"
+        [[ "$tool" != rano ]] || want_env="${want_env#'TMPDIR=$verified_installer_tmpdir'}"
+        if [[ "$runner" != "${gen_runner[$tool]}" || "$env" != "$want_env" \
+            || "$args" != "${gen_args[$tool]}" ]]; then
+            failures+="install.sh:$number: $tool runs '$runner' env '$env' args '$args'; generated: '${gen_runner[$tool]}' env '$want_env' args '${gen_args[$tool]}'"$'\n'
+        fi
+    done < <(hand_written_calls)
+    (( count >= 40 )) || failures+="only $count hand-written calls found"$'\n'
+    printf '%s' "$failures"
+    [[ -z "$failures" ]]
+}
+
 # Runs install.sh's install_stack_phase with every hand-written tool
 # installed, Agent Mail deselected and fake generated installers that record
 # their module. INSTALLED names the modules whose installed_check passes,
-# FAILING the generated installers that fail.
+# MISSING the binaries that binary_installed doesn't find, FAILING the
+# generated installers that fail.
 run_stack_phase() {
     eval "$(sed -n '/^install_stack_phase() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
     eval "$(sed -n '/^acfs_legacy_run_manifest_module() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
@@ -71,7 +157,7 @@ run_stack_phase() {
     acfs_legacy_module_selected() { [[ "$1" != "stack.mcp_agent_mail" ]]; }
     should_run_module() { return 0; }
     acfs_module_supports_family() { return 0; }
-    binary_installed() { return 0; }
+    binary_installed() { [[ " ${MISSING:-} " != *" $1 "* ]]; }
     install_asset() { return 1; }
     run_as_target() { return 0; }
     try_step() { shift; "$@"; }
@@ -81,7 +167,7 @@ run_stack_phase() {
 
     declare -gA ACFS_MODULE_FUNC=()
     local module func
-    for module in tools.herdr stack.nhm stack.caam stack.ru utils.mdwb; do
+    for module in tools.herdr stack.nhm stack.caam stack.ru utils.mdwb stack.cass utils.s2p; do
         func="acfs_generated_install_${module//./_}"
         ACFS_MODULE_FUNC[$module]="$func"
         eval "$func() {
@@ -185,4 +271,39 @@ run_stack_phase() {
     [[ "$output" == *"module=stack.ru"* ]]
     # The reason is consumed, so no later failure is reported with it.
     [[ "$output" == *$'\nreason=' ]]
+}
+
+# acfs-ltqj: cass's generated installer stages downloads in its own TMPDIR,
+# and s2p's passes --skip-cass and RU_NON_INTERACTIVE=1.
+@test "install.sh runs cass's and s2p's installers only through their generated installers" {
+    run grep -nE 'acfs_run_verified_upstream_script_as_target(_with_env)? "(cass|s2p)"' "$PROJECT_ROOT/install.sh"
+    [[ "$status" -eq 1 ]]
+    grep -q 'acfs_legacy_run_manifest_module "stack.cass"' "$PROJECT_ROOT/install.sh"
+    grep -q 'acfs_legacy_run_manifest_module "utils.s2p"' "$PROJECT_ROOT/install.sh"
+}
+
+@test "install_stack_phase installs cass and a missing s2p through their generated installers" {
+    MISSING="s2p"
+    run run_stack_phase
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"rc=0"* ]]
+    [[ "$output" == *"module=stack.cass"* ]]
+    [[ "$output" == *"module=utils.s2p"* ]]
+}
+
+@test "install_stack_phase skips cass when its installed_check passes, and s2p when its binary is there" {
+    INSTALLED="stack.cass"
+    run run_stack_phase
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"rc=0"* ]]
+    [[ "$output" != *"module=stack.cass"* ]]
+    [[ "$output" != *"module=utils.s2p"* ]]
+}
+
+@test "a failed cass install fails the stack phase and names stack.cass with its reason" {
+    FAILING="stack.cass"
+    run run_stack_phase
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"rc=1"* ]]
+    [[ "$output" == *"failure=stack.cass (checksum)"* ]]
 }
