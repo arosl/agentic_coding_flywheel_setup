@@ -67,18 +67,21 @@ describe("complete guide derived claims", () => {
     expect(pageSource).toContain("PINNED_INSTALL_COMMAND");
   });
 
-  test("section 7 launches the swarm with ACFS's own commands on herdr, never ntm", () => {
+  test("section 7 launches the swarm with ACFS's commands and nhm on herdr, never ntm", () => {
     for (const command of [
       "acfs machine up dev",
       "acfs machine verify dev",
       "acfs capacity --recommend-herdr",
       "acfs swarm plan --agents",
-      "acfs agents spawn --claude",
-      "acfs agents send --all --template default_new_agent",
+      "nhm spawn myproject --cc=",
+      "nhm send myproject",
+      "nhm status myproject",
       "herdr agent prompt",
     ]) {
       expect(pageSource).toContain(command);
     }
+    // nhm owns the herdr server, so these refuse (acfs-f2mc.5.4).
+    expect(pageSource).not.toMatch(/acfs agents (spawn|send)/);
     expect(pageSource).not.toMatch(/\bntm\b/);
     expect(pageSource).not.toMatch(/\btmux\b/);
   });

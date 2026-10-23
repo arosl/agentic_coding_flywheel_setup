@@ -201,27 +201,28 @@ or infer repo paths from RU state.
 
 ### herdr
 
-herdr manages the agent workspace. Inventory can suggest labels and per-host agent counts
-that feed an operator command such as:
+herdr manages the agent workspace, and nhm, which owns the herdr server, starts
+the agents in it. Inventory can suggest labels and per-host agent counts that
+feed an operator command such as:
 
 ```bash
-acfs agents spawn --workspace WORKSPACE_ID --claude 10 --codex 10 --agy 5 --cwd "$PWD/acfs-main" --dry-run
+nhm spawn swarm-25 --cc=10 --cod=10 --agy=5 --project "$PWD/acfs-main" --dry-run
 ```
 
-The preview makes no herdr calls; `WORKSPACE_ID` can be a placeholder. After
-reviewing it, create the workspace and capture its ID:
+The preview prints the plan and the admission (quota and capacity) and creates
+nothing. After reviewing it, start the agents; nhm creates the workspace
+`swarm-25` when it doesn't exist (`nhm add` adds to one that does):
 
 ```bash
-swarm_workspace="$(herdr workspace create --cwd "$PWD/acfs-main" --label swarm-25 --no-focus | jq -er '.result.workspace.workspace_id')"
-acfs agents spawn --workspace "$swarm_workspace" --claude 10 --codex 10 --agy 5 --cwd "$PWD/acfs-main"
-acfs agents list --workspace "$swarm_workspace"
+nhm spawn swarm-25 --cc=10 --cod=10 --agy=5 --project "$PWD/acfs-main"
+nhm status swarm-25
 ```
 
-In a new repository, a Claude Code or Codex folder-trust dialog stops spawn at
-the first agent. Open the repository once in each CLI and choose whether to
-trust it, or add `--trust-folder` to spawn if you explicitly trust it.
-By default, spawn sends the palette's kickoff prompt so each agent picks ready
-Beads; add `--no-prompt` to start agents without assigning work.
+In a new repository, a Claude Code or Codex folder-trust dialog stops the
+agent at its first start. Open the repository once in each CLI and choose
+whether to trust it, or add `--trust-folder` to spawn if you explicitly trust
+it. By default, spawn sends the palette's kickoff prompt so each agent picks
+ready Beads; add `--no-kickoff` to start agents without assigning work.
 The inventory command must not create workspaces or start agents.
 
 ### Agent Mail And Beads

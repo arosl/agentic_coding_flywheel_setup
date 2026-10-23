@@ -6,7 +6,7 @@
 >
 > This is upstream's record. Its ntm rows say what was verified in ntm at the time.
 > This fork doesn't install ntm: it starts agy agents in herdr with
-> `acfs agents spawn --agy N`.
+> `nhm spawn <session> --agy=N` (nhm, the herdr wrapper, in ntm's place).
 
 ## What happened
 

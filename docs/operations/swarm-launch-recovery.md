@@ -21,10 +21,13 @@ shell PID. Slots are assigned to the same native-agent types (Claude, Codex or
 `agy`) in tab creation order, which the launcher's one-at-a-time start made the
 slot order. A pane runs its agent when a foreground process has the agent type
 as its name or its argv[0], as `agy-real` does under `agy-locked`. Each
-agent's Agent Mail name is read from its tab label, where `acfs agents spawn` put
-it. A herdr name that was dropped (for example after a Codex context compaction)
-is restored from the tab label; a renamed tab, or a herdr name that differs from
-its tab's label, is refused rather than guessed. Since a tab label can be edited,
+agent's Agent Mail name is read from its tab label, where `acfs agents spawn`
+puts it. A launch that nhm started (the owner of the herdr server since the
+takeover) puts up to six agents in one tab named for the project's directory, so
+recovery can't read their names from it yet (acfs-aahj). A herdr name that was
+dropped (for example after a Codex context compaction) is restored from the tab
+label; a renamed tab, or a herdr name that differs from its tab's label, is
+refused rather than guessed. Since a tab label can be edited,
 each name must also be registered in Agent Mail under the repository's project
 key (`am agents list`). Tab ids past `t9` are base-36 capitals (`tA`, `tB`, …);
 a lowercase tab id, whose creation order isn't known, is refused. The preview

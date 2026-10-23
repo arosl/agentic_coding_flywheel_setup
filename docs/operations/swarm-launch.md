@@ -23,11 +23,16 @@ a receipt or start agents. Use the returned `launch_command` to perform the
 separate hash-bound `--launch` operation.
 
 Launching creates a new herdr workspace labelled
-`swarm-<session>-<first 12 hex of the review hash>`, then starts the agents one at
-a time, in slot order, through `acfs agents spawn --kind <type> --count 1
---no-prompt`. Each agent gets a new Agent Mail identity, registered in the
-repository's Agent Mail project, and its own tab labelled with that name; its
-herdr name is that name lowercased. Launching can start paid provider processes.
+`swarm-<session>-<first 12 hex of the review hash>` and starts the agents in it.
+When nhm owns the herdr server (`herdr_agents.sh owner` says `nhm`), that is one
+call, upstream's spawn with nhm in ntm's place: `nhm --robot-spawn=<label>
+--spawn-cc=N --spawn-cod=N [--spawn-agy=N] --spawn-safety --spawn-wait`. nhm
+puts the agents in panes, up to six to a tab, and binds each pane to its Agent
+Mail name. Otherwise the agents start one at a time, in slot order, through
+`acfs agents spawn --kind <type> --count 1 --no-prompt`, each in its own tab
+labelled with its name. Either way, each agent gets a new Agent Mail identity,
+registered in the repository's Agent Mail project, and its herdr name is that
+name lowercased. Launching can start paid provider processes.
 No prompts, trust-dialog answers, Beads claims, reservations, interrupts,
 existing-workspace reuse or destructive cleanup are requested.
 

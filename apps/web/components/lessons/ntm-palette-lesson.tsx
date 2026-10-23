@@ -148,19 +148,19 @@ export function NtmPaletteLesson() {
           <UsageOption number={2} title="Send Without The Menu (Power Move)" steps={[]}>
             <div className="mt-4">
               <CodeBlock
-                code={`# A one-off prompt to every agent in the workspace
-acfs agents send --all "Review the changes in src/ for edge cases"
+                code={`# A one-off prompt to every agent in the session
+nhm send myproject "Review the changes in src/ for edge cases"
 
 # A palette prompt by its key (keys: acfs palette --list)
-acfs agents send --kind claude --template fresh_review`}
+nhm send myproject --cc -t fresh_review`}
               />
             </div>
             <p className="mt-3 text-white/60">
-              Same battle-tested prompts, no menu: <InlineCode>acfs agents send</InlineCode> picks
-              recipients with <InlineCode>--all</InlineCode>, <InlineCode>--kind claude</InlineCode>,{" "}
-              <InlineCode>--kind codex</InlineCode>, <InlineCode>--kind agy</InlineCode> or{" "}
-              <InlineCode>--name N</InlineCode>, skips agents blocked at a question, and checks that
-              each agent took the prompt.
+              Same battle-tested prompts, no menu: <InlineCode>nhm send</InlineCode> targets every
+              agent of the session by default, or picks recipients with <InlineCode>--cc</InlineCode>,{" "}
+              <InlineCode>--cod</InlineCode>, <InlineCode>--agy</InlineCode> or{" "}
+              <InlineCode>--name N</InlineCode>. It refuses agents blocked at a question and reports
+              whether each agent took the prompt.
             </p>
           </UsageOption>
         </div>
@@ -1077,7 +1077,7 @@ function InteractivePaletteBrowser() {
     }, 1500);
     setTerminalLines((prev) => [
       ...prev.slice(-4),
-      `$ acfs agents send --all "<${activeCommand.id} prompt>"`,
+      `$ nhm send myproject -t ${activeCommand.id}`,
       "> Sent to 3 agents",
       "!  Every agent took the prompt",
       "",

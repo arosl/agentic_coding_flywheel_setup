@@ -124,7 +124,7 @@ without sourcing the opt-in snippet also leaves direct agent commands unchanged.
    `agent-mail.service.d/resource-profile.conf`, after wrapper tests have
    accumulated enough evidence.
 2. Add launcher integration only after direct shell-wrapper tests pass;
-   `acfs agents spawn` and `acfs swarm launch` should pass explicit class hints
+   `nhm spawn` and `acfs swarm launch` should pass explicit class hints
    rather than infer from command strings.
 3. Consider conservative `MemoryHigh=` recommendations only after capacity
    calibration has measured real high-context agent sessions.
