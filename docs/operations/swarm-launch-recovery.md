@@ -18,22 +18,33 @@ is refused.
 
 Inspect every proposed slot, agent type, Agent Mail name, pane, terminal and
 shell PID. Slots are assigned to the same native-agent types (Claude, Codex or
-`agy`) in tab creation order, which the launcher's one-at-a-time start made the
-slot order. A pane runs its agent when a foreground process has the agent type
-as its name or its argv[0], as `agy-real` does under `agy-locked`. Each
-agent's Agent Mail name is read from its tab label, where `acfs agents spawn`
-puts it. A launch that nhm started (the owner of the herdr server since the
-takeover) puts up to six agents in one tab named for the project's directory, so
-recovery can't read their names from it yet (acfs-aahj). A herdr name that was
-dropped (for example after a Codex context compaction) is restored from the tab
-label; a renamed tab, or a herdr name that differs from its tab's label, is
-refused rather than guessed. Since a tab label can be edited,
-each name must also be registered in Agent Mail under the repository's project
-key (`am agents list`). Tab ids past `t9` are base-36 capitals (`tA`, `tB`, …);
-a lowercase tab id, whose creation order isn't known, is refused. The preview
-writes no files and runs only read-only queries: herdr's `workspace list`,
-`tab list`, `agent list` and `pane process-info`, and `am agents list`. It never
-runs model commands, pane capture, renames or prompt delivery.
+`agy`) in the order the agents started: nhm's slot `N.M` when nhm started the
+launch, otherwise tab creation order, which the launcher's one-at-a-time start
+made the slot order. A pane runs its agent when a foreground process has the
+agent type as its name or its argv[0], as `agy-real` does under `agy-locked`.
+
+Recovery reads each agent's Agent Mail name and slot from nhm's binding of its
+pane when nhm started the launch, otherwise from its tab label, where
+`acfs agents spawn` put it; either way the name must be registered for the
+repository (acfs-aahj). nhm puts up to six agents in one tab and names a shared
+tab after the project's directory, so for its launches the binding is the only
+source. Recovery asks nhm (`nhm resolve <pane> --json`, on the socket
+`herdr status server` reports) and refuses a launch nhm binds only in part, a
+binding that isn't active and verified or doesn't match its pane, tab,
+workspace and repository, and an nhm that can't answer.
+
+Without bindings, a herdr name that was dropped (for example after a Codex
+context compaction) is restored from the tab label; a renamed tab is refused
+rather than guessed. Either way, a herdr name that differs from the agent's
+Agent Mail name is refused. Since a tab label can be edited, each name must
+also be registered in Agent Mail under the repository's project key
+(`am agents list`). Without bindings, tab ids past `t9` are base-36 capitals
+(`tA`, `tB`, …), and a lowercase tab id, whose creation order isn't known, is
+refused. The preview writes no files and runs only read-only queries: herdr's
+`workspace list`, `tab list`, `agent list` and `pane process-info`; when nhm is
+installed, herdr's `status server` and `nhm resolve` for each pane; and
+`am agents list`. It never runs model commands, pane capture, renames or prompt
+delivery.
 
 To adopt exactly those observed identities, repeat with the **recovery** digest:
 
