@@ -17,11 +17,15 @@ e10_nhm() {
 
 step_E10() {
     local dir claudes codex pa pb pc out
-    herdr integration install claude >"$SANDBOX_EVIDENCE/herdr-integration.out" 2>&1 || true
-    herdr integration install codex >>"$SANDBOX_EVIDENCE/herdr-integration.out" 2>&1 || true
     dir="$HOME/e10"
     mkdir -p "$dir" && git -C "$dir" init -q && sandbox_claude_prepare "$dir" >/dev/null &&
         sandbox_codex_prepare "$dir" >/dev/null
+    # herdr's integration after sandbox_codex_prepare, which writes Codex's
+    # config.toml whole; then Codex's trust in herdr's state hook, so the
+    # Codex starts with no dialog herdr cannot read (acfs-9hkh.99).
+    herdr integration install claude >"$SANDBOX_EVIDENCE/herdr-integration.out" 2>&1 || true
+    herdr integration install codex >>"$SANDBOX_EVIDENCE/herdr-integration.out" 2>&1 || true
+    check "E10: Codex trusts herdr's state hook before the Codex starts" sandbox_codex_trust_herdr
     claude_guards
     nhm_owner || { echo "FAIL E10: nhm could not take the server over"; return; }
     claudes="$(e10_nhm spawn --cc=3)"
@@ -32,7 +36,8 @@ step_E10() {
     pb="$(jq -r '.result.agents[1].pane_id // empty' <<<"$claudes" 2>/dev/null)"
     pc="$(jq -r '.result.agents[2].pane_id // empty' <<<"$claudes" 2>/dev/null)"
     check "E10: three Claudes started" test -n "$pa" -a -n "$pb" -a -n "$pc"
-    check "E10: a Codex started" jq -e '.result.agents[0].pane_id' <<<"$codex"
+    check "E10: a Codex started, and is ready (herdr reads its state)" \
+        jq -e '.result.agents[0].pane_id and .result.agents[0].ready == true' <<<"$codex"
     for p in "$pa" "$pb" "$pc"; do settle "$p"; done
     # C works; A and B are between turns.
     herdr agent prompt "$pc" "keep working slow" >/dev/null 2>&1 || true

@@ -12,22 +12,14 @@
 # The step's own improve_beads template stands in for the palette's (the
 # sandbox has no ACFS palette); the passes ask the mock for a slow reply,
 # so herdr sees each turn start. The Codex is added with
-# --allow-unguarded: its guards are E01's subject.
+# --allow-unguarded: its guards are E01's subject. Its trust in herdr's
+# state hook is recorded before it starts (sandbox_codex_trust_herdr), as
+# the live swarm's was, so it comes up ready and pass 4 needs no
+# --when any (acfs-9hkh.99).
 
 # e05_row NAME: the agent's row in `nhm list --json` (one line), or nothing.
 e05_row() {
     nhm list --json 2>/dev/null | jq -c --arg n "$1" 'first(.result.agents[]? | select(.binding.mail_name == $n)) // empty'
-}
-
-# e05_codex_trust PANE: a new Codex asks once whether to trust the hook
-# that `herdr integration install codex` added (herdr's state hook, not
-# ACFS's, so nhm_hooks.sh trust codex does not cover it); answer as a user
-# does, "2. Trust all and continue". Succeeds when no dialog came, too.
-e05_codex_trust() {
-    if herdr pane wait-output "$1" --match "Hooks need review" --timeout 20000 >/dev/null 2>&1; then
-        herdr pane send-keys "$1" 2 >/dev/null 2>&1 && sleep 0.5 &&
-            herdr pane send-keys "$1" enter >/dev/null 2>&1
-    fi
 }
 
 # e05_read LABEL NAME: `nhm read NAME`, saved as e05-read-LABEL.json and
@@ -54,8 +46,6 @@ e05_send() {
 
 step_E05() {
     local dir out a pa bead before after cod pcod
-    herdr integration install claude >"$SANDBOX_EVIDENCE/herdr-integration.out" 2>&1 || true
-    herdr integration install codex >>"$SANDBOX_EVIDENCE/herdr-integration.out" 2>&1 || true
     for tool in br cm cass; do
         command -v "$tool" >/dev/null 2>&1 || { echo "FAIL E05: $tool is not in the sandbox (sandbox_bin $tool)"; return; }
     done
@@ -65,6 +55,11 @@ step_E05() {
     printf 'Improve the beads around {{bead_id}}: {{bead_title}}. Tighten each one; reply slow.\n' \
         >"$dir/.nhm/templates/improve_beads.md"
     sandbox_claude_prepare "$dir" >/dev/null && sandbox_codex_prepare "$dir" >/dev/null
+    # herdr's integration after sandbox_codex_prepare, which writes Codex's
+    # config.toml whole.
+    herdr integration install claude >"$SANDBOX_EVIDENCE/herdr-integration.out" 2>&1 || true
+    herdr integration install codex >>"$SANDBOX_EVIDENCE/herdr-integration.out" 2>&1 || true
+    check "E05: Codex trusts herdr's state hook before the Codex starts" sandbox_codex_trust_herdr
     claude_guards
     nhm_owner || { echo "FAIL E05: nhm could not take the server over"; return; }
     CASS_MEMORY_LLM=none cm playbook add "Polish beads in passes; tighten each bead's acceptance" --category workflow --json \
@@ -130,11 +125,9 @@ step_E05() {
     cod="$(jq -r '.result.agents[0].mail_name // empty' <<<"$out")"
     pcod="$(jq -r '.result.agents[0].pane_id // empty' <<<"$out")"
     check "E05: a Codex joins" test -n "$cod" -a -n "$pcod"
-    e05_codex_trust "$pcod"
+    check "E05: the Codex is ready (herdr reads its state)" jq -e '.result.agents[0].ready == true' <<<"$out"
     settle "$pcod"
-    # herdr reports a Codex's state as unknown, which nhm's gate admits
-    # only with --when any.
-    e05_send pass4 --cod --bead "$bead" --when any
+    e05_send pass4 --cod --bead "$bead"
     check "E05: pass 4's only target is the Codex" \
         jq -e --arg c "$cod" '[.result.targets[] | .mail_name] == [$c] and .result.targets[0].kind == "codex"' \
             "$SANDBOX_EVIDENCE/e05-send-pass4.json"

@@ -47,7 +47,11 @@
 #   sandbox_claude_prepare DIR Claude Code's first-run state: onboarding
 #                              done, the mock key approved, DIR trusted
 #   sandbox_codex_prepare DIR  Codex's config.toml: the mock's Responses
-#                              API, DIR trusted (after sandbox_mock_start)
+#                              API, DIR trusted (after sandbox_mock_start);
+#                              it writes the file whole, so herdr's
+#                              integration comes after it
+#   sandbox_codex_trust_herdr  Codex's trust in herdr's state hook, so a
+#                              new Codex asks nothing herdr cannot read
 #   sandbox_mock_stop
 #   sandbox_mail_start         a separate Agent Mail server (am, which
 #                              sandbox_bin must provide) on the sandbox's
@@ -55,10 +59,17 @@
 #   sandbox_mail_stop
 #
 # sandbox_init also puts an `acfs` into the sandbox's bin that runs
-# `acfs agents ...` from this checkout's scripts/lib/herdr_agents.sh.
+# `acfs agents ...` from this checkout's scripts/lib/herdr_agents.sh, and
+# copies the agent-detection manifests the host's herdr fetched into the
+# sandbox's state dir (acfs-9hkh.99). herdr reads an agent's state from
+# its screen by those manifests, and the sandbox has no network to fetch
+# them: with only the ones built into herdr, which can be older than the
+# installed agents, it read Codex 0.162's idle prompt as unknown, and
+# every Codex spawn timed out.
 #
 # Nothing here installs anything on the host or touches the live herdr
-# server, ~/.claude, ~/.codex, ~/.config or ~/.local.
+# server, ~/.claude, ~/.codex, ~/.config or ~/.local; the manifests are
+# only read from there.
 # ============================================================
 
 SANDBOX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -114,6 +125,18 @@ sandbox_init() {
         '    *) echo "acfs (sandbox): only acfs agents exists here" >&2; exit 2 ;;' \
         'esac' >"$SANDBOX_BIN/acfs" || return 1
     chmod 755 "$SANDBOX_BIN/acfs" || return 1
+    # The host herdr's agent-detection manifests, at the path the sandbox's
+    # XDG_STATE_HOME gives its herdr. Without them the step's evidence says
+    # so, and a Codex may never read as ready.
+    local detection="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/agent-detection"
+    if [[ -d "$detection/remote" ]]; then
+        mkdir -p "$SANDBOX_HOME/.local/state/herdr" || return 1
+        cp -R "$detection" "$SANDBOX_HOME/.local/state/herdr/" || return 1
+        cp "$detection/status.toml" "$SANDBOX_EVIDENCE/herdr-detection.toml" 2>/dev/null || true
+    else
+        printf 'none: the host herdr has fetched no agent-detection manifests (%s), so the sandbox herdr uses those built into it\n' \
+            "$detection" >"$SANDBOX_EVIDENCE/herdr-detection.toml"
+    fi
     export SANDBOX_ROOT SANDBOX_HOME SANDBOX_BIN SANDBOX_EVIDENCE
 }
 
@@ -330,7 +353,9 @@ sandbox_claude_prepare() {
 
 # sandbox_codex_prepare DIR: Codex's config.toml in the sandbox
 # CODEX_HOME, pointing it at the mock's Responses API (as experiment 3
-# ran Codex 0.162), with DIR trusted. Run it after sandbox_mock_start.
+# ran Codex 0.162), with DIR trusted. Run it after sandbox_mock_start, and
+# before `herdr integration install codex`: it writes the file whole, and
+# would drop the [features] hooks = true that herdr's integration adds.
 sandbox_codex_prepare() {
     sandbox_inside_check sandbox_codex_prepare || return 1
     local dir="${1:-}"
@@ -353,6 +378,41 @@ supports_websockets = false
 [projects."$dir"]
 trust_level = "trusted"
 EOF
+}
+
+# sandbox_codex_trust_herdr: Codex's trust in herdr's state hook (the
+# SessionStart entry that `herdr integration install codex` adds),
+# recorded through Codex's app-server as its "Trust all and continue"
+# does, by nhm_hooks.sh's driver. Run it after herdr's integration and
+# before the first Codex starts. A Codex with an untrusted hook opens on
+# "Hooks need review", which herdr reads as unknown, not blocked, so a
+# spawn waiting for the Codex to be ready times out at it (acfs-9hkh.99).
+# The live swarm's Codex was trusted once the same way.
+sandbox_codex_trust_herdr() {
+    sandbox_inside_check sandbox_codex_trust_herdr || return 1
+    local hooks="$CODEX_HOME/hooks.json" lib="$SANDBOX_LIB_DIR/../../../scripts/lib/nhm_hooks.sh" spec codex
+    [[ -f "$hooks" ]] || { sandbox_die "sandbox_codex_trust_herdr: no $hooks (run herdr integration install codex first)"; return 1; }
+    codex="$(command -v codex)" || { sandbox_die "sandbox_codex_trust_herdr: no codex in the sandbox"; return 1; }
+    # The driver trusts only entries exactly like its spec: herdr's group
+    # holds its one handler and no matcher.
+    spec="$(jq -c '[.hooks.SessionStart[]? | select(.matcher == null and (.hooks | length) == 1) | .hooks[0]
+        | select(.type == "command" and (.command | test("herdr-agent-state\\.sh")))
+        | {event: "SessionStart", command, matcher: "", timeout}]' "$hooks")" || return 1
+    [[ "$spec" != "[]" ]] || { sandbox_die "sandbox_codex_trust_herdr: $hooks holds no herdr state hook"; return 1; }
+    (
+        # shellcheck source=../../../scripts/lib/nhm_hooks.sh
+        source "$lib" || exit 1
+        timeout 90 python3 -I -c "$(nhm_hooks_trust_driver)" "$hooks" "$codex" write "$spec"
+    ) >"$SANDBOX_EVIDENCE/codex-trust-herdr.out" 2>&1 || {
+        sandbox_die "sandbox_codex_trust_herdr: Codex did not record the trust (see $SANDBOX_EVIDENCE/codex-trust-herdr.out)"
+        return 1
+    }
+    # The driver exits 0 when it finds no entry like the spec, so check
+    # that the trust is in config.toml.
+    grep -Fq 'hooks.json:session_start:' "$CODEX_HOME/config.toml" || {
+        sandbox_die "sandbox_codex_trust_herdr: config.toml holds no trust for herdr's hook"
+        return 1
+    }
 }
 
 sandbox_mail_start() {
