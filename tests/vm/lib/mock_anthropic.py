@@ -35,7 +35,14 @@ Bash), or a function_call item whose arguments are the input (Responses
 API; Codex 0.162's exec_command takes {"cmd": ...}). The name "shell"
 with {"cmd": ...} is either one, so one prompt works for both kinds. The
 request that carries the tools' results gets a short closing text and
-takes no turn. A helper request never calls a tool.
+takes no turn. A helper request never calls a tool, and a compaction
+that carries tool results (one in the middle of a turn) is answered as
+a compaction.
+
+Context (Messages API): a prompt line 'mock-context: N' has the turn's
+reply report N input tokens, so Claude Code finds its context full and
+compacts before it sends the tool results, in the middle of the turn,
+as it does when a real turn fills the context (E04).
 
 Pointing the CLIs at it (as exp.3 and exp.4 did):
 - Claude Code: ANTHROPIC_BASE_URL=<url> and any ANTHROPIC_API_KEY.
@@ -78,6 +85,9 @@ TITLE = ("generate a concise, single-line task title",
 # prompt that quotes one (nhm's CASS excerpt of an earlier session) asks
 # for nothing.
 TOOL_LINE = re.compile(r"^mock-tool: (\{.*\})[ \t]*$", re.M)
+# A prompt line that has the turn's reply report that many input tokens,
+# so Claude Code finds its context full and compacts before it goes on.
+CONTEXT_LINE = re.compile(r"^mock-context: ([0-9]{1,9})[ \t]*$", re.M)
 
 
 def says(text, word):
@@ -300,7 +310,11 @@ class Handler(BaseHTTPRequestHandler):
     def _messages(self, path, body):
         text = anthropic_user_text(body)
         last_text, results = anthropic_last_user(body)
-        calls = [] if results or is_helper(text) else tool_calls(last_text)
+        # A compaction in the middle of a turn carries the tool results
+        # too: it is answered as the helper it is.
+        helper = is_helper(text)
+        calls = [] if results or helper else tool_calls(last_text)
+        full = None if results or helper else CONTEXT_LINE.search(last_text)
         rec = {"method": "POST", "path": path, "model": body.get("model"), "stream": body.get("stream"),
                "n_messages": len(body.get("messages") or []), "user_text": text,
                # Each message's role and block types, never their text.
@@ -311,8 +325,10 @@ class Handler(BaseHTTPRequestHandler):
             rec["tool_calls"] = [c["name"] for c in calls]
         if results:
             rec["tool_results"] = results
+        if full:
+            rec["context_tokens"] = int(full.group(1))
         self.state.record(rec)
-        if results:
+        if results and not helper:
             # The tools ran: close the turn they belong to.
             reply, delay = f"mock: read {results} tool result(s)", self.state.delay
         else:
@@ -321,7 +337,8 @@ class Handler(BaseHTTPRequestHandler):
         stop = "tool_use" if uses else "end_turn"
         msg_id = "msg_" + uuid.uuid4().hex[:24]
         model = body.get("model") or "claude-mock"
-        usage = {"input_tokens": 42, "output_tokens": 8, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        usage = {"input_tokens": rec.get("context_tokens", 42), "output_tokens": 8,
+                 "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
         if not body.get("stream"):
             time.sleep(delay)
             self._json(200, {"id": msg_id, "type": "message", "role": "assistant", "model": model,
@@ -350,14 +367,15 @@ class Handler(BaseHTTPRequestHandler):
                                                           "partial_json": json.dumps(use["input"])}})
             self._event("content_block_stop", {"type": "content_block_stop", "index": i})
         self._event("message_delta", {"type": "message_delta", "delta": {"stop_reason": stop, "stop_sequence": None},
-                                      "usage": {"output_tokens": 8}})
+                                      "usage": {**usage, "output_tokens": 8}})
         self._event("message_stop", {"type": "message_stop"})
 
     # The OpenAI Responses API (exp.3).
     def _responses(self, path, body):
         text = responses_user_text(body)
         last_text, results = responses_last_user(body)
-        calls = [] if results or is_helper(text) else tool_calls(last_text, "responses")
+        helper = is_helper(text)
+        calls = [] if results or helper else tool_calls(last_text, "responses")
         rec = {"method": "POST", "path": path, "model": body.get("model"), "stream": body.get("stream"),
                "user_text": text,
                # The tools Codex offers and its input items' types, never their text.
@@ -368,7 +386,7 @@ class Handler(BaseHTTPRequestHandler):
         if results:
             rec["tool_results"] = results
         self.state.record(rec)
-        if results:
+        if results and not helper:
             # The tools ran: close the turn they belong to.
             reply, delay = f"mock: read {results} tool result(s)", self.state.delay
         else:

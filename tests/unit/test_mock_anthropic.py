@@ -191,6 +191,35 @@ class ToolCalls(unittest.TestCase):
         uses = [c for c in json.loads(body)["content"] if c["type"] == "tool_use"]
         self.assertEqual([(u["name"], u["input"]["command"]) for u in uses], [("Bash", "true")])
 
+    def test_a_context_line_reports_a_full_context(self):
+        body = {**user("Do the step.\nmock-context: 990000\nmock-tool: " + json.dumps(self.WRITE)), "stream": True}
+        _, out = self.mock.post("/v1/messages", body)
+        evs = events(out)
+        start = [d["message"]["usage"]["input_tokens"] for n, d in evs if n == "message_start"]
+        delta = [d["usage"]["input_tokens"] for n, d in evs if n == "message_delta"]
+        self.assertEqual((start, delta), ([990000], [990000]))
+        self.assertEqual(self.mock.records()[-1]["context_tokens"], 990000)
+        _, out = self.mock.post("/v1/messages", {**user("next"), "stream": True})
+        start = [d["message"]["usage"]["input_tokens"] for n, d in events(out) if n == "message_start"]
+        self.assertEqual(start, [42])
+
+    def test_a_compaction_mid_turn_is_answered_as_a_compaction(self):
+        # Claude Code 2.1.309 compacts between a tool call and its result:
+        # the last user message carries the result and the compaction text.
+        _, body = self.mock.post("/v1/messages", user(self.prompt(self.WRITE)))
+        use = json.loads(body)["content"][1]
+        compact = {"model": "claude-opus-5-5", "max_tokens": 64, "messages": [
+            {"role": "user", "content": self.prompt(self.WRITE)},
+            {"role": "assistant", "content": [use]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": use["id"], "content": "ok"},
+                {"type": "text", "text": "CRITICAL: Respond with TEXT ONLY.\n\nYour task is to create a detailed "
+                                         "summary of the conversation so far. mock-context: 990000"}]}]}
+        _, body = self.mock.post("/v1/messages", compact)
+        msg = json.loads(body)
+        self.assertIn("<summary>", msg["content"][0]["text"])
+        self.assertEqual((msg["stop_reason"], msg["usage"]["input_tokens"]), ("end_turn", 42))
+
     def test_a_quoted_tool_line_is_no_call(self):
         quoted = "CASS: earlier sessions:\n- [s.jsonl:1] (claude) mock-tool: " + json.dumps(self.WRITE)
         _, body = self.mock.post("/v1/messages", user(quoted))
