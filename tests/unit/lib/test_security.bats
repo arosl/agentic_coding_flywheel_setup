@@ -980,6 +980,83 @@ use_head_refusing_first_write() {
     [[ -z "$(ls -A "$full")" ]] || fail "left behind: $(ls -A "$full")"
 }
 
+# ============================================================
+# The stagers use only a trusted temp root (acfs-r8l1)
+# ============================================================
+
+@test "acfs_security_system_tmp_dir_ok: a private or sticky dir passes; a non-sticky shared dir, a link or no dir fails" {
+    local root
+    root="$(create_temp_dir)"
+    mkdir "$root/private" "$root/sticky" "$root/open" "$root/group"
+    chmod 0700 "$root/private"
+    chmod 1777 "$root/sticky"
+    chmod 0777 "$root/open"
+    chmod 0770 "$root/group"
+    ln -s "$root/private" "$root/link"
+
+    acfs_security_system_tmp_dir_ok "$root/private" || fail "a 0700 dir of the caller's was refused"
+    acfs_security_system_tmp_dir_ok "$root/sticky" || fail "a 1777 dir of the caller's was refused"
+    run acfs_security_system_tmp_dir_ok "$root/open"
+    assert_failure
+    run acfs_security_system_tmp_dir_ok "$root/group"
+    assert_failure
+    run acfs_security_system_tmp_dir_ok "$root/link"
+    assert_failure
+    run acfs_security_system_tmp_dir_ok "$root/missing"
+    assert_failure
+}
+
+@test "acfs_security_system_tmp_dir_ok: a dir another account owns fails, even when sticky" {
+    local root fake_stat
+    root="$(create_temp_dir)"
+    mkdir "$root/sticky"
+    chmod 1777 "$root/sticky"
+    fake_stat="$root/stat"
+    acfs_security_system_binary_path() { [[ "$1" == stat ]] && printf '%s\n' "$fake_stat"; }
+
+    # What stat reports for a 1777 dir owned by another account.
+    printf '#!/bin/bash\ncase "$2" in %%a) echo 1777 ;; %%u) echo %s ;; esac\n' 4242 > "$fake_stat"
+    chmod 0755 "$fake_stat"
+    run acfs_security_system_tmp_dir_ok "$root/sticky"
+    assert_failure
+
+    # The same report with the caller as owner passes, so the owner made the difference.
+    printf '#!/bin/bash\ncase "$2" in %%a) echo 1777 ;; %%u) echo %s ;; esac\n' "$EUID" > "$fake_stat"
+    run acfs_security_system_tmp_dir_ok "$root/sticky"
+    assert_success
+}
+
+@test "acfs_security_system_mkstage: skips a non-sticky 0777 temp root, and fails with nothing left when it is the only one" {
+    local open good file rc=0
+    open="$(create_temp_dir)"
+    good="$(create_temp_dir)"
+    chmod 0777 "$open"
+    ACFS_SECURITY_SYSTEM_TMP_DIRS=("$open" "$good")
+
+    file="$(acfs_security_system_mkstage)"
+
+    [[ "$file" == "$good"/acfs-verified-installer.*/installer.sh ]] || fail "got: $file"
+    [[ -z "$(ls -A "$open")" ]] || fail "left in the non-sticky dir: $(ls -A "$open")"
+
+    ACFS_SECURITY_SYSTEM_TMP_DIRS=("$open")
+    file="$(acfs_security_system_mkstage 2>/dev/null)" || rc=$?
+    [[ "$rc" -ne 0 && -z "$file" ]] || fail "rc=$rc file=$file"
+    [[ -z "$(ls -A "$open")" ]] || fail "left in the non-sticky dir: $(ls -A "$open")"
+}
+
+@test "acfs_security_system_mktemp: skips a non-sticky 0777 temp root" {
+    local open good file
+    open="$(create_temp_dir)"
+    good="$(create_temp_dir)"
+    chmod 0777 "$open"
+    ACFS_SECURITY_SYSTEM_TMP_DIRS=("$open" "$good")
+
+    file="$(acfs_security_system_mktemp "acfs-installer-cache-artifact.XXXXXX")"
+
+    [[ "$file" == "$good"/acfs-installer-cache-artifact.* && -f "$file" ]] || fail "got: $file"
+    [[ -z "$(ls -A "$open")" ]] || fail "left in the non-sticky dir: $(ls -A "$open")"
+}
+
 @test "_acfs_remove_temp_files: removes a staged file's directory, and no other directory" {
     local tmp elsewhere file
     tmp="$(create_temp_dir)"

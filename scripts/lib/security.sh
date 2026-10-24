@@ -135,9 +135,28 @@ acfs_security_mktemp() {
 # TMPDIR, so a privileged caller can hand it to the target user. /tmp is often
 # a tmpfs with per-user quotas (systemd 256+ usrquota): once a user's share is
 # spent every write there fails with EDQUOT while df still shows free space,
-# and every verified installer failed. Use the first directory that takes a
-# test write of PROBE_BYTES (default 1 MiB); the file is returned empty.
+# and every verified installer failed. Use the first trusted directory
+# (acfs_security_system_tmp_dir_ok) that takes a test write of PROBE_BYTES
+# (default 1 MiB); the file is returned empty.
 ACFS_SECURITY_SYSTEM_TMP_DIRS=(/tmp /var/tmp)
+
+# A system temp directory the stagers may use: a real directory, not a link,
+# writable, owned by root or the caller, and sticky when group- or
+# world-writable, as update_create_target_readable_temp_file requires. In a
+# temp root without the sticky bit, or one another account owns, that account
+# could rename the stage between the checksum write and the run (acfs-r8l1).
+acfs_security_system_tmp_dir_ok() {
+    local dir="${1:-}" stat_bin="" mode="" uid=""
+
+    [[ -n "$dir" && -d "$dir" && ! -L "$dir" && -w "$dir" ]] || return 1
+    stat_bin="$(acfs_security_system_binary_path stat 2>/dev/null)" || return 1
+    mode="$("$stat_bin" -c '%a' "$dir" 2>/dev/null || "$stat_bin" -f '%Lp' "$dir" 2>/dev/null || true)"
+    uid="$("$stat_bin" -c '%u' "$dir" 2>/dev/null || "$stat_bin" -f '%u' "$dir" 2>/dev/null || true)"
+    [[ "$mode" =~ ^[0-7]{3,4}$ && "$uid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$uid" == 0 || "$uid" == "$EUID" ]] || return 1
+    (( (8#$mode & 0022) == 0 )) || [[ -k "$dir" ]]
+}
+
 acfs_security_system_mktemp() {
     local name="${1:-}" probe_bytes="${2:-1048576}" dir="" file="" head_bin=""
 
@@ -145,7 +164,7 @@ acfs_security_system_mktemp() {
     [[ "$probe_bytes" =~ ^[0-9]{1,9}$ ]] || return 1
     head_bin="$(acfs_security_required_binary_path head 2>/dev/null)" || head_bin=""
     for dir in "${ACFS_SECURITY_SYSTEM_TMP_DIRS[@]}"; do
-        [[ -d "$dir" && -w "$dir" ]] || continue
+        acfs_security_system_tmp_dir_ok "$dir" || continue
         file="$(acfs_security_mktemp "$dir/$name" 2>/dev/null)" || continue
         if [[ -z "$head_bin" ]] || "$head_bin" -c "$probe_bytes" /dev/zero > "$file" 2>/dev/null; then
             if : > "$file"; then
@@ -165,7 +184,7 @@ acfs_security_system_mktemp() {
 # local account put in /tmp. So the installer is the only file in a fresh
 # directory, mode 0755 and owned by the caller, which no other account can
 # add to. Prints the path of the empty file installer.sh in that directory,
-# made in the first system temp directory that takes a test write of
+# made in the first trusted system temp directory that takes a test write of
 # PROBE_BYTES (default 1 MiB). _acfs_remove_temp_files removes both.
 ACFS_SECURITY_STAGE_FILE="installer.sh"
 acfs_security_system_mkstage() {
@@ -175,7 +194,7 @@ acfs_security_system_mkstage() {
     chmod_bin="$(acfs_security_required_binary_path chmod 2>/dev/null)" || return 1
     head_bin="$(acfs_security_required_binary_path head 2>/dev/null)" || head_bin=""
     for dir in "${ACFS_SECURITY_SYSTEM_TMP_DIRS[@]}"; do
-        [[ -d "$dir" && -w "$dir" ]] || continue
+        acfs_security_system_tmp_dir_ok "$dir" || continue
         stage_dir="$(acfs_security_mktemp -d "$dir/acfs-verified-installer.XXXXXX" 2>/dev/null)" || continue
         [[ -n "$stage_dir" ]] || continue
         file="$stage_dir/$ACFS_SECURITY_STAGE_FILE"
@@ -2032,7 +2051,7 @@ acfs_stage_verified_installer() {
     fi
 
     staging_file="$(acfs_security_system_mkstage)" || {
-        log_error "Failed to create verified installer staging file for $name (no system temp dir took a test write: full or over a per-user quota?)"
+        log_error "Failed to create verified installer staging file for $name (no system temp dir took a test write: full or over a per-user quota, or not owned by root or you and sticky?)"
         ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
         return 1
     }
