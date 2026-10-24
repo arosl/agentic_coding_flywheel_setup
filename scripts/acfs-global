@@ -885,6 +885,55 @@ detect_target_user() {
     return 1
 }
 
+# path_owner_mode_type PATH: prints "<uid> <octal mode> <type>" for PATH
+# itself, not for what a link at PATH points to.
+path_owner_mode_type() {
+    local stat_bin=""
+    stat_bin="$(system_binary_path stat 2>/dev/null || true)"
+    [[ -n "$stat_bin" ]] || return 1
+    "$stat_bin" -c '%u %a %F' -- "$1" 2>/dev/null
+}
+
+resolve_path_fully() {
+    local readlink_bin=""
+    readlink_bin="$(system_binary_path readlink 2>/dev/null || true)"
+    [[ -n "$readlink_bin" ]] || return 1
+    "$readlink_bin" -f -- "$1" 2>/dev/null
+}
+
+# root_owned_path_chain PATH: PATH and every directory above it belong to
+# root, and no group or other can write them, so no other account can
+# change what PATH names. A link counts by its owner alone; the caller
+# checks where it leads as well.
+root_owned_path_chain() {
+    local path="$1" info="" uid="" mode="" type=""
+    [[ "$path" == /* ]] || return 1
+    while :; do
+        info="$(path_owner_mode_type "$path")" || return 1
+        read -r uid mode type <<< "$info"
+        [[ "$uid" == 0 && "$mode" =~ ^[0-7]+$ ]] || return 1
+        if [[ "$type" != "symbolic link" ]] && (( 8#$mode & 022 )); then
+            return 1
+        fi
+        [[ "$path" != "/" ]] || return 0
+        path="${path%/*}"
+        [[ -n "$path" ]] || path="/"
+    done
+}
+
+# root_may_exec_directly ACFS_BIN: true when a root run may execute
+# ACFS_BIN itself: it resolves to a regular file, and root owns it and
+# everything above it, as named and as resolved. Otherwise another
+# account's file would run as root (acfs-67mn).
+root_may_exec_directly() {
+    local acfs_bin="$1" resolved="" info=""
+    resolved="$(resolve_path_fully "$acfs_bin")" || return 1
+    [[ "$resolved" == /* ]] || return 1
+    info="$(path_owner_mode_type "$resolved")" || return 1
+    [[ "${info#* * }" == "regular file" ]] || return 1
+    root_owned_path_chain "$acfs_bin" && root_owned_path_chain "$resolved"
+}
+
 main() {
     local target_user
     local acfs_bin=""
@@ -1182,6 +1231,13 @@ main() {
 
     # If owner detection failed or we're already the target user, run directly
     if [[ -z "$target_user" || "$current_user" == "$target_user" ]]; then
+        # As root, only an acfs that root alone controls runs here; a user's
+        # would run with root's rights (acfs-67mn).
+        if [[ "$EUID" -eq 0 ]] && ! root_may_exec_directly "$acfs_bin"; then
+            echo "Error: refusing to run $acfs_bin as root: root doesn't own it and every directory above it" >&2
+            echo "Run acfs as the account that owns it, e.g.: sudo -n -u <user> -H -- \"$0\" [args...]" >&2
+            exit 1
+        fi
         direct_target_home="$(resolve_direct_exec_target_home "$runtime_acfs_home" 2>/dev/null || true)"
         if [[ -n "$direct_target_home" ]]; then
             direct_acfs_home="$(resolve_direct_exec_acfs_home "$direct_target_home" "$runtime_acfs_home" 2>/dev/null || true)"
