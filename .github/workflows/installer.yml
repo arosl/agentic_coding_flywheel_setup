@@ -137,6 +137,9 @@ jobs:
       - name: Run doctor ast-grep launcher check tests
         run: bash tests/unit/test_doctor_ast_grep_launcher.sh
 
+      - name: Run doctor login shell check tests
+        run: bash tests/unit/test_doctor_login_shell.sh
+
       - name: Run acfs update --help stack list tests
         run: bash tests/unit/test_update_help_stack.sh
 

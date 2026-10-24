@@ -2644,7 +2644,11 @@ check_shell() {
     local user_lib=""
     user_lib="$(_acfs_doctor_find_lib_script "user.sh" 2>/dev/null || true)"
     if [[ -z "$user_lib" || ! -f "$user_lib" ]]; then
-        check "shell.login_shell" "Login shell policy" "fail" "user.sh validator is not deployed" \
+        # A runtime from before upstream's #473 lacks user.sh until an update
+        # syncs it, and an update that can't pull deploys this doctor without
+        # it (acfs-kcia). That is a stale runtime, not a broken host, so warn,
+        # as the holds check does: a FAIL fails cloud-init's install check.
+        check "shell.login_shell" "Login shell policy" "warn" "user.sh validator is not deployed, so the login shell is unchecked" \
             "Run acfs-update to redeploy the ACFS runtime, then run acfs doctor again"
     elif (
         # Keep user.sh state changes contained; doctor only needs its read-only
