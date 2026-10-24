@@ -231,6 +231,29 @@ test_healthy_ten_agents_passes_with_launch_command() {
     pass "healthy_ten_agents_passes_with_launch_command"
 }
 
+# A count flag takes 1 or more (nhm-2p6.4.1, as in ntm), so the printed
+# command leaves out a kind a small plan gives no agents (acfs-9hkh.104).
+test_small_plans_leave_out_kinds_with_no_agents() {
+    local fixture output count
+    fixture="$(healthy_status_fixture)"
+    ACFS_TEST_CAPACITY_SCRIPT="$(capacity_script_with_safe_count 64 44 pass "Requested count is within the recommended tier")"
+    export ACFS_TEST_CAPACITY_SCRIPT
+
+    for count in 1 2 10; do
+        # The fixture's herdr workspaces make the 1- and 2-agent plans a
+        # warn (launch with review); the command is the same either way.
+        output="$(run_plan_json "small_$count" "$fixture" --agents "$count" --profile balanced --workload standard)"
+        jq -e --argjson n "$count" '
+          ({"1": " --agy=1 ", "2": " --agy=2 ", "10": " --cc=4 --cod=4 --agy=2 "}[$n | tostring]) as $flags
+          | .launch_profile.recommended == true
+            and (.launch_profile.command | test("=0( |$)") | not)
+            and .launch_profile.command == "nhm spawn myproject --label swarm-\($n)\($flags)--assign --stagger-mode=smart"
+        ' <<<"$output" >/dev/null || return 1
+    done
+
+    pass "small_plans_leave_out_kinds_with_no_agents"
+}
+
 test_busy_rch_warns_and_scales_down() {
     local fixture output status
     fixture="$(busy_rch_status_fixture)"
@@ -421,6 +444,7 @@ main() {
     }
 
     run_test test_healthy_ten_agents_passes_with_launch_command
+    run_test test_small_plans_leave_out_kinds_with_no_agents
     run_test test_busy_rch_warns_and_scales_down
     run_test test_warning_within_capacity_proceeds_with_review
     run_test test_low_capacity_blocks_large_profile

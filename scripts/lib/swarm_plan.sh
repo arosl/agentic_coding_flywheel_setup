@@ -565,9 +565,10 @@ $status as $s
       command:
         (if ($launch_agents // 0) > 0 then
           "nhm spawn myproject --label swarm-" + ($launch_agents | tostring)
-          + " --cc=" + ($mix.cc | tostring)
-          + " --cod=" + ($mix.cod | tostring)
-          + " --agy=" + ($mix.agy | tostring)
+          # A count flag takes 1 or more, as in ntm (nhm-2p6.4.1): a kind
+          # with no agents is left out (acfs-9hkh.104).
+          + ([["cc", $mix.cc], ["cod", $mix.cod], ["agy", $mix.agy]]
+             | map(select(.[1] > 0) | " --" + .[0] + "=" + (.[1] | tostring)) | join(""))
           + " --assign --stagger-mode=smart"
         else null end)
     },
