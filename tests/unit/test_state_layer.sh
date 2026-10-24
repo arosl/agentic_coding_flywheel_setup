@@ -75,10 +75,14 @@ if [[ "$decrypt" == "true" ]]; then
 else
     if [[ -n "${AGE_SWAP_LINK:-}" ]]; then
         # A user who owns the output directory swaps the output's name for a
-        # link before age writes.
-        target="${out:-$(readlink /proc/self/fd/1)}"
+        # link before age writes. $$, not self: inside $( ) fd 1 is the
+        # substitution's pipe. Only a real path is swapped, so a run never
+        # plants a link in the working directory.
+        target="${out:-$(readlink "/proc/$$/fd/1")}"
+        [[ "$target" == /* ]] || { echo "age stub: output is not a file: $target" >&2; exit 1; }
         rm -f -- "$target"
         ln -s "$AGE_SWAP_LINK" "$target"
+        touch "$AGE_SWAP_LINK.swapped"
     fi
     { echo AGESTUB; cat; } >"${out:-/dev/stdout}"
 fi
@@ -358,7 +362,9 @@ check "export refuses to overwrite an existing file" bash -c '[[ "$1" -ne 0 ]] &
 printf 'root file\n' >"$WORK/victim"
 ACTIVE_UNITS="user@$UID_NOW.service" AGE_SWAP_LINK="$WORK/victim" run "$A" export devbox "$WORK/swap.tar.age" --recipient age1example
 check "a link swapped in at the partial archive's name is not written through" \
-    bash -c '[[ "$(cat "$1")" == "root file" ]]' _ "$WORK/victim"
+    bash -c '[[ -e "$1.swapped" && "$(cat "$1")" == "root file" ]]' _ "$WORK/victim"
+check "the swap left nothing in the working directory" \
+    bash -c '[[ -z "$(find . -maxdepth 1 -lname "$1")" ]]' _ "$WORK/victim"
 
 run "$A" export devbox --with-cache --recipient age1example
 DEFAULT_ARCHIVE="$(compgen -G "$A/home/acfs-state/devbox-*.tar.age" | head -1)"
