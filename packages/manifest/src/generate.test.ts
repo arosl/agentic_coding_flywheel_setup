@@ -1049,11 +1049,10 @@ describe("Generated filesystem script hardening", () => {
   });
 
   test("does not recursively chown /data (avoid over-broad ownership changes)", () => {
-    // Recursive ownership is safe for the ACFS-owned docs subtree; reject only
-    // a recursive operation whose target is /data itself.
-    expect(filesystemContent).toContain(
-      'chown -R "${TARGET_USER:-ubuntu}:${TARGET_USER:-ubuntu}" "$target_home/.acfs/docs"',
-    );
+    // The target user writes the ACFS-owned docs subtree itself, so root
+    // chowns nothing there (acfs-idnq); reject a recursive operation whose
+    // target is /data itself.
+    expect(filesystemContent).toContain('"${as_target[@]}" mkdir -p "$target_home/.acfs/docs"');
     expect(filesystemContent).not.toMatch(/chown\s+-R[^\n]*\s\/data\b/);
   });
 

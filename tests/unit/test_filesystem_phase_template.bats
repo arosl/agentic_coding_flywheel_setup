@@ -142,3 +142,25 @@ verified_files() {
     [[ ! -e "$BATS_TEST_TMPDIR/missing" ]]
     [[ ! -s "$RUN_AS_TARGET_LOG" ]]
 }
+
+# The generated path (a migrated filesystem category) runs base.filesystem's
+# install as root. It can't run here: it writes /data/projects, and runuser
+# needs root. So the generated installer is read instead.
+@test "base.filesystem writes the template and the workspace seed as the target user, and root chowns neither (acfs-idnq)" {
+    local body writes as_root chowns
+    # The module's shell snippets, which carry helper functions of their own.
+    body="$(sed -n "/<<'INSTALL_BASE_FILESYSTEM'\$/,/^INSTALL_BASE_FILESYSTEM\$/p" "$PROJECT_ROOT/scripts/generated/install_filesystem.sh")"
+    [[ -n "$body" ]]
+    [[ "$body" == *'as_target=("$runuser_bin" -u "${TARGET_USER:-ubuntu}" --)'* ]]
+
+    # Each command that writes ~/.acfs/docs or /data/projects/AGENTS.md.
+    writes="$(grep -E '^[^#]*\b(mkdir|curl|cp)\b.*(\.acfs/docs|/data/projects/AGENTS\.md)' <<< "$body" || true)"
+    [[ "$(grep -c . <<< "$writes")" -eq 3 ]]
+    as_root="$(grep -vE '^[[:space:]]*"\$\{as_target\[@\]\}" ' <<< "$writes" || true)"
+    printf 'written as root: %s\n' "$as_root"
+    [[ -z "$as_root" ]]
+
+    chowns="$(grep -E '^[^#]*\bchown\b.*(\.acfs/docs|/data/projects/AGENTS\.md)' <<< "$body" || true)"
+    printf 'root chowns: %s\n' "$chowns"
+    [[ -z "$chowns" ]]
+}
