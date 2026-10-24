@@ -3974,6 +3974,54 @@ EOF
     assert_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
 }
 
+@test "sync_acfs_zshrc makes the directory and copies only as the target user (acfs-n9l8)" {
+    local body
+    body="$(declare -f sync_acfs_zshrc)"
+    # No mkdir, cp or redirect into the deployed path from update.sh's own
+    # shell, which is root's when root runs the update for the user.
+    [[ -z "$(grep -E '(^|[;&|[:space:]])(mkdir|cp|install|tee) ' <<<"$body" | grep -v 'update_run_in_target_context' || true)" ]]
+    [[ -z "$(grep -E '>>? *"\$deployed_zshrc"' <<<"$body" || true)" ]]
+    [[ "$body" == *'update_run_in_target_context "" cp -- "$repo_zshrc" "$deployed_zshrc"'* ]]
+}
+
+_zshrc_sync_repo() {
+    ACFS_REPO_ROOT="$(create_temp_dir)"
+    mkdir -p "$ACFS_REPO_ROOT/acfs/zsh"
+    printf '# acfs.zshrc from the repo\n' > "$ACFS_REPO_ROOT/acfs/zsh/acfs.zshrc"
+}
+
+@test "sync_acfs_zshrc: replaces a differing deployed copy, and says so" {
+    _zshrc_sync_repo
+    mkdir -p "$HOME/.acfs/zsh"
+    printf '# hand-edited\n' > "$HOME/.acfs/zsh/acfs.zshrc"
+
+    run sync_acfs_zshrc
+    assert_success
+    assert_output --partial "the deployed copy differed and was replaced"
+
+    run cat "$HOME/.acfs/zsh/acfs.zshrc"
+    assert_output "# acfs.zshrc from the repo"
+}
+
+@test "sync_acfs_zshrc: a deployed acfs.zshrc linked to a file the user can't write is left alone, with a warning (acfs-n9l8)" {
+    local locked
+    _zshrc_sync_repo
+    locked="$(create_temp_dir)"
+    printf 'root:x:0:0:root:/root:/bin/bash\n' > "$locked/passwd"
+    chmod a-w "$locked/passwd" "$locked"
+    mkdir -p "$HOME/.acfs/zsh"
+    ln -s "$locked/passwd" "$HOME/.acfs/zsh/acfs.zshrc"
+
+    run sync_acfs_zshrc
+    chmod u+w "$locked" "$locked/passwd"
+    assert_success
+    assert_output --partial "couldn't copy $ACFS_REPO_ROOT/acfs/zsh/acfs.zshrc to $HOME/.acfs/zsh/acfs.zshrc as the target user"
+    refute_output --partial "synced from repo"
+
+    run cat "$locked/passwd"
+    assert_output "root:x:0:0:root:/root:/bin/bash"
+}
+
 @test "sync_acfs_profile_paths: respects TARGET_HOME when HOME differs" {
     local current_home
     local target_home

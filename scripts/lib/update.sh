@@ -3344,8 +3344,16 @@ sync_acfs_zshrc() {
     local had_deployed=false
     [[ -f "$deployed_zshrc" ]] && had_deployed=true
 
-    mkdir -p "$(dirname "$deployed_zshrc")"
-    cp "$repo_zshrc" "$deployed_zshrc"
+    # The target user makes the directory and copies the file (acfs-n9l8).
+    # As root, cp wrote through a link the user put at the deployed path, onto
+    # any file of root's; as the user, a link there or in the checkout reaches
+    # only what the user could read or write.
+    if ! update_run_in_target_context "" mkdir -p -- "$(dirname "$deployed_zshrc")" >/dev/null 2>&1 \
+        || ! update_run_in_target_context "" cp -- "$repo_zshrc" "$deployed_zshrc" >/dev/null 2>&1; then
+        log_item "warn" "acfs.zshrc" "couldn't copy $repo_zshrc to $deployed_zshrc as the target user; not synced"
+        log_to_file "Refused syncing $repo_zshrc -> $deployed_zshrc: the target user could not read the source or write the file"
+        return 0
+    fi
     if [[ "$had_deployed" == "true" ]]; then
         # acfs.zshrc is a managed file: any hand edits to the deployed copy are
         # replaced on sync. Say so instead of reporting a routine sync (#359).
