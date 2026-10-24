@@ -590,8 +590,10 @@ state_py() {
 # state_as_user CMD...: runs CMD as the user, for work inside the user's
 # home. There a link the user puts in a path reaches only what the user
 # may write already; root following it could reach any file (acfs-z2c7).
+# In a clean environment: runuser keeps root's, and the user can read the
+# environment of a process the user owns.
 state_as_user() {
-    runuser -u "$STATE_USER" -- env PATH=/usr/bin:/bin "$@"
+    runuser -u "$STATE_USER" -- env -i PATH=/usr/bin:/bin HOME="$STATE_HOME" LANG=C.UTF-8 "$@"
 }
 
 # state_py_as_user ARGS...: state_py, run as the user.
@@ -909,7 +911,8 @@ state_cmd_lease() {
 state_tool_versions_json() {
     local tool v json="{}"
     for tool in claude codex agy gemini pi gh herdr am tailscale; do
-        v="$(runuser -u "$STATE_USER" -- env PATH="$STATE_HOME/.local/bin:$STATE_HOME/.bun/bin:$STATE_HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
+        v="$(runuser -u "$STATE_USER" -- env -i HOME="$STATE_HOME" LANG=C.UTF-8 \
+            PATH="$STATE_HOME/.local/bin:$STATE_HOME/.bun/bin:$STATE_HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
             timeout 10 "$tool" --version 2>/dev/null </dev/null | head -1 || true)"
         [[ -n "$v" ]] && json="$(jq -c --arg k "$tool" --arg v "$v" '. + {($k): $v}' <<<"$json")"
     done
@@ -993,7 +996,8 @@ state_cmd_export() {
     if [[ -n "$snap_pool" ]]; then
         local snap="acfs-export-$stamp"
         state_info "Snapshotting $snap_remote:acfs-state-$name as $snap"
-        runuser -u "$STATE_USER" -- incus storage volume snapshot create "$snap_remote:$snap_pool" "acfs-state-$name" "$snap" \
+        runuser -u "$STATE_USER" -- env -i HOME="$STATE_HOME" LANG=C.UTF-8 PATH="$PATH" \
+            incus storage volume snapshot create "$snap_remote:$snap_pool" "acfs-state-$name" "$snap" \
             || state_die "could not snapshot acfs-state-$name; nothing was exported"
     elif state_in_container; then
         state_info "No volume snapshot (pass --snapshot-pool to take one); the copy is taken from the quiesced volume"
@@ -1232,7 +1236,8 @@ state_import_tool_warnings() {
     local manifest="$1" tool want have
     while IFS=$'\t' read -r tool want; do
         [[ -n "$tool" ]] || continue
-        have="$(runuser -u "$STATE_USER" -- env PATH="$STATE_HOME/.local/bin:$STATE_HOME/.bun/bin:$STATE_HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
+        have="$(runuser -u "$STATE_USER" -- env -i HOME="$STATE_HOME" LANG=C.UTF-8 \
+            PATH="$STATE_HOME/.local/bin:$STATE_HOME/.bun/bin:$STATE_HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
             timeout 10 "$tool" --version 2>/dev/null </dev/null | head -1 || true)"
         if [[ -z "$have" ]]; then
             state_info "note: $tool is not installed here (the archive has $want)"

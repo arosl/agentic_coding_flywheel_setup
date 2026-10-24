@@ -428,6 +428,8 @@ check "the user extracts, swaps and merges the home rows; root renames and makes
     bash -c 'grep -q "^as-user .*extract $1/home/.acfs-import-" "$2" && grep -q "^as-user .*mv -T -- $1/home/.acfs-import-" "$2" && grep -q "^as-user .*authorized_keys" "$2" && ! grep -qE "^(mv|mkdir) .*$1/home/" "$2"' _ "$B" "$LOG"
 check "the user's extract never sees the root rows" \
     bash -c '! grep -rq ed25519-private "$1"/home/.acfs-import-*/' _ "$B"
+check "what runs as the user gets a clean environment, never root's" \
+    bash -c 'grep -q "^as-user " "$1" && ! grep "^as-user " "$1" | grep -qv "^as-user env -i "' _ "$LOG"
 
 INSTANCE_LEASE="lease-b" run "$B" import devbox "$WORK/a.tar.age"
 check "a second import refuses the login this machine now holds" \
