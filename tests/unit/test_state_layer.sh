@@ -605,6 +605,8 @@ echo "repair"
 chmod 0644 "$A/home/.codex/auth.json" "$A/ssh/ssh_host_ed25519_key"
 chmod 0755 "$A/home/.codex"
 chmod 0664 "$A/home/.config/systemd/user/x.service"
+printf 'ssh-ed25519 pub\n' >"$A/home/.ssh/id_ed25519.pub"
+chmod 0775 "$A/home/.ssh/id_ed25519.pub"
 run "$A" repair --dry-run
 check "repair --dry-run names the rows and changes nothing" \
     bash -c 'grep -q "^codex: no group or other access" "$1" && [[ "$(stat -c %a "$2/home/.codex/auth.json")" == 644 ]]' _ "$OUT" "$A"
@@ -613,6 +615,8 @@ check "repair makes secret files 0600, dirs 0700, keeps .pub 0644" \
     bash -c '[[ "$(stat -c %a "$1/home/.codex/auth.json")" == 600 && "$(stat -c %a "$1/home/.codex")" == 700 && "$(stat -c %a "$1/ssh/ssh_host_ed25519_key")" == 600 && "$(stat -c %a "$1/ssh/ssh_host_ed25519_key.pub")" == 644 ]]' _ "$A"
 check "repair leaves asis rows alone" \
     bash -c '[[ "$(stat -c %a "$1/home/.config/systemd/user/x.service")" == 664 ]]' _ "$A"
+check "a home .pub gets u+rw,go-wx,go+r, as state_fix_modes gives it" \
+    bash -c '[[ "$(stat -c %a "$1/home/.ssh/id_ed25519.pub")" == 744 ]]' _ "$A"
 # Repair runs as root, and the user owns the home: a directory in a row's
 # path may be a link the user made (acfs-3vcb). Repair refuses the row, and
 # nothing behind the link changes.

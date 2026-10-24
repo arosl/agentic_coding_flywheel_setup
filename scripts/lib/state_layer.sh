@@ -556,28 +556,31 @@ def fix_entry(dfd, name, action, uid, gid):
         finally:
             os.close(fd)
     elif stat.S_ISREG(st.st_mode):
-        if action == "owner":
-            # Another name of a file the user doesn't own is never handed
-            # over: with protected_hardlinks off it may be a root file.
-            if st.st_nlink > 1 and st.st_uid != uid:
-                raise Refuse("a hard link to a file the user doesn't own: %r" % name)
-            os.chown(name, uid, gid, dir_fd=dfd, follow_symlinks=False)
-            return
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dfd)
         try:
-            if os.fstat(fd).st_ino != st.st_ino:
+            fst = os.fstat(fd)
+            if fst.st_ino != st.st_ino:
                 raise Refuse("changed during the repair: %r" % name)
-            mode = stat.S_IMODE(st.st_mode)
-            if name.endswith(".pub"):
-                mode = (mode | 0o644) & ~0o022
+            if action == "owner":
+                # Another name of a file the user doesn't own is never handed
+                # over: with protected_hardlinks off it may be a root file.
+                # The check and the chown use the same descriptor, so a name
+                # swapped in between can't be what changes hands.
+                if fst.st_nlink > 1 and fst.st_uid != uid:
+                    raise Refuse("a hard link to a file the user doesn't own: %r" % name)
+                os.fchown(fd, uid, gid)
             else:
-                mode &= ~0o077
-            os.fchmod(fd, mode)
+                mode = stat.S_IMODE(fst.st_mode)
+                if name.endswith(".pub"):
+                    mode = (mode | 0o644) & ~0o033
+                else:
+                    mode &= ~0o077
+                os.fchmod(fd, mode)
         finally:
             os.close(fd)
-    elif action == "owner":
-        # A link or special file: its own owner, never its target's.
-        os.chown(name, uid, gid, dir_fd=dfd, follow_symlinks=False)
+    # A link or special file is left as it is: its owner grants no access,
+    # it can't be changed through a descriptor here, and a device node is
+    # never the user's to have.
 
 def fix_tree(base, rel, action, uid=None, gid=None):
     # repair's fix for a home row, as root: every directory from the base
@@ -599,6 +602,8 @@ def fix_tree(base, rel, action, uid=None, gid=None):
         else:
             for e in os.scandir(fd):
                 fix_entry(fd, e.name, action, uid, gid)
+    except OSError as e:
+        raise Refuse("the repair of %r stopped: %s (a link swapped in, or a file gone)" % (rel, e))
     finally:
         os.close(fd)
 
@@ -700,10 +705,12 @@ state_mode_problems() {
         -printf '%m %p\n' 2>/dev/null || true
 }
 
+# Directories and regular files only: a link's or special file's owner
+# grants no access, and repair never hands one over (acfs-3vcb).
 state_owner_problems() {
     local target="$1" uid="$2"
     [[ -e "$target" || -L "$target" ]] || return 0
-    find "$target" ! -uid "$uid" -printf '%U %p\n' 2>/dev/null || true
+    find "$target" \( -type d -o -type f \) ! -uid "$uid" -printf '%U %p\n' 2>/dev/null || true
 }
 
 # The user's primary group when it is the user's alone: no other
