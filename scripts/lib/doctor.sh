@@ -3773,7 +3773,10 @@ check_cloud() {
         if [[ "$doctor_ci" == "true" ]]; then
             check "network.ssh_keepalive" "SSH keepalive (not configured)" "pass" "ok in CI"
         else
-            check "network.ssh_keepalive" "SSH keepalive" "warn" "not configured (optional)" "$(fix_for_module "network.ssh_keepalive")"
+            # Opt-in (acfs-htdm): a host without it isn't a fault, so it's a
+            # skip that names how to enable it, not a warning on every host.
+            # A skip prints no Fix line, so the details carry the hint too.
+            check "network.ssh_keepalive" "SSH keepalive" "skip" "not enabled (opt-in: --only network.ssh_keepalive)" "$(fix_for_module "network.ssh_keepalive")"
         fi
     fi
 

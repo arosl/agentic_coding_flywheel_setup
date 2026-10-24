@@ -372,10 +372,14 @@ run_stack_phase() {
     grep -q 'acfs_legacy_run_manifest_module "agents.gemini"' <<<"$body"
 }
 
-@test "the legacy CLI phase runs ssh_keepalive's generated installer whenever it is selected (acfs-htdm)" {
+@test "the legacy CLI phase runs ssh_keepalive's generated installer when the plan has it (acfs-htdm)" {
     local body
     body="$(sed -n '/^install_cli_tools() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
-    grep -q 'acfs_legacy_module_selected "network.ssh_keepalive"' <<<"$body"
+    # The plan decides (it is opt-in): acfs_legacy_module_selected would be
+    # true on every unfiltered run.
+    grep -q 'should_run_module "network.ssh_keepalive"' <<<"$body"
+    ! grep -q 'acfs_legacy_module_selected "network.ssh_keepalive"' <<<"$body" \
+        || fail "keepalive's guard is true on every unfiltered run"
     grep -q 'acfs_should_skip_module "network.ssh_keepalive"' <<<"$body"
     grep -q 'acfs_legacy_run_manifest_module "network.ssh_keepalive"' <<<"$body"
     ! grep -q 'acfs_module_explicitly_selected "network.ssh_keepalive"' <<<"$body" \

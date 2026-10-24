@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="0f24db6e35e11ea174edcc2d8359e860353e392bd54c6adae5b41d607c06c6d8"
+ACFS_MANIFEST_SHA256="01551da557e4e6ee0f84a2d402ef8ace70787e7e5f83f20e6c4e14da683b1858"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -596,7 +596,7 @@ declare -gA ACFS_MODULE_DEFAULT=(
   ['tools.lazydocker']="0"
   ['tools.incus']="1"
   ['network.tailscale']="1"
-  ['network.ssh_keepalive']="1"
+  ['network.ssh_keepalive']="0"
   ['lang.bun']="1"
   ['lang.uv']="1"
   ['lang.rust']="1"

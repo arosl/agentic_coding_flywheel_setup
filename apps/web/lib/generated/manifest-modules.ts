@@ -41,7 +41,7 @@ export interface ManifestProvenanceMetadata {
 
 export const manifestProvenance = {
   acfsVersion: "0.10.0",
-  manifestSha256: "0f24db6e35e11ea174edcc2d8359e860353e392bd54c6adae5b41d607c06c6d8",
+  manifestSha256: "01551da557e4e6ee0f84a2d402ef8ace70787e7e5f83f20e6c4e14da683b1858",
   checksumsYamlSha256: "d8ca0bb0b9eeee8ae3f4cb3f718b74812d834d61d75f1dcc6077f89461f37b34",
 } as const satisfies ManifestProvenanceMetadata;
 
@@ -239,7 +239,7 @@ export const manifestModules: ManifestModuleMetadata[] = [
       "remote-dev",
       "ssh",
     ],
-    enabledByDefault: true,
+    enabledByDefault: false,
     optional: true,
   },
   {

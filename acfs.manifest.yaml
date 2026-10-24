@@ -731,7 +731,9 @@ modules:
     phase: 5
     run_as: root
     optional: true
-    enabled_by_default: true
+    # Opt-in (the operator's ruling on acfs-htdm, 2026-10-24): it edits sshd's
+    # config, so it runs only when selected, e.g. --only network.ssh_keepalive.
+    enabled_by_default: false
     tags: [networking, remote-dev, ssh]
     dependencies:
       - base.system
