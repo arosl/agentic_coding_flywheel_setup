@@ -72,6 +72,27 @@ home_chmods() {
     [[ -z "$as_root" ]]
 }
 
+# Each code line of install.sh that makes a directory on a path in the
+# user's home ($ACFS_HOME, $ACFS_BIN_DIR, $TARGET_HOME).
+home_mkdirs() {
+    grep -nE '((^|[^[:alnum:]_-])mkdir|"\$mkdir_bin"|acfs_asset_dir)( +-[[:alpha:]-]+)* +"\$\{?(ACFS_HOME|ACFS_BIN_DIR|TARGET_HOME)' \
+        "$PROJECT_ROOT/install.sh" | grep -vE '^[0-9]+:[[:space:]]*#'
+}
+
+@test "install.sh makes directories in the user's home only as the target user (acfs-svzn)" {
+    local mkdirs as_root
+    mkdirs="$(home_mkdirs)"
+    # The pattern still finds the call sites, so the check can't pass empty.
+    (( $(wc -l <<<"$mkdirs") >= 10 ))
+    # install_asset writes there as the user (acfs-wiip), and the user can't
+    # create a file in a directory root made. Two stay root's: a primary bin
+    # directory root owns (_acfs_run_root_bin_command), and normalize_user's
+    # ~/.ssh, which root fills and hands over before the user writes there.
+    as_root="$(grep -vE 'acfs_asset_dir|run_as_target|_acfs_run_root_bin_command|"\$TARGET_HOME/\.ssh"' <<<"$mkdirs" || true)"
+    printf 'as root: %s\n' "$as_root"
+    [[ -z "$as_root" ]]
+}
+
 # Loads install.sh's acfs_chmod_as_target, acfs_find_chmod_as_target and
 # acfs_dotfile_own_for_target. The system chmod is a fake that logs who ran
 # it, root or the target user (run_as_target sets the runner), then runs the

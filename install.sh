@@ -4950,6 +4950,43 @@ acfs_write_file_as_target() {
     ' _ "$dest" "$mode" "$expected_sha" "${bins[@]}"
 }
 
+# Makes each DIR that install_asset then writes into. Where install_asset
+# writes as the target user (a target that isn't root, DIR under its home),
+# the user makes DIR: the user can't create its temp file in a directory
+# root made (acfs-svzn). A root-owned directory that an earlier run's root
+# mkdir left below the home is handed to the user first, so a resume gets
+# through; a link there is the user's, and the user's mkdir follows it.
+# Elsewhere root makes DIR, as before.
+acfs_asset_dir() {
+    local dir="" path="" part="" target_home="${TARGET_HOME:-}" mkdir_bin="" stat_bin=""
+    local -a parts=()
+    target_home="${target_home%/}"
+    mkdir_bin="$(acfs_early_system_binary_path mkdir 2>/dev/null || true)"
+    stat_bin="$(acfs_early_system_binary_path stat 2>/dev/null || true)"
+    if [[ -z "$mkdir_bin" || -z "$stat_bin" ]]; then
+        log_error "acfs_asset_dir: Unable to locate mkdir or stat"
+        return 1
+    fi
+    for dir in "$@"; do
+        if [[ -z "${TARGET_USER:-}" || "$TARGET_USER" == "root" || -z "$target_home" || "$dir" != "$target_home"/* ]]; then
+            $SUDO "$mkdir_bin" -p -- "$dir" || return 1
+            continue
+        fi
+        path="$target_home"
+        IFS=/ read -r -a parts <<< "${dir#"$target_home"/}"
+        for part in "${parts[@]}"; do
+            [[ -n "$part" ]] || continue
+            path="$path/$part"
+            [[ -d "$path" && ! -L "$path" ]] || break
+            if [[ "$("$stat_bin" -c %u -- "$path" 2>/dev/null || true)" == 0 ]]; then
+                acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$path" || return 1
+                break
+            fi
+        done
+        run_as_target "$mkdir_bin" -p -- "$dir" || return 1
+    done
+}
+
 install_asset() {
     local rel_path="$1"
     local dest_path="$2"
@@ -8295,8 +8332,9 @@ setup_filesystem() {
         fi
     done
 
-    # Create ACFS directories (as root, then chown)
-    try_step "Creating ACFS directories" $SUDO mkdir -p "$ACFS_HOME"/{zsh,bin,docs,logs,scripts/lib} || return 1
+    # Create ACFS directories (as the user where install_asset writes as the
+    # user, acfs-svzn; the chown hands over what an older root run left)
+    try_step "Creating ACFS directories" acfs_asset_dir "$ACFS_HOME"/{zsh,bin,docs,logs,scripts/lib} || return 1
     try_step "Setting ACFS directory ownership" acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$ACFS_HOME" || return 1
     try_step "Creating ACFS log directory" $SUDO mkdir -p "$ACFS_LOG_DIR" || return 1
 
@@ -11739,7 +11777,7 @@ finalize() {
 
     # Install onboard lessons + command
     log_detail "Installing onboard lessons"
-    try_step "Creating onboard lessons directory" $SUDO mkdir -p "$ACFS_HOME/onboard/lessons" || return 1
+    try_step "Creating onboard lessons directory" acfs_asset_dir "$ACFS_HOME/onboard/lessons" || return 1
     local lesson_path
     local lesson_name
     local nullglob_was_set=0
@@ -11778,9 +11816,9 @@ finalize() {
 
     # Install acfs scripts (for acfs CLI subcommands)
     log_detail "Installing acfs scripts"
-    try_step "Creating ACFS scripts directory" $SUDO mkdir -p "$ACFS_HOME/scripts/lib" || return 1
-    try_step "Creating ACFS generated scripts directory" $SUDO mkdir -p "$ACFS_HOME/scripts/generated" || return 1
-    try_step "Creating ACFS templates directory" $SUDO mkdir -p "$ACFS_HOME/scripts/templates" || return 1
+    try_step "Creating ACFS scripts directory" acfs_asset_dir "$ACFS_HOME/scripts/lib" || return 1
+    try_step "Creating ACFS generated scripts directory" acfs_asset_dir "$ACFS_HOME/scripts/generated" || return 1
+    try_step "Creating ACFS templates directory" acfs_asset_dir "$ACFS_HOME/scripts/templates" || return 1
     
     # Install script libraries
     try_step "Installing logging.sh" install_asset "scripts/lib/logging.sh" "$ACFS_HOME/scripts/lib/logging.sh" || return 1
@@ -11928,7 +11966,7 @@ finalize() {
     try_step "Installing newproj_screens.sh" install_asset "scripts/lib/newproj_screens.sh" "$ACFS_HOME/scripts/lib/newproj_screens.sh" || return 1
     try_step "Installing newproj_tui.sh" install_asset "scripts/lib/newproj_tui.sh" "$ACFS_HOME/scripts/lib/newproj_tui.sh" || return 1
 
-    try_step "Creating newproj_screens directory" $SUDO mkdir -p "$ACFS_HOME/scripts/lib/newproj_screens" || return 1
+    try_step "Creating newproj_screens directory" acfs_asset_dir "$ACFS_HOME/scripts/lib/newproj_screens" || return 1
     
     local screens=(
         "screen_agents_preview.sh"

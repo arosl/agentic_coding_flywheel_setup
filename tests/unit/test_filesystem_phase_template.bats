@@ -12,6 +12,10 @@ setup() {
     PROJECT_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
 }
 
+teardown() {
+    chmod -R u+w "$BATS_TEST_TMPDIR" 2>/dev/null || true
+}
+
 # Runs install.sh's setup_filesystem with stubs, and prints, in order, each
 # install_asset destination and each workspace AGENTS.md seed it asks for.
 run_filesystem_phase() {
@@ -30,6 +34,7 @@ run_filesystem_phase() {
     try_step_optional() { shift; "$@"; }
     fake_sudo() { :; }
     run_as_target() { :; }
+    acfs_asset_dir() { :; }
     acfs_chown_target_home() { :; }
     acfs_chown_tree() { :; }
     acfs_ensure_primary_bin_dir() { :; }
@@ -258,6 +263,113 @@ verified_files() {
 
     [[ "$status" -ne 0 ]]
     grep -qF "error: install_asset: Failed to write verified source asset as ubuntu: acfs/AGENTS.md" "$CALLS"
+}
+
+# Adds install.sh's acfs_asset_dir to load_install_asset. A test can't make
+# root's directories, so left_by_root makes them mode 0555, which stops this
+# test's user as root's ownership stops the target, and the stat that
+# acfs_asset_dir resolves reports uid 0 for the paths in ROOT_OWNED.
+# acfs_chown_tree logs the handover and gives the tree back. $SUDO logs a
+# root mkdir.
+load_asset_dir() {
+    load_install_asset
+    eval "$(sed -n '/^acfs_asset_dir() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
+    [[ "$(type -t acfs_asset_dir)" == "function" ]]
+
+    ROOT_OWNED="$BATS_TEST_TMPDIR/root-owned"
+    : > "$ROOT_OWNED"
+    FAKE_STAT="$BATS_TEST_TMPDIR/stat"
+    printf '#!/bin/bash\nif grep -qxF -- "${!#}" "%s"; then echo 0; else exec %s "$@"; fi\n' \
+        "$ROOT_OWNED" "$(command -v stat)" > "$FAKE_STAT"
+    chmod 0755 "$FAKE_STAT"
+    acfs_early_system_binary_path() {
+        case "$1" in
+            cp) printf '%s\n' "$FAKE_CP" ;;
+            stat) printf '%s\n' "$FAKE_STAT" ;;
+            *) command -v "$1" ;;
+        esac
+    }
+    acfs_chown_tree() {
+        printf 'handover %s %s\n' "$1" "$2" >> "$CALLS"
+        chmod -R u+w -- "$2"
+        : > "$ROOT_OWNED"
+    }
+    root_mkdir() { printf 'root %s\n' "$*" >> "$CALLS"; "$@"; }
+    SUDO=root_mkdir
+}
+
+# Makes each DIR as an earlier run's root mkdir left it.
+left_by_root() {
+    local dir
+    for dir in "$@"; do
+        mkdir -p "$dir"
+        printf '%s\n' "$dir" >> "$ROOT_OWNED"
+    done
+    chmod 0555 -- "$@"
+}
+
+@test "acfs_asset_dir makes a directory under the target's home as the target user, and root makes none (acfs-svzn)" {
+    load_asset_dir
+
+    acfs_asset_dir "$ACFS_HOME/onboard/lessons" "$ACFS_HOME/scripts/generated"
+
+    [[ -d "$ACFS_HOME/onboard/lessons" && -d "$ACFS_HOME/scripts/generated" ]]
+    grep -qxF "as target: $(command -v mkdir) -p -- $ACFS_HOME/onboard/lessons" "$CALLS"
+    grep -qxF "as target: $(command -v mkdir) -p -- $ACFS_HOME/scripts/generated" "$CALLS"
+    [[ -z "$(grep -E '^(root|handover) ' "$CALLS" || true)" ]]
+}
+
+@test "a directory an earlier root run left is handed to the user first, so install_asset's user write gets in" {
+    load_asset_dir
+    left_by_root "$ACFS_HOME/onboard" "$ACFS_HOME/onboard/lessons"
+    # As finalize's was since acfs-wiip: the user can't write there.
+    run install_asset "acfs/AGENTS.md" "$ACFS_HOME/onboard/lessons/00_welcome.md"
+    [[ "$status" -ne 0 ]]
+    : > "$CALLS"
+
+    acfs_asset_dir "$ACFS_HOME/onboard/lessons"
+    install_asset "acfs/AGENTS.md" "$ACFS_HOME/onboard/lessons/00_welcome.md"
+
+    [[ "$(head -n 1 "$CALLS")" == "handover ubuntu:ubuntu $ACFS_HOME/onboard" ]]
+    [[ "$(cat "$ACFS_HOME/onboard/lessons/00_welcome.md")" == "template" ]]
+}
+
+@test "a link below the target's home is the user's: no handover, and the user's mkdir follows it" {
+    load_asset_dir
+    mkdir -p "$BATS_TEST_TMPDIR/elsewhere"
+    ln -s "$BATS_TEST_TMPDIR/elsewhere" "$ACFS_HOME/onboard"
+    printf '%s\n' "$ACFS_HOME/onboard" >> "$ROOT_OWNED"
+
+    acfs_asset_dir "$ACFS_HOME/onboard/lessons"
+
+    [[ -z "$(grep '^handover' "$CALLS" || true)" ]]
+    grep -qxF "as target: $(command -v mkdir) -p -- $ACFS_HOME/onboard/lessons" "$CALLS"
+}
+
+@test "outside the target's home, or for a root target, root makes the directory as before" {
+    load_asset_dir
+
+    acfs_asset_dir "$ACFS_BIN_DIR/sub"
+    TARGET_USER=root
+    acfs_asset_dir "$ACFS_HOME/onboard/lessons"
+
+    grep -qxF "root $(command -v mkdir) -p -- $ACFS_BIN_DIR/sub" "$CALLS"
+    grep -qxF "root $(command -v mkdir) -p -- $ACFS_HOME/onboard/lessons" "$CALLS"
+    [[ -z "$(grep -E '^(as target|handover) ' "$CALLS" || true)" ]]
+}
+
+@test "acfs_asset_dir fails when the user's mkdir fails, and makes nothing when the handover fails" {
+    load_asset_dir
+    run_as_target() { printf 'as target: %s\n' "$*" >> "$CALLS"; return 1; }
+    run acfs_asset_dir "$ACFS_HOME/onboard/lessons"
+    [[ "$status" -ne 0 ]]
+
+    load_asset_dir
+    left_by_root "$ACFS_HOME/onboard"
+    acfs_chown_tree() { return 1; }
+    run acfs_asset_dir "$ACFS_HOME/onboard/lessons"
+    [[ "$status" -ne 0 ]]
+    [[ -z "$(grep '^as target' "$CALLS" || true)" ]]
 }
 
 @test "the seed writes an absent workspace AGENTS.md, as the target user" {
