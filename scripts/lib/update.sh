@@ -1080,6 +1080,17 @@ update_for_user() {
     UPDATE_FOR_USER_HOME="$home"
 }
 
+# update_root_run_for_other_user: this is root's run for a user other than
+# root, where update_for_user fails only for a path outside that user's
+# home. The bin dir can be such a path, named by the user's own state.json
+# (/usr/local/bin, say), so root writes nothing there (acfs-r7nv).
+update_root_run_for_other_user() {
+    local user=""
+    [[ "${EUID:-$(id -u)}" -eq 0 ]] || return 1
+    user="$(update_target_user 2>/dev/null || true)"
+    [[ -n "$user" && "$user" != "root" ]]
+}
+
 # update_no_link_below HOME PATH: no part of PATH below HOME is a symlink.
 update_no_link_below() {
     local home="$1" path="$2"
@@ -1652,9 +1663,14 @@ update_write_atuin_guard_wrapper() {
         update_write_atuin_guard_wrapper_as_user "$wrapper_path" "$real_bin"
         return
     fi
+    # Outside that user's home, a wrapper of root's would put the user's
+    # atuin in root's PATH (acfs-r7nv).
+    if update_root_run_for_other_user; then
+        log_to_file "Not writing $wrapper_path as root: it is outside $(update_target_user 2>/dev/null || true)'s home"
+        return 1
+    fi
 
-    # A user's own run, or root's for root or into a directory outside the
-    # target's home, writes by path.
+    # A user's own run, or root's for root, writes by path.
     mkdir -p "${wrapper_path%/*}" 2>/dev/null || true
     if [[ -e "$wrapper_path" || -L "$wrapper_path" ]]; then
         if [[ ! -L "$wrapper_path" ]] && grep -Fq "agent hook integration disabled by ACFS" "$wrapper_path" 2>/dev/null; then
@@ -1845,6 +1861,33 @@ update_repair_atuin_install() {
     "$resolved_bin" --version >/dev/null 2>&1
 }
 
+# update_link_into_bin_dir SOURCE LINK: makes LINK, in the target's bin dir,
+# a link to SOURCE. In a root run for another user, that user makes the
+# directory and the link, and ln -n replaces a link at LINK rather than
+# making the new link inside the directory it points to; root links nothing
+# into a bin dir outside the user's home (acfs-r7nv). A user's own run, or
+# root's for root, links by path.
+update_link_into_bin_dir() {
+    local source_path="$1"
+    local link_path="$2"
+    local ln_bin=""
+
+    if update_for_user "$link_path"; then
+        ln_bin="$(update_system_binary_path ln 2>/dev/null || true)"
+        [[ -n "$ln_bin" ]] || return 1
+        update_user_mkdir "${link_path%/*}" || return 1
+        update_run_in_target_context "" "$ln_bin" -sfn -- "$source_path" "$link_path" >/dev/null 2>&1
+        return
+    fi
+    if update_root_run_for_other_user; then
+        log_to_file "Not linking $link_path as root: it is outside $(update_target_user 2>/dev/null || true)'s home"
+        return 1
+    fi
+
+    mkdir -p "${link_path%/*}" 2>/dev/null || true
+    ln -sf "$source_path" "$link_path" 2>/dev/null
+}
+
 update_repair_zoxide_install() {
     local primary_dir=""
     local user_bin=""
@@ -1859,8 +1902,7 @@ update_repair_zoxide_install() {
     if [[ -n "$primary_dir" && -n "$user_bin" && "$primary_dir" != "$user_bin" ]]; then
         local preferred_src="$user_bin/zoxide"
         [[ -x "$preferred_src" ]] || return 1
-        mkdir -p "$primary_dir" 2>/dev/null || true
-        if ln -sf "$preferred_src" "$primary_dir/zoxide" 2>/dev/null; then
+        if update_link_into_bin_dir "$preferred_src" "$primary_dir/zoxide"; then
             log_to_file "Zoxide symlink normalized: $primary_dir/zoxide -> $preferred_src"
         fi
     fi
@@ -1886,11 +1928,10 @@ update_repair_uv_install() {
     if [[ -n "$primary_dir" && -n "$user_bin" && "$primary_dir" != "$user_bin" ]]; then
         local preferred_src=""
         local binary_name=""
-        mkdir -p "$primary_dir" 2>/dev/null || true
         for binary_name in uv uvx; do
             preferred_src="$user_bin/$binary_name"
             [[ -x "$preferred_src" ]] || continue
-            if ln -sf "$preferred_src" "$primary_dir/$binary_name" 2>/dev/null; then
+            if update_link_into_bin_dir "$preferred_src" "$primary_dir/$binary_name"; then
                 log_to_file "uv symlink normalized: $primary_dir/$binary_name -> $preferred_src"
             fi
         done

@@ -3752,6 +3752,90 @@ EOF
     assert_output "$HOME/.local/bin/uvx"
 }
 
+# The user's zoxide, uv and uvx in ~/.local/bin, and a root run for that
+# user (stub_sync_as_user) whose update_for_user, like the real one, finds
+# the user only for a path inside the home (acfs-r7nv).
+_bin_dir_repairs_for_user() {
+    local tool
+    mkdir -p "$HOME/.local/bin"
+    for tool in zoxide uv uvx; do
+        printf '#!/bin/sh\necho "%s 1.0.0"\n' "$tool" > "$HOME/.local/bin/$tool"
+        chmod +x "$HOME/.local/bin/$tool"
+    done
+    UPDATE_LOG_FILE="$HOME/update.log"
+    stub_sync_as_user "$HOME" "$HOME/as-user.log"
+    update_for_user() {
+        [[ "$1" == "$AS_USER_HOME/"* ]] || return 1
+        UPDATE_FOR_USER=tester
+        UPDATE_FOR_USER_HOME="$AS_USER_HOME"
+    }
+    update_root_run_for_other_user() { return 0; }
+}
+
+@test "update_repair_zoxide_install and update_repair_uv_install run by root for a user: the user makes the links, replacing a link at the name rather than following it (acfs-r7nv)" {
+    local elsewhere tool
+    _bin_dir_repairs_for_user
+    elsewhere="$(create_temp_dir)"
+    export ACFS_BIN_DIR="$HOME/custom-bin"
+    mkdir -p "$ACFS_BIN_DIR"
+    # The user put links to a directory of root's (/etc, say) at the names.
+    for tool in zoxide uv uvx; do
+        ln -s "$elsewhere" "$ACFS_BIN_DIR/$tool"
+    done
+
+    run update_repair_zoxide_install
+    assert_success
+    run update_repair_uv_install
+    assert_success
+
+    [[ -z "$(ls -A "$elsewhere")" ]]
+    for tool in zoxide uv uvx; do
+        [[ "$(readlink "$ACFS_BIN_DIR/$tool")" == "$HOME/.local/bin/$tool" ]]
+        grep -Fq -- "-sfn -- $HOME/.local/bin/$tool $ACFS_BIN_DIR/$tool" "$HOME/as-user.log"
+    done
+    grep -Fxq "mkdir -p -- $ACFS_BIN_DIR" "$HOME/as-user.log"
+}
+
+@test "update_repair_zoxide_install and update_repair_uv_install run by root for a user link nothing into a bin dir outside that user's home (acfs-r7nv)" {
+    local outside tool
+    _bin_dir_repairs_for_user
+    # The user's state.json, or ACFS_BIN_DIR, names a directory of root's
+    # outside the home (/usr/local/bin, say), which the validator accepts.
+    outside="$(create_temp_dir)"
+    export ACFS_BIN_DIR="$outside"
+
+    run update_repair_zoxide_install
+    assert_success
+    run update_repair_uv_install
+    assert_success
+
+    [[ -z "$(ls -A "$outside")" ]]
+    for tool in zoxide uv uvx; do
+        grep -Fq "Not linking $outside/$tool as root: it is outside" "$HOME/update.log"
+    done
+    run grep -F -- "-sfn" "$HOME/as-user.log"
+    assert_failure
+}
+
+@test "update_write_atuin_guard_wrapper run by root for a user writes nothing outside that user's home (acfs-r7nv)" {
+    local outside
+    _atuin_wrapper_for_user
+    update_for_user() {
+        [[ "$1" == "$AS_USER_HOME/"* ]] || return 1
+        UPDATE_FOR_USER=tester
+        UPDATE_FOR_USER_HOME="$AS_USER_HOME"
+    }
+    update_root_run_for_other_user() { return 0; }
+    UPDATE_LOG_FILE="$ATUIN_HOME/update.log"
+    outside="$(create_temp_dir)"
+
+    run update_write_atuin_guard_wrapper "$outside/atuin" "$ATUIN_REAL"
+    assert_failure
+
+    [[ -z "$(ls -A "$outside")" ]]
+    grep -Fq "Not writing $outside/atuin as root: it is outside" "$ATUIN_HOME/update.log"
+}
+
 @test "acfs.zshrc: does not load Atuin shell hooks" {
     local zshrc="$PROJECT_ROOT/acfs/zsh/acfs.zshrc"
 
