@@ -266,7 +266,7 @@ describe("flywheelDescription object", () => {
   });
 
   test("keyInsight mentions key tools", () => {
-    expect(flywheelDescription.keyInsight).toMatch(/BV|Mail|CASS|CM|SLB|DCG|RU|herdr/);
+    expect(flywheelDescription.keyInsight).toMatch(/BV|Mail|CASS|CM|SLB|DCG|RU|nhm/);
   });
 });
 

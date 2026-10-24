@@ -366,7 +366,7 @@ Users are told to wait 10-15 minutes watching text scroll by.
 
 **What works:**
 - Celebratory design with confetti
-- Quick command reference (cc, herdr, rg, lazygit)
+- Quick command reference (cc, nhm, rg, lazygit)
 - Link to Learning Hub
 
 **CRITICAL Issue 9.1: No First Project Walkthrough**
@@ -427,7 +427,7 @@ If user closes their laptop or terminal, they'll be completely lost.
    ```bash
    ssh -i ~/.ssh/acfs_ed25519 ubuntu@YOUR_IP
    ```
-3. Your work is still there! Your agents kept running in herdr:
+3. Your work is still there! If you were using nhm:
    ```bash
    herdr
    ```

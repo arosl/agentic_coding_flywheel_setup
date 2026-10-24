@@ -1230,7 +1230,7 @@ EOF
 
     # Core tools
     local tools=(
-        "rust" "bun" "uv" "go" "zsh" "tmux" "nvim"
+        "rust" "bun" "uv" "go" "zsh" "herdr" "nvim"
         "zoxide" "atuin" "fzf" "ripgrep" "gh" "docker" "postgresql"
     )
 
@@ -1263,7 +1263,7 @@ EOF
     echo "flywheel_stack:"
 
     # Flywheel tools
-    local stack_tools=("herdr" "cass" "cm" "bv" "br" "dcg" "slb" "caam" "ubs" "rch" "ms" "ru")
+    local stack_tools=("nhm" "cass" "cm" "bv" "br" "dcg" "slb" "caam" "ubs" "rch" "ms" "ru")
     for tool in "${stack_tools[@]}"; do
         local version
         version=$(get_tool_version "$tool")
@@ -1323,7 +1323,7 @@ EOF
 EOF
 
     # Core tools
-    local tools=("rust" "bun" "uv" "go" "zsh" "tmux" "nvim" "zoxide" "atuin" "fzf" "ripgrep" "gh" "docker" "postgresql")
+    local tools=("rust" "bun" "uv" "go" "zsh" "herdr" "nvim" "zoxide" "atuin" "fzf" "ripgrep" "gh" "docker" "postgresql")
     first=true
     for tool in "${tools[@]}"; do
         local version
@@ -1371,7 +1371,7 @@ EOF
 EOF
 
     # Flywheel tools
-    local stack_tools=("herdr" "cass" "cm" "bv" "br" "dcg" "slb" "caam" "ubs" "rch" "ms" "ru")
+    local stack_tools=("nhm" "cass" "cm" "bv" "br" "dcg" "slb" "caam" "ubs" "rch" "ms" "ru")
     first=true
     for tool in "${stack_tools[@]}"; do
         local version

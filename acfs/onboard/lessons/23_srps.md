@@ -114,7 +114,7 @@ sudo systemctl start ananicy-cpp
 ## Next Steps
 
 Now that SRPS is keeping your system responsive, you can safely:
-- Run multiple agents in parallel in herdr
+- Run multiple agents in parallel with nhm
 - Launch heavy builds without worrying about freezes
 - Focus on your work while background tasks complete
 

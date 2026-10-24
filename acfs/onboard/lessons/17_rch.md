@@ -99,7 +99,7 @@ rch config set default_worker=myserver
 
 ## Integration with Other Tools
 
-- **herdr**: Every agent running in a herdr pane uses RCH for builds
+- **nhm**: Agents spawned by nhm use RCH for builds
 - **RU**: RU syncs repos that RCH then builds remotely
 - **Beads**: Build tasks can be tracked via beads
 

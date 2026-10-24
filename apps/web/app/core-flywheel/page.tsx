@@ -910,6 +910,7 @@ When you're not sure what to do next, use the bv tool mentioned in AGENTS.md to 
                 items={[
                   "Large-scale session memory systems like CASS and CM",
                   "Big prompt libraries",
+                  "Advanced launch tooling like nhm",
                   "The full exhaustive planning doctrine",
                   "Every supporting tool in ACFS",
                 ]}

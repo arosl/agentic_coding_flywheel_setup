@@ -848,7 +848,7 @@ printf "%s\n" "$doctor_json" | jq -e ".summary.fail == 0 and .summary.warn == 0"
     exit 1
 }
 '
-    run_target_step "post.stack_bins" 'for cmd in am herdr dcg ru cass cm caam slb ubs bv br; do command -v "$cmd" >/dev/null; done'
+    run_target_step "post.stack_bins" 'for cmd in am nhm dcg ru cass cm caam slb ubs bv br; do command -v "$cmd" >/dev/null; done'
     # The installed tree must run the shipped audit (bin/acfs ->
     # scripts/agent-readiness-audit.sh -> packages/manifest/src). Agents are not
     # signed in on a fresh host, so only the report shape is asserted.

@@ -7,13 +7,13 @@ acfs swarm inventory plan --agents 50 --workload standard --json \
 
 The planner distributes a **target total**, not an additional number of agents
 to launch. It reads the existing v1 inventory; it never connects to hosts,
-launches agents, claims Beads, sends Agent Mail, or changes RCH/RU configuration.
+launches nhm, claims Beads, sends Agent Mail, or changes RCH/RU configuration.
 A successful placement is not proof that a host is currently ready.
 
 ## Placement policy
 
 Only active controller, swarm-worker, or explicitly launch-enabled support
-hosts qualify. `herdr.can_launch` must be the boolean `true`. A missing flag,
+hosts qualify. `nhm.can_launch` must be the boolean `true`. A missing flag,
 null, or `false` is not permission. Both capacity counts must be known, positive
 integers. The per-host limit is the smaller of `recommended_agents` and
 `safe_agents`; zero remains zero. Recommendations above a safe maximum are
@@ -56,7 +56,7 @@ acfs swarm plan --agents 20 --workload standard --json
 
 Run that command **on the allocated host**, inspect existing sessions, and
 review its live admission result before deciding whether or how many agents
-to launch in herdr. Do not run every host's command on the controller and do
+to launch with nhm. Do not run every host's command on the controller and do
 not interpret target totals as additional agents. Recorded inventory is not
 live capacity, a reservation, or an authorization token.
 
@@ -92,7 +92,7 @@ shellcheck scripts/lib/swarm_inventory.sh
 The Python tests execute the actual Bash/jq entrypoint with filesystem fixtures.
 They cover eligibility, contradictory limits, duplicate keys, bad timestamps,
 large import/export, workload matching, stable ordering, bounded allocations,
-shortfalls, and inert invalid options. They do not perform live fleet or herdr
+shortfalls, and inert invalid options. They do not perform live fleet or nhm
 acceptance testing.
 
 ## Populate and refresh records from the local machine
@@ -110,14 +110,14 @@ readers and selected workload. It projects CPU, RAM, disk headroom, recommended
 and safe counts into the existing inventory schema and records a UTC observation
 time. The default filesystem is the current user's home; `--disk-path` selects
 an existing project filesystem without including that local path in the output.
-No commands run over SSH; no model, herdr workspace, RU operation, Beads write, Mail
+No commands run over SSH; no model, nhm session, RU operation, Beads write, Mail
 request, or RCH service request is made. Executable availability is not service
 health, authentication, or a live queue admission check.
 
 New records default to role `swarm-worker`, status `active`, and
-`herdr.can_launch: false`. `--role` selects another inventory role for a new record;
+`nhm.can_launch: false`. `--role` selects another inventory role for a new record;
 `--allow-launch` explicitly enables the new record's recommendation hint only
-when herdr is installed and the role permits agent launches. It does **not** start
+when nhm is installed and the role permits agent launches. It does **not** start
 agents. Omit it for a record that should remain excluded until separately reviewed.
 
 To refresh one local host in an existing fleet snapshot:
@@ -135,7 +135,7 @@ Other hosts retain their exact records, including their original probe times.
 Existing role, status, notes, tags, RCH/RU settings, and unrelated metadata are
 preserved. Existing workload is retained unless `--workload` explicitly changes
 it; new records use the inventory default. An old launch veto stays false.
-Missing herdr withdraws an existing positive hint. `--role` and `--allow-launch`
+Missing nhm withdraws an existing positive hint. `--role` and `--allow-launch`
 are rejected for existing records: changing operator policy needs a separate
 review, not a side effect of measurement. Refreshing a host never re-enables a
 disabled host or repurposes a build-only worker.
