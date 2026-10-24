@@ -2000,6 +2000,78 @@ acfs_file_is_owned_temp() {
     [[ -f "$path" && ! -L "$path" ]]
 }
 
+# Where a root run takes its install lock: a directory only root can write,
+# so no name in it is a link another account put there (acfs-0dmd). /run is
+# root's, where /run/lock is world-writable, and a tmpfs, so nothing of it
+# outlives a reboot.
+acfs_install_lock_root_dir() {
+    printf '%s\n' "/run/acfs"
+}
+
+acfs_install_lock_as_root() {
+    [[ "$EUID" -eq 0 ]]
+}
+
+# acfs_install_lock_file HOME: prints the install lock's path, after making
+# its directory. The lock is opened with a redirect, which truncates and
+# follows a link. So a root run never takes it in the user's ~/.acfs, where
+# the user can put a link at any name (acfs-0dmd): it locks
+# /run/acfs/install-<user>.lock. A run as the user keeps
+# $ACFS_HOME/.install.lock, the user's own file.
+acfs_install_lock_file() {
+    local home="$1" user="${TARGET_USER:-ubuntu}" dir="" owner_mode=""
+    if acfs_install_lock_as_root; then
+        # main checks TARGET_USER only after the lock; it names a file here.
+        if [[ ! "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+            log_error "Invalid TARGET_USER '$user' (expected: lowercase user name like 'ubuntu')"
+            return 1
+        fi
+        dir="$(acfs_install_lock_root_dir)"
+        if [[ ! -e "$dir" && ! -L "$dir" ]] && ! mkdir -m 0755 -- "$dir" 2>/dev/null && [[ ! -d "$dir" ]]; then
+            log_error "Unable to create the ACFS install lock directory: $dir"
+            return 1
+        fi
+        owner_mode="$(stat -c '%u %a' -- "$dir" 2>/dev/null || true)"
+        if [[ -L "$dir" || ! -d "$dir" || "${owner_mode%% *}" != "$EUID" ]] || (( 8#${owner_mode##* } & 022 )); then
+            log_error "Refusing the ACFS install lock directory $dir: it must be root's own directory, writable only by root"
+            return 1
+        fi
+        printf '%s/install-%s.lock\n' "$dir" "$user"
+        return 0
+    fi
+    dir="${ACFS_HOME:-$home/.acfs}"
+    if ! mkdir -p "$dir" 2>/dev/null; then
+        log_error "Unable to create ACFS install lock directory: $dir"
+        return 1
+    fi
+    printf '%s/.install.lock\n' "$dir"
+}
+
+# acfs_install_lock_is_free FILE: true when no installer holds FILE's lock.
+# The probe opens FILE read-only in a subshell, so it creates and truncates
+# nothing, and a run as the user can probe root's 0644 lock: flock needs no
+# write access (acfs-0dmd).
+acfs_install_lock_is_free() {
+    local file="$1"
+    [[ -f "$file" ]] || return 1
+    (exec 197<"$file" && flock -n 197) 2>/dev/null
+}
+
+# acfs_install_lock_root_held USER: in a run as the user, prints root's lock
+# path and is true while a root run installs for USER. The two runs can't
+# share a lock file, but the user can't put a name in root's directory, so
+# probing it there is safe (acfs-0dmd).
+acfs_install_lock_root_held() {
+    local user="$1" file=""
+    ! acfs_install_lock_as_root || return 1
+    [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]] || return 1
+    file="$(acfs_install_lock_root_dir)/install-$user.lock"
+    [[ -f "$file" && ! -L "$file" ]] || return 1
+    (exec 197<"$file") 2>/dev/null || return 1
+    ! acfs_install_lock_is_free "$file" || return 1
+    printf '%s\n' "$file"
+}
+
 acfs_remember_install_lock() {
     ACFS_INSTALL_LOCK_FD="$1"
     ACFS_INSTALL_LOCK_FILE="$2"
@@ -2064,10 +2136,11 @@ acfs_attach_to_running_install() {
         _tail_pid=$!
         # Poll for lock release in this shell.
         while kill -0 "$_tail_pid" 2>/dev/null; do
-            if (exec 197>"$lock_file") 2>/dev/null && flock -n 197 2>/dev/null; then
+            # A read-only probe: the user's own run polls root's lock too
+            # (acfs-0dmd), and opening in a subshell alone left fd 197 closed
+            # for the flock, which then never succeeded.
+            if acfs_install_lock_is_free "$lock_file"; then
                 # Acquired -> the other installer released the lock (finished).
-                flock -u 197 2>/dev/null || true
-                { exec 197>&-; } 2>/dev/null || true
                 kill "$_tail_pid" 2>/dev/null || true
                 wait "$_tail_pid" 2>/dev/null || true
                 log_info ""
@@ -2075,7 +2148,6 @@ acfs_attach_to_running_install() {
                 log_info "continue or verify your installation (e.g. 'acfs doctor')."
                 return 0
             fi
-            { exec 197>&-; } 2>/dev/null || true
             sleep 2
         done
         return 0
@@ -12810,12 +12882,10 @@ main() {
             log_error "Unable to resolve TARGET_HOME for '${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly"
             exit 1
         fi
+        # ~/.acfs: attaching to a running installer follows its log there (#301).
         local _acfs_lock_dir="${ACFS_HOME:-${_acfs_lock_home}/.acfs}"
-        if ! mkdir -p "$_acfs_lock_dir" 2>/dev/null; then
-            log_error "Unable to create ACFS install lock directory: $_acfs_lock_dir"
-            exit 1
-        fi
-        local _acfs_lock_file="$_acfs_lock_dir/.install.lock"
+        local _acfs_lock_file=""
+        _acfs_lock_file="$(acfs_install_lock_file "$_acfs_lock_home")" || exit 1
         # NOTE: On bash 5.3+, `exec N>file` under set -e exits the script
         # before `if` can catch the failure. We test in a subshell first,
         # then only exec in the main shell if the subshell succeeded.
@@ -12829,14 +12899,21 @@ main() {
         fi
         if [[ -n "$_acfs_lock_fd" ]]; then
             if command -v flock &>/dev/null; then
+                local _acfs_busy_lock=""
                 if ! flock -n "$_acfs_lock_fd"; then
+                    _acfs_busy_lock="$_acfs_lock_file"
+                else
+                    # A root run installing for this user holds its own lock (acfs-0dmd).
+                    _acfs_busy_lock="$(acfs_install_lock_root_held "${TARGET_USER:-ubuntu}" || true)"
+                fi
+                if [[ -n "$_acfs_busy_lock" ]]; then
                     # Another installer holds the lock. Rather than failing outright,
                     # attach to its live progress (and show how to watch it). (#301)
-                    if acfs_attach_to_running_install "$_acfs_lock_file" "$_acfs_lock_dir/logs"; then
+                    if acfs_attach_to_running_install "$_acfs_busy_lock" "$_acfs_lock_dir/logs"; then
                         # We followed the other installer to completion (interactive).
                         exit 0
                     fi
-                    log_error "Wait for it to finish, then retry. Lock file: $_acfs_lock_file"
+                    log_error "Wait for it to finish, then retry. Lock file: $_acfs_busy_lock"
                     exit 1
                 fi
             fi
