@@ -128,6 +128,22 @@ as_root() {
     [[ "$output" == */.acfs/docs/flywheel-agent-guide.md ]] || fail "path printed: $output"
 }
 
+@test "as root for root, the probe PATH keeps root's /usr/local after the system's directories" {
+    # A copy whose /usr/local dirs are the test's, an id that says root,
+    # and a bv only in that /usr/local/bin.
+    local gen_root="$FIX/gen-root.sh"
+    sed -e "s|/usr/local/sbin:/usr/local/bin|$FIX/ulsbin:$FIX/ulbin|" "$GEN" > "$gen_root"
+    mkdir -p "$FIX/ulsbin" "$FIX/ulbin"
+    printf '#!/bin/bash\necho root\n' > "$FAKEBIN/id"
+    printf '#!/bin/bash\necho "bv 6.5.4"\n' > "$FIX/ulbin/bv"
+    chmod 755 "$FAKEBIN/id" "$FIX/ulbin/bv"
+
+    run env FAKE_ROOT=1 ACFS_TARGET_HOME="$HOMEFIX" PATH="/usr/bin:/bin" bash "$gen_root" --dry-run
+    assert_success
+    assert_output --partial '| `bv` | 6.5.4 |'
+    [[ ! -e "$RUNUSER_LOG" ]] || fail "root's own run called runuser"
+}
+
 @test "the user's own run is unchanged: no runuser, and their tools are probed" {
     run env ACFS_TARGET_HOME="$HOMEFIX" PATH="/usr/bin:/bin" bash "$GEN"
     assert_success

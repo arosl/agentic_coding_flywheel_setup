@@ -115,6 +115,9 @@ TARGET_HOME="$(resolve_target_home "$TARGET_USER")"
 if [[ $EUID -eq 0 && "$TARGET_USER" != "root" ]]; then
     PATH="$ROOT_PATH"
 else
+    # Root's own run also probes root's /usr/local, after the system's
+    # directories, so nothing there shadows a system tool.
+    [[ $EUID -ne 0 ]] || PATH="$ROOT_PATH:/usr/local/sbin:/usr/local/bin"
     PATH="$TARGET_HOME/.local/bin:$TARGET_HOME/.acfs/bin:$TARGET_HOME/.cargo/bin:$TARGET_HOME/.bun/bin:$TARGET_HOME/.atuin/bin:$TARGET_HOME/go/bin:$PATH"
 fi
 export PATH
