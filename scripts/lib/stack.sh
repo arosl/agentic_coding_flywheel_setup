@@ -1966,6 +1966,57 @@ EOF
     _stack_run_as_user "$service_cmd"
 }
 
+# The local opt-outs that make _stack_configure_agent_mail_service return 75
+# (issue #327), read without changing anything: ACFS_SKIP_AGENT_MAIL=1, a
+# persistent mask, a mask with no runtime mask behind it, or a disabled unit
+# whose service is stopped. A runtime mask alone is not one (issue #328).
+# install.sh's phase verify needs only the am CLI then (acfs-v1lt).
+# tests/unit/test_stack_agent_mail_mask.sh checks it in every configure case:
+# it holds exactly where the configure step returns 75.
+stack_agent_mail_opted_out() {
+    [[ "${ACFS_SKIP_AGENT_MAIL:-0}" == "1" ]] && return 0
+    local check_cmd
+    check_cmd="$(cat <<'EOF'
+set -uo pipefail
+runtime_dir="${ACFS_AM_RUNTIME_DIR:-/run/user/$(id -u)}"
+if [[ -d "$runtime_dir" ]]; then
+    export XDG_RUNTIME_DIR="$runtime_dir"
+    if [[ -S "$runtime_dir/bus" ]]; then
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus"
+    fi
+fi
+unit_file="$HOME/.config/systemd/user/agent-mail.service"
+is_devnull_symlink() {
+    [[ -L "$1" ]] && [[ "$(readlink "$1" 2>/dev/null)" == "/dev/null" ]]
+}
+is_devnull_symlink "$unit_file" && exit 0
+if ! command -v systemctl >/dev/null 2>&1 || ! systemctl --user show-environment >/dev/null 2>&1; then
+    exit 1
+fi
+enable_state="$(systemctl --user is-enabled agent-mail.service 2>/dev/null || true)"
+case "$enable_state" in
+    masked|masked-runtime)
+        for p in /etc/systemd/user/agent-mail.service /etc/xdg/systemd/user/agent-mail.service /usr/lib/systemd/user/agent-mail.service; do
+            is_devnull_symlink "$p" && exit 0
+        done
+        if [[ "$enable_state" == "masked" ]] \
+            && ! is_devnull_symlink "$runtime_dir/systemd/user/agent-mail.service" \
+            && ! is_devnull_symlink "$runtime_dir/systemd/user.control/agent-mail.service"; then
+            exit 0
+        fi
+        ;;
+    disabled)
+        if [[ -e "$unit_file" ]] && ! systemctl --user is-active --quiet agent-mail.service; then
+            exit 0
+        fi
+        ;;
+esac
+exit 1
+EOF
+)"
+    _stack_run_as_user "$check_cmd"
+}
+
 # Wait for the managed Agent Mail service to become healthy.
 _stack_wait_for_agent_mail_health() {
     local waited=0

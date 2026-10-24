@@ -5342,6 +5342,23 @@ acfs_verify_authored_module() {
                     && { [[ ! -c /dev/net/tun ]] || systemctl is-active --quiet tailscaled; }
             fi
             ;;
+        stack.mcp_agent_mail)
+            # Agent Mail's local opt-outs (issue #327: ACFS_SKIP_AGENT_MAIL=1, a
+            # persistent mask, a disabled and stopped unit) keep the service
+            # down on purpose, so then the module needs only its CLI. Otherwise
+            # the manifest's verify decides (acfs-v1lt). A resume can verify
+            # the stack phase before it sources stack.sh.
+            if ! declare -f stack_agent_mail_opted_out >/dev/null 2>&1 \
+                && [[ -f "${ACFS_LIB_DIR:-}/stack.sh" ]]; then
+                # shellcheck source=scripts/lib/stack.sh
+                source "$ACFS_LIB_DIR/stack.sh"
+            fi
+            declare -f stack_agent_mail_opted_out >/dev/null 2>&1 || return 2
+            stack_agent_mail_opted_out || return 2
+            # stack.sh's resolver, not the PATH: a system `am` isn't Agent Mail's.
+            executable="$(_stack_agent_mail_cli_path 2>/dev/null)" || return 1
+            run_as_target "$executable" --version >/dev/null 2>&1
+            ;;
         *) return 2 ;;
     esac
 }

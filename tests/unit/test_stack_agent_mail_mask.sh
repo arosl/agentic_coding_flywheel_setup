@@ -253,11 +253,57 @@ mask_symlink() {
     ln -sf /dev/null "$1"
 }
 
+# Run stack_agent_mail_opted_out inside the sandbox, as the phase verify
+# would before the configure step runs (acfs-v1lt). Captures rc in
+# OPTED_OUT_RC, and the systemctl calls it made in OPTED_OUT_CALLS.
+OPTED_OUT_RC=0
+OPTED_OUT_CALLS=""
+run_opted_out() {
+    local calls_before=0
+    [[ -f "$FAKE_STATE_DIR/calls.log" ]] && calls_before="$(wc -l < "$FAKE_STATE_DIR/calls.log")"
+    OPTED_OUT_RC=0
+    env -i \
+        PATH="$BASH_BIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin" \
+        HOME="$FAKE_HOME" \
+        TMPDIR="$SANDBOX" \
+        TARGET_USER="$(id -un)" \
+        ACFS_AM_RUNTIME_DIR="$FAKE_RTD" \
+        FAKE_STATE_DIR="$FAKE_STATE_DIR" \
+        FAKE_RTD="$FAKE_RTD" \
+        ACFS_SKIP_AGENT_MAIL="${ACFS_SKIP_AGENT_MAIL:-0}" \
+        LIB_DIR="$LIB_DIR" \
+        bash -c '
+            export ACFS_BLUE="test"
+            log_info() { :; }
+            log_warn() { :; }
+            log_error() { :; }
+            log_detail() { :; }
+            source "$LIB_DIR/stack.sh"
+            _stack_run_as_user() { PATH="$HOME/.local/bin:$PATH" bash -c "$1"; }
+            stack_agent_mail_opted_out
+        ' 2>/dev/null
+    OPTED_OUT_RC=$?
+    OPTED_OUT_CALLS="$(tail -n +"$((calls_before + 1))" "$FAKE_STATE_DIR/calls.log" 2>/dev/null || true)"
+}
+
+# The phase verify's opt-out reading changes nothing, and holds exactly
+# where the configure step that ran next returned 75 (acfs-v1lt).
+check_opted_out_agrees() {
+    local predicted=no actual=no
+    [[ "$OPTED_OUT_RC" -eq 0 ]] && predicted=yes
+    [[ "$CONFIGURE_RC" -eq 75 ]] && actual=yes
+    check "stack_agent_mail_opted_out ($predicted) agrees with configure's rc 75 ($actual)" test "$predicted" = "$actual"
+    check "stack_agent_mail_opted_out made only read-only systemctl calls" \
+        bash -c '! grep -vE "^--user (show-environment|is-enabled agent-mail\.service|is-active --quiet agent-mail\.service)\$" <<<"$1" | grep -q .' _ "$OPTED_OUT_CALLS"
+}
+
 # Run _stack_configure_agent_mail_service inside the sandbox.
-# Captures rc in CONFIGURE_RC and stderr in CONFIGURE_ERR_FILE.
+# Captures rc in CONFIGURE_RC and stderr in CONFIGURE_ERR_FILE. Runs
+# stack_agent_mail_opted_out first and checks the two agree.
 CONFIGURE_RC=0
 CONFIGURE_ERR_FILE=""
 run_configure() {
+    run_opted_out
     CONFIGURE_ERR_FILE="$SANDBOX/configure.stderr"
     CONFIGURE_RC=0
     env -i \
@@ -291,6 +337,7 @@ run_configure() {
             _stack_configure_agent_mail_service
         ' 2> "$CONFIGURE_ERR_FILE"
     CONFIGURE_RC=$?
+    check_opted_out_agrees
 }
 
 # Invoked indirectly through check/check_not.
@@ -510,6 +557,24 @@ settle_running_service
 rm -f "$FAKE_STATE_DIR/main-pid"
 run_configure
 check "no main pid: restart issued" calls_match "restart agent-mail.service"
+
+# ------------------------------------------------------------
+# Tests 17-18: the two other opt-outs the configure step answers with
+# rc 75, so run_configure also checks stack_agent_mail_opted_out on them
+# (acfs-v1lt).
+# ------------------------------------------------------------
+begin_test "admin disable: an existing unit, disabled and stopped, is respected, rc 75"
+printf '[Unit]\nDescription=admin-kept unit\n' > "$UNIT_FILE"
+run_configure
+check "rc is 75" test "$CONFIGURE_RC" -eq 75
+check "the unit file is the admin's" grep -q "admin-kept unit" "$UNIT_FILE"
+check_not "service was never started" service_active
+
+begin_test "masked outside ACFS-managed locations, no runtime mask: respected, rc 75"
+printf 'masked\n' > "$FAKE_STATE_DIR/force-enabled-report"
+run_configure
+check "rc is 75" test "$CONFIGURE_RC" -eq 75
+check_not "service was never started" service_active
 
 # ------------------------------------------------------------
 # Summary
