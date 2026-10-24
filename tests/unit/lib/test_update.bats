@@ -11370,7 +11370,9 @@ EOF
     run grep -F 'if binary_installed "gum"; then' "$installer"
     assert_success
 
-    run grep -F 'if binary_installed "gh"; then' "$installer"
+    # gh: the system directories that cli.modern's root verify searches, so
+    # neither a target nor an inherited PATH entry counts (acfs-iabw).
+    run grep -F 'if acfs_early_system_binary_path gh >/dev/null 2>&1; then' "$installer"
     assert_success
 
     run grep -F 'if ! binary_installed "lazygit"; then' "$installer"
@@ -11386,7 +11388,7 @@ EOF
     run grep -F 'binary_installed "go" || { missing_lang+=("go"); missing_lang_modules+=(lang.go); }' "$installer"
     assert_success
 
-    run grep -F 'gh_bin="$(binary_path gh 2>/dev/null || true)"' "$installer"
+    run grep -F 'gh_bin="$(acfs_early_system_binary_path gh 2>/dev/null || true)"' "$installer"
     assert_success
 
     # The smoke test's psql comes from the system path, its vault check is target-aware.
