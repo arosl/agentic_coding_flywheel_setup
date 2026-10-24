@@ -38,11 +38,12 @@ def specification(count=2):
 
 
 def native_targets(req, first=42):
-    """What the native launcher records: one herdr tab per slot in the launch's workspace."""
+    """What the native launcher records: nhm's robot spawn puts the launch's
+    agents in one herdr tab of its workspace, a pane each (acfs-q51a)."""
     label = "swarm-" + req["session"] + "-" + fleet.native_hash(req)[:12]
     return [{"slot": i, **agent, "agent_mail_name": "Mail" + agent["agent_name"],
              "herdr_name": "mail" + agent["agent_name"].lower(), "workspace_id": "w3",
-             "workspace_label": label, "tab_id": f"w3:t{first + i - 1}", "pane_id": f"w3:p{first + i - 1}",
+             "workspace_label": label, "tab_id": f"w3:t{first}", "pane_id": f"w3:p{first + i - 1}",
              "terminal_id": f"term_{first + i - 1}", "shell_pid": 200 + i, "launched_state": "ready"}
             for i, agent in enumerate(req["agents"], 1)]
 
@@ -339,13 +340,26 @@ class ValidationTests(unittest.TestCase):
     def test_duplicate_agents_and_split_workspaces_are_refused(self):
         selected = host()
         selected["request"]["agents"].append({"agent_name": "Other", "agent_type": "codex"})
-        for key in ("pane_id", "tab_id", "terminal_id", "shell_pid", "workspace_id"):
+        for key in ("pane_id", "terminal_id", "shell_pid", "workspace_id"):
             def change(h, m, r):
                 r["targets"][1][key] = r["targets"][0][key] if key != "workspace_id" else "w4"
                 return r
             with self.subTest(key=key):
                 self.assertEqual(fleet.remote_result(selected, "launch", FixtureTransport(change))["status"], "unconfirmed")
         self.assertEqual(fleet.remote_result(selected, "launch", FixtureTransport())["status"], "ready")
+
+    def test_agents_sharing_one_herdr_tab_are_accepted(self):
+        # nhm's robot spawn fills one tab with up to six agents (acfs-q51a).
+        selected = host()
+        selected["request"]["agents"].append({"agent_name": "Other", "agent_type": "codex"})
+        targets = native_targets(selected["request"])
+        self.assertEqual(len({t["tab_id"] for t in targets}), 1)
+        self.assertEqual(fleet.remote_result(selected, "launch", FixtureTransport())["status"], "ready")
+        def own_tabs(h, m, r):
+            for i, target in enumerate(r["targets"]):
+                target["tab_id"] = f"w3:t{90 + i}"
+            return r
+        self.assertEqual(fleet.remote_result(selected, "launch", FixtureTransport(own_tabs))["status"], "ready")
 
 
 class FilesAndProcessTests(unittest.TestCase):

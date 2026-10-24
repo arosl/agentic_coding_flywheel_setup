@@ -387,7 +387,9 @@ def valid_targets(value, request):
                 and target["workspace_id"] == value[0]["workspace_id"] and target["workspace_label"] == label
                 and target["launched_state"] in ("ready", "blocked"), "native_targets_invalid")
         targets.append({k: target[k] for k in sorted(fields)})
-    for key in ("tab_id", "pane_id", "terminal_id", "shell_pid", "herdr_name"):
+    # nhm's robot spawn puts up to six of a launch's agents in one herdr tab,
+    # a pane each, so agents may share a tab_id (acfs-q51a).
+    for key in ("pane_id", "terminal_id", "shell_pid", "herdr_name"):
         require(len({t[key] for t in targets}) == len(targets), "native_targets_invalid")
     return targets
 

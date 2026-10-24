@@ -81,10 +81,13 @@ if name == "nhm":
         assert intent.exists() and (intent.stat().st_mode & 0o077) == 0
         names = ["GreenCastle", "AmberFox", "CopperHill"]
         agents = []
+        # As nhm's robot spawn does: one tab holds a launch's agents, a pane
+        # each, in slots 1.1, 1.2, ... (acfs-q51a).
+        tab = "w9:t%d" % state["next"]
         for i, kind in enumerate(types):
             n = state["next"]
             state["next"] += 1
-            state["agents"].append({"workspace_id": "w9", "tab_id": "w9:t%d" % n, "pane_id": "w9:p%d" % n,
+            state["agents"].append({"workspace_id": "w9", "tab_id": tab, "pane_id": "w9:p%d" % n,
                 "name": names[i].lower(), "agent": kind, "agent_status": "idle", "cwd": str(root / "repo"),
                 "terminal_id": "term_%d" % n})
             agents.append({"pane": "1.%d" % (i + 1), "pane_id": "w9:p%d" % n, "agent_mail_name": names[i],
@@ -210,7 +213,7 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(report["targets"], targets)
         self.assertEqual(targets, [
             {"slot": 1, "agent_name": "BlueLake", "agent_type": "codex", "agent_mail_name": "AmberFox",
-             "herdr_name": "amberfox", "workspace_id": "w9", "workspace_label": self.label(), "tab_id": "w9:t3",
+             "herdr_name": "amberfox", "workspace_id": "w9", "workspace_label": self.label(), "tab_id": "w9:t2",
              "pane_id": "w9:p3", "terminal_id": "term_3", "shell_pid": 1003, "launched_state": "ready"},
             {"slot": 2, "agent_name": "RedFox", "agent_type": "claude", "agent_mail_name": "GreenCastle",
              "herdr_name": "greencastle", "workspace_id": "w9", "workspace_label": self.label(), "tab_id": "w9:t2",
