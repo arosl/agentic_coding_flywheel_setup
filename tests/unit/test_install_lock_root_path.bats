@@ -177,6 +177,16 @@ take_lock() {
     [[ ! -e "$OUTSIDE/created" ]]
 }
 
+@test "a run that can't make the lock file says it couldn't create it, not that it found a link" {
+    as_user
+    chmod a-w "$TEST_HOME/.acfs"
+    run acfs_install_lock_file "$TEST_HOME"
+    chmod u+w "$TEST_HOME/.acfs"
+    [[ "$status" -ne 0 ]]
+    grep -qxF "Unable to create the ACFS install lock: $TEST_HOME/.acfs/.install.lock" "$ERRORS"
+    [[ -z "$(grep -F 'Refusing the ACFS install lock' "$ERRORS" || true)" ]]
+}
+
 @test "a root run refuses a link at its own lock name too" {
     as_root
     mkdir -m 0755 "$LOCK_ROOT"

@@ -2146,6 +2146,10 @@ acfs_install_lock_file() {
     fi
     if [[ ! -e "$file" && ! -L "$file" ]]; then
         (set -C; : > "$file") 2>/dev/null || true
+        if [[ ! -e "$file" && ! -L "$file" ]]; then
+            log_error "Unable to create the ACFS install lock: $file"
+            return 1
+        fi
     fi
     if [[ -L "$file" || ! -f "$file" ]]; then
         log_error "Refusing the ACFS install lock $file: it must be a regular file, not a link"
