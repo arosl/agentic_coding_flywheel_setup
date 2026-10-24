@@ -10,6 +10,10 @@
 # through a link the user planted there, or swapped in mid-run, would create
 # or change any file, say /etc/profile.d/x.sh. acfs-k9a9: those writes run
 # as the target user, so a link reaches only what the user could write.
+#
+# chmod follows a link too, so root's chmod of a path in the user's home had
+# root change any file's mode: /etc/shadow to 0755, or /etc to 0700.
+# acfs-1twj: those chmods run as the target user (acfs_chmod_as_target).
 
 setup() {
     PROJECT_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
@@ -43,6 +47,112 @@ variable_owner_chowns() {
     missing="$(grep -vE '(chown|"\$chown_bin")( +-[[:alpha:]]+)* +-[[:alpha:]]*[hR][[:alpha:]]* ' <<<"$chowns" || true)"
     printf '%s\n' "$missing"
     [[ -z "$missing" ]]
+}
+
+# Each code line of install.sh that changes a mode on a path in the user's
+# home ($ACFS_HOME, $ACFS_BIN_DIR, $TARGET_HOME, ~/.ssh with it): a chmod by
+# any name, or a find that runs chmod.
+home_chmods() {
+    grep -nE '(acfs_(find_)?chmod_as_target|(^|[^[:alnum:]_-])chmod|"\$chmod_bin")( +-[[:alpha:]]+)* +[^[:space:]]+ +"\$\{?(ACFS_HOME|ACFS_BIN_DIR|TARGET_HOME)|find +"\$\{?(ACFS_HOME|ACFS_BIN_DIR|TARGET_HOME)[^|]*-exec +chmod' \
+        "$PROJECT_ROOT/install.sh" | grep -vE '^[0-9]+:[[:space:]]*#'
+}
+
+@test "install.sh changes modes in the user's home only as the target user (acfs-1twj)" {
+    local chmods as_root
+    chmods="$(home_chmods)"
+    # The pattern still finds the call sites, so the check can't pass empty.
+    (( $(wc -l <<<"$chmods") >= 13 ))
+    as_root="$(grep -vE 'acfs_(find_)?chmod_as_target|run_as_target' <<<"$chmods" || true)"
+    printf 'as root: %s\n' "$as_root"
+    [[ -z "$as_root" ]]
+}
+
+# Loads install.sh's acfs_chmod_as_target, acfs_find_chmod_as_target and
+# acfs_dotfile_own_for_target. The system chmod is a fake that logs who ran
+# it, root or the target user (run_as_target sets the runner), then runs the
+# real one; $SUDO logs each chown.
+load_chmod_helpers() {
+    local fn
+    for fn in acfs_dotfile_own_for_target acfs_chmod_as_target acfs_find_chmod_as_target; do
+        eval "$(sed -n "/^$fn() {\$/,/^}\$/p" "$PROJECT_ROOT/install.sh")"
+        [[ "$(type -t "$fn")" == "function" ]]
+    done
+    CALLS="$BATS_TEST_TMPDIR/calls"
+    : > "$CALLS"
+    FAKE_CHMOD="$BATS_TEST_TMPDIR/chmod"
+    printf '#!/bin/bash\necho "${ACFS_TEST_RUNNER:-root} chmod $*" >> "%s"\nexec %s "$@"\n' \
+        "$CALLS" "$(command -v chmod)" > "$FAKE_CHMOD"
+    command chmod 0755 "$FAKE_CHMOD"
+    acfs_early_system_binary_path() { if [[ "$1" == chmod ]]; then printf '%s\n' "$FAKE_CHMOD"; else command -v "$1"; fi; }
+    fake_sudo() { printf 'sudo %s\n' "$*" >> "$CALLS"; }
+    log_error() { printf 'error: %s\n' "$*" >> "$CALLS"; }
+    run_as_target() { ACFS_TEST_RUNNER=target "$@"; }
+    SUDO=fake_sudo
+    TARGET_USER=tester
+}
+
+@test "acfs_chmod_as_target hands a lone file to the user first, then the user changes its mode" {
+    load_chmod_helpers
+    printf 'x\n' > "$TARGET_HOME/tool"
+    command chmod 0644 "$TARGET_HOME/tool"
+
+    acfs_chmod_as_target 755 "$TARGET_HOME/tool"
+
+    [[ "$(cat "$CALLS")" == "sudo chown -h tester:tester $TARGET_HOME/tool"$'\n'"target chmod 755 $TARGET_HOME/tool" ]]
+    [[ "$(stat -c %a "$TARGET_HOME/tool")" == 755 ]]
+}
+
+@test "acfs_chmod_as_target never chowns a link or a file with a second hard link, and root runs no chmod" {
+    load_chmod_helpers
+    printf 'root file\n' > "$ROOT_DIR/shadow"
+    ln -s "$ROOT_DIR/shadow" "$TARGET_HOME/tool"
+    printf 'x\n' > "$TARGET_HOME/linked"
+    ln "$TARGET_HOME/linked" "$BATS_TEST_TMPDIR/second-name"
+
+    acfs_chmod_as_target 755 "$TARGET_HOME/tool" "$TARGET_HOME/linked"
+
+    [[ -z "$(grep '^sudo ' "$CALLS" || true)" ]]
+    [[ -z "$(grep '^root chmod' "$CALLS" || true)" ]]
+    grep -qxF "target chmod 755 $TARGET_HOME/tool $TARGET_HOME/linked" "$CALLS"
+}
+
+@test "acfs_chmod_as_target fails when the user's chmod fails" {
+    load_chmod_helpers
+    run_as_target() { return 1; }
+    printf 'x\n' > "$TARGET_HOME/tool"
+
+    run acfs_chmod_as_target 755 "$TARGET_HOME/tool"
+    [[ "$status" -ne 0 ]]
+}
+
+@test "acfs_find_chmod_as_target passes only the regular files root's find lists" {
+    load_chmod_helpers
+    local dir="$TARGET_HOME/generated"
+    mkdir -p "$dir/sub.sh" "$dir/deeper"
+    printf 'x\n' > "$dir/a.sh"
+    printf 'x\n' > "$dir/c.txt"
+    printf 'x\n' > "$dir/deeper/d.sh"
+    printf 'root file\n' > "$ROOT_DIR/shadow"
+    ln -s "$ROOT_DIR/shadow" "$dir/b.sh"
+
+    acfs_find_chmod_as_target 755 "$dir" -maxdepth 1 -name '*.sh'
+
+    [[ "$(grep 'chmod' "$CALLS")" == "target chmod 755 $dir/a.sh" ]]
+}
+
+@test "acfs_find_chmod_as_target runs no chmod when nothing matches, and fails on a missing directory" {
+    load_chmod_helpers
+    local dir="$TARGET_HOME/generated"
+    mkdir -p "$dir"
+    printf 'x\n' > "$dir/c.txt"
+
+    acfs_find_chmod_as_target 755 "$dir" -maxdepth 1 -name '*.sh'
+    [[ ! -s "$CALLS" ]]
+
+    run acfs_find_chmod_as_target 755 "$TARGET_HOME/missing" -maxdepth 1 -name '*.sh'
+    [[ "$status" -ne 0 ]]
+    grep -qxF "error: Unable to list $TARGET_HOME/missing for a target-user chmod" "$CALLS"
+    [[ -z "$(grep 'chmod ' "$CALLS" | grep -v '^error' || true)" ]]
 }
 
 @test "setup_shell itself never writes the user's dotfiles; run_as_target does" {

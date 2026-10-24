@@ -7906,8 +7906,8 @@ normalize_user() {
         try_step "Merging SSH authorized_keys" user_merge_authorized_keys \
             /root/.ssh/authorized_keys "$TARGET_HOME/.ssh/authorized_keys" || return 1
         try_step "Setting SSH directory ownership" acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/.ssh" || return 1
-        try_step "Setting SSH directory permissions" $SUDO chmod 700 "$TARGET_HOME/.ssh" || return 1
-        try_step "Setting authorized_keys permissions" $SUDO chmod 600 "$TARGET_HOME/.ssh/authorized_keys" || return 1
+        try_step "Setting SSH directory permissions" acfs_chmod_as_target 700 "$TARGET_HOME/.ssh" || return 1
+        try_step "Setting authorized_keys permissions" acfs_chmod_as_target 600 "$TARGET_HOME/.ssh/authorized_keys" || return 1
     fi
 
     # Enable lingering user sessions so systemctl --user works on fresh VPS installs
@@ -8018,7 +8018,7 @@ setup_filesystem() {
     try_step_optional "Installing doctor.sh (early)" install_asset "scripts/lib/doctor.sh" "$ACFS_HOME/scripts/lib/doctor.sh" || true
     try_step_optional "Installing user.sh (early doctor dependency)" install_asset "scripts/lib/user.sh" "$ACFS_HOME/scripts/lib/user.sh" || true
     # Set permissions and ownership so target user can run doctor
-    $SUDO chmod 755 "$ACFS_HOME/scripts/lib/"*.sh 2>/dev/null || true
+    acfs_chmod_as_target 755 "$ACFS_HOME/scripts/lib/"*.sh 2>/dev/null || true
     acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/scripts" 2>/dev/null || true
 
     # Create user's bin and .bun directories early - many installers need them
@@ -8093,6 +8093,49 @@ acfs_dotfile_write_as_target() {
 acfs_dotfile_own_for_target() {
     [[ -f "$1" && ! -L "$1" && "$(stat -c %h -- "$1" 2>/dev/null)" == "1" ]] || return 0
     $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$1" 2>/dev/null || true
+}
+
+# chmod MODE PATH... as the target user, with the system chmod. chmod follows
+# a link, and the user owns these paths: as root, a link swapped in there
+# would have root change any file's mode, /etc/shadow to 0755 or /etc to 0700
+# (acfs-1twj). A file root left there goes to the user first, by the rule
+# above, so the user's chmod can change it.
+acfs_chmod_as_target() {
+    local mode="$1" path="" chmod_bin=""
+    shift
+    chmod_bin="$(acfs_early_system_binary_path chmod 2>/dev/null || true)"
+    if [[ -z "$chmod_bin" ]]; then
+        log_error "Unable to locate chmod for a target-user chmod"
+        return 1
+    fi
+    for path in "$@"; do
+        acfs_dotfile_own_for_target "$path"
+    done
+    run_as_target "$chmod_bin" "$mode" "$@"
+}
+
+# find DIR TESTS... and chmod MODE each regular file it lists, as the target
+# user (acfs_chmod_as_target). Root's find only lists the names.
+acfs_find_chmod_as_target() {
+    local mode="$1" dir="$2" find_bin="" path=""
+    local -a paths=()
+    shift 2
+    find_bin="$(acfs_early_system_binary_path find 2>/dev/null || true)"
+    if [[ -z "$find_bin" ]]; then
+        log_error "Unable to locate find for a target-user chmod"
+        return 1
+    fi
+    while IFS= read -r -d '' path; do
+        paths+=("$path")
+    done < <("$find_bin" "$dir" "$@" -type f -print0)
+    # A listing that failed (no such directory) fails the step, as root's
+    # find -exec chmod did.
+    if ! wait "$!"; then
+        log_error "Unable to list $dir for a target-user chmod"
+        return 1
+    fi
+    [[ ${#paths[@]} -gt 0 ]] || return 0
+    acfs_chmod_as_target "$mode" "${paths[@]}"
 }
 
 # Names dotfile $1 that the user couldn't write, and line $2 to add by hand.
@@ -9135,7 +9178,7 @@ install_agy_locked_launchers() {
     try_step "Installing agy locked launcher" install_asset "scripts/lib/agy_locked.py" "$ACFS_BIN_DIR/agy-locked" || return 1
     try_step "Installing agy PATH shim" install_asset "scripts/lib/agy_locked.py" "$ACFS_BIN_DIR/agy" || return 1
     try_step "Installing gmi Antigravity launcher" install_asset "scripts/lib/agy_locked.py" "$ACFS_BIN_DIR/gmi" || return 1
-    try_step "Setting agy launcher permissions" $SUDO chmod 0755 "$ACFS_BIN_DIR/agy-locked" "$ACFS_BIN_DIR/agy" "$ACFS_BIN_DIR/gmi" || return 1
+    try_step "Setting agy launcher permissions" acfs_chmod_as_target 0755 "$ACFS_BIN_DIR/agy-locked" "$ACFS_BIN_DIR/agy" "$ACFS_BIN_DIR/gmi" || return 1
     try_step "Setting agy launcher ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_BIN_DIR/agy-locked" "$ACFS_BIN_DIR/agy" "$ACFS_BIN_DIR/gmi" || return 1
     try_step "Priming agy locked settings and dcg hook" run_as_target "$ACFS_BIN_DIR/agy-locked" --acfs-prime-settings || return 1
 }
@@ -11358,7 +11401,7 @@ finalize() {
 
     log_detail "Installing onboard command"
     try_step "Installing onboard script" install_asset "packages/onboard/onboard.sh" "$ACFS_HOME/onboard/onboard.sh" || return 1
-    try_step "Setting onboard permissions" $SUDO chmod 755 "$ACFS_HOME/onboard/onboard.sh" || return 1
+    try_step "Setting onboard permissions" acfs_chmod_as_target 755 "$ACFS_HOME/onboard/onboard.sh" || return 1
     try_step "Setting onboard ownership" acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/onboard" || return 1
 
     try_step "Creating bin directory ($ACFS_BIN_DIR)" acfs_ensure_primary_bin_dir || return 1
@@ -11476,7 +11519,7 @@ finalize() {
 
     # Install acfs-update wrapper command
     try_step "Installing acfs-update" install_asset "scripts/acfs-update" "$ACFS_HOME/bin/acfs-update" || return 1
-    try_step "Setting acfs-update permissions" $SUDO chmod 755 "$ACFS_HOME/bin/acfs-update" || return 1
+    try_step "Setting acfs-update permissions" acfs_chmod_as_target 755 "$ACFS_HOME/bin/acfs-update" || return 1
     try_step "Setting acfs-update ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/acfs-update" || return 1
     try_step "Linking acfs-update command" acfs_link_primary_bin_command "$ACFS_HOME/bin/acfs-update" "acfs-update" || return 1
     try_step "Linking global acfs-update command" acfs_link_global_bin_command "$ACFS_HOME/bin/acfs-update" "acfs-update" || return 1
@@ -11487,7 +11530,7 @@ finalize() {
     # ~/.codex/AGENTS.md, or a project is an explicit user action
     # (`acfs agents install ...`) and is never done automatically.
     if try_step_optional "Installing flywheel-update-agents-md" install_asset "scripts/generate-root-agents-md.sh" "$ACFS_HOME/bin/flywheel-update-agents-md"; then
-        try_step_optional "Setting flywheel-update-agents-md permissions" $SUDO chmod 755 "$ACFS_HOME/bin/flywheel-update-agents-md" || true
+        try_step_optional "Setting flywheel-update-agents-md permissions" acfs_chmod_as_target 755 "$ACFS_HOME/bin/flywheel-update-agents-md" || true
         try_step_optional "Setting flywheel-update-agents-md ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/flywheel-update-agents-md" || true
         try_step_optional "Linking flywheel-update-agents-md command" $SUDO ln -sf "$ACFS_HOME/bin/flywheel-update-agents-md" "/usr/local/bin/flywheel-update-agents-md" || true
         # Run in the target user's context so user-local tools
@@ -11499,18 +11542,18 @@ finalize() {
 
     # Install services-setup wizard
     try_step "Installing services-setup.sh" install_asset "scripts/services-setup.sh" "$ACFS_HOME/scripts/services-setup.sh" || return 1
-    try_step "Setting scripts permissions" $SUDO chmod 755 "$ACFS_HOME/scripts/services-setup.sh" || return 1
+    try_step "Setting scripts permissions" acfs_chmod_as_target 755 "$ACFS_HOME/scripts/services-setup.sh" || return 1
 
     # Agent readiness audit and profile rehearsal (`acfs agent-readiness`). The
     # TypeScript sources keep their checkout layout so the wrapper runs as-is.
     try_step "Installing agent readiness audit" install_asset "scripts/agent-readiness-audit.sh" "$ACFS_HOME/scripts/agent-readiness-audit.sh" || return 1
-    try_step "Setting agent readiness audit permissions" $SUDO chmod 755 "$ACFS_HOME/scripts/agent-readiness-audit.sh" || return 1
+    try_step "Setting agent readiness audit permissions" acfs_chmod_as_target 755 "$ACFS_HOME/scripts/agent-readiness-audit.sh" || return 1
     try_step "Installing agent-readiness-audit.ts" install_asset "packages/manifest/src/agent-readiness-audit.ts" "$ACFS_HOME/packages/manifest/src/agent-readiness-audit.ts" || return 1
     try_step "Installing agent-profile-rehearsal.ts" install_asset "packages/manifest/src/agent-profile-rehearsal.ts" "$ACFS_HOME/packages/manifest/src/agent-profile-rehearsal.ts" || return 1
     try_step "Installing binary-architecture.ts" install_asset "packages/manifest/src/binary-architecture.ts" "$ACFS_HOME/packages/manifest/src/binary-architecture.ts" || return 1
     try_step "Setting agent readiness ownership" acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/packages" || return 1
-    try_step "Setting lib scripts permissions" $SUDO chmod 755 "$ACFS_HOME/scripts/lib/"*.sh "$ACFS_HOME/scripts/nightly-update.sh" || return 1
-    try_step "Setting generated scripts permissions" $SUDO find "$ACFS_HOME/scripts/generated" -maxdepth 1 -type f -name '*.sh' -exec chmod 755 {} + || return 1
+    try_step "Setting lib scripts permissions" acfs_chmod_as_target 755 "$ACFS_HOME/scripts/lib/"*.sh "$ACFS_HOME/scripts/nightly-update.sh" || return 1
+    try_step "Setting generated scripts permissions" acfs_find_chmod_as_target 755 "$ACFS_HOME/scripts/generated" -maxdepth 1 -name '*.sh' || return 1
     try_step "Setting scripts ownership" acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/scripts" || return 1
     try_step "Configuring ACFS nightly update timer" configure_acfs_nightly_timer || return 1
 
@@ -11540,7 +11583,7 @@ finalize() {
     for screen in "${screens[@]}"; do
         try_step "Installing $screen" install_asset "scripts/lib/newproj_screens/$screen" "$ACFS_HOME/scripts/lib/newproj_screens/$screen" || return 1
     done
-    try_step "Setting newproj permissions" $SUDO chmod 755 "$ACFS_HOME/scripts/lib/"newproj*.sh "$ACFS_HOME/scripts/lib/newproj_screens/"*.sh || return 1
+    try_step "Setting newproj permissions" acfs_chmod_as_target 755 "$ACFS_HOME/scripts/lib/"newproj*.sh "$ACFS_HOME/scripts/lib/newproj_screens/"*.sh || return 1
     try_step "Setting newproj ownership" acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/scripts/lib" || return 1
 
     # Install manifest, checksums, and version metadata so the installed cache
@@ -11559,7 +11602,7 @@ finalize() {
 
     # Legacy: Install doctor as acfs binary (for backwards compat)
     try_step "Installing acfs CLI" install_asset "scripts/lib/doctor.sh" "$ACFS_HOME/bin/acfs" || return 1
-    try_step "Setting acfs permissions" $SUDO chmod 755 "$ACFS_HOME/bin/acfs" || return 1
+    try_step "Setting acfs permissions" acfs_chmod_as_target 755 "$ACFS_HOME/bin/acfs" || return 1
     try_step "Setting acfs ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/acfs" || return 1
     try_step "Linking acfs command" acfs_link_primary_bin_command "$ACFS_HOME/bin/acfs" "acfs" || return 1
     # nhm's takeover reads the Bash's state with the acfs command just
