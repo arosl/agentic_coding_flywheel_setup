@@ -3045,9 +3045,12 @@ check_core_tools() {
     # age encrypts `acfs state export` archives, and apr computes its
     # convergence signals with bc. cli.modern installs both, and
     # _is_bespoke_covered skips its manifest checks as covered here
-    # (acfs-5mkj).
+    # (acfs-5mkj). The same holds for jq, which upstream's #474 added to
+    # cli.modern's verify and ACFS's scripts and hooks parse JSON with
+    # (acfs-n3uo).
     check_command "tool.age" "age (acfs state export encryption)" "age" "$(doctor_pkg_install_hint age)"
     check_command "tool.bc" "bc (apr convergence signals)" "bc" "$(doctor_pkg_install_hint bc)"
+    check_command "tool.jq" "jq (JSON for ACFS's scripts and hooks)" "jq" "$(doctor_pkg_install_hint jq)"
     check_command "tool.dig" "dig (dnsutils)" "dig" "sudo apt-get -o DPkg::Lock::Timeout=120 install -y dnsutils"
     check_command "tool.nc" "nc (netcat-openbsd)" "nc" "sudo apt-get -o DPkg::Lock::Timeout=120 install -y netcat-openbsd"
     check_ast_grep

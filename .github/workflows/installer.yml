@@ -140,6 +140,12 @@ jobs:
       - name: Run doctor login shell check tests
         run: bash tests/unit/test_doctor_login_shell.sh
 
+      # It fails when a manifest check the doctor skips as bespoke-covered
+      # has no bespoke check, as cli.modern's jq had since the upstream sync
+      # (acfs-n3uo).
+      - name: Run doctor generated checks and coverage tests
+        run: bash tests/unit/test_doctor_generated.sh
+
       - name: Run acfs update --help stack list tests
         run: bash tests/unit/test_update_help_stack.sh
 
