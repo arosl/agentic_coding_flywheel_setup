@@ -338,6 +338,11 @@ jobs:
           bash scripts/tests/test_ru_update.sh
           bash scripts/tests/test_ru_doctor.sh
 
+      # acfs update's channel, pin and checksum-preference cases (acfs-axu9):
+      # no workflow ran them, so a failure stayed unseen.
+      - name: Run update channel tests
+        run: bash scripts/tests/test_update_channel.sh
+
   # ACFS no longer installs on Ubuntu 22.04 (acfs-d91): without an explicit
   # --target-ubuntu=24.04|26.04 the installer must stop before installing.
   refuse-ubuntu-2204:

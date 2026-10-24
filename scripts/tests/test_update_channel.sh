@@ -817,6 +817,11 @@ repo_checksum_preference_output=$(
         set -euo pipefail
         export HOME
         HOME="$(mktemp -d)"
+        # The stale cache must be the installed one update.sh reads: its
+        # runtime home is the passwd home unless TARGET_HOME names this one
+        # (acfs-axu9). No remote-checksums cache may come from the host.
+        unset TARGET_USER ACFS_HOME
+        export TARGET_HOME="$HOME" XDG_STATE_HOME="$HOME/.local/state"
         mkdir -p "$HOME/.acfs"
         cp "'"$REPO_ROOT"'/checksums.yaml" "$HOME/.acfs/checksums.yaml"
         python3 - <<'"'"'PY'"'"' "$HOME/.acfs/checksums.yaml"
@@ -834,6 +839,10 @@ with open(path, "w", encoding="utf-8") as fh:
 PY
 
         source "'"$UPDATE_SH"'"
+        # The tree under test is the repo checkout. In a git worktree or an
+        # extract, .git is no directory, so update.sh would find another
+        # checkout on the host instead (acfs-axu9).
+        ACFS_REPO_ROOT="'"$REPO_ROOT"'"
         QUIET=true
         CHECKSUMS_URL="https://127.0.0.1:9/nowhere"
         update_require_security >/dev/null
