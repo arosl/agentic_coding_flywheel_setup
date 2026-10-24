@@ -374,7 +374,7 @@ swarm_status_collect_nhm() {
     # One lookup, as everywhere in ACFS (acfs-9hkh.84): ~/.local/bin, where
     # ACFS installs nhm, then PATH.
     if [[ -x "${HOME:-}/.local/bin/nhm" ]]; then
-        nhm_bin="$HOME/.local/bin/nhm"
+        nhm_bin="${HOME:-}/.local/bin/nhm"
     else
         nhm_bin="$(swarm_status_binary_path nhm 2>/dev/null || true)"
     fi

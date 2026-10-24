@@ -1577,8 +1577,8 @@ info_get_quick_commands() {
 cc|Launch Claude Code
 cod|Launch Codex CLI
 agy|Launch Antigravity CLI, model Gemini 4 Argon (High)
-herdr|Start or reattach the agent workspace
-herdr agent list|List agents and their state
+nhm new X|Create herdr workspace
+nhm attach X|Resume session
 lazygit|Visual git interface
 rg "term"|Search code
 z folder|Jump to folder
@@ -1618,7 +1618,7 @@ info_get_installed_tools_summary() {
 
     # Stack tools
     stack_ok="○"
-    info_binary_exists "herdr" && stack_ok="✓"
+    info_binary_exists "nhm" && stack_ok="✓"
 
     echo "shell:$shell_ok|lang:$lang_ok|agents:$agents_ok|stack:$stack_ok"
 }
@@ -1832,7 +1832,7 @@ info_render_terminal() {
     echo -e "  $shell_icon ${C_DIM}Shell:${C_RESET}     zsh + oh-my-zsh + powerlevel10k"
     echo -e "  $lang_icon ${C_DIM}Languages:${C_RESET} bun, uv, rust, go"
     echo -e "  $agents_icon ${C_DIM}Agents:${C_RESET}    claude, codex, agy"
-    echo -e "  $stack_icon ${C_DIM}Stack:${C_RESET}     herdr, bv, lazygit"
+    echo -e "  $stack_icon ${C_DIM}Stack:${C_RESET}     nhm, bv, lazygit"
 
     if [[ "$install_status" == "failed" ]]; then
         echo -e "  ${C_BOLD}✗ Install:   failed${failed_phases:+ in ${failed_phases//,/, }}${C_RESET} ${C_DIM}(run 'acfs rescue')${C_RESET}"
@@ -1904,7 +1904,7 @@ info_render_minimal() {
 
     echo "ACFS @ $hostname ($ip)"
     echo ""
-    echo "Quick commands: cc (Claude), cod (Codex), herdr (agent workspace)"
+    echo "Quick commands: cc (Claude), cod (Codex), nhm (sessions)"
     echo "Run 'acfs info' for full details"
 }
 
@@ -2006,8 +2006,8 @@ info_render_json() {
     {"cmd": "cc", "desc": "Launch Claude Code"},
     {"cmd": "cod", "desc": "Launch Codex CLI"},
     {"cmd": "agy", "desc": "Launch Antigravity CLI, model Gemini 4 Argon (High)"},
-    {"cmd": "herdr", "desc": "Start or reattach the agent workspace"},
-    {"cmd": "herdr agent list", "desc": "List agents and their state"},
+    {"cmd": "nhm new X", "desc": "Create herdr workspace"},
+    {"cmd": "nhm attach X", "desc": "Resume session"},
     {"cmd": "lazygit", "desc": "Visual git interface"},
     {"cmd": "rg term", "desc": "Search code"},
     {"cmd": "z folder", "desc": "Jump to folder"}
@@ -2190,7 +2190,7 @@ EOF
             <div class="grid">
                 <span class="cmd">cc</span><span>Launch Claude Code</span>
                 <span class="cmd">cod</span><span>Launch Codex CLI</span>
-                <span class="cmd">herdr</span><span>Start or reattach the agent workspace</span>
+                <span class="cmd">nhm new X</span><span>Create herdr workspace</span>
                 <span class="cmd">lazygit</span><span>Visual git interface</span>
             </div>
         </div>

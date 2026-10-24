@@ -1280,7 +1280,10 @@ _status_editor_json() {
         bash_bin="$BASH"
         if [[ -n "$timeout_bin" && -n "$bash_bin" && -r "$collector_script" ]]; then
             live_status=error
-            if output="$(ACFS_SWARM_STATUS_TIMEOUT=1 "$timeout_bin" --kill-after=1 5 "$bash_bin" "$collector_script" --json --nhm-only 2>/dev/null)" &&
+            # The collector runs with HOME at the target's home, which has two
+            # effects: it finds the target's ~/.local/bin/nhm first
+            # (acfs-9hkh.84), and herdr's default socket is the target's.
+            if output="$(HOME="${TARGET_HOME:-$HOME}" ACFS_SWARM_STATUS_TIMEOUT=1 "$timeout_bin" --kill-after=1 5 "$bash_bin" "$collector_script" --json --nhm-only 2>/dev/null)" &&
                 live_json="$(printf '%s' "$output" | "$jq_bin" -ce 'select(.schema_version == 1 and (.probes.nhm | type) == "object") | .probes.nhm' 2>/dev/null)"; then
                 live_status=ok
             else
@@ -1381,8 +1384,8 @@ _status_main_body() {
     local _state_file=""
     local -a _warnings=()
     local -a _errors=()
-    local -a _CORE_TOOLS=(zsh git bun cargo go rg claude)
-    local -a _OPTIONAL_TOOLS=(codex agy gh uv fzf zoxide atuin bat lsd herdr bv br cass cm slb ubs dcg)
+    local -a _CORE_TOOLS=(zsh git herdr bun cargo go rg claude)
+    local -a _OPTIONAL_TOOLS=(codex agy gh uv fzf zoxide atuin bat lsd nhm bv br cass cm slb ubs dcg)
     local _tool_count=0
     local _last_update_ts=""
     local _update_run_ts=""

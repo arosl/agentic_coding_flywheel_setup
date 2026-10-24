@@ -2560,7 +2560,7 @@ capture_swarm_timeline_json() {
     herdr_bin="$(support_binary_path_any herdr 2>/dev/null || true)"
     # ~/.local/bin first, where ACFS installs nhm (acfs-9hkh.84).
     if [[ -x "${HOME:-}/.local/bin/nhm" ]]; then
-        nhm_bin="$HOME/.local/bin/nhm"
+        nhm_bin="${HOME:-}/.local/bin/nhm"
     else
         nhm_bin="$(support_binary_path_any nhm 2>/dev/null || true)"
     fi
@@ -2671,7 +2671,7 @@ capture_swarm_timeline_json() {
 
     "$jq_bin" -n \
         --arg generated_at "$generated_at" \
-        --arg privacy "Raw Agent Mail bodies, terminal history, tmux panes, and command output are intentionally excluded." \
+        --arg privacy "Raw Agent Mail bodies, terminal history, herdr panes, and command output are intentionally excluded." \
         --argjson telemetry "$telemetry_json" \
         --arg telemetry_probe_status "$telemetry_probe_status" \
         --arg telemetry_probe_reason "$telemetry_probe_reason" \
@@ -2890,7 +2890,7 @@ write_manifest() {
     local team_profile_manifest=""
     doctor_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "doctor.json" "doctor" '["secret_values","local_paths","command_output"]' "$jq_bin")"
     swarm_status_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "swarm_status.json" "swarm_status" '["host_metrics","local_paths","command_output"]' "$jq_bin")"
-    swarm_timeline_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "swarm_timeline.json" "swarm_timeline" '["agent_mail_bodies","terminal_history","tmux_panes","command_output","local_paths"]' "$jq_bin")"
+    swarm_timeline_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "swarm_timeline.json" "swarm_timeline" '["agent_mail_bodies","terminal_history","herdr_panes","command_output","local_paths"]' "$jq_bin")"
     provenance_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "provenance.json" "provenance" '["tool_versions","install_sources","local_paths"]' "$jq_bin")"
     resource_profile_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "resource_profile.json" "resource_profile" '["local_paths","wrapper_commands","secret_values"]' "$jq_bin")"
     credential_status_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "credential_status.json" "credential_status" '["secret_values","local_paths","raw_credentials"]' "$jq_bin")"
@@ -3094,7 +3094,7 @@ write_support_report_index() {
         printf '\n## Redaction\n\n'
         printf '%s\n' "- Redaction enabled: \`$redaction_enabled\`"
         printf '%s\n' "- Files modified by redaction: \`$redaction_files_modified\`"
-        printf '%s\n\n' "- Raw Agent Mail bodies, terminal history, tmux panes, command output snippets, local project paths, and secret values are intentionally not summarized here."
+        printf '%s\n\n' "- Raw Agent Mail bodies, terminal history, herdr panes, command output snippets, local project paths, and secret values are intentionally not summarized here."
     } >> "$report_file" || return 1
 
     if [[ -n "$sensitive_findings" ]]; then

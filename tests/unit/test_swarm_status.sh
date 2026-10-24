@@ -129,8 +129,9 @@ STUB
 }
 
 test_no_tool_environment_warns() {
-    local output
-    output="$(run_and_capture no_tool_environment env PATH="/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
+    local output stub_dir
+    stub_dir="$(make_stub_dir)"
+    output="$(run_and_capture no_tool_environment env HOME="$stub_dir/home" PATH="/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
     write_artifact "no_tool_environment.json" "$output"
 
     jq -e '
@@ -233,7 +234,7 @@ JSON
 esac'
 
     local output
-    output="$(run_and_capture rch_queue_pressure env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
+    output="$(run_and_capture rch_queue_pressure env HOME="$stub_dir/home" PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
     write_artifact "rch_queue_pressure.json" "$output"
 
     jq -e '
@@ -404,7 +405,7 @@ case "$*" in
 esac'
 
     local output
-    output="$(run_and_capture rch_queue_timeout env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
+    output="$(run_and_capture rch_queue_timeout env HOME="$stub_dir/home" PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH" --json)"
     write_artifact "rch_queue_timeout.json" "$output"
 
     jq -e '
@@ -419,8 +420,9 @@ esac'
 }
 
 test_human_output() {
-    local output
-    output="$(run_and_capture human_output env PATH="/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH")"
+    local output stub_dir
+    stub_dir="$(make_stub_dir)"
+    output="$(run_and_capture human_output env HOME="$stub_dir/home" PATH="/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 "$BASH" "$SWARM_STATUS_SH")"
     write_artifact "human_output.txt" "$output"
 
     grep -Fq "ACFS Swarm Status" <<<"$output" || return 1
@@ -447,7 +449,7 @@ case "$1" in
 esac'
 
     local output
-    output="$(run_and_capture clock_step_back env PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 bash "$SWARM_STATUS_SH" --json)"
+    output="$(run_and_capture clock_step_back env HOME="$stub_dir/home" PATH="$stub_dir:/usr/bin:/bin" ACFS_SWARM_STATUS_TIMEOUT=1 bash "$SWARM_STATUS_SH" --json)"
     write_artifact "clock_step_back.json" "$output"
 
     jq -e '

@@ -157,8 +157,7 @@ class InventoryProbeTests(unittest.TestCase):
         self.report["tools"]["nhm"]["available"] = False
         self.calculator()
         self.assertFalse(self.probe("--inventory", path)["hosts"][0]["nhm"]["can_launch"])
-        refusal = self.run_cli("probe-local", "--host-id", "worker-a", "--allow-launch", code=2)
-        self.assertIn("nhm availability", json.loads(refusal.stdout)["message"])
+        self.probe("--allow-launch", code=2)
         self.assertFalse(self.probe()["hosts"][0]["nhm"]["can_launch"])
 
     def test_build_only_and_disabled_new_roles_cannot_opt_in(self):

@@ -243,6 +243,7 @@ EOF
     write_fake_command "$TEST_TARGET_HOME/.local/bin/uv" "uv 0.8.0"
     write_fake_command "$TEST_TARGET_HOME/.local/bin/rustc" "rustc 1.85.0"
     write_fake_command "$TEST_TARGET_HOME/.local/bin/herdr" "herdr 1.2.3"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/nhm" "nhm 1.2.3"
     write_fake_command "$TEST_TARGET_HOME/.bun/bin/bun" "1.2.3"
     write_fake_command "$TEST_TARGET_HOME/.cargo/bin/cargo" "cargo 1.85.0"
     write_fake_command "$TEST_TARGET_HOME/go/bin/go" "go version go1.24.0 linux/amd64"
@@ -440,6 +441,7 @@ EOF
     write_fake_command "$TEST_TARGET_HOME/.local/bin/uv" "uv 0.8.0"
     write_fake_command "$TEST_TARGET_HOME/.local/bin/rustc" "rustc 1.85.0"
     write_fake_command "$TEST_TARGET_HOME/.local/bin/herdr" "herdr 1.2.3"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/nhm" "nhm 1.2.3"
     write_fake_command "$TEST_TARGET_HOME/.bun/bin/bun" "1.2.3"
     write_fake_command "$TEST_TARGET_HOME/.cargo/bin/cargo" "cargo 1.85.0"
     write_fake_command "$TEST_TARGET_HOME/go/bin/go" "go version go1.24.0 linux/amd64"
@@ -11978,7 +11980,7 @@ status_protocol_setup() {
     PROTOCOL_HOME="$HARNESS_ARTIFACT_DIR/editor/$scenario/home"
     mkdir -p "$PROTOCOL_HOME/.acfs" "$PROTOCOL_HOME/.local/bin"
     printf '1.2.3\n' > "$PROTOCOL_HOME/.acfs/VERSION"
-    for tool in zsh git bun cargo go rg claude codex agy gh uv fzf zoxide atuin bat lsd herdr bv br cass cm slb ubs dcg am rch; do
+    for tool in zsh git herdr bun cargo go rg claude codex agy gh uv fzf zoxide atuin bat lsd nhm bv br cass cm slb ubs dcg am rch; do
         cat > "$PROTOCOL_HOME/.local/bin/$tool" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' called >> "$ACFS_PROTOCOL_POISON_MARKER"
@@ -12010,7 +12012,7 @@ JSON
         jq -e '{schema_version, status, install_status: .install.status, phases: .install.completed_phases, provider: .provider.name, sessions: .sessions.status, automatic: .execute_automatically} ==
           {schema_version:1,status:"ok",install_status:"complete",phases:["finalize","user_setup"],provider:"hetzner",sessions:"not_requested",automatic:false} and
           .freshness.cache == "none" and .freshness.state_updated_at == "2026-10-11T10:00:00Z" and
-          .generated_at != null and .install.tools_present == 24 and .sessions.session_count == null' "$PROTOCOL_OUTPUT" >/dev/null &&
+          .generated_at != null and .install.tools_present == 25 and .sessions.session_count == null' "$PROTOCOL_OUTPUT" >/dev/null &&
         cmp -s "$PROTOCOL_HOME/.acfs/state.json" "$PROTOCOL_HOME/state.before" &&
         [[ ! -e "$PROTOCOL_HOME/tool-called" ]]; then
         harness_pass "editor complete snapshot is passive and preserves state"
@@ -12184,13 +12186,16 @@ EOF
 test_status_editor_sourced_calls_reset_live_option() {
     status_protocol_setup reset
     printf '%s\n' '{"completed_phases":["finalize"]}' > "$PROTOCOL_HOME/.acfs/state.json"
+    cat > "$PROTOCOL_HOME/.local/bin/nhm" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' probe >> "$ACFS_PROTOCOL_POISON_MARKER"
+printf '{}\n'
+EOF
     cat > "$PROTOCOL_HOME/.local/bin/herdr" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
-  "workspace list")
-    printf '%s\n' probe >> "$ACFS_PROTOCOL_POISON_MARKER"
-    printf '%s\n' '{"result":{"workspaces":[{}]}}' ;;
-  "agent list") printf '%s\n' '{"result":{"agents":[{}]}}' ;;
+  "workspace list") printf '%s\n' '{"result":{"workspaces":[{}]}}' ;;
+  "tab list") printf '%s\n' '{"result":{"tabs":[{}]}}' ;;
   *) exit 99 ;;
 esac
 EOF
