@@ -60,6 +60,14 @@ if name == "nhm":
     assert session == os.environ["LAUNCH_TEST_LABEL"]
     types = ["claude"] * int(flag("--spawn-cc=")) + ["codex"] * int(flag("--spawn-cod="))
     dry = "--dry-run" in args
+    if mode == "nhm-refused" or (mode == "nhm-refused-launch" and not dry):
+        # nhm v0.1.16's admission refusal: nothing is made, and the reasons say why.
+        reason = ("capacity red: MemAvailable is under one agent's need\x1b[31m (to start anyway: "
+                  "--ignore-capacity for this spawn, or capacity = [] under [providers] in nhm's config)")
+        print(json.dumps({"success": False, "session": session, "agents": [], "error": "admission refused: " + reason,
+            "error_code": "ADMISSION_REFUSED", "admission": {"decision": "refuse", "reason": reason,
+            "reasons": [reason], "hint": "nhm quota, nhm doctor and the capacity provider say why"}}))
+        sys.exit(1)
     response = {"success": True, "session": session, "working_dir": str(root / "repo"),
         "effective_project_key": str(root / "repo"), "assignments": [],
         "admission": {"decision": "admit"}, "agents": []}
@@ -313,6 +321,26 @@ class LaunchTests(unittest.TestCase):
                 self.assertEqual(code, 2, report)
                 self.assertFalse(self.receipt.exists())
                 self.assertEqual(self.count_spawns(), 0)
+
+    def test_admission_refusal_names_nhms_reasons_and_starts_nothing(self):
+        # Refused at the preview: no receipt and no spawn.
+        code, report = self.invoke(mode="nhm-refused", launch=True)
+        self.assertEqual(code, 2, report)
+        self.assertIn("nhm's admission check refused this launch, so nothing was started and no launch receipt "
+                      "was created: capacity red: MemAvailable is under one agent's need [31m", report["error"])
+        self.assertIn("--ignore-capacity for this spawn", report["error"])
+        self.assertIn("nhm quota, nhm doctor and the capacity provider say why", report["error"])
+        self.assertNotIn("\x1b", report["error"])
+        self.assertFalse(self.receipt.exists())
+        self.assertEqual(self.count_spawns(), 0)
+        # Refused at the launch, after the preview admitted: the intent stays and has no result.
+        code, report = self.invoke(mode="nhm-refused-launch", launch=True)
+        self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
+        self.assertIn("so nothing was started; this receipt never launches, so launch again with a new "
+                      "--receipt: capacity red:", report["error"])
+        self.assertTrue(self.receipt.exists())
+        self.assertFalse((self.root / "intent.json.result.json").exists())
+        self.assertEqual(self.count_spawns(), 1)
 
     def test_hash_required_and_request_changes_refused_before_probes(self):
         self.assertEqual(self.invoke(extra=("--launch",))[0], 2)

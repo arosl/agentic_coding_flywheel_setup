@@ -245,6 +245,23 @@ def spawn_response(data, request, dry_run):
     return agents
 
 
+def refuse_on_admission(data, after):
+    """nhm's admission check refuses before it makes anything, and says why
+    (acfs-wpbc): fail with its reasons and hint, control characters replaced."""
+    try:
+        result = parse(data)
+    except LaunchError:
+        return
+    if not (isinstance(result, dict) and result.get("error_code") == "ADMISSION_REFUSED"):
+        return
+    admission = result.get("admission") if isinstance(result.get("admission"), dict) else {}
+    said = admission.get("reasons") if isinstance(admission.get("reasons"), list) else []
+    said = [text for text in [*said, admission.get("hint")] if isinstance(text, str)]
+    reasons = "; ".join(re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", text) for text in said)
+    raise LaunchError("nhm's admission check refused this launch, so nothing was started" + after
+                      + (": " + reasons if reasons else "."))
+
+
 def verify_targets(agents, request):
     # nhm has no tmux "=session:N.M" target: each agent is checked by the
     # herdr pane ID nhm's robot spawn reports for it (robot/spawn.go).
@@ -789,6 +806,7 @@ def main():
             nhm = binary("nhm")
             binary("herdr")
             code, data = run([nhm, *argv[1:], "--dry-run"], repo, timeout=90)
+            refuse_on_admission(data, " and no launch receipt was created")
             require(code == 0, "nhm launch preview failed; no launch receipt was created.")
             spawn_response(data, request, True)
             report["nhm_argv"] = argv
@@ -808,6 +826,7 @@ def main():
                 try:
                     # nhm's --timeout is each agent's ready wait, not the total (G9).
                     code, data = run([nhm, *argv[1:]], repo, timeout=60 + 90 * len(request["agents"]))
+                    refuse_on_admission(data, "; this receipt never launches, so launch again with a new --receipt")
                     require(code == 0, "nhm launch did not complete; inspect the retained workspace "
                             + workspace_label(request) + ".")
                     targets = verify_targets(spawn_response(data, request, False), request)

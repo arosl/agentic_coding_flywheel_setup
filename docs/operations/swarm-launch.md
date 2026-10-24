@@ -30,7 +30,9 @@ responses, Beads claims, reservations, interrupts, existing-workspace reuse or
 destructive cleanup are requested.
 
 Both ACFS and nhm must admit the requested agent count. Unknown or malformed
-admission fails closed. `wait`, `scale_down`, `fail`, or a count above the
+admission fails closed. When nhm's admission check refuses, nothing is started,
+and the error gives nhm's reasons and hint, such as a red capacity and its way
+out (`--ignore-capacity`, which `acfs swarm launch` never passes). `wait`, `scale_down`, `fail`, or a count above the
 recommended/safe limits always blocks launch. `--accept-warnings` is explicit
 permission for warning-level decisions that still recommend proceeding; it
 never overrides pressure or hard blockers. `--profile` and `--workload` select
