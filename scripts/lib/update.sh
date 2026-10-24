@@ -4181,17 +4181,21 @@ update_normalize_runtime_modes() {
     fi
 }
 
-# sync_acfs_global_wrapper [SOURCE_REF] [DEPLOYED_FILE] [REPO_REL]: a copy of
+# sync_acfs_global_wrapper [SOURCE_REF] [DEPLOYED_FILE] [REPO_REL] [RUNTIME_COPY]: a copy of
 # REPO_REL (scripts/acfs-global by default) at DEPLOYED_FILE (acfs in
 # ACFS_GLOBAL_BIN_DIR, /usr/local/bin), from the checkout or from
 # SOURCE_REF, as root or with sudo -n. The copy is staged beside the name
 # and renamed over it, so a link at the name (ACFS made
 # /usr/local/bin/acfs-update one before acfs-evgn) is replaced, never
-# written through.
+# written through. When this run can't refresh it and it differs from the
+# source, or, with no source here, from RUNTIME_COPY (the runtime's copy in
+# ~/.acfs, only compared, never copied from), the run says so: only the
+# installer, re-run as root, refreshes it then.
 sync_acfs_global_wrapper() {
     local source_ref="${1:-}"
     local deployed_file="${2:-${ACFS_GLOBAL_BIN_DIR:-/usr/local/bin}/acfs}"
     local repo_rel="${3:-scripts/acfs-global}"
+    local runtime_copy="${4:-}"
     local source_file="$ACFS_REPO_ROOT/$repo_rel"
     local source_tmp=""
     local source_label="$repo_rel"
@@ -4208,7 +4212,15 @@ sync_acfs_global_wrapper() {
         source_file="$source_tmp"
         source_label="${source_ref}:$repo_rel"
     else
-        [[ -f "$source_file" ]] || return 0
+        if [[ ! -f "$source_file" ]]; then
+            # No checkout to refresh from (a deployed ~/.acfs only).
+            if [[ -n "$runtime_copy" && -f "$runtime_copy" ]] \
+                && { [[ ! -f "$deployed_file" || -L "$deployed_file" ]] || ! cmp -s "$runtime_copy" "$deployed_file"; }; then
+                log_item "warn" "Root's ${deployed_file##*/} is out of date" \
+                    "$deployed_file differs from $runtime_copy, and this run has no checkout to refresh it from; re-run the ACFS installer as root"
+            fi
+            return 0
+        fi
     fi
 
     install_bin="$(update_system_binary_path install 2>/dev/null || true)"
@@ -4256,7 +4268,14 @@ sync_acfs_global_wrapper() {
         return 0
     fi
 
+    # No staged copy stays behind (one install made before its mv failed).
+    if [[ -e "$stage_file" || -L "$stage_file" ]]; then
+        rm -f -- "$stage_file" 2>/dev/null \
+            || { [[ -n "$sudo_bin" ]] && "$sudo_bin" -n rm -f -- "$stage_file" 2>/dev/null; } || true
+    fi
     log_to_file "Skipped syncing $source_label -> $deployed_file (needs root)"
+    log_item "warn" "Root's ${deployed_file##*/} is out of date" \
+        "$deployed_file differs from $source_label, and this run can't replace it; re-run the ACFS installer as root"
     if [[ -n "$source_tmp" ]]; then
         rm -f "$source_tmp" 2>/dev/null || true
     fi
@@ -4272,10 +4291,14 @@ sync_acfs_global_wrapper() {
 sync_acfs_global_commands() {
     local source_ref="${1:-}"
     local global_bin_dir="${ACFS_GLOBAL_BIN_DIR:-/usr/local/bin}"
+    local acfs_home=""
 
     [[ -n "$global_bin_dir" && "$global_bin_dir" == /* && "$global_bin_dir" != "/" ]] || return 0
-    sync_acfs_global_wrapper "$source_ref" "$global_bin_dir/acfs-update" "scripts/acfs-update"
-    sync_acfs_global_wrapper "$source_ref" "$global_bin_dir/flywheel-update-agents-md" "scripts/generate-root-agents-md.sh"
+    acfs_home="$(update_runtime_acfs_home 2>/dev/null || true)"
+    sync_acfs_global_wrapper "$source_ref" "$global_bin_dir/acfs-update" "scripts/acfs-update" \
+        "${acfs_home:+$acfs_home/bin/acfs-update}"
+    sync_acfs_global_wrapper "$source_ref" "$global_bin_dir/flywheel-update-agents-md" "scripts/generate-root-agents-md.sh" \
+        "${acfs_home:+$acfs_home/bin/flywheel-update-agents-md}"
     update_remove_global_home_link "$global_bin_dir/onboard"
 }
 

@@ -10664,8 +10664,8 @@ stub_sync_as_user() {
     run cat "$global_wrapper_args"
     assert_success
     assert_line --index 0 "origin/main"
-    assert_line --index 1 "origin/main $ACFS_GLOBAL_BIN_DIR/acfs-update scripts/acfs-update"
-    assert_line --index 2 "origin/main $ACFS_GLOBAL_BIN_DIR/flywheel-update-agents-md scripts/generate-root-agents-md.sh"
+    assert_line --index 1 "origin/main $ACFS_GLOBAL_BIN_DIR/acfs-update scripts/acfs-update $deployed_home/bin/acfs-update"
+    assert_line --index 2 "origin/main $ACFS_GLOBAL_BIN_DIR/flywheel-update-agents-md scripts/generate-root-agents-md.sh $deployed_home/bin/flywheel-update-agents-md"
 
     run "$deployed_home/bin/acfs"
     assert_success
@@ -10894,6 +10894,53 @@ global_commands_fixture() {
     assert_success
     [[ -L "$global_bin/acfs-update" && -L "$global_bin/onboard" ]] || fail "dry-run changed the global bin dir"
     [[ ! -e "$global_bin/flywheel-update-agents-md" ]] || fail "dry-run made a copy"
+}
+
+# A sudo that always refuses, so a refresh this run can't make never
+# reaches the host's own sudo.
+refusing_sudo() {
+    printf '#!/bin/sh\necho "sudo: a password is required" >&2\nexit 1\n' > "$temp_root/sudo"
+    chmod 755 "$temp_root/sudo"
+    update_system_binary_path() {
+        if [[ "$1" == sudo ]]; then printf '%s\n' "$temp_root/sudo"; return 0; fi
+        PATH=/usr/bin:/bin command -v "$1"
+    }
+}
+
+@test "global commands: a copy this run can't replace is reported, with the installer as the fix" {
+    local temp_root repo_root deployed_home global_bin log_file
+    global_commands_fixture
+    refusing_sudo
+    # mv -T can't put a file over a directory: the refresh fails after install.
+    rm -f "$global_bin/acfs-update"
+    mkdir "$global_bin/acfs-update"
+
+    run sync_acfs_global_commands
+    assert_success
+    assert_output --partial "Root's acfs-update is out of date"
+    assert_output --partial "re-run the ACFS installer as root"
+    [[ -d "$global_bin/acfs-update" ]] || fail "the name changed"
+    [[ ! -e "$global_bin/.acfs-update.acfs-new" ]] || fail "the staged copy was left"
+}
+
+@test "global commands: with no checkout, a root copy that differs from the runtime's is reported" {
+    local temp_root repo_root deployed_home global_bin log_file
+    global_commands_fixture
+    refusing_sudo
+    ACFS_REPO_ROOT="$temp_root/no-checkout"
+    rm -f "$global_bin/acfs-update"
+    printf '#!/bin/sh\necho old-root-copy\n' > "$global_bin/acfs-update"
+
+    run sync_acfs_global_commands
+    assert_success
+    assert_output --partial "Root's acfs-update is out of date"
+    assert_output --partial "differs from $deployed_home/bin/acfs-update, and this run has no checkout"
+    [[ "$(cat "$global_bin/acfs-update")" == *old-root-copy* ]] || fail "root's copy was replaced from the runtime's"
+
+    cp "$deployed_home/bin/acfs-update" "$global_bin/acfs-update"
+    run sync_acfs_global_commands
+    assert_success
+    refute_output --partial "Root's acfs-update is out of date"
 }
 
 @test "self-update done sentinel does not sync from unexpected origin" {

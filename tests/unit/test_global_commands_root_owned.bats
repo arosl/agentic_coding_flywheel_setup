@@ -37,8 +37,9 @@ load_helpers() {
     ACFS_HOME="$HOMEDIR/.acfs"
     ACFS_BIN_DIR="$HOMEDIR/.local/bin"
     INSTALL_ASSET_FAILS=""
+    MV_FAILS=""
     _acfs_primary_bin_tool_path() { PATH=/usr/bin:/bin command -v "$1"; }
-    _acfs_run_root_bin_command() { "$@"; }
+    _acfs_run_root_bin_command() { [[ -z "$MV_FAILS" || "${1##*/}" != mv ]] || return 1; "$@"; }
     log_detail() { printf 'DETAIL %s\n' "$1"; }
     # install_asset's root copy of a verified source: here a plain cp.
     install_asset() {
@@ -68,6 +69,16 @@ load_helpers() {
     run acfs_install_global_command "scripts/acfs-update" "acfs-update"
     [[ "$status" -ne 0 ]]
     [[ -L "$GB/acfs-update" ]] || fail "the name changed"
+}
+
+@test "acfs_install_global_command: a rename that fails leaves no staged copy, and the name as it was" {
+    load_helpers
+    ln -s "$HOMEDIR/.acfs/bin/acfs-update" "$GB/acfs-update"
+    MV_FAILS=1
+    run acfs_install_global_command "scripts/acfs-update" "acfs-update"
+    [[ "$status" -ne 0 ]]
+    [[ -L "$GB/acfs-update" ]] || fail "the name changed"
+    [[ ! -e "$GB/.acfs-update.acfs-new" ]] || fail "the staged copy was left"
 }
 
 @test "acfs_remove_global_home_link removes a link into the home, and leaves a regular file and a link elsewhere" {

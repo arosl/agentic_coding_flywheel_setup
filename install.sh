@@ -7168,13 +7168,20 @@ acfs_install_global_command() {
     local command_name="$2"
     local dest_path="/usr/local/bin/$command_name"
     local stage_path="/usr/local/bin/.$command_name.acfs-new"
-    local chmod_bin="" mv_bin=""
+    local chmod_bin="" mv_bin="" rm_bin=""
 
     chmod_bin="$(_acfs_primary_bin_tool_path chmod)" || return 1
     mv_bin="$(_acfs_primary_bin_tool_path mv)" || return 1
-    install_asset "$rel_path" "$stage_path" || return 1
-    _acfs_run_root_bin_command "$chmod_bin" 755 "$stage_path" || return 1
-    _acfs_run_root_bin_command "$mv_bin" -f -T "$stage_path" "$dest_path"
+    rm_bin="$(_acfs_primary_bin_tool_path rm)" || return 1
+    if ! install_asset "$rel_path" "$stage_path" \
+        || ! _acfs_run_root_bin_command "$chmod_bin" 755 "$stage_path" \
+        || ! _acfs_run_root_bin_command "$mv_bin" -f -T "$stage_path" "$dest_path"; then
+        # No staged copy stays behind; the name is as it was.
+        if [[ -e "$stage_path" || -L "$stage_path" ]]; then
+            _acfs_run_root_bin_command "$rm_bin" -f -- "$stage_path" || true
+        fi
+        return 1
+    fi
 }
 
 # acfs_remove_global_home_link NAME: removes /usr/local/bin/NAME when it is a
