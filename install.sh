@@ -8632,6 +8632,14 @@ install_cli_tools() {
         fi
     fi
 
+    # SSH keepalive (network.ssh_keepalive) has no legacy steps. Here it runs
+    # through its generated installer only when named (--only), so the phase
+    # verify judges what was asked, while a default legacy run (Arch) leaves
+    # sshd_config alone as before (acfs-fae9).
+    if [[ "$used_generated_network" != "true" ]] && acfs_module_explicitly_selected "network.ssh_keepalive"; then
+        acfs_legacy_run_manifest_module "network.ssh_keepalive" || log_warn "SSH keepalive configuration failed (see summary)"
+    fi
+
     if [[ "$cli_phase_rc" -ne 0 ]]; then
         log_warn "CLI tools phase finished with generated-module failures (see summary); the phase will be retried on resume"
         return 1
@@ -9288,6 +9296,13 @@ install_agents_phase() {
     if ! install_agy_locked_launchers; then
         ACFS_MODULE_FAILURES+=("agents.antigravity (locked launcher or dcg priming failed)")
         agents_phase_rc=1
+    fi
+
+    # Gemini CLI (agents.gemini, off by default) has no legacy steps: when the
+    # plan has it, its generated installer runs, so --only installs it here
+    # too and the phase verify judges what was asked (acfs-fae9).
+    if should_run_module "agents.gemini"; then
+        acfs_legacy_run_manifest_module "agents.gemini" || log_warn "Gemini CLI installation failed (see summary)"
     fi
 
     if [[ "$agents_phase_rc" -ne 0 ]]; then
@@ -10856,17 +10871,20 @@ UNIT_EOF
         # Keep the verified-installer capability identical to the manifest
         # contract. A custom ACFS_BIN_DIR is handled by the link step below.
         acfs_try_module_step "agents.grok" "Installing Grok CLI" acfs_run_verified_upstream_script_as_target_with_env "grok" "bash" "GROK_BIN_DIR=$TARGET_HOME/.local/bin" || acfs_optional_module_install_failed "grok" "Grok CLI"
-        local grok_installed_bin=""
-        local grok_candidate=""
-        for grok_candidate in "$TARGET_HOME/.local/bin/grok" "$TARGET_HOME/.grok/bin/grok"; do
-            if [[ -x "$grok_candidate" ]]; then
-                grok_installed_bin="$grok_candidate"
-                break
-            fi
-        done
-        if [[ ! -x "$ACFS_BIN_DIR/grok" ]] && [[ -n "$grok_installed_bin" ]]; then
-            acfs_try_module_step "agents.grok" "Linking grok into $ACFS_BIN_DIR" acfs_link_primary_bin_command "$grok_installed_bin" "grok" || log_warn "Could not link grok into $ACFS_BIN_DIR"
+    fi
+    # The link runs even when grok was already installed: binary_installed
+    # also finds ~/.grok/bin, which the verify's PATH lacks, so a resume
+    # after a failed link must still make it (acfs-fae9).
+    local grok_installed_bin=""
+    local grok_candidate=""
+    for grok_candidate in "$TARGET_HOME/.local/bin/grok" "$TARGET_HOME/.grok/bin/grok"; do
+        if [[ -x "$grok_candidate" ]]; then
+            grok_installed_bin="$grok_candidate"
+            break
         fi
+    done
+    if [[ ! -x "$ACFS_BIN_DIR/grok" ]] && [[ -n "$grok_installed_bin" ]]; then
+        acfs_try_module_step "agents.grok" "Linking grok into $ACFS_BIN_DIR" acfs_link_primary_bin_command "$grok_installed_bin" "grok" || log_warn "Could not link grok into $ACFS_BIN_DIR"
     fi
 
     # Get Image from Internet Link (giil)
@@ -10922,11 +10940,14 @@ UNIT_EOF
     else
         log_detail "Installing OpenCode"
         acfs_try_module_step "agents.opencode" "Installing OpenCode" acfs_run_verified_upstream_script_as_target "opencode" "bash" || acfs_optional_module_install_failed "opencode" "OpenCode"
-        # The upstream installer hardcodes ~/.opencode/bin, which is on no PATH ACFS
-        # manages; normalize the binary into the ACFS bin dir like claude/codex.
-        if [[ -x "$TARGET_HOME/.opencode/bin/opencode" ]]; then
-            acfs_try_module_step "agents.opencode" "Linking opencode into $ACFS_BIN_DIR" acfs_link_primary_bin_command "$TARGET_HOME/.opencode/bin/opencode" "opencode" || log_warn "Could not link opencode into $ACFS_BIN_DIR"
-        fi
+    fi
+    # The upstream installer hardcodes ~/.opencode/bin, which is on no PATH ACFS
+    # manages; normalize the binary into the ACFS bin dir like claude/codex.
+    # This runs even when opencode was already installed: binary_installed
+    # finds ~/.opencode/bin too, so a resume after a failed link must still
+    # make it (acfs-fae9).
+    if [[ ! -x "$ACFS_BIN_DIR/opencode" ]] && [[ -x "$TARGET_HOME/.opencode/bin/opencode" ]]; then
+        acfs_try_module_step "agents.opencode" "Linking opencode into $ACFS_BIN_DIR" acfs_link_primary_bin_command "$TARGET_HOME/.opencode/bin/opencode" "opencode" || log_warn "Could not link opencode into $ACFS_BIN_DIR"
     fi
 
     # herdr (tools.herdr). This hand-written path is the default on every
@@ -10954,6 +10975,16 @@ UNIT_EOF
     else
         acfs_legacy_run_manifest_module "utils.s2p" || log_warn "S2P installation failed (see summary)"
     fi
+
+    # rust_proxy, aadc and caut (off by default) have no legacy steps: when the
+    # plan has one, its generated installer runs, so --only installs it here
+    # too and the phase verify judges what was asked (acfs-fae9).
+    local legacy_only_module=""
+    for legacy_only_module in utils.rust_proxy utils.aadc utils.caut; do
+        if should_run_module "$legacy_only_module"; then
+            acfs_legacy_run_manifest_module "$legacy_only_module" || log_warn "$legacy_only_module installation failed (see summary)"
+        fi
+    done
 
     # System Resource Protection Script (srps)
     if ! acfs_legacy_module_selected "stack.srps"; then

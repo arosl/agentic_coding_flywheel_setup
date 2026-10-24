@@ -137,7 +137,8 @@ pinned_modules() {
 # installed, Agent Mail deselected and fake generated installers that record
 # their module. INSTALLED names the modules whose installed_check passes,
 # MISSING the binaries that binary_installed doesn't find, FAILING the
-# generated installers that fail.
+# generated installers that fail, UNSELECTED the modules the plan lacks.
+# Link steps are recorded as "link=<command>".
 run_stack_phase() {
     eval "$(sed -n '/^install_stack_phase() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
     eval "$(sed -n '/^acfs_legacy_run_manifest_module() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
@@ -155,19 +156,22 @@ run_stack_phase() {
     log_success() { :; }
     acfs_use_generated_category() { return 1; }
     acfs_legacy_module_selected() { [[ "$1" != "stack.mcp_agent_mail" ]]; }
-    should_run_module() { return 0; }
+    should_run_module() { [[ " ${UNSELECTED:-} " != *" $1 "* ]]; }
     acfs_module_supports_family() { return 0; }
     binary_installed() { [[ " ${MISSING:-} " != *" $1 "* ]]; }
     install_asset() { return 1; }
     run_as_target() { return 0; }
     try_step() { shift; "$@"; }
+    acfs_try_module_step() { shift 2; "$@"; }
+    acfs_link_primary_bin_command() { printf 'link=%s\n' "$2" >> "$MODULES"; }
     acfs_run_verified_upstream_script_as_target() { return 0; }
     acfs_run_verified_upstream_script_as_target_with_env() { return 0; }
     acfs_should_skip_module() { [[ " ${INSTALLED:-} " == *" $1 "* ]]; }
 
     declare -gA ACFS_MODULE_FUNC=()
     local module func
-    for module in tools.herdr stack.nhm stack.caam stack.ru utils.mdwb stack.cass utils.s2p; do
+    for module in tools.herdr stack.nhm stack.caam stack.ru utils.mdwb stack.cass utils.s2p \
+        utils.rust_proxy utils.aadc utils.caut; do
         func="acfs_generated_install_${module//./_}"
         ACFS_MODULE_FUNC[$module]="$func"
         eval "$func() {
@@ -306,4 +310,71 @@ run_stack_phase() {
     [[ "$status" -eq 0 ]]
     [[ "$output" == *"rc=1"* ]]
     [[ "$output" == *"failure=stack.cass (checksum)"* ]]
+}
+
+# acfs-fae9: modules with no legacy steps run through their generated
+# installer when the plan has them, so --only on the legacy path (Arch, or
+# ACFS_USE_GENERATED=0) installs them and the phase verify judges that.
+@test "install_stack_phase installs rust_proxy, aadc and caut through their generated installers when selected" {
+    run run_stack_phase
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"rc=0"* ]]
+    [[ "$output" == *"module=utils.rust_proxy"* ]]
+    [[ "$output" == *"module=utils.aadc"* ]]
+    [[ "$output" == *"module=utils.caut"* ]]
+}
+
+@test "install_stack_phase leaves rust_proxy, aadc and caut alone when the plan lacks them" {
+    UNSELECTED="utils.rust_proxy utils.aadc utils.caut"
+    run run_stack_phase
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"rc=0"* ]]
+    [[ "$output" != *"module=utils.rust_proxy"* ]]
+    [[ "$output" != *"module=utils.aadc"* ]]
+    [[ "$output" != *"module=utils.caut"* ]]
+}
+
+@test "a selected aadc whose generated installer fails fails the stack phase and names it" {
+    FAILING="utils.aadc"
+    run run_stack_phase
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"rc=1"* ]]
+    [[ "$output" == *"failure=utils.aadc (checksum)"* ]]
+}
+
+@test "grok and opencode found outside ACFS's bin dir are linked even when already installed" {
+    mkdir -p "$BATS_TEST_TMPDIR/home/.grok/bin" "$BATS_TEST_TMPDIR/home/.opencode/bin"
+    printf '#!/bin/sh\n' > "$BATS_TEST_TMPDIR/home/.grok/bin/grok"
+    printf '#!/bin/sh\n' > "$BATS_TEST_TMPDIR/home/.opencode/bin/opencode"
+    chmod +x "$BATS_TEST_TMPDIR/home/.grok/bin/grok" "$BATS_TEST_TMPDIR/home/.opencode/bin/opencode"
+    run run_stack_phase
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"module=link=grok"* ]]
+    [[ "$output" == *"module=link=opencode"* ]]
+}
+
+@test "grok and opencode already in ACFS's bin dir are not linked again" {
+    mkdir -p "$BATS_TEST_TMPDIR/home/.grok/bin" "$BATS_TEST_TMPDIR/home/.opencode/bin" "$BATS_TEST_TMPDIR/home/.local/bin"
+    local f
+    for f in .grok/bin/grok .opencode/bin/opencode .local/bin/grok .local/bin/opencode; do
+        printf '#!/bin/sh\n' > "$BATS_TEST_TMPDIR/home/$f"
+        chmod +x "$BATS_TEST_TMPDIR/home/$f"
+    done
+    run run_stack_phase
+    [[ "$status" -eq 0 ]]
+    [[ "$output" != *"module=link="* ]]
+}
+
+@test "the legacy agents phase runs gemini through its generated installer when the plan has it" {
+    local body
+    body="$(sed -n '/^install_agents_phase() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
+    grep -q 'if should_run_module "agents.gemini"; then' <<<"$body"
+    grep -q 'acfs_legacy_run_manifest_module "agents.gemini"' <<<"$body"
+}
+
+@test "the legacy CLI phase runs ssh_keepalive's generated installer only when it is named" {
+    local body
+    body="$(sed -n '/^install_cli_tools() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
+    grep -q 'acfs_module_explicitly_selected "network.ssh_keepalive"' <<<"$body"
+    grep -q 'acfs_legacy_run_manifest_module "network.ssh_keepalive"' <<<"$body"
 }
