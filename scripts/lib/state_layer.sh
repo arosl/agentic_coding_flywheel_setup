@@ -559,6 +559,23 @@ state_py() {
         python3 -I -c "$STATE_PY" "$@"
 }
 
+# state_exec_to_new_file PATH CMD...: runs CMD with stdout on PATH, opened
+# as a new 0600 file, never an existing one and never through a link
+# (O_EXCL, O_NOFOLLOW). Root writes the export into a directory the user
+# owns, where `age -o` would follow a link planted at the name (acfs-6lwb).
+state_exec_to_new_file() {
+    python3 -I -c '
+import os, sys
+try:
+    fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+except OSError as e:
+    sys.exit("refusing to write %s: %s" % (sys.argv[1], e.strerror))
+os.dup2(fd, 1)
+os.close(fd)
+os.execvp(sys.argv[2], sys.argv[2:])
+' "$@"
+}
+
 # --- Modes -----------------------------------------------------------
 
 # Print the paths under a private row that have group or other access
@@ -784,7 +801,6 @@ state_write_lease() {
     chmod 0700 "$STATE_META"
     tmp="$(mktemp "$STATE_META/.lease.XXXXXX")"
     printf '%s\n' "$value" >"$tmp"
-    chmod 0600 "$tmp"
     mv -f "$tmp" "$STATE_META/lease"
 }
 
@@ -970,7 +986,7 @@ state_cmd_export() {
     for r in "${recipients[@]}"; do age_args+=(-r "$r"); done
     for r in "${recipient_files[@]}"; do age_args+=(-R "$r"); done
     state_info "Writing the archive"
-    if ! (umask 077; state_py create "$spec" "$summary" | age "${age_args[@]}" -o "$partial"); then
+    if ! (umask 077; state_py create "$spec" "$summary" | state_exec_to_new_file "$partial" age "${age_args[@]}"); then
         [[ -f "$partial" ]] && rm -f -- "$partial"
         if [[ "$move" == "true" ]]; then
             if [[ -n "$prev_lease" ]]; then state_write_lease "$prev_lease"; else rm -f -- "$STATE_META/lease"; fi
@@ -978,7 +994,6 @@ state_cmd_export() {
         fi
         state_die "export failed; no archive was written"
     fi
-    chmod 0600 "$partial"
     chown -h "$(state_uid):$(state_gid)" "$partial"
     if ! ln -T -- "$partial" "$file" 2>/dev/null; then
         rm -f -- "$partial"
@@ -1270,7 +1285,8 @@ state_merge_authorized_keys() {
     else
         awk 'NF && !seen[$0]++' "$old" >"$tmp"
     fi
-    chmod 0600 "$tmp"
+    # mktemp made it 0600; a chmod here would follow a link the user swapped
+    # in, in a ~/.ssh the user owns (acfs-6lwb).
     chown -h "$(state_uid):$(state_gid)" "$tmp"
     mv -f "$tmp" "$new"
 }
@@ -1495,6 +1511,8 @@ state_write_if_changed() {
     mkdir -p "$(dirname "$path")"
     tmp="$(mktemp "$(dirname "$path")/.acfs-state.XXXXXX")"
     printf '%s\n' "$content" >"$tmp"
+    # Its callers write only into root's own directories (sshd_config.d,
+    # /etc/systemd/system), where no other account can swap $tmp.
     chmod "$mode" "$tmp"
     mv -f "$tmp" "$path"
 }

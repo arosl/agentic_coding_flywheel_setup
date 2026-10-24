@@ -73,6 +73,13 @@ if [[ "$decrypt" == "true" ]]; then
     [[ "$header" == "AGESTUB" ]] || { echo "age: not an age file" >&2; exit 1; }
     cat <&3
 else
+    if [[ -n "${AGE_SWAP_LINK:-}" ]]; then
+        # A user who owns the output directory swaps the output's name for a
+        # link before age writes.
+        target="${out:-$(readlink /proc/self/fd/1)}"
+        rm -f -- "$target"
+        ln -s "$AGE_SWAP_LINK" "$target"
+    fi
     { echo AGESTUB; cat; } >"${out:-/dev/stdout}"
 fi
 STUB
@@ -331,7 +338,7 @@ check "the archive is 0600" bash -c '[[ "$(stat -c %a "$1")" == 600 ]]' _ "$WORK
 check "export prints the archive's sha256" bash -c 'grep -q "^sha256: $(sha256sum "$2" | cut -d" " -f1)$" "$1"' _ "$OUT" "$WORK/a.tar.age"
 check "export stopped and restarted the user manager" \
     bash -c 'grep -q "systemctl stop user@$2.service" "$1" && grep -q "systemctl start user@$2.service" "$1"' _ "$LOG" "$UID_NOW"
-check "age got the recipient" bash -c 'grep -q "age -r age1example -o" "$1"' _ "$LOG"
+check "age got the recipient, and writes to its stdout, not to a path" bash -c 'grep -qx "age -r age1example" "$1"' _ "$LOG"
 members "$WORK/a.tar.age" >"$WORK/a.members"
 check "manifest.json is the last member" bash -c '[[ "$(tail -1 "$1")" == manifest.json ]]' _ "$WORK/a.members"
 check "logins and root rows are in, cache is out" \
@@ -344,6 +351,14 @@ check "the archive never holds a secret in the clear outside its members" \
 
 run "$A" export devbox "$WORK/a.tar.age" --recipient age1example
 check "export refuses to overwrite an existing file" bash -c '[[ "$1" -ne 0 ]] && grep -q "refusing to overwrite" "$2"' _ "$RC" "$ERR"
+
+# The output directory is the user's, so the user can swap the partial
+# archive's name for a link while age writes (acfs-6lwb): the archive must
+# land in the file the export opened, never in the link's target.
+printf 'root file\n' >"$WORK/victim"
+ACTIVE_UNITS="user@$UID_NOW.service" AGE_SWAP_LINK="$WORK/victim" run "$A" export devbox "$WORK/swap.tar.age" --recipient age1example
+check "a link swapped in at the partial archive's name is not written through" \
+    bash -c '[[ "$(cat "$1")" == "root file" ]]' _ "$WORK/victim"
 
 run "$A" export devbox --with-cache --recipient age1example
 DEFAULT_ARCHIVE="$(compgen -G "$A/home/acfs-state/devbox-*.tar.age" | head -1)"
