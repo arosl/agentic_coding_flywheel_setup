@@ -8637,12 +8637,19 @@ install_cli_tools() {
         fi
     fi
 
-    # SSH keepalive (network.ssh_keepalive) has no legacy steps. Here it runs
-    # through its generated installer only when named (--only), so the phase
-    # verify judges what was asked, while a default legacy run (Arch) leaves
-    # sshd_config alone as before (acfs-fae9).
-    if [[ "$used_generated_network" != "true" ]] && acfs_module_explicitly_selected "network.ssh_keepalive"; then
-        acfs_legacy_run_manifest_module "network.ssh_keepalive" || log_warn "SSH keepalive configuration failed (see summary)"
+    # SSH keepalive (network.ssh_keepalive) has no legacy steps, so it runs
+    # through its generated installer whenever it is selected, a default run
+    # included, as the manifest's enabled_by_default says (acfs-htdm; before,
+    # only when named, acfs-fae9). As in the generated dispatch, a host it
+    # already holds is skipped. The installer changes sshd only when that is
+    # safe; where it can't (no SSH server, say), the summary lists it as a
+    # skipped tool, unless --only named it.
+    if [[ "$used_generated_network" != "true" ]] && acfs_legacy_module_selected "network.ssh_keepalive"; then
+        if acfs_should_skip_module "network.ssh_keepalive"; then
+            log_detail "SSH keepalive already configured"
+        else
+            acfs_legacy_run_manifest_module "network.ssh_keepalive" || log_warn "SSH keepalive configuration failed (see summary)"
+        fi
     fi
 
     if [[ "$cli_phase_rc" -ne 0 ]]; then

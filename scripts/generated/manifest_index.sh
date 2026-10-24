@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="7d4ee4a5ca2c3c924bf03c014535ea980437e52b197dd9df0679c11929bbcd63"
+ACFS_MANIFEST_SHA256="c6f90aab3b68467eb2783a207c2e520f45ed93fbf64bcdf2a8ac7f89ff324ccb"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -760,8 +760,9 @@ declare -gA ACFS_MODULE_INSTALLED_CHECK=(
   ['tools.lazydocker']='command -v lazydocker'
   ['tools.incus']='command -v incus'
   ['network.tailscale']='command -v tailscale'
-  ['network.ssh_keepalive']='# Check if ClientAliveInterval is configured (non-zero)
-grep -qE '\''^ClientAliveInterval[[:space:]]+[1-9]'\'' /etc/ssh/sshd_config 2>/dev/null
+  ['network.ssh_keepalive']='# Configured when sshd_config or one of its drop-ins sets a positive
+# ClientAliveInterval (ACFS'\''s line or the user'\''s own)
+grep -qsiE '\''^[[:space:]]*ClientAliveInterval[[:space:]]+[1-9]'\'' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf
 '
   ['lang.bun']='test -x ~/.bun/bin/bun'
   ['lang.uv']='test -x "${ACFS_BIN_DIR:-$HOME/.local/bin}/uv" || test -x "$HOME/.local/bin/uv"'
@@ -966,7 +967,7 @@ declare -gA ACFS_MODULE_VERIFY_COUNT=(
   ['tools.lazydocker']="1"
   ['tools.incus']="1"
   ['network.tailscale']="2"
-  ['network.ssh_keepalive']="2"
+  ['network.ssh_keepalive']="1"
   ['lang.bun']="1"
   ['lang.uv']="1"
   ['lang.rust']="2"
@@ -1238,8 +1239,9 @@ user_login_shell_configured'
   ['tools.incus.0']='incus --version'
   ['network.tailscale.0']='tailscale version'
   ['network.tailscale.1']='systemctl is-enabled tailscaled'
-  ['network.ssh_keepalive.0']='grep -E '\''^ClientAliveInterval[[:space:]]+60'\'' /etc/ssh/sshd_config'
-  ['network.ssh_keepalive.1']='grep -E '\''^ClientAliveCountMax[[:space:]]+3'\'' /etc/ssh/sshd_config'
+  ['network.ssh_keepalive.0']='# A positive ClientAliveInterval, ACFS'\''s or the user'\''s, in sshd_config
+# or a drop-in. Where the install can'\''t set one, it exits 1 first.
+grep -qsiE '\''^[[:space:]]*ClientAliveInterval[[:space:]]+[1-9]'\'' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf'
   ['lang.bun.0']='~/.bun/bin/bun --version'
   ['lang.uv.0']='command -v uv >/dev/null 2>&1 && uv --version'
   ['lang.rust.0']='~/.cargo/bin/cargo --version'

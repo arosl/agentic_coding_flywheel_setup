@@ -436,33 +436,119 @@ acfs_generated_install_network_ssh_keepalive() {
     log_step "Installing network.ssh_keepalive"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: if [[ ! -f /etc/ssh/sshd_config.acfs.bak ]]; then (root)"
+        log_info "dry-run: install: if [[ ! -f \"\$cfg\" ]]; then (root)"
     else
         if ! run_as_root_shell <<'INSTALL_NETWORK_SSH_KEEPALIVE'
-# Backup original sshd_config if not already backed up
-if [[ ! -f /etc/ssh/sshd_config.acfs.bak ]]; then
-  cp /etc/ssh/sshd_config /etc/ssh/sshd_config.acfs.bak
+# ClientAliveInterval 60, ClientAliveCountMax 3: sshd probes an idle
+# session every 60 s and drops it after 3 missed answers, so a VPN or
+# NAT that forgets idle flows doesn't cut it (acfs-htdm). Every default
+# install runs this, so it changes sshd only when that is safe. Where
+# it can't, it exits 1 with the reason: the module is optional, so
+# unless --only named it, the install records a skipped tool.
+cfg=/etc/ssh/sshd_config
+dropin_dir=/etc/ssh/sshd_config.d
+
+# No SSH server here (a desktop, Omarchy, a container without one).
+if [[ ! -f "$cfg" ]]; then
+  echo "network.ssh_keepalive: no $cfg: install openssh-server first; skipped" >&2
+  exit 1
+fi
+# A positive value set already, by ACFS or by the user: leave it, so a
+# rerun changes nothing.
+if grep -qsiE '^[[:space:]]*ClientAliveInterval[[:space:]]+[1-9]' "$cfg" "$dropin_dir"/*.conf; then
+  exit 0
+fi
+# This runs under set -euo pipefail (run_as_root_shell), so every step
+# that can fail is checked, and a failure undoes what it wrote.
+sshd_bin="$(command -v sshd 2>/dev/null || true)"
+if [[ -z "$sshd_bin" ]]; then
+  for candidate in /usr/sbin/sshd /usr/bin/sshd; do
+    if [[ -x "$candidate" ]]; then
+      sshd_bin="$candidate"
+      break
+    fi
+  done
+fi
+if [[ -z "$sshd_bin" ]]; then
+  echo "network.ssh_keepalive: $cfg exists but sshd is not installed: install openssh-server first; skipped" >&2
+  exit 1
+fi
+# A config sshd already rejects (no host keys yet, say) is not ours to judge.
+if ! "$sshd_bin" -t -f "$cfg" >/dev/null 2>&1; then
+  echo "network.ssh_keepalive: sshd -t rejects the current $cfg; left as it is" >&2
+  exit 1
 fi
 
-# Configure SSH keepalive settings
-# ClientAliveInterval: send keepalive every 60 seconds
-# ClientAliveCountMax: disconnect after 3 missed (3 minutes of real disconnect)
+# Any ClientAliveInterval left now is 0, and sshd keeps the first value
+# it reads. One in a drop-in is the user's file and would win over
+# ACFS's lines, so leave it.
+if grep -qsiE '^[[:space:]]*ClientAliveInterval[[:space:]]' "$dropin_dir"/*.conf; then
+  echo "network.ssh_keepalive: a drop-in in $dropin_dir sets ClientAliveInterval 0; left as it is" >&2
+  exit 1
+fi
+# A drop-in, unless sshd_config sets ClientAliveInterval 0 itself, which
+# could be read first: then the copy below drops that line.
+if [[ -d "$dropin_dir" ]] && grep -qiE '^[[:space:]]*Include[[:space:]]+.*sshd_config\.d' "$cfg" \
+  && ! grep -qiE '^[[:space:]]*ClientAliveInterval[[:space:]]' "$cfg"; then
+  # A drop-in, as doctor --fix writes: it applies before any Match
+  # block, and removing it undoes this.
+  dropin="$dropin_dir/60-acfs-keepalive.conf"
+  if ! printf '%s\n' "# ACFS: SSH keepalive for VPN/NAT resilience (network.ssh_keepalive)" \
+      "ClientAliveInterval 60" "ClientAliveCountMax 3" >"$dropin" \
+    || ! chmod 0644 "$dropin"; then
+    rm -f -- "$dropin" 2>/dev/null || true
+    echo "network.ssh_keepalive: could not write $dropin; sshd is unchanged" >&2
+    exit 1
+  fi
+  if ! "$sshd_bin" -t -f "$cfg" >/dev/null 2>&1; then
+    rm -f -- "$dropin" 2>/dev/null || true
+    echo "network.ssh_keepalive: sshd -t rejected the keepalive drop-in; removed it, sshd is unchanged" >&2
+    exit 1
+  fi
+else
+  # Edit a copy of sshd_config: drop its ClientAliveInterval 0, put the
+  # lines before its first Match block (after one, they would apply
+  # only to that block), check the copy, then put it in place.
+  if [[ ! -f "$cfg.acfs.bak" ]] && ! cp -p -- "$cfg" "$cfg.acfs.bak"; then
+    echo "network.ssh_keepalive: could not back up $cfg; left as it is" >&2
+    exit 1
+  fi
+  if ! tmp="$(mktemp "$cfg.acfs.XXXXXX")"; then
+    echo "network.ssh_keepalive: could not make a copy of $cfg; left as it is" >&2
+    exit 1
+  fi
+  if ! cp -p -- "$cfg" "$tmp" || ! awk '
+    function block() {
+      print "# ACFS: SSH keepalive for VPN/NAT resilience (network.ssh_keepalive)"
+      print "ClientAliveInterval 60"
+      print "ClientAliveCountMax 3"
+    }
+    tolower($1) == "clientaliveinterval" { next }
+    !done && tolower($1) == "match" { block(); print ""; done = 1 }
+    { print }
+    END { if (!done) { print ""; block() } }
+  ' "$cfg" >"$tmp"; then
+    rm -f -- "$tmp" 2>/dev/null || true
+    echo "network.ssh_keepalive: could not write the edited copy; $cfg is unchanged" >&2
+    exit 1
+  fi
+  if ! "$sshd_bin" -t -f "$tmp" >/dev/null 2>&1; then
+    rm -f -- "$tmp" 2>/dev/null || true
+    echo "network.ssh_keepalive: sshd -t rejected the edited config; $cfg is unchanged" >&2
+    exit 1
+  fi
+  if ! mv -f -- "$tmp" "$cfg"; then
+    rm -f -- "$tmp" 2>/dev/null || true
+    echo "network.ssh_keepalive: could not put the edited config in place; $cfg is unchanged" >&2
+    exit 1
+  fi
+fi
 
-# Remove any existing ClientAlive settings
-sed -i '/^#*ClientAliveInterval/d' /etc/ssh/sshd_config
-sed -i '/^#*ClientAliveCountMax/d' /etc/ssh/sshd_config
-
-# Add new settings at the end
-echo "" >> /etc/ssh/sshd_config
-echo "# ACFS: SSH keepalive for VPN/NAT resilience" >> /etc/ssh/sshd_config
-echo "ClientAliveInterval 60" >> /etc/ssh/sshd_config
-echo "ClientAliveCountMax 3" >> /etc/ssh/sshd_config
-
-# Reload sshd (doesn't kill existing connections)
-systemctl reload sshd || systemctl reload ssh || true
+# Reload, never restart: open sessions stay up.
+systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 INSTALL_NETWORK_SSH_KEEPALIVE
         then
-            log_warn "network.ssh_keepalive: install command failed: if [[ ! -f /etc/ssh/sshd_config.acfs.bak ]]; then"
+            log_warn "network.ssh_keepalive: install command failed: if [[ ! -f \"\$cfg\" ]]; then"
             # Optional-module failures are warnings on a default install, but a
             # module the user explicitly named with --only had exactly one job:
             # propagate the failure instead of reporting phase success (#373).
@@ -472,7 +558,7 @@ INSTALL_NETWORK_SSH_KEEPALIVE
               return 1
             fi
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "network.ssh_keepalive" "install command failed: if [[ ! -f /etc/ssh/sshd_config.acfs.bak ]]; then"
+              record_skipped_tool "network.ssh_keepalive" "install command failed: if [[ ! -f \"\$cfg\" ]]; then"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "network.ssh_keepalive"
             fi
@@ -482,13 +568,15 @@ INSTALL_NETWORK_SSH_KEEPALIVE
 
     # Verify
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: verify: grep -E '^ClientAliveInterval[[:space:]]+60' /etc/ssh/sshd_config (root)"
+        log_info "dry-run: verify: grep -qsiE '^[[:space:]]*ClientAliveInterval[[:space:]]+[1-9]' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf (root)"
     else
         if ! run_as_root_shell <<'INSTALL_NETWORK_SSH_KEEPALIVE'
-grep -E '^ClientAliveInterval[[:space:]]+60' /etc/ssh/sshd_config
+# A positive ClientAliveInterval, ACFS's or the user's, in sshd_config
+# or a drop-in. Where the install can't set one, it exits 1 first.
+grep -qsiE '^[[:space:]]*ClientAliveInterval[[:space:]]+[1-9]' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf
 INSTALL_NETWORK_SSH_KEEPALIVE
         then
-            log_warn "network.ssh_keepalive: verify failed: grep -E '^ClientAliveInterval[[:space:]]+60' /etc/ssh/sshd_config"
+            log_warn "network.ssh_keepalive: verify failed: grep -qsiE '^[[:space:]]*ClientAliveInterval[[:space:]]+[1-9]' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf"
             # Optional-module failures are warnings on a default install, but a
             # module the user explicitly named with --only had exactly one job:
             # propagate the failure instead of reporting phase success (#373).
@@ -498,31 +586,7 @@ INSTALL_NETWORK_SSH_KEEPALIVE
               return 1
             fi
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "network.ssh_keepalive" "verify failed: grep -E '^ClientAliveInterval[[:space:]]+60' /etc/ssh/sshd_config"
-            elif type -t state_tool_skip >/dev/null 2>&1; then
-              state_tool_skip "network.ssh_keepalive"
-            fi
-            return 0
-        fi
-    fi
-    if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: verify: grep -E '^ClientAliveCountMax[[:space:]]+3' /etc/ssh/sshd_config (root)"
-    else
-        if ! run_as_root_shell <<'INSTALL_NETWORK_SSH_KEEPALIVE'
-grep -E '^ClientAliveCountMax[[:space:]]+3' /etc/ssh/sshd_config
-INSTALL_NETWORK_SSH_KEEPALIVE
-        then
-            log_warn "network.ssh_keepalive: verify failed: grep -E '^ClientAliveCountMax[[:space:]]+3' /etc/ssh/sshd_config"
-            # Optional-module failures are warnings on a default install, but a
-            # module the user explicitly named with --only had exactly one job:
-            # propagate the failure instead of reporting phase success (#373).
-            if declare -f acfs_module_explicitly_selected >/dev/null 2>&1 \
-                && acfs_module_explicitly_selected "network.ssh_keepalive"; then
-              log_error "network.ssh_keepalive: explicitly requested via --only; treating optional-module failure as fatal"
-              return 1
-            fi
-            if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "network.ssh_keepalive" "verify failed: grep -E '^ClientAliveCountMax[[:space:]]+3' /etc/ssh/sshd_config"
+              record_skipped_tool "network.ssh_keepalive" "verify failed: grep -qsiE '^[[:space:]]*ClientAliveInterval[[:space:]]+[1-9]' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "network.ssh_keepalive"
             fi
@@ -532,8 +596,10 @@ INSTALL_NETWORK_SSH_KEEPALIVE
 
     # Post-install message
     log_info "SSH keepalive configured! Your connections will now survive VPN/NAT timeouts."
-    log_info "Settings: ClientAliveInterval 60, ClientAliveCountMax 3"
-    log_info "Original config backed up to /etc/ssh/sshd_config.acfs.bak"
+    log_info "Settings: ClientAliveInterval 60, ClientAliveCountMax 3, in"
+    log_info "/etc/ssh/sshd_config.d/60-acfs-keepalive.conf, or in /etc/ssh/sshd_config"
+    log_info "(backed up first to /etc/ssh/sshd_config.acfs.bak) where there is no drop-in directory."
+    log_info "A ClientAliveInterval you set yourself stays as it is."
 
     log_success "network.ssh_keepalive installed"
 }
