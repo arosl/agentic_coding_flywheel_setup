@@ -538,6 +538,70 @@ def extract(dest, manifest_path, home_out=None):
         os.chmod(path, mode)
         os.utime(path, (mtime, mtime))
 
+DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+def fix_entry(dfd, name, action, uid, gid):
+    st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+    if stat.S_ISDIR(st.st_mode):
+        fd = os.open(name, DIR_FLAGS, dir_fd=dfd)
+        try:
+            if os.fstat(fd).st_ino != st.st_ino:
+                raise Refuse("changed during the repair: %r" % name)
+            for e in os.scandir(fd):
+                fix_entry(fd, e.name, action, uid, gid)
+            if action == "owner":
+                os.fchown(fd, uid, gid)
+            else:
+                os.fchmod(fd, stat.S_IMODE(st.st_mode) & ~0o077)
+        finally:
+            os.close(fd)
+    elif stat.S_ISREG(st.st_mode):
+        if action == "owner":
+            # Another name of a file the user doesn't own is never handed
+            # over: with protected_hardlinks off it may be a root file.
+            if st.st_nlink > 1 and st.st_uid != uid:
+                raise Refuse("a hard link to a file the user doesn't own: %r" % name)
+            os.chown(name, uid, gid, dir_fd=dfd, follow_symlinks=False)
+            return
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dfd)
+        try:
+            if os.fstat(fd).st_ino != st.st_ino:
+                raise Refuse("changed during the repair: %r" % name)
+            mode = stat.S_IMODE(st.st_mode)
+            if name.endswith(".pub"):
+                mode = (mode | 0o644) & ~0o022
+            else:
+                mode &= ~0o077
+            os.fchmod(fd, mode)
+        finally:
+            os.close(fd)
+    elif action == "owner":
+        # A link or special file: its own owner, never its target's.
+        os.chown(name, uid, gid, dir_fd=dfd, follow_symlinks=False)
+
+def fix_tree(base, rel, action, uid=None, gid=None):
+    # repair's fix for a home row, as root: every directory from the base
+    # down is opened O_NOFOLLOW, and every change goes through a directory
+    # or file descriptor, so a link the user puts in the row's path or tree
+    # is never followed (acfs-3vcb).
+    parts = [p for p in rel.split("/") if p]
+    try:
+        fd = os.open(base, DIR_FLAGS)
+        for p in parts[:-1]:
+            nfd = os.open(p, DIR_FLAGS, dir_fd=fd)
+            os.close(fd)
+            fd = nfd
+    except OSError as e:
+        raise Refuse("a directory in %r's path is a link or missing: %s" % (rel, e.strerror))
+    try:
+        if parts:
+            fix_entry(fd, parts[-1], action, uid, gid)
+        else:
+            for e in os.scandir(fd):
+                fix_entry(fd, e.name, action, uid, gid)
+    finally:
+        os.close(fd)
+
 def split(dest, manifest_path):
     # Root extracts the root rows into dest, a root-only directory, and
     # writes manifest.json and then the home rows' members to stdout, for
@@ -569,6 +633,9 @@ try:
     elif cmd == "split":
         split(sys.argv[2], sys.argv[3])
         drain()
+    elif cmd == "fix-tree":
+        ids = [int(x) for x in sys.argv[5:7]]
+        fix_tree(sys.argv[2], sys.argv[3], sys.argv[4], *ids)
     else:
         raise Refuse("unknown helper command %r" % cmd)
 except Refuse as e:
@@ -1392,14 +1459,28 @@ state_cmd_repair() {
         if [[ -n "$problems" ]]; then
             changed=$((changed + $(wc -l <<<"$problems")))
             printf '%s: owner -> %s (%d paths)\n' "$id" "$owner" "$(wc -l <<<"$problems")"
-            [[ "$dry_run" == "true" ]] || chown -R -h "$owner" "$target"
+            # In the home, through descriptors: chown -R -h follows a link
+            # the user put at a directory in the row's path (acfs-3vcb).
+            if [[ "$dry_run" == "true" ]]; then
+                :
+            elif [[ "$base" == "home" ]]; then
+                state_py fix-tree "$STATE_HOME" "$path" owner "$(state_uid)" "$(state_gid)"
+            else
+                chown -R -h "$owner" "$target"
+            fi
         fi
         [[ "$policy" == "private" ]] || continue
         problems="$(state_mode_problems "$target")"
         if [[ -n "$problems" ]]; then
             changed=$((changed + $(wc -l <<<"$problems")))
             printf '%s: no group or other access (%d paths)\n' "$id" "$(wc -l <<<"$problems")"
-            [[ "$dry_run" == "true" ]] || state_fix_modes "$target"
+            if [[ "$dry_run" == "true" ]]; then
+                :
+            elif [[ "$base" == "home" ]]; then
+                state_py fix-tree "$STATE_HOME" "$path" modes
+            else
+                state_fix_modes "$target"
+            fi
         fi
     done
     if [[ "$changed" -eq 0 ]]; then

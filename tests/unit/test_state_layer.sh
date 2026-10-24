@@ -594,6 +594,20 @@ check "repair makes secret files 0600, dirs 0700, keeps .pub 0644" \
     bash -c '[[ "$(stat -c %a "$1/home/.codex/auth.json")" == 600 && "$(stat -c %a "$1/home/.codex")" == 700 && "$(stat -c %a "$1/ssh/ssh_host_ed25519_key")" == 600 && "$(stat -c %a "$1/ssh/ssh_host_ed25519_key.pub")" == 644 ]]' _ "$A"
 check "repair leaves asis rows alone" \
     bash -c '[[ "$(stat -c %a "$1/home/.config/systemd/user/x.service")" == 664 ]]' _ "$A"
+# Repair runs as root, and the user owns the home: a directory in a row's
+# path may be a link the user made (acfs-3vcb). Repair refuses the row, and
+# nothing behind the link changes.
+R="$WORK/r"
+make_machine "$R"
+mkdir -p "$WORK/outside-share/caam"
+printf 'not the home\n' >"$WORK/outside-share/caam/vault"
+chmod 0644 "$WORK/outside-share/caam/vault"
+rm -rf "$R/home/.local/share"
+ln -s "$WORK/outside-share" "$R/home/.local/share"
+run "$R" repair
+check "repair refuses a row whose path runs through a link, and changes nothing behind it" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "is a link" "$2" && [[ "$(stat -c %a "$3")" == 644 ]]' \
+    _ "$RC" "$ERR" "$WORK/outside-share/caam/vault"
 
 echo "doctor"
 # A umask-002 user's file inside a row whose top is 0700: no other
