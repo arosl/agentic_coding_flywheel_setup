@@ -527,15 +527,22 @@ check "no refused archive changed the machine's home or root rows" bash -c '[[ "
 # The user moves the home rows, and moving a directory needs write on its
 # parent: a root-owned ~/.config would stop the import halfway
 # (acfs-essd). It stops before anything is staged or moved instead.
+# The archive is built here, with no tools, as the refusals above are:
+# an import runs each archived tool's --version as the user first, and a
+# real one on the runner's PATH could touch the home it is given.
 G="$WORK/g"
 make_machine "$G"
 rm -rf "$G/home/.claude" "$G/home/.claude.json" "$G/home/.codex" "$G/home/.config/gh"
+tamper owners "add('home/.config/gh/hosts.yml', b'x'); manifest([{'path': 'home/.config/gh/hosts.yml', 'sha256': hashlib.sha256(b'x').hexdigest()}], rows=[
+    {'id': 'gh', 'class': 'login', 'base': 'home', 'path': '.config/gh', 'policy': 'private', 'markers': [], 'present': True}])"
 before_g="$(snapshot "$G")"
-ROOT_OWNED="$G/home/.config" INSTANCE_LEASE="lease-g" run "$G" import devbox "$WORK/a.tar.age"
+ROOT_OWNED="$G/home/.config" INSTANCE_LEASE="lease-g" run "$G" import devbox "$WORK/owners.tar.age"
 after_g="$(snapshot "$G")"
-check "a root-owned directory above a home row stops the import before anything moves" \
-    bash -c '[[ "$1" -ne 0 ]] && grep -q "nothing was moved" "$2" && grep -qx "  $3/home/.config" "$2" && [[ "$4" == "$5" ]] && ! compgen -G "$3/home/.acfs-import-*" >/dev/null' \
-    _ "$RC" "$ERR" "$G" "$before_g" "$after_g"
+check "a root-owned directory above a home row stops the import, saying nothing was moved" \
+    bash -c '{ [[ "$1" -ne 0 ]] && grep -q "nothing was moved" "$2"; } || { echo "rc=$1"; cat "$2"; } >&2' _ "$RC" "$ERR"
+check "the refusal names the root-owned directory" bash -c 'grep -qx "  $2/home/.config" "$1"' _ "$ERR" "$G"
+check "and the home, the root rows and the staging are as they were" \
+    bash -c '[[ "$1" == "$2" ]] && ! compgen -G "$3/home/.acfs-import-*" >/dev/null' _ "$before_g" "$after_g" "$G"
 
 run "$C" import devbox "$WORK/a.tar.age" --dry-run
 check "import --dry-run validates and changes nothing" \
