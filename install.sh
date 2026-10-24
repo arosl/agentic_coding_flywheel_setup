@@ -5348,6 +5348,21 @@ install_checksums_yaml() {
     local dest_dir
     dest_dir="$(dirname "$dest_path")"
 
+    # Under the target's home the user writes it, as install_asset writes
+    # there since acfs-wiip: a temp file renamed over the name, so a link the
+    # user put at the name is replaced, never written through (acfs-hmf1).
+    local target_home="${TARGET_HOME:-}" content_sha=""
+    target_home="${target_home%/}"
+    if [[ -n "${TARGET_USER:-}" && "$TARGET_USER" != "root" && -n "$target_home" && "$dest_path" == "$target_home"/* ]]; then
+        content_sha="$(printf '%s' "$content" | acfs_calculate_file_sha256 /dev/stdin)" || return 1
+        if ! acfs_asset_dir "$dest_dir" \
+            || ! printf '%s' "$content" | acfs_write_file_as_target "$dest_path" 0644 "$content_sha"; then
+            log_error "install_checksums_yaml: Failed to write $dest_path as $TARGET_USER"
+            return 1
+        fi
+        return 0
+    fi
+
     local -a sudo_cmd=()
     local sudo_bin=""
     if [[ $EUID -ne 0 ]]; then

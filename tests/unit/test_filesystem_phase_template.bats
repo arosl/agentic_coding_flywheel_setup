@@ -429,3 +429,45 @@ left_by_root() {
     printf 'root chowns: %s\n' "$chowns"
     [[ -z "$chowns" ]]
 }
+
+# Adds install.sh's install_checksums_yaml and acfs_asset_dir to
+# load_install_asset, with a dedicated checksums ref (ACFS_CHECKSUMS_REF other
+# than the install's ref), so it takes the branch that writes the fetched
+# content itself. The fetch returns fixed text, and validation passes.
+load_checksums_yaml() {
+    load_install_asset
+    local fn
+    for fn in install_checksums_yaml acfs_asset_dir; do
+        eval "$(sed -n "/^$fn() {\$/,/^}\$/p" "$PROJECT_ROOT/install.sh")"
+        [[ "$(type -t "$fn")" == "function" ]]
+    done
+    ACFS_CHECKSUMS_REF=main
+    ACFS_REF_INPUT=older-install-ref
+    acfs_fetch_fresh_checksums_via_api() { printf 'installers:\n  tool:\n    url: "https://example.com/install.sh"\n'; }
+    acfs_parse_checksums_content() { :; }
+    acfs_validate_upstream_checksums() { :; }
+}
+
+@test "install_checksums_yaml from a dedicated ref is written by the user, and a link at the name is replaced, its target untouched (acfs-hmf1)" {
+    load_checksums_yaml
+    local victim="$BATS_TEST_TMPDIR/passwd"
+    printf 'root:x:0:0\n' > "$victim"
+    ln -s "$victim" "$ACFS_HOME/checksums.yaml"
+
+    install_checksums_yaml "$ACFS_HOME/checksums.yaml"
+
+    [[ "$(cat "$victim")" == "root:x:0:0" ]]
+    [[ -f "$ACFS_HOME/checksums.yaml" && ! -L "$ACFS_HOME/checksums.yaml" ]]
+    grep -qF 'url: "https://example.com/install.sh"' "$ACFS_HOME/checksums.yaml"
+    [[ "$(stat -c %a "$ACFS_HOME/checksums.yaml")" == 644 ]]
+    grep -q '^as target: ' "$CALLS"
+}
+
+@test "install_checksums_yaml from a dedicated ref, outside the target's home, writes as before" {
+    load_checksums_yaml
+
+    install_checksums_yaml "$ACFS_BIN_DIR/checksums.yaml"
+
+    grep -qF 'url: "https://example.com/install.sh"' "$ACFS_BIN_DIR/checksums.yaml"
+    [[ -z "$(grep '^as target' "$CALLS" || true)" ]]
+}
