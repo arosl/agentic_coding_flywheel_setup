@@ -7051,19 +7051,48 @@ acfs_link_primary_bin_command() {
     run_as_target "$ln_bin" -sf "$source_path" "$dest_path"
 }
 
-acfs_link_global_bin_command() {
-    local source_path="$1"
+# acfs_install_global_command REL_PATH NAME: /usr/local/bin/NAME becomes
+# root's copy of the verified REL_PATH, never a link to the target's file,
+# which an admin's sudo would run as root (acfs-evgn). The copy is staged
+# beside the name and renamed over it, so a link ACFS made there before
+# acfs-evgn is replaced, never written through.
+acfs_install_global_command() {
+    local rel_path="$1"
     local command_name="$2"
     local dest_path="/usr/local/bin/$command_name"
-    local ln_bin=""
+    local stage_path="/usr/local/bin/.$command_name.acfs-new"
+    local chmod_bin="" mv_bin=""
 
-    if [[ -e "$dest_path" && ! -L "$dest_path" ]]; then
-        log_error "Refusing to replace existing non-symlink global command: $dest_path"
-        return 1
-    fi
+    chmod_bin="$(_acfs_primary_bin_tool_path chmod)" || return 1
+    mv_bin="$(_acfs_primary_bin_tool_path mv)" || return 1
+    install_asset "$rel_path" "$stage_path" || return 1
+    _acfs_run_root_bin_command "$chmod_bin" 755 "$stage_path" || return 1
+    _acfs_run_root_bin_command "$mv_bin" -f -T "$stage_path" "$dest_path"
+}
 
-    ln_bin="$(_acfs_primary_bin_tool_path ln)" || return 1
-    _acfs_run_root_bin_command "$ln_bin" -sf "$source_path" "$dest_path"
+# acfs_remove_global_home_link NAME: removes /usr/local/bin/NAME when it is a
+# link into the target's home, as ACFS made /usr/local/bin/onboard before
+# acfs-evgn. A regular file there, or a link elsewhere, stays.
+acfs_remove_global_home_link() {
+    local dest_path="/usr/local/bin/$1"
+    local link_target="" readlink_bin="" rm_bin=""
+
+    # With ACFS_BIN_DIR=/usr/local/bin (upstream's #211 opt-in), the link is
+    # the user's own primary command, made just before; acfs-g1p1 rules on
+    # that setting.
+    [[ "${ACFS_BIN_DIR:-}" != "/usr/local/bin" ]] || return 0
+    [[ -L "$dest_path" ]] || return 0
+    readlink_bin="$(_acfs_primary_bin_tool_path readlink)" || return 1
+    link_target="$("$readlink_bin" -- "$dest_path" 2>/dev/null || true)"
+    case "$link_target" in
+        "$TARGET_HOME"/*|"$ACFS_HOME"/*) ;;
+        *)
+            log_detail "Leaving $dest_path as it is: a link to ${link_target:-?}, outside $TARGET_HOME"
+            return 0
+            ;;
+    esac
+    rm_bin="$(_acfs_primary_bin_tool_path rm)" || return 1
+    _acfs_run_root_bin_command "$rm_bin" -f -- "$dest_path"
 }
 
 configure_acfs_nightly_timer() {
@@ -11805,7 +11834,9 @@ finalize() {
 
     try_step "Creating bin directory ($ACFS_BIN_DIR)" acfs_ensure_primary_bin_dir || return 1
     try_step "Linking onboard command" acfs_link_primary_bin_command "$ACFS_HOME/onboard/onboard.sh" "onboard" || return 1
-    try_step "Linking global onboard command" acfs_link_global_bin_command "$ACFS_HOME/onboard/onboard.sh" "onboard" || return 1
+    # onboard is the user's, on their PATH through the bin dir, and not in
+    # root's (acfs-evgn): the global link to their onboard.sh goes.
+    try_step "Removing the global onboard link" acfs_remove_global_home_link "onboard" || return 1
 
     # Install shell completions (acfs.zshrc adds ~/.acfs/completions to fpath
     # only when _acfs exists, so without this step `acfs <TAB>` never works)
@@ -11921,7 +11952,8 @@ finalize() {
     try_step "Setting acfs-update permissions" acfs_chmod_as_target 755 "$ACFS_HOME/bin/acfs-update" || return 1
     try_step "Setting acfs-update ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/acfs-update" || return 1
     try_step "Linking acfs-update command" acfs_link_primary_bin_command "$ACFS_HOME/bin/acfs-update" "acfs-update" || return 1
-    try_step "Linking global acfs-update command" acfs_link_global_bin_command "$ACFS_HOME/bin/acfs-update" "acfs-update" || return 1
+    # Root's own copy: it drops to the owner before it runs their update.sh.
+    try_step "Installing global acfs-update command" acfs_install_global_command "scripts/acfs-update" "acfs-update" || return 1
 
     # Install the flywheel agent-guide generator (if available) and generate
     # the canonical guide once. The guide lives only in ACFS-owned storage
@@ -11931,7 +11963,9 @@ finalize() {
     if try_step_optional "Installing flywheel-update-agents-md" install_asset "scripts/generate-root-agents-md.sh" "$ACFS_HOME/bin/flywheel-update-agents-md"; then
         try_step_optional "Setting flywheel-update-agents-md permissions" acfs_chmod_as_target 755 "$ACFS_HOME/bin/flywheel-update-agents-md" || true
         try_step_optional "Setting flywheel-update-agents-md ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/flywheel-update-agents-md" || true
-        try_step_optional "Linking flywheel-update-agents-md command" $SUDO ln -sf "$ACFS_HOME/bin/flywheel-update-agents-md" "/usr/local/bin/flywheel-update-agents-md" || true
+        # Root's own copy for `sudo flywheel-update-agents-md deploy --root`
+        # (acfs-evgn), never a link to the user's file.
+        try_step_optional "Installing global flywheel-update-agents-md command" acfs_install_global_command "scripts/generate-root-agents-md.sh" "flywheel-update-agents-md" || true
         # Run in the target user's context so user-local tools
         # (~/.local/bin, ~/go/bin) are detected correctly.
         try_step_optional "Generating agent guide (~/.acfs/docs)" run_as_target "$ACFS_HOME/bin/flywheel-update-agents-md" || true

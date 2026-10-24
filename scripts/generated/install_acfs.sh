@@ -732,9 +732,6 @@ else
   curl "${CURL_ARGS[@]}" "${ACFS_RAW}/packages/onboard/onboard.sh" -o "$onboard_tmp"
 fi
 acfs_install_executable_into_primary_bin "$onboard_tmp" "onboard"
-if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1 && { [[ ! -e /usr/local/bin/onboard ]] || [[ -L /usr/local/bin/onboard ]]; }; then
-  sudo -n ln -sf "$HOME/.acfs/onboard/onboard.sh" /usr/local/bin/onboard
-fi
 INSTALL_ACFS_ONBOARD
         then
             log_error "acfs.onboard: install command failed: trap 'rm -f \"\$onboard_tmp\"' EXIT"
@@ -981,8 +978,11 @@ else
   curl "${CURL_ARGS[@]}" "${ACFS_RAW}/scripts/acfs-update" -o "$update_tmp"
 fi
 acfs_install_executable_into_primary_bin "$update_tmp" "acfs-update"
-if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1 && { [[ ! -e /usr/local/bin/acfs-update ]] || [[ -L /usr/local/bin/acfs-update ]]; }; then
-  sudo -n ln -sf "$HOME/.acfs/bin/acfs-update" /usr/local/bin/acfs-update
+# Root's own copy, staged and renamed over the name, never a link to
+# the user's file (acfs-evgn).
+if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+  sudo -n install -m 0755 "$update_tmp" /usr/local/bin/.acfs-update.acfs-new \
+    && sudo -n mv -f -T /usr/local/bin/.acfs-update.acfs-new /usr/local/bin/acfs-update
 fi
 INSTALL_ACFS_UPDATE
         then

@@ -488,6 +488,8 @@ self_update_repair_output=$(
         log_item() { printf "%s|%s|%s\n" "$1" "$2" "${3:-}"; }
         is_expected_acfs_origin_url() { return 0; }
         sync_acfs_global_wrapper() { return 0; }
+        # Never the real /usr/local/bin (acfs-evgn).
+        sync_acfs_global_commands() { return 0; }
         update_runtime_acfs_home() { printf "%s\n" "$work_repo"; }
 
         update_acfs_self

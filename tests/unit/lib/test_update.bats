@@ -19,6 +19,10 @@ setup() {
     export HOME=$(create_temp_dir)
     export TARGET_HOME="$HOME"
     export UPDATE_LOG_DIR="$HOME/.acfs/logs/updates"
+    # The global commands (acfs, acfs-update, flywheel-update-agents-md,
+    # onboard) go here, never into the host's /usr/local/bin: with
+    # passwordless sudo, an unstubbed sync acts on the real one (acfs-evgn).
+    export ACFS_GLOBAL_BIN_DIR="$HOME/global-bin"
     
     source_lib "update"
     # The checksum-refresh cases below assert upstream ACFS's URLs; the
@@ -2209,7 +2213,7 @@ _setup_stack_agent_mail_gate_fixture() {
     is_expected_acfs_origin_url() { return 0; }
     sync_acfs_deployed() { return 0; }
     sync_acfs_global_wrapper() { return 0; }
-    sync_acfs_global_command_links() { return 0; }
+    sync_acfs_global_commands() { return 0; }
     update_runtime_acfs_home() { printf "%s\n" "$work_repo"; }
 
     local_head="$(git -C "$work_repo" rev-parse HEAD)"
@@ -10556,7 +10560,7 @@ stub_sync_as_user() {
     is_expected_acfs_origin_url() { return 0; }
     update_runtime_acfs_home() { printf '%s\n' "$deployed_home"; }
     update_refresh_installed_security() { :; }
-    sync_acfs_global_wrapper() { printf '%s\n' "$*" > "$global_wrapper_args"; }
+    sync_acfs_global_wrapper() { printf '%s\n' "$*" >> "$global_wrapper_args"; }
     log_item() { printf "%s|%s|%s\n" "$1" "$2" "${3:-}"; }
 
     run update_acfs_self
@@ -10572,9 +10576,12 @@ stub_sync_as_user() {
     [[ "$(cat "$work_repo/scripts/lib/stack.sh")" == "base-stack-lib" ]]
     [[ "$(cat "$work_repo/scripts/generated/install_stack.sh")" == "base-generated" ]]
     [[ "$(cat "$work_repo/scripts/lib/update.sh")" == "local-dirty-update" ]]
+    # acfs, then the other global commands (acfs-evgn), all from origin/main.
     run cat "$global_wrapper_args"
     assert_success
-    assert_output "origin/main"
+    assert_line --index 0 "origin/main"
+    assert_line --index 1 "origin/main $ACFS_GLOBAL_BIN_DIR/acfs-update scripts/acfs-update"
+    assert_line --index 2 "origin/main $ACFS_GLOBAL_BIN_DIR/flywheel-update-agents-md scripts/generate-root-agents-md.sh"
 
     run "$deployed_home/bin/acfs"
     assert_success
@@ -10705,36 +10712,104 @@ stub_sync_as_user() {
     assert_success
 }
 
-@test "global core command link sync publishes onboard and acfs-update" {
-    local temp_root
-    local deployed_home
-    local global_bin
-    local log_file
-
+# acfs-evgn: the global commands are copies, never links to the user's
+# files, which an admin's sudo would run as root; onboard leaves the global
+# bin dir. global_commands_fixture sets up a checkout, a deployed home and a
+# global bin dir with ACFS's old links in it.
+global_commands_fixture() {
     temp_root="$(create_temp_dir)"
-    deployed_home="$temp_root/deployed-acfs"
+    repo_root="$temp_root/repo"
+    deployed_home="$temp_root/home/.acfs"
     global_bin="$temp_root/global-bin"
     log_file="$temp_root/update.log"
 
-    mkdir -p "$deployed_home/bin" "$deployed_home/onboard" "$global_bin"
-    printf "#!/usr/bin/env bash\nprintf 'update\\n'\n" > "$deployed_home/bin/acfs-update"
+    mkdir -p "$repo_root/scripts" "$deployed_home/bin" "$deployed_home/onboard" "$global_bin"
+    printf "#!/usr/bin/env bash\nprintf 'repo-update\\n'\n" > "$repo_root/scripts/acfs-update"
+    printf "#!/usr/bin/env bash\nprintf 'repo-generator\\n'\n" > "$repo_root/scripts/generate-root-agents-md.sh"
+    printf "#!/usr/bin/env bash\nprintf 'users-update\\n'\n" > "$deployed_home/bin/acfs-update"
     printf "#!/usr/bin/env bash\nprintf 'onboard\\n'\n" > "$deployed_home/onboard/onboard.sh"
     chmod 755 "$deployed_home/bin/acfs-update" "$deployed_home/onboard/onboard.sh"
+    ln -s "$deployed_home/bin/acfs-update" "$global_bin/acfs-update"
+    ln -s "$deployed_home/onboard/onboard.sh" "$global_bin/onboard"
 
+    ACFS_REPO_ROOT="$repo_root"
     UPDATE_LOG_FILE="$log_file"
     ACFS_GLOBAL_BIN_DIR="$global_bin"
     DRY_RUN=false
 
     update_runtime_acfs_home() { printf '%s\n' "$deployed_home"; }
+    update_target_user() { printf 'u\n'; }
+    update_target_home() { printf '%s\n' "$temp_root/home"; }
+}
 
-    run sync_acfs_global_command_links
+@test "global commands: acfs-update and flywheel-update-agents-md become copies, and the old link's file stays untouched" {
+    local temp_root repo_root deployed_home global_bin log_file
+    global_commands_fixture
+    cp "$deployed_home/bin/acfs-update" "$temp_root/users-update.before"
+
+    run sync_acfs_global_commands
     assert_success
-    [[ "$(readlink "$global_bin/acfs-update")" == "$deployed_home/bin/acfs-update" ]]
-    [[ "$(readlink "$global_bin/onboard")" == "$deployed_home/onboard/onboard.sh" ]]
-    run grep -F "Linked $global_bin/acfs-update -> $deployed_home/bin/acfs-update" "$log_file"
+    local name
+    for name in acfs-update flywheel-update-agents-md; do
+        [[ -f "$global_bin/$name" && ! -L "$global_bin/$name" ]] || fail "$name is not a regular file"
+        [[ "$(stat -c %a "$global_bin/$name")" == 755 ]] || fail "$name is not 0755"
+        [[ ! -e "$global_bin/.$name.acfs-new" ]] || fail "$name's staged copy was left"
+    done
+    cmp -s "$global_bin/acfs-update" "$repo_root/scripts/acfs-update"
+    cmp -s "$global_bin/flywheel-update-agents-md" "$repo_root/scripts/generate-root-agents-md.sh"
+    # The rename replaced the link; the user's file it pointed at is as it was.
+    cmp -s "$deployed_home/bin/acfs-update" "$temp_root/users-update.before" \
+        || fail "the user's acfs-update was written through the link"
+    run grep -F "Synced scripts/acfs-update -> $global_bin/acfs-update" "$log_file"
     assert_success
-    run grep -F "Linked $global_bin/onboard -> $deployed_home/onboard/onboard.sh" "$log_file"
+}
+
+@test "global commands: a link to a file with the same text is still replaced by a copy" {
+    local temp_root repo_root deployed_home global_bin log_file
+    global_commands_fixture
+    cp "$repo_root/scripts/acfs-update" "$deployed_home/bin/acfs-update"
+
+    run sync_acfs_global_commands
     assert_success
+    [[ -f "$global_bin/acfs-update" && ! -L "$global_bin/acfs-update" ]] || fail "the link stayed"
+}
+
+@test "global commands: ACFS's onboard link into the home goes; a regular file or a link elsewhere stays" {
+    local temp_root repo_root deployed_home global_bin log_file
+    global_commands_fixture
+
+    run sync_acfs_global_commands
+    assert_success
+    [[ ! -e "$global_bin/onboard" && ! -L "$global_bin/onboard" ]] || fail "the onboard link stayed"
+    [[ -f "$deployed_home/onboard/onboard.sh" ]] || fail "the user's onboard.sh went"
+    run grep -F "Removed $global_bin/onboard (a link to $deployed_home/onboard/onboard.sh)" "$log_file"
+    assert_success
+
+    printf '#!/bin/sh\n' > "$global_bin/onboard"
+    run sync_acfs_global_commands
+    assert_success
+    [[ -f "$global_bin/onboard" ]] || fail "a regular file at onboard was removed"
+    run grep -F "Left $global_bin/onboard as it is (not a link)" "$log_file"
+    assert_success
+
+    rm -f "$global_bin/onboard"
+    ln -s /usr/share/doc "$global_bin/onboard"
+    run sync_acfs_global_commands
+    assert_success
+    [[ -L "$global_bin/onboard" ]] || fail "a link outside the home was removed"
+    run grep -F "Left $global_bin/onboard as it is (a link to /usr/share/doc, outside the target's home)" "$log_file"
+    assert_success
+}
+
+@test "global commands: dry-run changes nothing" {
+    local temp_root repo_root deployed_home global_bin log_file
+    global_commands_fixture
+    DRY_RUN=true
+
+    run sync_acfs_global_commands
+    assert_success
+    [[ -L "$global_bin/acfs-update" && -L "$global_bin/onboard" ]] || fail "dry-run changed the global bin dir"
+    [[ ! -e "$global_bin/flywheel-update-agents-md" ]] || fail "dry-run made a copy"
 }
 
 @test "self-update done sentinel does not sync from unexpected origin" {

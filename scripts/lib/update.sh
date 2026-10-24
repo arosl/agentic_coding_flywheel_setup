@@ -4140,14 +4140,23 @@ update_normalize_runtime_modes() {
     fi
 }
 
+# sync_acfs_global_wrapper [SOURCE_REF] [DEPLOYED_FILE] [REPO_REL]: a copy of
+# REPO_REL (scripts/acfs-global by default) at DEPLOYED_FILE (acfs in
+# ACFS_GLOBAL_BIN_DIR, /usr/local/bin), from the checkout or from
+# SOURCE_REF, as root or with sudo -n. The copy is staged beside the name
+# and renamed over it, so a link at the name (ACFS made
+# /usr/local/bin/acfs-update one before acfs-evgn) is replaced, never
+# written through.
 sync_acfs_global_wrapper() {
     local source_ref="${1:-}"
-    local deployed_file="${2:-/usr/local/bin/acfs}"
-    local repo_rel="scripts/acfs-global"
+    local deployed_file="${2:-${ACFS_GLOBAL_BIN_DIR:-/usr/local/bin}/acfs}"
+    local repo_rel="${3:-scripts/acfs-global}"
     local source_file="$ACFS_REPO_ROOT/$repo_rel"
     local source_tmp=""
     local source_label="$repo_rel"
-    local install_cmd=()
+    local stage_file="${deployed_file%/*}/.${deployed_file##*/}.acfs-new"
+    local install_bin="" mv_bin=""
+    local install_cmd=() mv_cmd=()
 
     if [[ -n "$source_ref" ]]; then
         source_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-global-sync.XXXXXX" 2>/dev/null)" || return 0
@@ -4161,9 +4170,18 @@ sync_acfs_global_wrapper() {
         [[ -f "$source_file" ]] || return 0
     fi
 
-    install_cmd=(install -m 0755 "$source_file" "$deployed_file")
+    install_bin="$(update_system_binary_path install 2>/dev/null || true)"
+    mv_bin="$(update_system_binary_path mv 2>/dev/null || true)"
+    if [[ -z "$install_bin" || -z "$mv_bin" ]]; then
+        log_to_file "Skipped syncing $source_label -> $deployed_file (install or mv not found)"
+        [[ -z "$source_tmp" ]] || rm -f "$source_tmp" 2>/dev/null || true
+        return 0
+    fi
+    install_cmd=("$install_bin" -m 0755 "$source_file" "$stage_file")
+    mv_cmd=("$mv_bin" -f -T "$stage_file" "$deployed_file")
 
-    if [[ -f "$deployed_file" ]] && cmp -s "$source_file" "$deployed_file" && [[ -x "$deployed_file" ]]; then
+    # A link at the name is never current, even to the same text.
+    if [[ -f "$deployed_file" && ! -L "$deployed_file" ]] && cmp -s "$source_file" "$deployed_file" && [[ -x "$deployed_file" ]]; then
         if [[ -n "$source_tmp" ]]; then
             rm -f "$source_tmp" 2>/dev/null || true
         fi
@@ -4178,7 +4196,7 @@ sync_acfs_global_wrapper() {
         return 0
     fi
 
-    if "${install_cmd[@]}" 2>/dev/null; then
+    if "${install_cmd[@]}" 2>/dev/null && "${mv_cmd[@]}" 2>/dev/null; then
         log_to_file "Synced $source_label -> $deployed_file"
         if [[ -n "$source_tmp" ]]; then
             rm -f "$source_tmp" 2>/dev/null || true
@@ -4188,8 +4206,8 @@ sync_acfs_global_wrapper() {
 
     local sudo_bin=""
     sudo_bin="$(update_system_binary_path sudo 2>/dev/null || true)"
-    if [[ -n "$sudo_bin" ]] && "$sudo_bin" -n true >/dev/null 2>&1; then
-        "$sudo_bin" -n "${install_cmd[@]}"
+    if [[ -n "$sudo_bin" ]] && "$sudo_bin" -n true >/dev/null 2>&1 \
+        && "$sudo_bin" -n "${install_cmd[@]}" && "$sudo_bin" -n "${mv_cmd[@]}"; then
         log_to_file "Synced $source_label -> $deployed_file"
         if [[ -n "$source_tmp" ]]; then
             rm -f "$source_tmp" 2>/dev/null || true
@@ -4204,60 +4222,62 @@ sync_acfs_global_wrapper() {
     return 0
 }
 
-sync_acfs_global_command_links() {
-    local acfs_home=""
+# The global commands besides acfs (acfs-evgn). acfs-update and
+# flywheel-update-agents-md are root's copies, as acfs is, never links to
+# the user's files, which an admin's sudo would run as root. onboard isn't
+# in root's PATH: a link ACFS made there into the target's home goes, and
+# anything else at the name stays, logged. Args: SOURCE_REF, as for
+# sync_acfs_global_wrapper.
+sync_acfs_global_commands() {
+    local source_ref="${1:-}"
     local global_bin_dir="${ACFS_GLOBAL_BIN_DIR:-/usr/local/bin}"
-    local spec=""
-    local source_path=""
-    local dest_path=""
-    local sudo_bin=""
 
-    acfs_home="$(update_runtime_acfs_home 2>/dev/null || true)"
-    [[ -n "$acfs_home" ]] || return 0
     [[ -n "$global_bin_dir" && "$global_bin_dir" == /* && "$global_bin_dir" != "/" ]] || return 0
+    sync_acfs_global_wrapper "$source_ref" "$global_bin_dir/acfs-update" "scripts/acfs-update"
+    sync_acfs_global_wrapper "$source_ref" "$global_bin_dir/flywheel-update-agents-md" "scripts/generate-root-agents-md.sh"
+    update_remove_global_home_link "$global_bin_dir/onboard"
+}
 
-    for spec in \
-        "$acfs_home/bin/acfs-update:$global_bin_dir/acfs-update" \
-        "$acfs_home/onboard/onboard.sh:$global_bin_dir/onboard"
-    do
-        source_path="${spec%%:*}"
-        dest_path="${spec#*:}"
+# update_remove_global_home_link PATH: removes PATH when it is a link into
+# the target's home or ACFS home, as root or with sudo -n. A regular file
+# there, or a link elsewhere, stays, and the log says so.
+update_remove_global_home_link() {
+    local path="$1" link_target="" target_user="" target_home="" acfs_home=""
+    local rm_bin="" sudo_bin=""
 
-        if [[ ! -x "$source_path" ]]; then
-            log_to_file "Skipped linking $dest_path -> $source_path (source missing)"
-            continue
-        fi
-
-        if [[ -L "$dest_path" ]] && [[ "$(readlink "$dest_path" 2>/dev/null || true)" == "$source_path" ]]; then
-            continue
-        fi
-
-        if [[ -e "$dest_path" && ! -L "$dest_path" ]]; then
-            log_to_file "Skipped linking $dest_path -> $source_path (non-symlink exists)"
-            continue
-        fi
-
-        if [[ "${DRY_RUN:-false}" == "true" ]]; then
-            log_to_file "Would link $dest_path -> $source_path"
-            continue
-        fi
-
-        if mkdir -p "$global_bin_dir" 2>/dev/null && ln -sfn "$source_path" "$dest_path" 2>/dev/null; then
-            log_to_file "Linked $dest_path -> $source_path"
-            continue
-        fi
-
-        sudo_bin="$(update_system_binary_path sudo 2>/dev/null || true)"
-        if [[ -n "$sudo_bin" ]] && "$sudo_bin" -n true >/dev/null 2>&1; then
-            "$sudo_bin" -n mkdir -p "$global_bin_dir" 2>/dev/null || true
-            if "$sudo_bin" -n ln -sfn "$source_path" "$dest_path" 2>/dev/null; then
-                log_to_file "Linked $dest_path -> $source_path"
-                continue
-            fi
-        fi
-
-        log_to_file "Skipped linking $dest_path -> $source_path (needs root)"
-    done
+    # Whatever bin_dir the user's state.json names: in safe mode the user
+    # writes that file, and could keep the link this removes. A #211 vibe
+    # host (ACFS_BIN_DIR=/usr/local/bin) loses its onboard there; acfs-yjwu.
+    [[ -L "$path" ]] || {
+        [[ ! -e "$path" ]] || log_to_file "Left $path as it is (not a link)"
+        return 0
+    }
+    link_target="$(readlink -- "$path" 2>/dev/null || true)"
+    target_user="$(update_target_user 2>/dev/null || true)"
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    acfs_home="$(update_runtime_acfs_home 2>/dev/null || true)"
+    if ! { [[ -n "$target_home" && "$link_target" == "$target_home/"* ]] \
+        || [[ -n "$acfs_home" && "$link_target" == "$acfs_home/"* ]]; }; then
+        log_to_file "Left $path as it is (a link to ${link_target:-?}, outside the target's home)"
+        return 0
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_to_file "Would remove $path (a link to $link_target)"
+        return 0
+    fi
+    rm_bin="$(update_system_binary_path rm 2>/dev/null || true)"
+    [[ -n "$rm_bin" ]] || { log_to_file "Skipped removing $path (rm not found)"; return 0; }
+    if "$rm_bin" -f -- "$path" 2>/dev/null && [[ ! -L "$path" ]]; then
+        log_to_file "Removed $path (a link to $link_target)"
+        return 0
+    fi
+    sudo_bin="$(update_system_binary_path sudo 2>/dev/null || true)"
+    if [[ -n "$sudo_bin" ]] && "$sudo_bin" -n true >/dev/null 2>&1 \
+        && "$sudo_bin" -n "$rm_bin" -f -- "$path"; then
+        log_to_file "Removed $path (a link to $link_target)"
+        return 0
+    fi
+    log_to_file "Skipped removing $path, a link to $link_target (needs root)"
 }
 
 # ============================================================
@@ -6107,7 +6127,7 @@ _acfs_refresh_security_from_fetched_remote() {
     # on the wrong branch, and its tracked bytes belong to the operator.
     sync_acfs_deployed "origin/main"
     sync_acfs_global_wrapper "origin/main"
-    sync_acfs_global_command_links
+    sync_acfs_global_commands "origin/main"
     log_item "ok" "ACFS runtime" "refreshed from origin/main without modifying the checkout"
     log_to_file "Refreshed deployed ACFS runtime from origin/main without modifying the checkout"
 }
@@ -6398,7 +6418,7 @@ update_acfs_self() {
     # the re-exec and future runs will use the old code.
     sync_acfs_deployed
     sync_acfs_global_wrapper
-    sync_acfs_global_command_links
+    sync_acfs_global_commands
 
     # Check if update.sh itself changed - if so, re-exec
     local new_hash=""
@@ -8913,19 +8933,18 @@ update_root_agents_md() {
             fi
         done
 
-        if [[ -f "$generator" ]]; then
-            if ! run_cmd_sudo "Install flywheel-update-agents-md" ln -sf "$generator" /usr/local/bin/flywheel-update-agents-md; then
-                log_item "skip" "Root AGENTS.md" "flywheel-update-agents-md not installed"
-                return 0
-            fi
-        else
+        # The user's own copy runs as it is: no link into root's PATH
+        # (acfs-evgn); sync_acfs_global_commands keeps root's copy.
+        if [[ ! -f "$generator" ]]; then
             log_item "skip" "Root AGENTS.md" "flywheel-update-agents-md not installed"
             return 0
         fi
+        # Run as the invoking user, NOT via sudo: the generator writes only
+        # the ACFS-owned canonical guide.
+        run_cmd "Agent guide" bash "$generator"
+        return 0
     fi
 
-    root_agents_generator="$(update_binary_path flywheel-update-agents-md 2>/dev/null || true)"
-    [[ -n "$root_agents_generator" ]] || root_agents_generator="flywheel-update-agents-md"
     # Run as the invoking user, NOT via sudo: the generator writes only the
     # ACFS-owned canonical guide (~/.acfs/docs/flywheel-agent-guide.md), and
     # tool detection under root's restricted PATH would falsely report
@@ -9244,7 +9263,7 @@ update_shell() {
     cleanup_unmanaged_atuin_init
     sync_acfs_deployed
     sync_acfs_global_wrapper
-    sync_acfs_global_command_links
+    sync_acfs_global_commands
 }
 
 # ============================================================
