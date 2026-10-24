@@ -12,13 +12,11 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from herdr_socket_stub import HerdrStub, agent_row  # noqa: E402
-from codex_daemon_guard import guard_codex_daemons  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 LAUNCH = ROOT / "scripts/lib/swarm_launch.sh"
 PACKET = ROOT / "scripts/lib/swarm_packet.sh"
 ASSIGN = ROOT / "scripts/lib/swarm_assign.sh"
-HELPER = ROOT / "scripts/lib/herdr_agents.sh"
 
 PROBE = r'''#!/usr/bin/env python3
 import hashlib, json, os, pathlib, sys
@@ -30,6 +28,10 @@ with (root / "calls").open("a") as f:
     f.write(json.dumps([name, args]) + "\n")
 def flag(key):
     return args[args.index(key) + 1]
+# What nhm started: herdr's workspace and agents, and nhm's binding of each pane.
+sp = root / "herdr-state.json"
+st = json.loads(sp.read_text()) if sp.exists() else {"workspaces":[],"agents":[],"bindings":{},"next":2}
+def save(): sp.write_text(json.dumps(st))
 if name == "plan":
     n = int(flag("--agents"))
     print(json.dumps({"schema_version":1,"status":"pass","exit_code":0,
@@ -37,64 +39,65 @@ if name == "plan":
         "quiesce_advisory":{"recommendation":"proceed"},"recommendation":"launch",
         "checks":[{"id":"capacity","status":"pass"}]}))
 elif name == "ntm":
-    raise AssertionError("delivery goes through herdr's socket, never ntm")
+    raise AssertionError("nhm starts the agents and delivery goes through herdr's socket, never ntm")
+elif name == "nhm":
+    if args[:1] == ["resolve"]:
+        # nhm's binding of a pane, as recovery asks for it, or nhm's not-found error.
+        assert flag("--socket") == str(root / "herdr.sock") and "--json" in args
+        envelope = {"schema":"nhm.v1","command":"resolve","result":None,"warnings":[]}
+        binding = st["bindings"].get(args[1])
+        if binding is None:
+            print(json.dumps({**envelope,"error":"bindings: no such binding: " + args[1]})); sys.exit(1)
+        print(json.dumps({**envelope,"result":{"binding":binding,"verification":{"verdict":"verified","checks":[]}}}))
+        sys.exit(0)
+    # nhm's --robot-spawn (tests/fixtures/nhm/robot_spawn*.json): claude before
+    # codex, each agent with a new Agent Mail name, in a new herdr workspace
+    # labelled with the --robot-spawn value.
+    def opt(key): return next(a.split("=",1)[1] for a in args if a.startswith(key + "="))
+    assert "--spawn-safety" in args and "--spawn-no-user" in args
+    assert not any("robot-send" in a or "assign-work" in a for a in args)
+    session = opt("--robot-spawn")
+    types = ["claude"] * int(opt("--spawn-cc")) + ["codex"] * int(opt("--spawn-cod"))
+    agents = [{"pane":"1."+str(i),"type":t,"ready":True} for i,t in enumerate(types,1)]
+    dry = "--dry-run" in args
+    if not dry:
+        assert (root / "launch.json").is_file()
+        for agent, mail in zip(agents, ["GreenCastle","AmberFox","CopperHill"]):
+            n = st["next"]; st["next"] += 1
+            ids = {"workspace_id":"w9","tab_id":"w9:t%d" % n,"pane_id":"w9:p%d" % n}
+            st["agents"].append({**ids,"name":mail.lower(),"agent":agent["type"],"agent_status":"idle",
+                "cwd":str(root / "repo"),"terminal_id":"term_%d" % n})
+            st["bindings"][ids["pane_id"]] = {**ids,"status":"active","mail_name":mail,"mail_project_key":str(root / "repo"),
+                "herdr_alias":mail.lower(),"kind":agent["type"],"slot":agent["pane"]}
+            agent.update(pane_id=ids["pane_id"],agent_mail_name=mail,name=mail.lower())
+        st["workspaces"].append({"workspace_id":"w9","label":session})
+        save()
+        (root / "spawned").write_text("yes")
+        if mode == "lost-spawn-reply":
+            print("private-provider-message",file=sys.stderr); sys.exit(1)
+    print(json.dumps({"success":True,"session":session,"working_dir":str(root / "repo"),
+        "admission":{"decision":"admit"},"dry_run":dry,
+        "would_create":agents if dry else [],"agents":[] if dry else agents}))
 elif name == "am":
-    assert args[:2] in (["agents","create"], ["agents","list"]) and flag("--project") == str(root / "repo")
-    count = root / "am-count"
-    n = int(count.read_text()) if count.exists() else 0
-    if args[:2] == ["agents","list"]:
-        print(json.dumps([{"name":x} for x in ["GreenCastle","AmberFox","CopperHill"][:n]])); sys.exit(0)
-    count.write_text(str(n + 1))
-    print(json.dumps({"name":["GreenCastle","AmberFox","CopperHill"][n]}))
-elif name == "curl":
-    # Agent Mail's HTTP MCP endpoint, as spawn calls it: ensure_project, then
-    # create_agent_identity for the next name, which `am agents list` then lists.
-    assert args[-2:] == ["--data-binary","@-"]
-    call = json.load(sys.stdin)["params"]
-    assert call["arguments"].get("project_key", call["arguments"].get("human_key")) == str(root / "repo")
-    text = {"id":1}
-    if call["name"] == "create_agent_identity":
-        count = root / "am-count"
-        n = int(count.read_text()) if count.exists() else 0
-        count.write_text(str(n + 1))
-        agent = ["GreenCastle","AmberFox","CopperHill"][n]
-        text = {"name":agent,"registration_token":"tok-" + agent}
-    else:
-        assert call["name"] == "ensure_project"
-    print(json.dumps({"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":json.dumps(text)}],"isError":False}}))
+    # Agent Mail has the names nhm registered under the repository's project key.
+    assert args[:2] == ["agents","list"] and flag("--project") == str(root / "repo")
+    print(json.dumps([{"name":b["mail_name"]} for b in st["bindings"].values()]))
 elif name == "herdr":
-    sp = root / "herdr-state.json"
-    st = json.loads(sp.read_text()) if sp.exists() else {"workspaces":[],"agents":[],"labels":{},"next":2}
-    def save(): sp.write_text(json.dumps(st))
     def ok(result): print(json.dumps({"result":result})); sys.exit(0)
     if args[:2] == ["status","server"]:
         print("server:\n  status: running"); sys.exit(0)
     if args[:2] == ["workspace","list"]:
         ok({"workspaces":st["workspaces"]})
-    if args[:2] == ["workspace","create"]:
-        assert (root / "launch.json").is_file()
-        st["workspaces"].append({"workspace_id":"w9","label":flag("--label")}); save()
-        ok({"workspace":{"workspace_id":"w9"}})
-    if args[:2] == ["tab","create"]:
-        n = st["next"]; st["next"] += 1
-        st["labels"]["w9:t%d" % n] = flag("--label"); save()
-        ok({"tab":{"tab_id":"w9:t%d" % n},"root_pane":{"pane_id":"w9:p%d" % n}})
     if args[:2] == ["tab","list"]:
-        ok({"tabs":[{"tab_id":t,"label":l,"workspace_id":"w9"} for t,l in st["labels"].items()]})
-    if args[:2] == ["agent","start"]:
-        pane = flag("--pane"); n = int(pane.rsplit(":p",1)[1])
-        st["agents"].append({"workspace_id":"w9","tab_id":"w9:t%d" % n,"pane_id":pane,"name":args[2],
-            "agent":flag("--kind"),"agent_status":"idle","cwd":str(root / "repo"),"terminal_id":"term_%d" % n})
-        save()
-        (root / "spawned").write_text("yes")
-        if mode == "lost-spawn-reply" and n == 3:
-            print(json.dumps({"error":{"code":"server_error","message":"lost"}}),file=sys.stderr); sys.exit(1)
-        ok({"agent":{"name":args[2]}})
+        # nhm names a tab after the project (acfs-aahj); each agent's name is in its binding.
+        ws = flag("--workspace")
+        ok({"tabs":[{"tab_id":a["tab_id"],"label":"repo","workspace_id":ws} for a in st["agents"] if a["workspace_id"] == ws]})
     changed = (mode == "server-changed" or (mode == "change-during" and (root / "prepared-called").exists()))
     if args[:2] == ["agent","list"]:
         rows = [] if mode == "missing-pane" else [dict(a) for a in st["agents"]]
         for a in rows:
-            if changed or (mode == "change-after-first" and a["pane_id"] == "w9:p3" and (root / "sends").exists()):
+            # Slot 2's agent (claude, w9:p2) changes after slot 1's work is sent.
+            if changed or (mode == "change-after-first" and a["pane_id"] == "w9:p2" and (root / "sends").exists()):
                 a["terminal_id"] += "x"
             if mode == "wrong-repo": a["cwd"] = str(root)
         ok({"agents":rows})
@@ -195,7 +198,7 @@ try:
     item["packet"] = args[1]
     r, packet, receipt, payload = request(item,pathlib.Path.cwd())
     assert flag("--expect-sha256") == r["packet_sha256"]
-    assert r["workspace"] == "w9" and r["agent_type"] == ("codex" if r["pane_id"] == "w9:p2" else "claude"), r
+    assert r["workspace"] == "w9" and r["agent_type"] == ("codex" if r["pane_id"] == "w9:p3" else "claude"), r
     # A recovery request must never call this send-capable path.
     assert not receipt.exists() and not pathlib.Path(str(receipt) + ".result.json").exists()
     terminal = "term_" + r["pane_id"].rsplit(":p",1)[1]
@@ -237,7 +240,6 @@ class HandoffTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="acfs-receipt-handoff-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(os.path.realpath(self.temp.name))
-        guard_codex_daemons(self, self.root)
         self.repo = self.root / "repo"
         self.repo.mkdir()
         self.lib = self.root / "lib"
@@ -248,30 +250,13 @@ class HandoffTests(unittest.TestCase):
             (self.bin / "python3").symlink_to("/usr/bin/python3")
         self.script = self.lib / "swarm_launch.sh"
         shutil.copyfile(LAUNCH, self.script)
-        shutil.copyfile(HELPER, self.lib / "herdr_agents.sh")
-        for name in ("ntm","herdr","am","curl","plan","packet"):
+        for name in ("ntm","nhm","herdr","am","plan","packet"):
             path = self.bin / name
             path.write_text(PROBE)
             path.chmod(0o755)
         for kind, name in (("plan","swarm_plan.sh"),("packet","swarm_packet.sh")):
             (self.lib / name).write_text('#!/bin/bash\nexec ' + shlex.quote(str(self.bin / kind)) + ' "$@"\n')
-        # Spawning Codex needs its app-server daemon running without HERDR_*
-        # variables (acfs-gen.3). Fake a clean one, so the host's real codex
-        # and daemon are never touched, and a codex that fails if called.
-        codex_home, proc = self.root / "codex-home", self.root / "proc"
-        (codex_home / "app-server-daemon").mkdir(parents=True)
-        (codex_home / "app-server-daemon" / "daemon.pid").write_text('{"pid":777}\n')
-        (proc / "777").mkdir(parents=True)
-        (proc / "777" / "cmdline").write_bytes(b"codex\0app-server\0daemon\0")
-        (proc / "777" / "environ").write_bytes(b"PATH=/usr/bin\0")
-        (self.bin / "codex").write_text("#!/bin/sh\nexit 97\n")
-        (self.bin / "codex").chmod(0o755)
-        self.env = dict(os.environ, PATH=str(self.bin)+os.pathsep+os.environ["PATH"], HANDOFF_ROOT=str(self.root),
-                        ACFS_HOME=str(self.root / "no-acfs-home"), CODEX_HOME=str(codex_home),
-                        HERDR_AGENTS_PROC_ROOT=str(proc),
-                        # Only the curl fixture answers; a live Agent Mail is never reached.
-                        AGENT_MAIL_URL="http://127.0.0.1:9/acfs-test-stub/mcp/")
-        self.env.pop("HERDR_WORKSPACE_ID", None)
+        self.env = dict(os.environ, PATH=str(self.bin)+os.pathsep+os.environ["PATH"], HANDOFF_ROOT=str(self.root))
         self.receipt = self.root / "launch.json"
         self.output = self.root / "work bundle"
         self.scopes = self.root / "scopes.json"
@@ -312,12 +297,15 @@ class HandoffTests(unittest.TestCase):
         code, result = self.handoff()
         self.assertEqual((code,result["status"]),(0,"prepared"),result)
         received = json.loads((self.root / "preparation-inputs").read_text())
-        self.assertEqual(received["targets"],["1:BlueLake:codex:w9:p2","2:RedFox:claude:w9:p3"])
+        # nhm starts claude before codex; each slot takes the next agent of its kind.
+        self.assertEqual(received["targets"],["1:BlueLake:codex:w9:p3","2:RedFox:claude:w9:p2"])
         self.assertEqual(received["sources"]["--scopes-file"],json.loads(self.scopes.read_text()))
         self.assertEqual([(name,argv[:2]) for name,argv in self.calls()[before:]],
-            [("herdr",["agent","list"]),("herdr",["pane","process-info"]),("herdr",["pane","process-info"]),
+            [("herdr",["workspace","list"]),("herdr",["agent","list"]),
+             ("herdr",["pane","process-info"]),("herdr",["pane","process-info"]),
              ("packet",["--prepare-batch",str(self.output)]),
-             ("herdr",["agent","list"]),("herdr",["pane","process-info"]),("herdr",["pane","process-info"])])
+             ("herdr",["workspace","list"]),("herdr",["agent","list"]),
+             ("herdr",["pane","process-info"]),("herdr",["pane","process-info"])])
         self.assertEqual(self.receipt.read_bytes(),saved)
         self.assertFalse(result["launch"]["starts_agents"])
         self.assertFalse(result["launch"]["work_dispatched"])
@@ -331,7 +319,7 @@ class HandoffTests(unittest.TestCase):
         code, result = self.invoke(args)
         self.assertEqual((code,result["status"]),(0,"prepared"),result)
         received = json.loads((self.root / "preparation-inputs").read_text())
-        self.assertEqual(received["targets"],["1:GreenCastle:codex:w9:p2","2:AmberFox:claude:w9:p3"])
+        self.assertEqual(received["targets"],["1:AmberFox:codex:w9:p3","2:GreenCastle:claude:w9:p2"])
         self.assertTrue(result["launch"]["agent_mail_registration_verified"])
 
     def test_missing_intent_never_launches_or_prepares(self):
@@ -374,7 +362,7 @@ class HandoffTests(unittest.TestCase):
         code, result = self.handoff(saved=True)
         self.assertEqual(code,0,result)
         received = json.loads((self.root / "preparation-inputs").read_text())
-        self.assertEqual(received["targets"],["2:RedFox:claude:w9:p3"])
+        self.assertEqual(received["targets"],["2:RedFox:claude:w9:p2"])
 
     def test_unknown_saved_assignment_slots_block_preparation(self):
         self.launch()
@@ -467,7 +455,7 @@ class HandoffTests(unittest.TestCase):
             "--beads-file",str(path),"--triage-file",str(triage)))
         self.assertEqual((code,result["status"]),(0,"prepared"),result)
         batch = json.loads((self.output / "batch.json").read_text())
-        self.assertEqual([d["pane_id"] for d in batch["deliveries"]],["w9:p2","w9:p3"])
+        self.assertEqual([d["pane_id"] for d in batch["deliveries"]],["w9:p3","w9:p2"])
         self.assertEqual({d["workspace"] for d in batch["deliveries"]},{"w9"})
         self.assertEqual([d["agent_type"] for d in batch["deliveries"]],["codex","claude"])
         first = json.loads((self.output / "packet-01.json").read_text())
@@ -488,7 +476,7 @@ class DispatchTests(unittest.TestCase):
         self.bundle.mkdir(mode=0o700)
         self.batch = self.bundle / "batch.json"
         self.items = []
-        for slot, kind, pane in ((1,"codex","w9:p2"),(2,"claude","w9:p3")):
+        for slot, kind, pane in ((1,"codex","w9:p3"),(2,"claude","w9:p2")):
             packet = {"schema_version":1,"status":"pass","repository":{"path":str(self.repo)},
                 "agent":{"name":"BlueLake" if slot==1 else "RedFox"},"bead":{"id":f"bd-{slot}","status":"open"},
                 "output":{"truncated":False},"packet_markdown":f"# ACFS Swarm Startup Packet\nDo task bd-{slot}.\n"}
@@ -517,9 +505,8 @@ class DispatchTests(unittest.TestCase):
         return [json.loads(s) for s in path.read_text().splitlines()] if path.exists() else []
 
     def assert_no_new_spawn(self):
-        self.assertEqual(sum(name == "herdr" and argv[:2] == ["workspace","create"]
-                             for name,argv in self.case.calls()),1)
-        self.assertEqual(sum(name == "herdr" and argv[:2] == ["agent","start"] for name,argv in self.case.calls()),2)
+        self.assertEqual(sum(name == "nhm" and any(a.startswith("--robot-spawn=") for a in argv)
+                             and "--dry-run" not in argv for name,argv in self.case.calls()),1)
 
     def test_preview_binds_original_launch_and_has_no_delivery_mutations(self):
         before = len(self.case.calls())
@@ -733,8 +720,8 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(self.sends(),[])
 
     def test_real_launch_prepare_review_dispatch_and_reconcile(self):
-        herdr = HerdrStub([agent_row("w9:p2",self.repo,agent="codex",terminal_id="term_2"),
-                           agent_row("w9:p3",self.repo,terminal_id="term_3")])
+        herdr = HerdrStub([agent_row("w9:p2",self.repo,terminal_id="term_2"),
+                           agent_row("w9:p3",self.repo,agent="codex",terminal_id="term_3")])
         self.addCleanup(herdr.close)
         self.case.env = herdr.env(self.case.env)
         shutil.copyfile(PACKET,self.case.lib/PACKET.name)
@@ -761,7 +748,7 @@ class DispatchTests(unittest.TestCase):
         code, result = self.case.invoke(send,mode="missing-pane")
         self.assertEqual(code,0,result)
         self.assertEqual(result["summary"]["reconciled"],2)
-        self.assertEqual([p["target"] for p in herdr.prompts()],["w9:p2","w9:p3"])
+        self.assertEqual([p["target"] for p in herdr.prompts()],["w9:p3","w9:p2"])
         self.assertTrue(all(p["text"].startswith("# ACFS Swarm Startup Packet\n") for p in herdr.prompts()))
         self.assert_no_new_spawn()
 

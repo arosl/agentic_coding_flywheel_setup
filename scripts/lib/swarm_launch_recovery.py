@@ -33,7 +33,7 @@ HERDR_ID = r"[A-Za-z0-9][A-Za-z0-9_:.-]{0,63}"
 TERMINAL_ID = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
 HERDR_NAME = r"[a-z][a-z0-9_-]{0,31}"
 MAIL_NAME = r"[A-Za-z][A-Za-z0-9_-]{0,63}"
-AGENT_TYPES = ("claude", "codex", "agy")
+AGENT_TYPES = ("claude", "codex")
 PROFILES = ("balanced", "codex-heavy", "review-heavy", "docs-heavy")
 WORKLOADS = ("light", "standard", "heavy")
 # A herdr pane id: the workspace id, then :p and herdr's base-36 counter.
@@ -165,7 +165,7 @@ def validate_request(intent, receipt):
                 and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", a["agent_name"])
                 and a["agent_type"] in AGENT_TYPES for a in agents)
             and len({a["agent_name"].lower() for a in agents}) == len(agents),
-            "Invalid saved native-agent identities.")
+            "Invalid saved native-agent identities: launch takes claude and codex only, with distinct names.")
     return request
 
 
@@ -268,12 +268,7 @@ def nhm_bindings(herdr, request, workspace_id, rows, timeout):
 
 
 def runs_agent(process, agent_type):
-    # agy-locked runs agy-real under the name agy (acfs-zg0), so check argv[0] too.
-    if not isinstance(process, dict):
-        return False
-    argv = process.get("argv")
-    first = argv[0] if isinstance(argv, list) and argv and isinstance(argv[0], str) else ""
-    return process.get("name") == agent_type or Path(first).name == agent_type
+    return isinstance(process, dict) and process.get("name") == agent_type
 
 
 def startup_shell(processes):

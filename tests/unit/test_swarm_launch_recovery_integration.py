@@ -35,19 +35,13 @@ class RecoveryIntegrationTests(unittest.TestCase):
 '''
         anchor = '    if args[:2] == ["pane","process-info"]:\n'
         assert anchor in PROBE
-        # Recovery asks nhm about the server that herdr reports. This launch
-        # is acfs agents spawn's, so the fake nhm binds none of its panes, and
-        # the host's own nhm is never asked.
+        # Recovery asks the fake nhm for its binding of each pane, on the
+        # server that herdr reports; the host's own nhm is never asked.
         status = 'print("server:\\n  status: running"); sys.exit(0)'
         assert status in PROBE
         probe = PROBE.replace(anchor, mutation + anchor).replace(
             status, 'print("server:\\n  status: running\\n  socket: " + str(root / "herdr.sock")); sys.exit(0)')
         (self.case.bin / "herdr").write_text(probe)
-        (self.case.bin / "nhm").write_text(
-            '#!/usr/bin/env python3\nimport json, sys\n'
-            'print(json.dumps({"schema": "nhm.v1", "command": "resolve", "result": None,\n'
-            '                  "error": "bindings: no such binding: " + sys.argv[2]}))\nsys.exit(1)\n')
-        (self.case.bin / "nhm").chmod(0o755)
 
     def unconfirmed(self):
         code, preview = self.case.invoke(self.case.launch_args)
@@ -75,8 +69,10 @@ class RecoveryIntegrationTests(unittest.TestCase):
 
     def assert_one_spawn_and_no_sends(self):
         calls = self.case.calls()
-        self.assertEqual(sum(name == "herdr" and args[:2] == ["workspace", "create"] for name, args in calls), 1)
-        self.assertEqual(sum(name == "herdr" and args[:2] == ["agent", "start"] for name, args in calls), 2)
+        spawns = [args for name, args in calls if name == "nhm" and any(a.startswith("--robot-spawn=") for a in args)
+                  and "--dry-run" not in args]
+        self.assertEqual(len(spawns), 1)
+        self.assertFalse(any(name == "nhm" and any("robot-send" in arg for arg in args) for name, args in calls))
         self.assertFalse(any(name == "ntm" for name, _ in calls))
         self.assertFalse(any(name == "herdr" and args[:2] in (["agent", "prompt"], ["agent", "send-keys"],
                                                                ["agent", "rename"]) for name, args in calls))
@@ -103,10 +99,11 @@ class RecoveryIntegrationTests(unittest.TestCase):
         self.assertEqual((code, report["status"]), (0, "ready"), report)
         self.assertFalse(report["original_launch_verified"])
         self.assertFalse(report["recovery_provenance"]["original_launch_verified"])
-        self.assertEqual(report["preparation_targets"], ["1:GreenCastle:codex:w9:p2", "2:AmberFox:claude:w9:p3"])
+        # nhm started claude, then codex: recovery maps the slots by nhm's binding.
+        self.assertEqual(report["preparation_targets"], ["1:AmberFox:codex:w9:p3", "2:GreenCastle:claude:w9:p2"])
         self.assertEqual([(name, args[:2]) for name, args in self.case.calls()[before:]],
-                         [("herdr", ["agent", "list"]), ("herdr", ["pane", "process-info"]),
-                          ("herdr", ["pane", "process-info"])])
+                         [("herdr", ["workspace", "list"]), ("herdr", ["agent", "list"]),
+                          ("herdr", ["pane", "process-info"]), ("herdr", ["pane", "process-info"])])
         self.assert_one_spawn_and_no_sends()
 
     def test_recovered_launch_handoff_keeps_native_slot_bindings(self):
@@ -115,7 +112,7 @@ class RecoveryIntegrationTests(unittest.TestCase):
         code, report = self.case.handoff()
         self.assertEqual((code, report["status"]), (0, "prepared"), report)
         received = json.loads((self.root / "preparation-inputs").read_text())
-        self.assertEqual(received["targets"], ["1:BlueLake:codex:w9:p2", "2:RedFox:claude:w9:p3"])
+        self.assertEqual(received["targets"], ["1:BlueLake:codex:w9:p3", "2:RedFox:claude:w9:p2"])
         self.assertFalse(report["launch"]["starts_agents"])
         self.assert_one_spawn_and_no_sends()
 
@@ -136,7 +133,7 @@ class RecoveryIntegrationTests(unittest.TestCase):
             "--ready-file", str(beads), "--beads-file", str(beads), "--triage-file", str(triage)))
         self.assertEqual((code, report["status"]), (0, "prepared"), report)
         batch = json.loads((self.case.output / "batch.json").read_text())
-        self.assertEqual([d["pane_id"] for d in batch["deliveries"]], ["w9:p2", "w9:p3"])
+        self.assertEqual([d["pane_id"] for d in batch["deliveries"]], ["w9:p3", "w9:p2"])
         self.assertEqual({d["workspace"] for d in batch["deliveries"]}, {"w9"})
         self.assertEqual([d["agent_type"] for d in batch["deliveries"]], ["codex", "claude"])
         self.assertIn("Return 200", json.loads((self.case.output / "packet-01.json").read_text())["packet_markdown"])

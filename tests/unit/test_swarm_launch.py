@@ -1,7 +1,6 @@
 """Execute the real launch CLI against native-process contract fixtures.
 
-herdr, Agent Mail's HTTP endpoint (curl) and the planner are fixtures; the launcher and the real
-herdr_agents.sh (acfs agents spawn) run unchanged between them.
+nhm, herdr and the planner are fixtures; the launcher runs unchanged between them.
 """
 import hashlib
 import json
@@ -11,16 +10,10 @@ import shlex
 import shutil
 import stat
 import subprocess
-import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from codex_daemon_guard import guard_codex_daemons  # noqa: E402
-
-LIB = Path(__file__).resolve().parents[2] / "scripts/lib"
-SCRIPT = LIB / "swarm_launch.sh"
-HELPER = LIB / "herdr_agents.sh"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts/lib/swarm_launch.sh"
 
 FIXTURE = r'''#!/usr/bin/env python3
 import json, os, pathlib, sys
@@ -31,15 +24,13 @@ assert pathlib.Path.cwd() == root / "repo"
 with (root / "calls").open("a") as f:
     f.write(json.dumps([name, args]) + "\n")
 state_path = root / "herdr-state.json"
-state = json.loads(state_path.read_text()) if state_path.exists() else {"workspaces": [], "agents": [], "next": 2}
-def save():
-    state_path.write_text(json.dumps(state))
+state = json.loads(state_path.read_text()) if state_path.exists() else {"agents": [], "next": 2}
+def flag(prefix):
+    return next(a[len(prefix):] for a in args if a.startswith(prefix))
+def opt(key):
+    return args[args.index(key) + 1]
 def ok(result):
     print(json.dumps({"result": result})); sys.exit(0)
-def fail(code):
-    print(json.dumps({"error": {"code": code, "message": code}}), file=sys.stderr); sys.exit(1)
-def opt(flag):
-    return args[args.index(flag) + 1]
 if name == "swarm_plan.sh":
     count = int(args[args.index("--agents") + 1])
     workload = args[args.index("--workload") + 1]
@@ -57,110 +48,78 @@ if name == "swarm_plan.sh":
     if mode == "bad-plan":
         print('sensitive-probe-output'); sys.exit(0)
     print(json.dumps(response)); sys.exit(code)
-if name == "curl":
-    # Agent Mail's HTTP MCP endpoint, as spawn calls it: ensure_project, then
-    # create_agent_identity for the next name.
-    assert args[-2:] == ["--data-binary", "@-"]
-    call = json.load(sys.stdin)["params"]
-    project = call["arguments"].get("project_key", call["arguments"].get("human_key"))
-    assert project == str(root / "repo")
-    if call["name"] == "ensure_project":
-        text = {"id": 1}
-    else:
-        assert call["name"] == "create_agent_identity"
-        names = ["GreenCastle", "AmberFox", "CopperHill"]
-        if mode == "am-fail" and state["next"] > 2:
-            print(json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "stub: down"}})); sys.exit(0)
-        text = {"name": names[state["next"] - 2], "registration_token": "tok-" + names[state["next"] - 2]}
-    print(json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": json.dumps(text)}], "isError": False}}))
-    sys.exit(0)
 if name == "nhm":
-    # nhm's --robot-spawn (acfs-9hkh.27), in the shape of
-    # tests/fixtures/nhm/robot_spawn*.json: one agent per tab of a new
-    # workspace labelled with the session, each with its Agent Mail name.
-    session = next(a for a in args if a.startswith("--robot-spawn=")).split("=", 1)[1]
-    assert session == os.environ["LAUNCH_TEST_LABEL"] and "--spawn-dir=" + str(root / "repo") in args
-    assert {"--spawn-no-user", "--spawn-safety", "--spawn-wait", "--robot-format=json"} <= set(args)
-    assert not any(a.startswith("--spawn-prompt") or a == "--spawn-assign-work" for a in args)
-    kinds = []
-    for flag, kind in (("--spawn-cc=", "claude"), ("--spawn-cod=", "codex"), ("--spawn-agy=", "agy")):
-        kinds += [kind] * sum(int(a[len(flag):]) for a in args if a.startswith(flag))
-    # nhm names kinds by ntm's type (kinds.go NTMType): agy is "antigravity".
-    ntm_type = {"claude": "claude", "codex": "codex", "agy": "antigravity"}
-    head = {"success": True, "session": session, "working_dir": str(root / "repo"),
-            "effective_project_key": str(root / "repo"), "assignments": [],
-            "admission": {"decision": "refuse" if mode == "nhm-refuse" else "admit"}}
-    if "--dry-run" in args:
-        print(json.dumps({**head, "dry_run": True, "agents": [], "would_create": [
-            {"pane": "1.%d" % i, "type": ntm_type[k], "ready": False} for i, k in enumerate(kinds, 1)]}))
-        sys.exit(0)
-    assert (root / "intent.json").exists()
-    names = ["GreenCastle", "AmberFox", "CopperHill"]
-    state["workspaces"].append({"workspace_id": "w9", "label": "other" if mode == "nhm-wrong-label" else session})
-    agents = []
-    for i, kind in enumerate(kinds):
-        n = state["next"]
-        state["next"] += 1
-        state["agents"].append({"workspace_id": "w9", "tab_id": "w9:t%d" % n, "pane_id": "w9:p%d" % n,
-            "name": names[i].lower(), "agent": kind, "agent_status": "idle", "cwd": str(root / "repo"),
-            "terminal_id": "term_%d" % n})
-        agents.append({"pane": "1.%d" % (i + 1), "pane_id": "w9:p%d" % n, "agent_mail_name": names[i],
-            "name": names[i].lower(), "type": ntm_type[kind], "ready": not (mode == "nhm-not-ready" and kind == "codex")})
-    save()
-    print(json.dumps({**head, "agents": agents}))
-    sys.exit(0)
+    # nhm's --robot-spawn, in the shape of tests/fixtures/nhm/robot_spawn*.json:
+    # one agent per tab of a new herdr workspace labelled with the launch's
+    # label, each with its Agent Mail name.
+    assert "--spawn-safety" in args and "--spawn-no-user" in args and "--spawn-wait" in args
+    assert "--timeout=60s" in args and "--robot-format=json" in args
+    assert not any("assign-work" in a or "robot-send" in a or "spawn-prompt" in a for a in args)
+    assert flag("--spawn-dir=") == str(root / "repo")
+    session = flag("--robot-spawn=")
+    assert session == os.environ["LAUNCH_TEST_LABEL"]
+    types = ["claude"] * int(flag("--spawn-cc=")) + ["codex"] * int(flag("--spawn-cod="))
+    dry = "--dry-run" in args
+    response = {"success": True, "session": session, "working_dir": str(root / "repo"),
+        "effective_project_key": str(root / "repo"), "assignments": [],
+        "admission": {"decision": "admit"}, "agents": []}
+    if dry:
+        if mode == "existing-session": print('{"success":false}'); sys.exit(1)
+        agents = [{"pane": "1." + str(i), "type": kind, "ready": False} for i, kind in enumerate(types, 1)]
+        response.update(dry_run=True, would_create=agents)
+        if mode == "unsupported": print('unknown flag --spawn-safety', file=sys.stderr); sys.exit(2)
+        if mode == "nhm-defer": response["admission"]["decision"] = "defer"
+        if mode == "no-nhm-admission": del response["admission"]
+        if mode == "extra-agent": response["would_create"].append({"pane": "1.9", "type": "codex"})
+        if mode == "wrong-project": response["working_dir"] = str(root)
+        if mode == "different-project-key": response["effective_project_key"] = str(root)
+        if mode == "bad-mix": agents[-1]["type"] = "claude"
+        if mode == "dup-pane": agents[-1]["pane"] = agents[0]["pane"]
+    else:
+        # The caller must have published a durable private intent before spawning.
+        intent = root / "intent.json"
+        assert intent.exists() and (intent.stat().st_mode & 0o077) == 0
+        names = ["GreenCastle", "AmberFox", "CopperHill"]
+        agents = []
+        for i, kind in enumerate(types):
+            n = state["next"]
+            state["next"] += 1
+            state["agents"].append({"workspace_id": "w9", "tab_id": "w9:t%d" % n, "pane_id": "w9:p%d" % n,
+                "name": names[i].lower(), "agent": kind, "agent_status": "idle", "cwd": str(root / "repo"),
+                "terminal_id": "term_%d" % n})
+            agents.append({"pane": "1.%d" % (i + 1), "pane_id": "w9:p%d" % n, "agent_mail_name": names[i],
+                "name": names[i].lower(), "type": kind, "ready": True})
+        state["workspaces"] = [{"workspace_id": "w9", "label": session}]
+        state_path.write_text(json.dumps(state))
+        response["agents"] = agents
+        if mode == "lost-response": print('private-provider-message', file=sys.stderr); sys.exit(1)
+        if mode == "not-ready": agents[0]["ready"] = False
+        if mode == "failed-spawn": response["success"] = False
+        if mode == "malformed-spawn": print('unparseable-private-output'); sys.exit(0)
+    print(json.dumps(response)); sys.exit(0)
 assert name == "herdr"
-if args[:2] == ["status", "server"]:
-    print("server:\n  status: " + ("stopped" if mode == "server-down" else "running")); sys.exit(0)
+# herdr is only asked about agents that nhm started.
+assert state_path.exists()
 if args[:2] == ["workspace", "list"]:
-    workspaces = list(state["workspaces"])
-    if mode == "existing-workspace":
-        workspaces.append({"workspace_id": "w3", "label": os.environ["LAUNCH_TEST_LABEL"]})
+    workspaces = [dict(w) for w in state["workspaces"]]
+    # Another workspace has the launch's agents: tmux's pane in another session.
+    if mode == "relabelled-workspace": workspaces[0]["label"] = "project"
     ok({"workspaces": workspaces})
-if args[:2] == ["workspace", "create"]:
-    # The caller must have published a durable private intent before creating anything.
-    intent = root / "intent.json"
-    assert intent.exists() and (intent.stat().st_mode & 0o077) == 0
-    assert opt("--cwd") == str(root / "repo") and "--no-focus" in args
-    state["workspaces"].append({"workspace_id": "w9", "label": opt("--label")})
-    save()
-    ok({"workspace": {"workspace_id": "w9"}, "tab": {"tab_id": "w9:t1"}, "root_pane": {"pane_id": "w9:p1"}})
-if args[:2] == ["tab", "create"]:
-    assert opt("--workspace") == "w9" and opt("--cwd") == str(root / "repo")
-    n = state["next"]
-    state["next"] += 1
-    state.setdefault("labels", {})["w9:t%d" % n] = opt("--label")
-    save()
-    ok({"tab": {"tab_id": "w9:t%d" % n}, "root_pane": {"pane_id": "w9:p%d" % n}})
-if args[:2] == ["agent", "start"]:
-    kind, pane = opt("--kind"), opt("--pane")
-    if mode == "start-fail": fail("server_error")
-    blocked = mode == "blocked-codex" and kind == "codex"
-    n = int(pane.rsplit(":p", 1)[1])
-    state["agents"].append({"workspace_id": "w9", "tab_id": "w9:t%d" % n, "pane_id": pane, "name": args[2],
-        "agent": kind, "agent_status": "blocked" if blocked else "idle", "cwd": str(root / "repo"),
-        "terminal_id": "term_%d" % n})
-    save()
-    if blocked: fail("agent_not_ready")
-    ok({"agent": {"name": args[2]}})
-if args[:2] == ["agent", "read"]:
-    print("Trust this folder?"); sys.exit(0)
 if args[:2] == ["agent", "list"]:
     agents = [dict(a) for a in state["agents"]]
     for a in agents:
         if mode == "replaced-terminal": a["terminal_id"] += "x"
-        if mode == "name-lost" and a["agent"] == "codex": a["name"] = None
         if mode == "pane-wrong-repo": a["cwd"] = str(root)
+        # Two panes that show one terminal.
+        if mode == "aliased-panes": a["terminal_id"] = state["agents"][0]["terminal_id"]
     ok({"agents": agents})
 if args[:2] == ["pane", "process-info"]:
     pane = opt("--pane")
     agent = next(a for a in state["agents"] if a["pane_id"] == pane)
     n = int(pane.rsplit(":p", 1)[1])
-    shown = "bash" if mode == "shell-pane" else agent["agent"]
-    # agy-locked runs agy-real with argv[0] agy (acfs-zg0): only argv[0] names the agent.
-    name = "agy-real" if shown == "agy" else shown
+    kind = "bash" if mode == "shell-pane" else agent["agent"]
     ok({"process_info": {"pane_id": pane, "shell_pid": 1000 + n,
-        "foreground_processes": [{"name": name, "pid": 2000 + n, "argv": [shown]}]}})
+        "foreground_processes": [{"name": kind, "pid": 2000 + n, "argv": [kind]}]}})
 sys.exit(95)
 '''
 
@@ -170,7 +129,6 @@ class LaunchTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="acfs-launch-test-")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(os.path.realpath(self.tmp.name))
-        guard_codex_daemons(self, self.root)
         self.repo = self.root / "repo"
         self.repo.mkdir()
         self.lib = self.root / "lib"
@@ -181,45 +139,20 @@ class LaunchTests(unittest.TestCase):
             (self.bin / "python3").symlink_to("/usr/bin/python3")
         self.script = self.lib / "swarm_launch.sh"
         shutil.copyfile(SCRIPT, self.script)
-        shutil.copyfile(HELPER, self.lib / "herdr_agents.sh")
         # The planner is a Bash entrypoint like production; a native fixture
         # implements its contract while all launcher code is copied unchanged.
-        for path in (self.bin / "herdr", self.bin / "curl", self.bin / "swarm_plan.sh"):
+        for path in (self.bin / "nhm", self.bin / "herdr", self.bin / "swarm_plan.sh"):
             path.write_text(FIXTURE)
             path.chmod(0o755)
         (self.lib / "swarm_plan.sh").write_text('#!/usr/bin/env bash\nexec "' + str(self.bin / "swarm_plan.sh") + '" "$@"\n')
-        # Spawning Codex needs its app-server daemon running without HERDR_*
-        # variables (acfs-gen.3). Fake a clean one, so the host's real codex
-        # and daemon are never touched, and a codex that fails if called.
-        codex_home, proc = self.root / "codex-home", self.root / "proc"
-        (codex_home / "app-server-daemon").mkdir(parents=True)
-        (codex_home / "app-server-daemon" / "daemon.pid").write_text('{"pid":777}\n')
-        (proc / "777").mkdir(parents=True)
-        (proc / "777" / "cmdline").write_bytes(b"codex\0app-server\0daemon\0")
-        (proc / "777" / "environ").write_bytes(b"PATH=/usr/bin\0")
-        (self.bin / "codex").write_text("#!/bin/sh\nexit 97\n")
-        (self.bin / "codex").chmod(0o755)
-        self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"], LAUNCH_TEST_ROOT=str(self.root),
-                        ACFS_HOME=str(self.root / "no-acfs-home"), CODEX_HOME=str(codex_home),
-                        HERDR_AGENTS_PROC_ROOT=str(proc),
-                        # The owner probe (acfs-9hkh.27) finds no nhm instance
-                        # here, so the launch takes the acfs agents path.
-                        XDG_STATE_HOME=str(self.root / "state"), NHM_BIN_DIR=str(self.root / "no-nhm"),
-                        # Only the curl fixture answers; a live Agent Mail is never reached.
-                        AGENT_MAIL_URL="http://127.0.0.1:9/acfs-test-stub/mcp/")
-        self.env.pop("HERDR_WORKSPACE_ID", None)
+        self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"], LAUNCH_TEST_ROOT=str(self.root))
         self.receipt = self.root / "intent.json"
-        self.agents = [("BlueLake", "codex"), ("RedFox", "claude")]
-
-    @property
-    def args(self):
-        agents = [arg for name, kind in self.agents for arg in ("--agent", name + ":" + kind)]
-        return ["bash", str(self.script), "--repo", str(self.repo), "--session", "project",
-            *agents, "--receipt", str(self.receipt)]
+        self.args = ["bash", str(self.script), "--repo", str(self.repo), "--session", "project",
+            "--agent", "BlueLake:codex", "--agent", "RedFox:claude", "--receipt", str(self.receipt)]
 
     def request(self, extra=()):
         return {"repo": str(self.repo), "session": "project", "agents": [
-            {"agent_name": name, "agent_type": kind} for name, kind in self.agents],
+            {"agent_name": "BlueLake", "agent_type": "codex"}, {"agent_name": "RedFox", "agent_type": "claude"}],
             "receipt": str(self.receipt), "profile": "balanced", "workload": "standard",
             "accept_warnings": "--accept-warnings" in extra}
 
@@ -228,88 +161,64 @@ class LaunchTests(unittest.TestCase):
             ensure_ascii=True, indent=2) + "\n").encode()
         return hashlib.sha256(encoded).hexdigest()
 
-    def label(self):
-        return "swarm-project-" + self.review_hash()[:12]
+    def label(self, extra=()):
+        # The launch's herdr workspace label: the session and its request's hash.
+        return "swarm-project-" + self.review_hash(extra)[:12]
 
     def calls(self):
         path = self.root / "calls"
         return [json.loads(s) for s in path.read_text().splitlines()] if path.exists() else []
 
-    def herdr_calls(self, *prefix):
-        return [argv for name, argv in self.calls() if name == "herdr" and argv[:len(prefix)] == list(prefix)]
-
-    def count_creates(self):
-        return len(self.herdr_calls("workspace", "create"))
+    def count_spawns(self):
+        return sum(name == "nhm" and "--dry-run" not in argv for name, argv in self.calls())
 
     def invoke(self, mode="ok", extra=(), launch=False):
         args = [*self.args]
         if launch:
             args.extend(("--launch", "--expect-sha256", self.review_hash(extra)))
-        result = subprocess.run([*args, *extra], env=dict(self.env, LAUNCH_TEST_MODE=mode, LAUNCH_TEST_LABEL=self.label()),
+        result = subprocess.run([*args, *extra], env=dict(self.env, LAUNCH_TEST_MODE=mode, LAUNCH_TEST_LABEL=self.label(extra)),
             capture_output=True, text=True, timeout=60)
         self.assertEqual(result.stderr, "", result.stderr)
         return result.returncode, json.loads(result.stdout)
 
-    def test_preview_checks_admission_and_herdr_but_does_not_start_or_write_receipt(self):
+    def test_preview_checks_admission_but_does_not_start_or_write_receipt(self):
         code, report = self.invoke()
         self.assertEqual((code, report["status"]), (0, "preview"), report)
         self.assertFalse(report["starts_agents"])
-        self.assertEqual([(n, a[:2]) for n, a in self.calls()],
-                         [("swarm_plan.sh", ["--json", "--agents"]), ("herdr", ["status", "server"]),
-                          ("herdr", ["workspace", "list"])])
+        self.assertEqual([n for n, _ in self.calls()], ["swarm_plan.sh", "nhm"])
+        self.assertEqual(self.count_spawns(), 0)
         self.assertFalse(self.receipt.exists())
-        self.assertEqual(report["herdr_plan"]["workspace_label"], self.label())
-        self.assertEqual([argv[-6:] for argv in report["herdr_plan"]["spawn"]],
-                         [["--kind", "codex", "--count", "1", "--no-prompt", "--json"],
-                          ["--kind", "claude", "--count", "1", "--no-prompt", "--json"]])
+        self.assertEqual(report["nhm_argv"], ["nhm", "--robot-spawn=" + self.label(), "--spawn-dir=" + str(self.repo),
+            "--spawn-cc=1", "--spawn-cod=1", "--spawn-no-user", "--spawn-safety", "--spawn-wait", "--timeout=60s",
+            "--robot-format=json"])
         self.assertIn("--expect-sha256", shlex.split(report["launch_command"]))
 
-    def test_launch_starts_each_slot_in_its_own_tab_of_one_new_workspace(self):
+    def test_launch_verifies_native_agents_and_maps_original_slots(self):
         code, report = self.invoke(launch=True)
         self.assertEqual((code, report["status"]), (0, "ready"), report)
-        self.assertEqual(report["preparation_targets"], ["1:GreenCastle:codex:w9:p2", "2:AmberFox:claude:w9:p3"])
+        # nhm starts claude before codex; each slot takes the next agent of its kind.
+        self.assertEqual(report["preparation_targets"], ["1:AmberFox:codex:w9:p3", "2:GreenCastle:claude:w9:p2"])
         self.assertTrue(report["starts_agents"])
         self.assertTrue(report["agent_mail_registered"])
         self.assertFalse(report["work_dispatched"])
         self.assertFalse(report["authentication_verified"])
-        self.assertEqual(self.count_creates(), 1)
-        self.assertEqual(self.herdr_calls("workspace", "create")[0][5], self.label())
-        # Slot order, one agent per tab; never a prompt, a key or a trust answer.
-        self.assertEqual([a[2:5] for a in self.herdr_calls("agent", "start")],
-                         [["greencastle", "--kind", "codex"], ["amberfox", "--kind", "claude"]])
-        self.assertEqual(self.herdr_calls("agent", "prompt") + self.herdr_calls("agent", "send-keys"), [])
+        self.assertEqual(self.count_spawns(), 1)
+        # nhm starts the agents; herdr is only read.
+        self.assertEqual({tuple(a[:2]) for n, a in self.calls() if n == "herdr"},
+                         {("agent", "list"), ("pane", "process-info"), ("workspace", "list")})
         targets = json.loads((self.root / "intent.json.result.json").read_text())["targets"]
-        self.assertEqual([(t["slot"], t["agent_name"], t["herdr_name"], t["pane_id"], t["terminal_id"], t["shell_pid"],
-                           t["launched_state"]) for t in targets],
-                         [(1, "BlueLake", "greencastle", "w9:p2", "term_2", 1002, "ready"),
-                          (2, "RedFox", "amberfox", "w9:p3", "term_3", 1003, "ready")])
+        self.assertEqual(report["targets"], targets)
+        self.assertEqual(targets, [
+            {"slot": 1, "agent_name": "BlueLake", "agent_type": "codex", "agent_mail_name": "AmberFox",
+             "herdr_name": "amberfox", "workspace_id": "w9", "workspace_label": self.label(), "tab_id": "w9:t3",
+             "pane_id": "w9:p3", "terminal_id": "term_3", "shell_pid": 1003, "launched_state": "ready"},
+            {"slot": 2, "agent_name": "RedFox", "agent_type": "claude", "agent_mail_name": "GreenCastle",
+             "herdr_name": "greencastle", "workspace_id": "w9", "workspace_label": self.label(), "tab_id": "w9:t2",
+             "pane_id": "w9:p2", "terminal_id": "term_2", "shell_pid": 1002, "launched_state": "ready"}])
         for name in ("intent.json", "intent.json.result.json"):
             self.assertEqual(stat.S_IMODE((self.root / name).stat().st_mode), 0o600)
 
-    def test_agy_launches_and_is_verified_by_its_argv0(self):
-        self.agents = [("BlueLake", "codex"), ("RedFox", "claude"), ("GreyOwl", "agy")]
-        code, report = self.invoke(launch=True)
-        self.assertEqual((code, report["status"]), (0, "ready"), report)
-        self.assertEqual(report["preparation_targets"][2], "3:CopperHill:agy:w9:p4")
-        self.assertEqual([a[2:5] for a in self.herdr_calls("agent", "start")][2], ["copperhill", "--kind", "agy"])
-        # A repeat re-verifies the recorded agy pane the same way.
-        code, report = self.invoke(launch=True)
-        self.assertEqual((code, report["status"], report["reconciled_only"]), (0, "ready", True), report)
-
-    def test_agy_pane_without_the_agy_process_is_refused(self):
-        self.agents = [("GreyOwl", "agy")]
-        code, report = self.invoke(launch=True, mode="shell-pane")
-        self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
-
-    def test_agent_waiting_at_a_dialog_counts_as_launched(self):
-        code, report = self.invoke(launch=True, mode="blocked-codex")
-        self.assertEqual((code, report["status"]), (0, "ready"), report)
-        self.assertEqual([t["launched_state"] for t in report["targets"]], ["blocked", "ready"])
-        # The launch went on to the next slot and answered nothing.
-        self.assertEqual(len(self.herdr_calls("agent", "start")), 2)
-        self.assertEqual(self.herdr_calls("agent", "send-keys"), [])
-
-    def test_repeat_only_verifies_recorded_panes(self):
+    def test_repeat_only_verifies_recorded_stable_panes(self):
         self.assertEqual(self.invoke(launch=True)[0], 0)
         intent, result = self.receipt.read_bytes(), (self.root / "intent.json.result.json").read_bytes()
         before = len(self.calls())
@@ -318,43 +227,44 @@ class LaunchTests(unittest.TestCase):
         self.assertTrue(report["reconciled_only"])
         self.assertFalse(report["starts_agents"])
         self.assertEqual([a[:2] for _, a in self.calls()[before:]],
-                         [["agent", "list"], ["pane", "process-info"], ["pane", "process-info"]])
-        self.assertEqual([t["live"] for t in report["targets"]],
-                         [{"state": "ready", "name_lost": False}, {"state": "ready", "name_lost": False}])
-        self.assertEqual(self.count_creates(), 1)
+                         [["workspace", "list"], ["agent", "list"], ["pane", "process-info"], ["pane", "process-info"]])
+        self.assertEqual(self.count_spawns(), 1)
         self.assertEqual(self.receipt.read_bytes(), intent)
         self.assertEqual((self.root / "intent.json.result.json").read_bytes(), result)
 
-    def test_lost_name_is_reported_with_its_rename_not_failed(self):
-        self.assertEqual(self.invoke(launch=True)[0], 0)
-        code, report = self.invoke(launch=True, mode="name-lost")
-        self.assertEqual((code, report["status"]), (0, "ready"), report)
-        live = report["targets"][0]["live"]
-        self.assertTrue(live["name_lost"])
-        self.assertEqual(live["rename_command"], "herdr agent rename w9:p2 greencastle")
-        # Reconcile reports the rename; it never runs it.
-        self.assertEqual(self.herdr_calls("agent", "rename"), [])
+    def test_lost_response_never_relaunches_or_adopts_unknown_session(self):
+        code, report = self.invoke(launch=True, mode="lost-response")
+        self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
+        self.assertNotIn("private-provider", json.dumps(report))
+        before = len(self.calls())
+        code, report = self.invoke(launch=True)
+        self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
+        self.assertEqual(len(self.calls()), before)
+        self.assertEqual(self.count_spawns(), 1)
 
     def test_replaced_terminal_is_not_trusted_or_relaunched(self):
         self.assertEqual(self.invoke(launch=True)[0], 0)
-        for mode in ("replaced-terminal", "shell-pane", "pane-wrong-repo"):
+        for mode in ("replaced-terminal", "shell-pane", "pane-wrong-repo", "relabelled-workspace"):
             with self.subTest(mode=mode):
                 code, report = self.invoke(launch=True, mode=mode)
                 self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
-        self.assertEqual(self.count_creates(), 1)
+        self.assertEqual(self.count_spawns(), 1)
 
-    def test_failed_or_unverifiable_launch_retains_intent_and_never_relaunches(self):
-        for mode in ("start-fail", "am-fail", "shell-pane", "pane-wrong-repo"):
+    def test_unready_or_invalid_launch_retains_intent(self):
+        for mode in ("not-ready", "failed-spawn", "malformed-spawn", "shell-pane", "pane-wrong-repo", "aliased-panes",
+                     "relabelled-workspace"):
             with self.subTest(mode=mode):
                 # Fresh isolated receipt for each simulated first launch.
-                with LaunchTests("test_preview_checks_admission_and_herdr_but_does_not_start_or_write_receipt") as case:
+                with LaunchTests("test_preview_checks_admission_but_does_not_start_or_write_receipt") as case:
                     code, report = case.invoke(launch=True, mode=mode)
                     self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
-                    self.assertIn(case.label(), report["error"])
+                    if mode in ("not-ready", "relabelled-workspace"):
+                        # The label is not the session the user typed, so the error names it.
+                        self.assertIn(case.label(), report["error"])
                     self.assertTrue(case.receipt.exists())
-                    self.assertEqual(case.count_creates(), 1)
+                    self.assertEqual(case.count_spawns(), 1)
                     self.assertEqual(case.invoke(launch=True)[1]["status"], "unconfirmed")
-                    self.assertEqual(case.count_creates(), 1)
+                    self.assertEqual(case.count_spawns(), 1)
 
     def __enter__(self):
         self.setUp()
@@ -370,7 +280,7 @@ class LaunchTests(unittest.TestCase):
         code, report = self.invoke(mode="warn", launch=True, extra=("--accept-warnings",))
         self.assertEqual((code, report["status"]), (0, "ready"), report)
 
-    def test_pressure_and_malformed_plans_fail_before_herdr_or_receipt(self):
+    def test_pressure_and_malformed_plans_fail_before_nhm_or_receipt(self):
         for mode in ("blocked", "wait", "scale", "over-capacity", "wrong-count", "invalid-checks", "mismatched-code", "bad-plan"):
             with self.subTest(mode=mode):
                 code, report = self.invoke(mode=mode, launch=True, extra=("--accept-warnings",))
@@ -379,21 +289,14 @@ class LaunchTests(unittest.TestCase):
                 self.assertNotIn("sensitive-probe", json.dumps(report))
         self.assertTrue(all(name == "swarm_plan.sh" for name, _ in self.calls()))
 
-    def test_preflight_failure_prevents_intent_and_workspace(self):
-        for mode in ("server-down", "existing-workspace"):
+    def test_nhm_dry_run_failure_prevents_intent_and_spawn(self):
+        for mode in ("existing-session", "unsupported", "nhm-defer", "no-nhm-admission", "extra-agent", "wrong-project",
+                     "different-project-key", "bad-mix", "dup-pane"):
             with self.subTest(mode=mode):
                 code, report = self.invoke(mode=mode, launch=True)
                 self.assertEqual(code, 2, report)
                 self.assertFalse(self.receipt.exists())
-                self.assertEqual(self.count_creates(), 0)
-
-    def test_missing_helper_or_am_prevents_intent(self):
-        (self.lib / "herdr_agents.sh").unlink()
-        code, report = self.invoke(launch=True)
-        self.assertEqual(code, 2, report)
-        self.assertIn("herdr_agents.sh", report["error"])
-        self.assertFalse(self.receipt.exists())
-        self.assertEqual(self.count_creates(), 0)
+                self.assertEqual(self.count_spawns(), 0)
 
     def test_hash_required_and_request_changes_refused_before_probes(self):
         self.assertEqual(self.invoke(extra=("--launch",))[0], 2)
@@ -408,7 +311,7 @@ class LaunchTests(unittest.TestCase):
         code, _ = self.invoke(extra=("--workload", "heavy"))
         self.assertEqual(code, 2)
         self.assertEqual(self.receipt.read_bytes(), original)
-        self.assertEqual(self.count_creates(), 1)
+        self.assertEqual(self.count_spawns(), 1)
 
     def test_existing_user_file_and_result_are_not_overwritten(self):
         self.receipt.write_text("important file")
@@ -430,10 +333,10 @@ class LaunchTests(unittest.TestCase):
         (self.root / "intent.json.result.json").chmod(0o644)
         code, report = self.invoke(launch=True)
         self.assertEqual((code, report["status"]), (1, "unconfirmed"))
-        self.assertEqual(self.count_creates(), 1)
+        self.assertEqual(self.count_spawns(), 1)
 
     def test_invalid_names_types_counts_and_session_never_probe(self):
-        for extra in (("--agent", "RedFox:bash"), ("--agent", "redfox:codex"), ("--session", "bad.label"),
+        for extra in (("--agent", "RedFox:bash"), ("--agent", "redfox:codex"), ("--session", "bad--label"),
                       ("--agent", "$(touch pwned):claude"), ("--session", "name:0")):
             with self.subTest(extra=extra):
                 self.assertEqual(self.invoke(extra=extra)[0], 2)
@@ -457,96 +360,6 @@ class LaunchTests(unittest.TestCase):
         self.receipt.chmod(0o600)
         self.assertEqual(self.invoke()[0], 2)
         self.assertEqual(self.calls(), [])
-
-
-class NhmLaunchTests(LaunchTests.__base__):
-    """acfs-9hkh.27, ruling b2: where nhm owns the herdr server, upstream's
-    --robot-spawn runs with nhm, and each slot's live herdr identity goes into
-    the same receipt as on the acfs agents path."""
-
-    setUp = LaunchTests.setUp
-    args, request, review_hash, label = LaunchTests.args, LaunchTests.request, LaunchTests.review_hash, LaunchTests.label
-    calls, herdr_calls, invoke = LaunchTests.calls, LaunchTests.herdr_calls, LaunchTests.invoke
-
-    def own(self, owner="nhm"):
-        nhm = self.bin / "nhm"
-        nhm.write_text(FIXTURE)
-        nhm.chmod(0o755)
-        inst = self.root / "state" / "nhm" / "inst-0123456789ab"
-        inst.mkdir(parents=True)
-        socket = str(self.root / "herdr.sock")
-        (inst / "instance.toml").write_text('id = "inst-0123456789ab"\nsocket_path = "%s"\n' % socket)
-        (inst / "owner.toml").write_text('owner = "%s"\ngeneration = 1\n' % owner)
-        self.env.update(NHM_BIN_DIR=str(self.bin), HERDR_SOCKET_PATH=socket)
-
-    def test_preview_runs_nhms_dry_run_and_starts_nothing(self):
-        self.own()
-        code, report = self.invoke()
-        self.assertEqual((code, report["status"], report["backend"]), (0, "preview", "nhm"), report)
-        self.assertNotIn("herdr_plan", report)
-        self.assertEqual(report["nhm_argv"], ["nhm", "--robot-spawn=" + self.label(), "--spawn-dir=" + str(self.repo),
-            "--spawn-cc=1", "--spawn-cod=1", "--spawn-no-user", "--spawn-safety", "--spawn-wait", "--timeout=60s",
-            "--robot-format=json"])
-        self.assertEqual([a[-1] for n, a in self.calls() if n == "nhm"], ["--dry-run"])
-        self.assertEqual(self.herdr_calls("workspace", "create"), [])
-        self.assertFalse(self.receipt.exists())
-
-    def test_launch_records_the_same_targets_as_the_acfs_agents_path(self):
-        self.own()
-        code, report = self.invoke(launch=True)
-        self.assertEqual((code, report["status"], report["backend"]), (0, "ready", "nhm"), report)
-        # nhm starts claude before codex; each slot takes the next agent of its kind.
-        self.assertEqual(report["preparation_targets"], ["1:AmberFox:codex:w9:p3", "2:GreenCastle:claude:w9:p2"])
-        # nhm made the workspace, the agents and their Agent Mail names.
-        self.assertEqual(self.herdr_calls("workspace", "create") + self.herdr_calls("agent", "start"), [])
-        self.assertEqual([n for n, _ in self.calls() if n == "curl"], [])
-        targets = json.loads((self.root / "intent.json.result.json").read_text())["targets"]
-        self.assertEqual([(t["slot"], t["agent_name"], t["agent_type"], t["herdr_name"], t["workspace_label"],
-                           t["pane_id"], t["shell_pid"]) for t in targets],
-                         [(1, "BlueLake", "codex", "amberfox", self.label(), "w9:p3", 1003),
-                          (2, "RedFox", "claude", "greencastle", self.label(), "w9:p2", 1002)])
-        # A repeat only re-verifies the saved panes; nhm never spawns again.
-        code, report = self.invoke(launch=True)
-        self.assertEqual((code, report["status"], report["reconciled_only"]), (0, "ready", True), report)
-        self.assertEqual(len([a for n, a in self.calls() if n == "nhm" and "--dry-run" not in a]), 1)
-
-    def test_agent_not_ready_keeps_the_intent_and_never_relaunches(self):
-        self.own()
-        code, report = self.invoke(mode="nhm-not-ready", launch=True)
-        self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
-        self.assertIn("not ready", report["error"])
-        self.assertTrue(self.receipt.exists())
-        self.assertFalse((self.root / "intent.json.result.json").exists())
-
-    def test_refused_admission_stops_before_any_receipt(self):
-        self.own()
-        code, report = self.invoke(mode="nhm-refuse", launch=True)
-        self.assertEqual((code, report["status"]), (2, "error"), report)
-        self.assertIn("admission", report["error"])
-        self.assertFalse(self.receipt.exists())
-
-    def test_agy_is_nhms_antigravity_type(self):
-        # Real nhm reports agy as ntm's type "antigravity" (review of cd622731).
-        self.own()
-        self.agents = [("BlueLake", "codex"), ("RedFox", "claude"), ("GreyOwl", "agy")]
-        code, report = self.invoke(launch=True)
-        self.assertEqual((code, report["status"]), (0, "ready"), report)
-        self.assertIn("--spawn-agy=1", report.get("nhm_argv", []) or self.calls()[-1][1])
-        self.assertEqual(report["preparation_targets"][2].split(":")[2], "agy")
-
-    def test_a_workspace_without_the_launch_label_is_not_recorded(self):
-        self.own()
-        code, report = self.invoke(mode="nhm-wrong-label", launch=True)
-        self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
-        self.assertIn("labelled for this launch", report["error"])
-        self.assertFalse((self.root / "intent.json.result.json").exists())
-
-    def test_acfs_bash_owner_keeps_the_acfs_agents_path(self):
-        self.own("acfs-bash")
-        code, report = self.invoke()
-        self.assertEqual((code, report["backend"]), (0, "acfs-bash"), report)
-        self.assertIn("herdr_plan", report)
-        self.assertEqual([n for n, _ in self.calls() if n == "nhm"], [])
 
 
 if __name__ == "__main__":

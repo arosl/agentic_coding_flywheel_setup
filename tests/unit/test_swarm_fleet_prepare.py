@@ -339,9 +339,8 @@ def enc(x): return (json.dumps(x,sort_keys=True,ensure_ascii=True,indent=2)+'\n'
 def sha(x): return hashlib.sha256(x).hexdigest()
 request = entry['host']['request']
 if args == ['--reconcile','--receipt',request['receipt']]:
-    live=[dict(t,live={'state':'ready','name_lost':False}) for t in entry['targets']]
     print(json.dumps(dict(schema='acfs.swarm-launch.v2',status='ready',request=request,
-        targets=live,starts_agents=False,work_dispatched=False,
+        targets=entry['targets'],starts_agents=False,work_dispatched=False,
         authentication_verified=False,agent_mail_registered=True,reconciled_only=True)))
     sys.exit(0)
 assert args[:2] == ['--prepare-batch',entry['output']+'/bundle']

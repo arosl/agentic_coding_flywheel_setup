@@ -36,7 +36,6 @@ LIMIT = 1024 * 1024
 POLICY = "explicit-new-sessions-strict-ssh-native-admission-v1"
 PROFILES = ("balanced", "codex-heavy", "review-heavy", "docs-heavy")
 WORKLOADS = ("light", "standard", "heavy")
-AGENT_TYPES = ("claude", "codex", "agy")
 NEW_LAUNCH_ATTEMPTED = False
 
 
@@ -194,7 +193,7 @@ def validate_spec(value):
         for agent in req["agents"]:
             require(type(agent) is dict and set(agent) == {"agent_name", "agent_type"}
                     and matches(r"[A-Za-z][A-Za-z0-9_-]{0,63}", agent["agent_name"])
-                    and agent["agent_type"] in AGENT_TYPES, "invalid_agent")
+                    and agent["agent_type"] in ("claude", "codex"), "invalid_agent")
             name = agent["agent_name"].lower()
             require(name not in names, "duplicate_fleet_agent_name")
             names.add(name)
@@ -375,14 +374,6 @@ def valid_targets(value, request):
     label = "swarm-" + request["session"] + "-" + native_hash(request)[:12]
     targets = []
     for slot, (target, agent) in enumerate(zip(value, request["agents"]), 1):
-        # Fleet state saved before the herdr port holds tmux targets; only a new launch helps.
-        require(type(target) is not dict or "session_id" not in target, "pre_herdr_launch_state_relaunch_required")
-        # Reconciliation adds a "live" report per target; it is not part of the identity.
-        if type(target) is dict and "live" in target:
-            live = target["live"]
-            require(type(live) is dict and type(live.get("state")) is str
-                    and type(live.get("name_lost")) is bool, "native_targets_invalid")
-            target = {k: v for k, v in target.items() if k != "live"}
         require(type(target) is dict and set(target) == fields and type(target["slot"]) is int
                 and target["slot"] == slot and target["agent_name"] == agent["agent_name"]
                 and target["agent_type"] == agent["agent_type"]

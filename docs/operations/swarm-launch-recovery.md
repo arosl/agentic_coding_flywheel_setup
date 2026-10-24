@@ -18,10 +18,9 @@ is refused.
 
 Inspect every proposed slot, agent type, Agent Mail name, pane, terminal and
 shell PID. By default, slots are assigned to the same native-agent types
-(Claude, Codex or `agy`) in the order the agents started: nhm's slot `N.M` when nhm started the
-launch, otherwise tab creation order, which the launcher's one-at-a-time start
-made the slot order. A pane runs its agent when a foreground process has the
-agent type as its name or its argv[0], as `agy-real` does under `agy-locked`.
+(Claude or Codex, as launch takes) in the order the agents started: nhm's slot
+`N.M` when nhm started the launch, otherwise tab creation order. A pane runs its
+agent when a foreground process has the agent type as its name.
 
 Recovery reads each agent's Agent Mail name and slot from nhm's binding of its
 pane when nhm started the launch, otherwise from its tab label, where
@@ -151,8 +150,7 @@ acfs swarm launch --prepare-batch ./work-bundle \
 ```
 
 Preparing packets does not send them; review the returned dispatch preview
-separately. Until acfs-qzc (K5) lands, the installed packet preparer still expects
-tmux pane IDs and refuses herdr ones.
+separately.
 
 Fresh installs and runtime updates distribute the recovery helper beside the
 native launcher under the canonical internal-checksum contract. A missing or

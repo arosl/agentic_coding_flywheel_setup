@@ -227,24 +227,10 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(review, self.preview())
         self.adopt(review)
 
-    def test_agy_slot_is_recovered_by_its_argv0(self):
+    def test_agy_intent_is_refused(self):
+        # Launch takes claude and codex only, as upstream's does (the operator, 2026-10-23).
         self.request["agents"][1]["agent_type"] = "agy"
         self.save_intent()
-        self.workspaces[1]["label"] = self.label()
-        # agy-locked runs agy-real with argv[0] agy (acfs-zg0); herdr reports the agent as agy.
-        self.agents[1] = {**self.agent(3, "agy", "AmberFox"), "foreground": "agy-real", "argv0": "agy"}
-        self.save_state()
-        self.assertTrue(self.adopt()["result_created"])
-        saved = json.loads(self.result.read_text())
-        self.assertEqual([(t["slot"], t["agent_type"], t["pane_id"]) for t in saved["targets"]],
-                         [(1, "codex", "w9:p2"), (2, "agy", "w9:p3"), (3, "codex", "w9:p7")])
-
-    def test_agy_pane_running_something_else_is_refused(self):
-        self.request["agents"][1]["agent_type"] = "agy"
-        self.save_intent()
-        self.workspaces[1]["label"] = self.label()
-        self.agents[1] = {**self.agent(3, "agy", "AmberFox"), "foreground": "agy-real", "argv0": "bash"}
-        self.save_state()
         self.invoke(code=2)
         self.assertFalse(self.result.exists())
 

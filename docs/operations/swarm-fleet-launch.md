@@ -9,8 +9,7 @@ existing session. Every host runs its own installed ACFS admission checks.
 Run `python3 -I scripts/swarm-fleet-launch.py --help` from a trusted complete
 checkout on a Linux controller. This is a checkout command, not a newly installed
 `acfs` subcommand. Remotes need the existing native launcher at
-`$HOME/.acfs/scripts/lib/swarm_launch.sh`, a running herdr server, Agent Mail
-(`am`) and the selected providers.
+`$HOME/.acfs/scripts/lib/swarm_launch.sh`, nhm, herdr and the selected providers.
 The project and private receipt parent must already exist on each remote host.
 This command does not provision machines, install tools, copy repositories,
 authenticate providers, or supply remote credentials.
@@ -68,13 +67,13 @@ host with another port/user does not create extra capacity. IPv4-mapped IPv6
 aliases are also deduplicated; different DNS aliases can still resolve to the
 same machine, which operators must exclude themselves. Root remote accounts,
 unknown providers, malformed paths, implicit selections and extra executable
-fields are refused. Native support covers Claude, Codex and Antigravity (`agy`).
+fields are refused. Native support currently covers Claude and Codex.
 
 The workload and profile choose admission policy, **not a provider model or CAAM
-account**. Each remote agent CLI's own configuration still chooses its normal
-commands, models, permissions and credentials. Use the profile rehearsal
-separately to check authentication/model access; this controller does not wire a
-CAAM profile into a herdr agent or treat a previous rehearsal as authorization.
+account**. The remote nhm configuration still chooses its normal commands,
+models, permissions and credentials. Use the profile rehearsal separately to
+check authentication/model access; this controller does not wire a CAAM profile
+into an nhm session or treat a previous rehearsal as authorization.
 
 ## Preview and launch
 
@@ -118,10 +117,8 @@ persists its own intent before starting agents. Only a matching ready response
 creates a local result record. Its targets (schema `acfs.swarm-launch.v2`) must
 be one per slot, in slot order, all in the one herdr workspace labelled for this
 launch, with distinct tab, pane, terminal and shell PID, and each with an Agent
-Mail name whose lowercase form is its herdr name. Spawn registers those names,
-so a ready response must report `agent_mail_registered: true`. Fleet state saved
-before the herdr port holds tmux targets and is refused as
-`pre_herdr_launch_state_relaunch_required`: launch again under a new receipt.
+Mail name whose lowercase form is its herdr name. nhm registers those names,
+so a ready response must report `agent_mail_registered: true`.
 The controller never executes the command strings returned by remote previews.
 
 ## Partial launches are not rolled back or blindly retried

@@ -211,14 +211,13 @@ class FleetTests(unittest.TestCase):
 
     def test_mixed_provider_original_slots_are_preserved(self):
         self.spec["hosts"][0]["request"]["agents"] = [
-            {"agent_name": "Coder", "agent_type": "codex"}, {"agent_name": "Reviewer", "agent_type": "claude"},
-            {"agent_name": "Tester", "agent_type": "agy"}]
+            {"agent_name": "Coder", "agent_type": "codex"}, {"agent_name": "Reviewer", "agent_type": "claude"}]
         self.plan = fleet.build_plan(self.spec, b"hosts", b"key", self.state, 360)
         self.approval = fleet.digest(fleet.encoded(self.plan))
         report, code = self.run_fleet("launch")
         self.assertEqual(code, 0)
         self.assertEqual([(t["agent_name"], t["agent_type"]) for t in report["hosts"][0]["targets"]],
-                         [("Coder", "codex"), ("Reviewer", "claude"), ("Tester", "agy")])
+                         [("Coder", "codex"), ("Reviewer", "claude")])
 
     def test_reports_do_not_echo_endpoints_paths_ssh_keys_or_raw_diagnostics(self):
         def private(h, m, r):
@@ -336,23 +335,6 @@ class ValidationTests(unittest.TestCase):
             self.assertEqual(fleet.remote_result(host(), mode, peer)["code"], "native_launch_unconfirmed")
         peer = FixtureTransport(lambda h, m, r: {**r, "agent_mail_registered": True})
         self.assertEqual(fleet.remote_result(host(), "preview", peer)["code"], "native_preview_refused_or_existing")
-
-    def test_reconcile_live_report_is_not_part_of_the_target(self):
-        def live(h, m, r):
-            for t in r["targets"]:
-                t["live"] = {"state": "blocked", "name_lost": True, "rename_command": "herdr agent rename x y"}
-            return r
-        row = fleet.remote_result(host(), "reconcile", FixtureTransport(live))
-        self.assertEqual(row["status"], "ready")
-        self.assertEqual(row["targets"], native_targets(host()["request"]))
-        bad = FixtureTransport(lambda h, m, r: {**r, "targets": [{**r["targets"][0], "live": "ready"}]})
-        self.assertEqual(fleet.remote_result(host(), "reconcile", bad)["status"], "unconfirmed")
-
-    def test_pre_herdr_tmux_targets_need_a_new_launch(self):
-        tmux = [{"slot": 1, "agent_name": "Agent1", "agent_type": "claude", "pane": "%42", "pane_pid": "201",
-                 "server_pid": "100", "session_id": "$3", "session_created": "1789000000"}]
-        with self.assertRaisesRegex(fleet.Refused, "pre_herdr_launch_state_relaunch_required"):
-            fleet.valid_targets(tmux, host()["request"])
 
     def test_duplicate_agents_and_split_workspaces_are_refused(self):
         selected = host()
