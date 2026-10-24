@@ -4948,6 +4948,19 @@ update_slb_sidecar_path_for() {
 }
 
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via run_cmd()
+# update_slb_root_fallback_allowed WHAT: whether root may redo, through
+# update_sudo_prefix, a step of the SLB update that the target user's own
+# attempt failed. Not in a root run for another user (acfs-r7nv): the
+# install dir can come from the user's state.json, and the user can make
+# their own attempt fail and then swap a link in at the backup or sidecar
+# name, so root's mkdir, cp or redirect would land where the user points.
+update_slb_root_fallback_allowed() {
+    update_root_run_for_other_user || return 0
+    echo "SLB: $(update_target_user 2>/dev/null || true) could not $1, and a root run for that user does not retry it as root" >&2
+    log_to_file "SLB: refused the root fallback to $1 (root run for another user)"
+    return 1
+}
+
 update_run_slb_verified_install() {
     local slb_path=""
     local sidecar_file=""
@@ -5028,6 +5041,7 @@ update_run_slb_verified_install() {
     fi
 
     if ! update_run_in_target_context "" "$mkdir_bin" -p -- "$install_dir"; then
+        update_slb_root_fallback_allowed "make $install_dir" || return 1
         update_sudo_prefix sudo_prefix || return 1
         "${sudo_prefix[@]}" "$mkdir_bin" -p -- "$install_dir" || return 1
     fi
@@ -5039,6 +5053,7 @@ update_run_slb_verified_install() {
             return 1
         fi
         if ! update_run_in_target_context "" "$cp_bin" -f -- "$slb_path" "$backup_path"; then
+            update_slb_root_fallback_allowed "back up $slb_path to $backup_path" || return 1
             update_sudo_prefix sudo_prefix || return 1
             "${sudo_prefix[@]}" "$cp_bin" -f -- "$slb_path" "$backup_path" || return 1
         fi
@@ -5068,6 +5083,7 @@ update_run_slb_verified_install() {
         printf "%s\n" "$installed_hash" > "$sidecar_file"
         "$3" 0644 -- "$sidecar_file"
     ' _ "$sidecar_file" "${installed_hash,,}" "$chmod_bin"; then
+        update_slb_root_fallback_allowed "record the checksum in $sidecar_file" || return 1
         update_sudo_prefix sudo_prefix || return 1
         "${sudo_prefix[@]}" "$bash_bin" --noprofile --norc -c '
             set -euo pipefail

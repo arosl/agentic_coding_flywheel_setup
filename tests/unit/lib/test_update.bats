@@ -16220,6 +16220,74 @@ _slb_install_fixture_binary() {
     [[ ! -s "$SLB_VERIFIED_CALLS_FILE" ]]
 }
 
+# A root run for another user (acfs-r7nv) in which the user's own STEP
+# fails: the user's context fails the command named STEP (mkdir, cp, or bash
+# for the sidecar write) and runs the rest, and update_sudo_prefix runs
+# root's retry through slb_root_ran, which logs it.
+_slb_root_run_user_step_fails() {
+    SLB_FAILING_STEP="$1"
+    SLB_ROOT_LOG="$HOME/slb_root.log"
+    update_run_in_target_context() {
+        shift
+        [[ "${1##*/}" != "$SLB_FAILING_STEP" ]] || return 1
+        "$@"
+    }
+    slb_root_ran() { printf '%s\n' "$*" >> "$SLB_ROOT_LOG"; "$@"; }
+    update_sudo_prefix() { local -n _ref="$1"; _ref=(slb_root_ran); }
+    update_root_run_for_other_user() { return 0; }
+}
+
+@test "slb verified update run by root for a user doesn't make the install dir as root (acfs-r7nv)" {
+    _slb_test_setup
+    update_binary_path() { return 1; }
+    _slb_root_run_user_step_fails mkdir
+
+    run update_run_slb_verified_install
+    assert_failure
+    assert_output --partial "could not make $HOME/.local/bin, and a root run for that user does not retry it as root"
+    [[ ! -e "$SLB_ROOT_LOG" ]]
+    [[ ! -s "$SLB_VERIFIED_CALLS_FILE" ]]
+}
+
+@test "slb verified update run by root for a user doesn't make the forced backup as root (acfs-r7nv)" {
+    _slb_test_setup
+    _slb_install_fixture_binary "audited-binary-v1"
+    _slb_root_run_user_step_fails cp
+    export ACFS_FORCE_SLB_UPDATE=1
+
+    run update_run_slb_verified_install
+    unset ACFS_FORCE_SLB_UPDATE
+    assert_failure
+    assert_output --partial "could not back up $HOME/go/bin/slb to $HOME/go/bin/slb.acfs-bak"
+    [[ ! -e "$SLB_ROOT_LOG" ]]
+    [[ ! -e "$HOME/go/bin/slb.acfs-bak" ]]
+    [[ ! -s "$SLB_VERIFIED_CALLS_FILE" ]]
+}
+
+@test "slb verified update run by root for a user doesn't write the checksum sidecar as root (acfs-r7nv)" {
+    _slb_test_setup
+    update_binary_path() { return 1; }
+    _slb_root_run_user_step_fails bash
+
+    run update_run_slb_verified_install
+    assert_failure
+    assert_output --partial "could not record the checksum in $HOME/.local/bin/.slb.acfs-sha256"
+    [[ ! -e "$SLB_ROOT_LOG" ]]
+    [[ ! -e "$HOME/.local/bin/.slb.acfs-sha256" ]]
+}
+
+@test "slb verified update in a user's own run still retries a failed step through sudo (acfs-r7nv)" {
+    _slb_test_setup
+    update_binary_path() { return 1; }
+    _slb_root_run_user_step_fails mkdir
+    update_root_run_for_other_user() { return 1; }
+
+    run update_run_slb_verified_install
+    assert_success
+    grep -Fq -- "mkdir -p -- $HOME/.local/bin" "$SLB_ROOT_LOG"
+    [[ -x "$HOME/.local/bin/slb" ]]
+}
+
 @test "slb update has no moving-branch source checkout lane" {
     run grep -F 'git clone --depth 1 https://github.com/Dicklesworthstone/simultaneous_launch_button.git' \
         "$PROJECT_ROOT/scripts/lib/update.sh"
