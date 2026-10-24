@@ -573,8 +573,10 @@ chown -R "${TARGET_USER:-ubuntu}:${TARGET_USER:-ubuntu}" "$target_home/.acfs/doc
 # Seed /data/projects/AGENTS.md ONLY when absent. An existing file
 # may contain user-authored rules and is never overwritten; use
 # `acfs agents install` for explicit, non-overwriting deployment.
-# A link of any kind is skipped too: root never writes or chowns
-# through a path the user controls (acfs-4qz1).
+# A link of any kind that is there at this check is skipped too, so
+# root doesn't write or chown through it (acfs-4qz1). One planted
+# after the check is still written through until acfs-k9a9 copies
+# this as the target user.
 if [[ -f "$target_home/.acfs/docs/AGENTS.workspace.md" && ! -e /data/projects/AGENTS.md && ! -L /data/projects/AGENTS.md ]]; then
   cp "$target_home/.acfs/docs/AGENTS.workspace.md" /data/projects/AGENTS.md
   chown -h "${TARGET_USER:-ubuntu}:${TARGET_USER:-ubuntu}" /data/projects/AGENTS.md 2>/dev/null || true
