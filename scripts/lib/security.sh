@@ -592,7 +592,7 @@ declare -gA KNOWN_INSTALLERS=(
     [atuin]="https://github.com/atuinsh/atuin/releases/latest/download/atuin-installer.sh"
     [herdr]="https://herdr.dev/install.sh"
     # nhm: the release tag pins the installer; acfs.manifest.yaml names the same version.
-    [nhm]="https://raw.githubusercontent.com/arosl/nhm/v0.1.14/install.sh"
+    [nhm]="https://raw.githubusercontent.com/arosl/nhm/v0.1.15/install.sh"
     [mcp_agent_mail]="https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/refs/heads/main/install.sh"
     [ubs]="https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/main/install.sh"
     [bv]="https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh"
@@ -644,8 +644,8 @@ declare -gA KNOWN_INSTALLERS=(
 # only a cosign signature, and Ubuntu 24.04 packages no cosign, so caam's
 # archive pins stand in for it there (acfs-7mu.3).
 declare -gA KNOWN_RELEASE_ARCHIVES=(
-    [nhm_archive_linux_amd64]="https://github.com/arosl/nhm/releases/download/v0.1.14/nhm-0.1.14-linux-amd64.tar.zst"
-    [nhm_archive_linux_arm64]="https://github.com/arosl/nhm/releases/download/v0.1.14/nhm-0.1.14-linux-arm64.tar.zst"
+    [nhm_archive_linux_amd64]="https://github.com/arosl/nhm/releases/download/v0.1.15/nhm-0.1.15-linux-amd64.tar.zst"
+    [nhm_archive_linux_arm64]="https://github.com/arosl/nhm/releases/download/v0.1.15/nhm-0.1.15-linux-arm64.tar.zst"
     [caam_archive_linux_amd64]="https://github.com/arosl/coding_agent_account_manager/releases/download/v0.1.23-herdr.3/caam_0.1.23-herdr.3_linux_amd64.tar.gz"
     [caam_archive_linux_arm64]="https://github.com/arosl/coding_agent_account_manager/releases/download/v0.1.23-herdr.3/caam_0.1.23-herdr.3_linux_arm64.tar.gz"
 )
