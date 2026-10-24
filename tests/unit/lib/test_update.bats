@@ -3916,6 +3916,64 @@ EOF
     assert_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
 }
 
+@test "sync_acfs_profile_paths and sync_acfs_zprofile_paths write only as the target user (acfs-rxpd)" {
+    local fn body edits
+    for fn in sync_acfs_profile_paths sync_acfs_zprofile_paths; do
+        body="$(declare -f "$fn")"
+        # No redirect into the dotfile from update.sh's own shell, which is
+        # root's when root runs the update for the user.
+        [[ -z "$(grep -E '>>? *"\$user_z?profile"' <<<"$body" || true)" ]]
+        edits="$(grep -E 'sed .*-i' <<<"$body")"
+        [[ -n "$edits" ]]
+        [[ -z "$(grep -v 'update_run_in_target_context' <<<"$edits" || true)" ]]
+    done
+}
+
+@test "sync_acfs_profile_paths: a ~/.profile link to a file the user can't write is left alone, with a warning (acfs-rxpd)" {
+    local locked
+    locked="$(create_temp_dir)"
+    printf 'root content\n' > "$locked/bash.bashrc"
+    chmod a-w "$locked/bash.bashrc" "$locked"
+    ln -s "$locked/bash.bashrc" "$HOME/.profile"
+
+    run sync_acfs_profile_paths
+    chmod u+w "$locked" "$locked/bash.bashrc"
+    assert_success
+    assert_output --partial "couldn't write $HOME/.profile as the target user"
+
+    run cat "$locked/bash.bashrc"
+    assert_output "root content"
+}
+
+@test "sync_acfs_zprofile_paths: a dangling ~/.zprofile link into a directory the user can't write gets no file (acfs-rxpd)" {
+    local locked
+    locked="$(create_temp_dir)"
+    chmod a-w "$locked"
+    ln -s "$locked/zprofile" "$HOME/.zprofile"
+
+    run sync_acfs_zprofile_paths
+    chmod u+w "$locked"
+    assert_success
+    assert_output --partial "couldn't write $HOME/.zprofile as the target user"
+    [[ ! -e "$locked/zprofile" ]]
+}
+
+@test "sync_acfs_profile_paths: a dotfiles link holding the legacy PATH line stays a link, and its file is upgraded (acfs-rxpd)" {
+    local dotfiles
+    dotfiles="$(create_temp_dir)"
+    cat > "$dotfiles/profile" <<'EOF'
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"
+EOF
+    ln -s "$dotfiles/profile" "$HOME/.profile"
+
+    run sync_acfs_profile_paths
+    assert_success
+    [[ -L "$HOME/.profile" ]]
+
+    run cat "$dotfiles/profile"
+    assert_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
+}
+
 @test "sync_acfs_profile_paths: respects TARGET_HOME when HOME differs" {
     local current_home
     local target_home

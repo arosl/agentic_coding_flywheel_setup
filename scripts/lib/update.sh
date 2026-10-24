@@ -3421,6 +3421,18 @@ _update_sed_literal() {
     printf '%s' "$1" | sed 's/[][\\.^$*|]/\\&/g'
 }
 
+# acfs update writes the user's ~/.profile and ~/.zprofile as that user, so
+# a root run never writes through a link the user put there; the link then
+# reaches only what the user could write (acfs-rxpd, the update side of
+# acfs-k9a9). Writes stdin to $1; with --append as $2, appends.
+_update_dotfile_write_as_target() {
+    if [[ "${2:-}" == "--append" ]]; then
+        update_run_in_target_context "" tee -a "$1" >/dev/null
+    else
+        update_run_in_target_context "" tee "$1" >/dev/null
+    fi
+}
+
 sync_acfs_profile_paths() {
     local runtime_home=""
     runtime_home="$(update_runtime_shell_home 2>/dev/null || true)"
@@ -3436,12 +3448,15 @@ sync_acfs_profile_paths() {
             return 0
         fi
 
-        {
+        if ! {
             printf '# ~/.profile: executed by bash for login shells\n'
             printf '\n'
             printf '# User binary paths\n'
             printf '%s\n' "$current_path_line"
-        } > "$user_profile"
+        } | _update_dotfile_write_as_target "$user_profile"; then
+            log_item "warn" "acfs.profile" "couldn't write $user_profile as the target user; add this line by hand: $current_path_line"
+            return 0
+        fi
         log_item "ok" "acfs.profile" "created login PATH including ~/.atuin/bin"
         log_to_file "Created ACFS-managed PATH line in $user_profile"
         return 0
@@ -3454,7 +3469,11 @@ sync_acfs_profile_paths() {
         fi
 
         escaped_legacy_path_line="$(_update_sed_literal "$legacy_path_line")"
-        sed -i "s|^$escaped_legacy_path_line$|$current_path_line|" "$user_profile"
+        # --follow-symlinks: a dotfiles link stays a link, and its file is edited.
+        if ! update_run_in_target_context "" sed --follow-symlinks -i "s|^$escaped_legacy_path_line$|$current_path_line|" "$user_profile"; then
+            log_item "warn" "acfs.profile" "couldn't edit $user_profile as the target user; replace its PATH line with: $current_path_line"
+            return 0
+        fi
         log_item "ok" "acfs.profile" "updated login PATH to include ~/.atuin/bin"
         log_to_file "Updated ACFS-managed PATH line in $user_profile"
         return 0
@@ -3470,11 +3489,14 @@ sync_acfs_profile_paths() {
         return 0
     fi
 
-    {
+    if ! {
         printf '\n'
         printf '# Added by ACFS - user binary paths\n'
         printf '%s\n' "$current_path_line"
-    } >> "$user_profile"
+    } | _update_dotfile_write_as_target "$user_profile" --append; then
+        log_item "warn" "acfs.profile" "couldn't write $user_profile as the target user; add this line by hand: $current_path_line"
+        return 0
+    fi
     log_item "ok" "acfs.profile" "added login PATH including ~/.atuin/bin"
     log_to_file "Added ACFS-managed PATH line to $user_profile"
 }
@@ -3494,12 +3516,15 @@ sync_acfs_zprofile_paths() {
             return 0
         fi
 
-        {
+        if ! {
             printf '# ~/.zprofile: executed by zsh for login shells\n'
             printf '\n'
             printf '# User binary paths\n'
             printf '%s\n' "$current_path_line"
-        } > "$user_zprofile"
+        } | _update_dotfile_write_as_target "$user_zprofile"; then
+            log_item "warn" "acfs.zprofile" "couldn't write $user_zprofile as the target user; add this line by hand: $current_path_line"
+            return 0
+        fi
         log_item "ok" "acfs.zprofile" "created login PATH including ~/.atuin/bin"
         log_to_file "Created ACFS-managed PATH line in $user_zprofile"
         return 0
@@ -3512,7 +3537,10 @@ sync_acfs_zprofile_paths() {
         fi
 
         escaped_legacy_path_line="$(_update_sed_literal "$legacy_path_line")"
-        sed -i "s|^$escaped_legacy_path_line$|$current_path_line|" "$user_zprofile"
+        if ! update_run_in_target_context "" sed --follow-symlinks -i "s|^$escaped_legacy_path_line$|$current_path_line|" "$user_zprofile"; then
+            log_item "warn" "acfs.zprofile" "couldn't edit $user_zprofile as the target user; replace its PATH line with: $current_path_line"
+            return 0
+        fi
         log_item "ok" "acfs.zprofile" "updated login PATH to include ~/.atuin/bin"
         log_to_file "Updated ACFS-managed PATH line in $user_zprofile"
         return 0
@@ -3528,11 +3556,14 @@ sync_acfs_zprofile_paths() {
         return 0
     fi
 
-    {
+    if ! {
         printf '\n'
         printf '# Added by ACFS - user binary paths\n'
         printf '%s\n' "$current_path_line"
-    } >> "$user_zprofile"
+    } | _update_dotfile_write_as_target "$user_zprofile" --append; then
+        log_item "warn" "acfs.zprofile" "couldn't write $user_zprofile as the target user; add this line by hand: $current_path_line"
+        return 0
+    fi
     log_item "ok" "acfs.zprofile" "added login PATH including ~/.atuin/bin"
     log_to_file "Added ACFS-managed PATH line to $user_zprofile"
 }
