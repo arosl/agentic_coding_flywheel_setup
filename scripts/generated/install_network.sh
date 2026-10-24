@@ -473,9 +473,33 @@ if [[ -z "$sshd_bin" ]]; then
   echo "network.ssh_keepalive: $cfg exists but sshd is not installed: install openssh-server first; skipped" >&2
   exit 1
 fi
+# sshd -t -f FILE; on a rejection it prints the first line of sshd's
+# reason. sshd -t as root needs its privilege separation directory,
+# which Ubuntu 24.04's openssh-server makes only when ssh.service starts
+# (RuntimeDirectory=sshd, no tmpfiles entry), so under socket activation
+# it is missing until the first SSH login, as in an install through
+# incus exec. On that reason alone, and only when nothing is at
+# /run/sshd, make it as RuntimeDirectory=sshd does (root, 0755) and
+# retry once; ssh.service takes the directory over when it starts, and
+# /run is a tmpfs, so nothing of it outlives a reboot. Anything already
+# at /run/sshd (a link, a file) is left, and the reason shown.
+sshd_check() {
+  local reason=""
+  if reason="$("$sshd_bin" -t -f "$1" 2>&1 >/dev/null)"; then
+    return 0
+  fi
+  if [[ "$reason" == *"Missing privilege separation directory: /run/sshd"* \
+      && ! -e /run/sshd && ! -L /run/sshd ]] \
+    && install -d -m 0755 -o root -g root /run/sshd 2>/dev/null \
+    && reason="$("$sshd_bin" -t -f "$1" 2>&1 >/dev/null)"; then
+    return 0
+  fi
+  printf '%s\n' "${reason%%$'\n'*}"
+  return 1
+}
 # A config sshd already rejects (no host keys yet, say) is not ours to judge.
-if ! "$sshd_bin" -t -f "$cfg" >/dev/null 2>&1; then
-  echo "network.ssh_keepalive: sshd -t rejects the current $cfg; left as it is" >&2
+if ! reason="$(sshd_check "$cfg")"; then
+  echo "network.ssh_keepalive: sshd -t rejects the current $cfg (${reason:-no reason given}); left as it is" >&2
   exit 1
 fi
 
@@ -500,9 +524,9 @@ if [[ -d "$dropin_dir" ]] && grep -qiE '^[[:space:]]*Include[[:space:]]+.*sshd_c
     echo "network.ssh_keepalive: could not write $dropin; sshd is unchanged" >&2
     exit 1
   fi
-  if ! "$sshd_bin" -t -f "$cfg" >/dev/null 2>&1; then
+  if ! reason="$(sshd_check "$cfg")"; then
     rm -f -- "$dropin" 2>/dev/null || true
-    echo "network.ssh_keepalive: sshd -t rejected the keepalive drop-in; removed it, sshd is unchanged" >&2
+    echo "network.ssh_keepalive: sshd -t rejected the keepalive drop-in (${reason:-no reason given}); removed it, sshd is unchanged" >&2
     exit 1
   fi
 else
@@ -532,9 +556,9 @@ else
     echo "network.ssh_keepalive: could not write the edited copy; $cfg is unchanged" >&2
     exit 1
   fi
-  if ! "$sshd_bin" -t -f "$tmp" >/dev/null 2>&1; then
+  if ! reason="$(sshd_check "$tmp")"; then
     rm -f -- "$tmp" 2>/dev/null || true
-    echo "network.ssh_keepalive: sshd -t rejected the edited config; $cfg is unchanged" >&2
+    echo "network.ssh_keepalive: sshd -t rejected the edited config (${reason:-no reason given}); $cfg is unchanged" >&2
     exit 1
   fi
   if ! mv -f -- "$tmp" "$cfg"; then

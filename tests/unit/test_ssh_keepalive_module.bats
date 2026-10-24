@@ -19,14 +19,21 @@ setup() {
     : > "$CALLS"
 
     # sshd -t -f FILE: SSHD_REJECT=all rejects every config, SSHD_REJECT=new
-    # rejects one that sets the keepalive (in FILE or a drop-in it includes).
+    # rejects one that sets the keepalive (in FILE or a drop-in it includes),
+    # each with SSHD_REASON on stderr. SSHD_PRIVSEP names a privilege
+    # separation directory that must exist, as sshd -t as root needs.
     cat > "$BIN/sshd" <<'STUB'
 #!/bin/bash
 printf 'sshd %s\n' "$*" >> "$CALLS"
 [[ "$1 $2" == "-t -f" ]] || exit 2
+if [[ -n "${SSHD_PRIVSEP:-}" && ! -d "$SSHD_PRIVSEP" ]]; then
+    printf 'Missing privilege separation directory: %s\n' "$SSHD_PRIVSEP" >&2
+    exit 255
+fi
+reject() { printf '%s\nsecond line\n' "${SSHD_REASON:-bad config}" >&2; exit 255; }
 case "${SSHD_REJECT:-}" in
-    all) exit 255 ;;
-    new) cat "$3" "$(dirname "$3")"/sshd_config.d/*.conf 2>/dev/null | grep -qi '^ClientAliveInterval 60' && exit 255 ;;
+    all) reject ;;
+    new) cat "$3" "$(dirname "$3")"/sshd_config.d/*.conf 2>/dev/null | grep -qi '^ClientAliveInterval 60' && reject ;;
 esac
 exit 0
 STUB
@@ -49,6 +56,10 @@ module_script() {
         on" "$PROJECT_ROOT/scripts/generated/install_network.sh")"
     [[ -n "$script" ]] || return 1
     script="${script//\/etc\/ssh/$FIX/etc/ssh}"
+    script="${script//\/run\/sshd/$FIX/run/sshd}"
+    # The test isn't root, so /run/sshd is made without its root owner: that
+    # is the one part of it this test can't check.
+    script="${script//-o root -g root /}"
     script="${script//\/usr\/sbin\/sshd/$BIN/sshd}"
     script="${script//\/usr\/bin\/sshd/$BIN/sshd}"
     printf '%s\n' "$script"
@@ -58,7 +69,8 @@ module_script() {
 run_install() {
     local script
     script="$(module_script 1)" || fail "the install script was not found in install_network.sh"
-    run env PATH="$BIN:/usr/bin:/bin" CALLS="$CALLS" SSHD_REJECT="${SSHD_REJECT:-}" bash -c "set -euo pipefail; $script"
+    run env PATH="$BIN:/usr/bin:/bin" CALLS="$CALLS" SSHD_REJECT="${SSHD_REJECT:-}" \
+        SSHD_REASON="${SSHD_REASON:-}" SSHD_PRIVSEP="${SSHD_PRIVSEP:-}" bash -c "set -euo pipefail; $script"
 }
 
 run_verify() {
@@ -195,6 +207,43 @@ reloads() {
     cmp -s "$FIX/etc/ssh/sshd_config" "$BATS_TEST_TMPDIR/before" || fail "sshd_config changed"
     [[ ! -e "$FIX/etc/ssh/sshd_config.d/60-acfs-keepalive.conf" ]] || fail "a drop-in was written"
     [[ "$(reloads)" -eq 0 ]] || fail "sshd was reloaded"
+}
+
+@test "a skip names sshd -t's reason, its first line only" {
+    ubuntu_config
+    SSHD_REJECT=all SSHD_REASON="sshd: no hostkeys available -- exiting." run_install
+    assert_failure
+    assert_output --partial "(sshd: no hostkeys available -- exiting.); left as it is"
+    refute_output --partial "second line"
+}
+
+@test "a missing /run/sshd (24.04 before the first SSH login) is made as the unit makes it, then the keepalive applies" {
+    ubuntu_config
+    mkdir -p "$FIX/run"
+    SSHD_PRIVSEP="$FIX/run/sshd" run_install
+    assert_success
+    [[ -d "$FIX/run/sshd" && "$(stat -c %a "$FIX/run/sshd")" == 755 ]] || fail "/run/sshd is not a 0755 directory"
+    grep -qx 'ClientAliveInterval 60' "$FIX/etc/ssh/sshd_config.d/60-acfs-keepalive.conf" || fail "the keepalive was not applied"
+}
+
+@test "a link at /run/sshd is never replaced: the run is a skip with sshd's reason" {
+    ubuntu_config
+    mkdir -p "$FIX/run"
+    ln -s "$BATS_TEST_TMPDIR/elsewhere" "$FIX/run/sshd"
+    SSHD_PRIVSEP="$FIX/run/sshd" run_install
+    assert_failure
+    assert_output --partial "Missing privilege separation directory: $FIX/run/sshd"
+    [[ -L "$FIX/run/sshd" && "$(readlink "$FIX/run/sshd")" == "$BATS_TEST_TMPDIR/elsewhere" ]] || fail "the link changed"
+    [[ ! -e "$BATS_TEST_TMPDIR/elsewhere" ]] || fail "the link's target was made"
+    [[ ! -e "$FIX/etc/ssh/sshd_config.d/60-acfs-keepalive.conf" ]] || fail "a drop-in was written"
+}
+
+@test "only /run/sshd is made: another missing directory is a skip with its reason" {
+    ubuntu_config
+    SSHD_PRIVSEP="$FIX/var/empty" run_install
+    assert_failure
+    assert_output --partial "Missing privilege separation directory: $FIX/var/empty"
+    [[ ! -e "$FIX/var/empty" ]] || fail "a directory other than /run/sshd was made"
 }
 
 @test "sshd_config without sshd: exits 1 naming openssh-server" {
