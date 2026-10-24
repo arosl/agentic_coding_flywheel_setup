@@ -1495,15 +1495,20 @@ run_as_target_shell() {
     # Keep user-provided path values in env data. The fixed shell wrapper
     # expands HOME/ACFS_BIN_DIR at runtime without re-parsing their contents.
     local -a shell_env=("ACFS_BASH_BIN=$bash_bin" "UV_NO_CONFIG=1")
+    # ACFS_LIB_DIR is root's view: a local checkout under a 0700 directory
+    # (/root/acfs) is not readable for the target user. Commands read
+    # "${ACFS_LIB_DIR:-$HOME/.acfs/scripts/lib}", so drop it then, and the
+    # copy setup_filesystem deployed answers instead (acfs-pkqz).
+    local lib_dir_guard='if [[ -n "${ACFS_LIB_DIR:-}" ]] && ! [[ -r "$ACFS_LIB_DIR" && -x "$ACFS_LIB_DIR" ]]; then unset ACFS_LIB_DIR; fi'
 
     if [[ -n "$cmd" ]]; then
         # IMPORTANT: Avoid `bash -l` (login shell). Profile files are not a stable API.
-        run_as_target "$env_bin" "${shell_env[@]}" "$bash_bin" -c "$path_export_source; set -euo pipefail; eval \"\$1\"" _ "$cmd"
+        run_as_target "$env_bin" "${shell_env[@]}" "$bash_bin" -c "$path_export_source; $lib_dir_guard; set -euo pipefail; eval \"\$1\"" _ "$cmd"
         return $?
     fi
 
     # stdin mode
-    run_as_target "$env_bin" "${shell_env[@]}" "$bash_bin" -c "$path_export_source; set -euo pipefail; (printf \"%s\\n\" \"set -euo pipefail\"; cat) | \"\$ACFS_BASH_BIN\" -s"
+    run_as_target "$env_bin" "${shell_env[@]}" "$bash_bin" -c "$path_export_source; $lib_dir_guard; set -euo pipefail; (printf \"%s\\n\" \"set -euo pipefail\"; cat) | \"\$ACFS_BASH_BIN\" -s"
 }
 
 # Run a command as TARGET_USER while preserving stdin for the final runner.
