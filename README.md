@@ -4916,7 +4916,7 @@ root-run repair attached to the intended account. From an administrator session,
 set `account` to the affected Linux username; when already root, omit `sudo`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh |
+curl -fsSL https://raw.githubusercontent.com/arosl/agentic_coding_flywheel_setup/main/install.sh |
   sudo env TARGET_USER="$account" bash -s -- --yes --mode safe --force-reinstall --only shell.login
 ```
 

@@ -1,0 +1,36 @@
+name: Fork Source Defaults
+
+# The fork's own workflow (acfs-5yyk). tests/unit/test_fork_source_defaults.sh
+# fails when a runtime file, an install instruction or the website points at
+# upstream ACFS. An upstream merge brings such lines back without a textual
+# conflict, and no other workflow ran the test, so README's repair command and
+# acfs/AGENTS.md went back to upstream's repo unnoticed. The test reads the
+# installer, the files it fetches, README, docs/operations, the provider
+# guides and the website, so it runs on every push; it needs only bash and
+# grep, and takes seconds.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-source-defaults-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fork-source:
+    name: No runtime file or install instruction points at upstream
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run tests/unit/test_fork_source_defaults.sh
+        run: bash tests/unit/test_fork_source_defaults.sh
