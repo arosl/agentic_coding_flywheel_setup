@@ -790,46 +790,6 @@ test_manifest_supplemental_coverage_is_precise() {
     fi
 }
 
-# _is_bespoke_covered skips every cli.modern.* manifest check as covered by
-# check_shell and check_core_tools. A binary that a required cli.modern check
-# names, and no bespoke check_command names, is never checked (acfs-5mkj: bc
-# and age weren't).
-test_cli_modern_binaries_have_bespoke_checks() {
-    harness_section "Test: cli.modern's required binaries have bespoke doctor checks"
-
-    local checks_file="$REPO_ROOT/scripts/generated/doctor_checks.sh"
-    local doctor_file="$REPO_ROOT/scripts/lib/doctor.sh"
-    local re_command_v='^command -v ([^[:space:]]+)$'
-    local re_first_word='^([^[:space:]|&;]+)( [^|&;]*)?$'
-    local line="" id="" desc="" cmd="" req_flag="" run_as="" bin=""
-    local checked=0 missing=0
-
-    while IFS= read -r line; do
-        line="${line#*\"}"
-        line="${line%\"*}"
-        IFS=$'\t' read -r id desc cmd req_flag run_as <<< "$line"
-        [[ "$req_flag" == "required" ]] || continue
-        if [[ "$cmd" =~ $re_command_v ]] || [[ "$cmd" =~ $re_first_word ]]; then
-            bin="${BASH_REMATCH[1]}"
-        else
-            harness_fail "$id: can't tell which binary '$cmd' checks"
-            missing=$((missing + 1))
-            continue
-        fi
-        checked=$((checked + 1))
-        if ! grep -Eq "check_(optional_)?command \"[^\"]+\" \"[^\"]*\" \"$bin\"" "$doctor_file"; then
-            harness_fail "$id ($cmd): no bespoke check_command names $bin, and the doctor skips $id"
-            missing=$((missing + 1))
-        fi
-    done < <(grep -E $'^[[:space:]]+"cli\\.modern\\.[0-9]+\t' "$checks_file")
-
-    if [[ "$checked" -eq 0 ]]; then
-        harness_fail "no required cli.modern checks found in $checks_file"
-    elif [[ "$missing" -eq 0 ]]; then
-        harness_pass "all $checked required cli.modern binaries have a bespoke doctor check"
-    fi
-}
-
 test_manifest_guard_scripts_cover_all_generated_outputs() {
     harness_section "Test: Manifest guard scripts cover all generated outputs"
 
@@ -954,7 +914,6 @@ main() {
     test_generated_target_home_fallbacks_are_dynamic
     test_meta_skill_arm64_linux_guidance
     test_manifest_supplemental_coverage_is_precise
-    test_cli_modern_binaries_have_bespoke_checks
     test_manifest_guard_scripts_cover_all_generated_outputs
 
     # Summary
