@@ -39,7 +39,7 @@ setup() {
 }
 
 teardown() {
-    chmod -R u+w "$BATS_TEST_TMPDIR" 2>/dev/null || true
+    chmod -R u+rwX "$BATS_TEST_TMPDIR" 2>/dev/null || true
 }
 
 # Each code line whose chown gives a path to an owner held in a variable
@@ -205,9 +205,12 @@ load_verified_source() {
 }
 
 # Loads install.sh's acfs_chown_tree. A test can't chown to another user, so
-# $SUDO records where root's chown ran (its physical working directory) and
-# with what, and changes nothing. VICTIM stands in for /root, OTHER_HOME for
-# another user's home.
+# chown is a fake, first on PATH and the one acfs_early_system_binary_path
+# gives: it runs CHOWN_HOOK if there is one, then records where it ran (the
+# kernel's working directory: bash's pwd -P resolves $PWD's string again,
+# which a swap after the cd changes) and with what, and changes nothing.
+# $SUDO (as_root) runs what it's given, as root would. VICTIM stands in for
+# /root, OTHER_HOME for another user's home.
 load_chown_tree() {
     eval "$(sed -n '/^acfs_chown_tree() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
     [[ "$(type -t acfs_chown_tree)" == "function" ]]
@@ -216,10 +219,19 @@ load_chown_tree() {
     log_detail() { :; }
     CHOWNS="$BATS_TEST_TMPDIR/chowns"
     : > "$CHOWNS"
-    # The kernel's working directory: bash's pwd -P resolves $PWD's string
-    # again, which a swap after the cd changes.
-    record_chown() { printf 'in %s: %s\n' "$(readlink /proc/self/cwd)" "$*" >> "$CHOWNS"; }
-    SUDO=record_chown
+    CHOWN_HOOK="$BATS_TEST_TMPDIR/chown-hook"
+    FAKE_BIN="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$FAKE_BIN"
+    cat > "$FAKE_BIN/chown" <<EOF
+#!/bin/bash
+[[ -f "$CHOWN_HOOK" ]] && source "$CHOWN_HOOK"
+printf 'in %s: chown %s\n' "\$(readlink /proc/self/cwd)" "\$*" >> "$CHOWNS"
+EOF
+    chmod 0755 "$FAKE_BIN/chown"
+    PATH="$FAKE_BIN:$PATH"
+    acfs_early_system_binary_path() { if [[ "$1" == chown ]]; then printf '%s\n' "$FAKE_BIN/chown"; else command -v "$1"; fi; }
+    as_root() { "$@"; }
+    SUDO=as_root
     ACFS_HOME="$TARGET_HOME/.acfs"
     VICTIM="$BATS_TEST_TMPDIR/root-home"
     OTHER_HOME="$BATS_TEST_TMPDIR/other-home"
@@ -242,7 +254,7 @@ load_chown_tree() {
     load_chown_tree
     ln -s "$VICTIM" "$ACFS_HOME/scripts"
     run acfs_chown_tree "tester:tester" "$ACFS_HOME/scripts"
-    [[ "$status" -ne 0 && "$output" == *"through a link below $TARGET_HOME: $ACFS_HOME/scripts"* ]]
+    [[ "$status" -ne 0 && "$output" == *"a link below $TARGET_HOME leads to $(cd -P "$VICTIM" && pwd -P)"* ]]
 
     rm -f "$ACFS_HOME/scripts"
     ln -s /root "$ACFS_HOME/scripts"
@@ -252,7 +264,7 @@ load_chown_tree() {
     ln -s "$OTHER_HOME" "$ACFS_HOME/onboard"
     mkdir -p "$OTHER_HOME/lessons"
     run acfs_chown_tree "tester:tester" "$ACFS_HOME/onboard/lessons"
-    [[ "$status" -ne 0 && "$output" == *"through a link below $TARGET_HOME: $ACFS_HOME/onboard"* ]]
+    [[ "$status" -ne 0 && "$output" == *"a link below $TARGET_HOME leads to $(cd -P "$OTHER_HOME" && pwd -P)/lessons"* ]]
 
     run acfs_chown_tree "tester:tester" "$TARGET_HOME/../root-home"
     [[ "$status" -ne 0 && "$output" == *"with '..'"* ]]
@@ -260,18 +272,17 @@ load_chown_tree() {
     [[ ! -s "$CHOWNS" ]]
 }
 
-@test "a link swapped in after the checks and before the chown gets no handover (acfs-y57c)" {
+@test "a link swapped in after the call and before root's cd gets no handover (acfs-y57c)" {
     load_chown_tree
     mkdir -p "$ACFS_HOME/scripts"
-    # The swap lands between the walk's checks and root's cd into the
-    # directory: the user renames the directory and puts a link in its place.
-    cd() {
-        if [[ "${3:-}" == "$ACFS_HOME/scripts" && ! -e "$BATS_TEST_TMPDIR/swapped" ]]; then
-            mv "$ACFS_HOME/scripts" "$ACFS_HOME/scripts.moved"
-            ln -s "$VICTIM" "$ACFS_HOME/scripts"
-            : > "$BATS_TEST_TMPDIR/swapped"
-        fi
-        builtin cd "$@"
+    # The swap lands after acfs_chown_tree looked at the path and before
+    # root's process enters it: the user renames the directory and puts a
+    # link in its place.
+    as_root() {
+        mv "$ACFS_HOME/scripts" "$ACFS_HOME/scripts.moved"
+        ln -s "$VICTIM" "$ACFS_HOME/scripts"
+        : > "$BATS_TEST_TMPDIR/swapped"
+        "$@"
     }
 
     run acfs_chown_tree "tester:tester" "$ACFS_HOME/scripts"
@@ -284,11 +295,9 @@ load_chown_tree() {
 @test "a link swapped in once root is inside the directory leaves the chown where it was checked (acfs-y57c)" {
     load_chown_tree
     mkdir -p "$ACFS_HOME/scripts"
-    record_chown() {
-        mv "$ACFS_HOME/scripts" "$ACFS_HOME/scripts.moved"
-        ln -s "$VICTIM" "$ACFS_HOME/scripts"
-        printf 'in %s: %s\n' "$(readlink /proc/self/cwd)" "$*" >> "$CHOWNS"
-    }
+    # The swap lands once root is inside the directory, just before chown.
+    printf 'mv "%s" "%s.moved"; ln -s "%s" "%s"\n' \
+        "$ACFS_HOME/scripts" "$ACFS_HOME/scripts" "$VICTIM" "$ACFS_HOME/scripts" > "$CHOWN_HOOK"
 
     acfs_chown_tree "tester:tester" "$ACFS_HOME/scripts"
 
@@ -308,6 +317,48 @@ load_chown_tree() {
     grep -qE "^in .*: chown -hR tester:tester $(cd -P "$BATS_TEST_TMPDIR/real-data" && pwd -P)\$" "$CHOWNS"
 }
 
+@test "a non-root installer for another user, whose home it can't enter, still hands over below it (acfs-y57c)" {
+    load_chown_tree
+    mkdir -p "$ACFS_HOME/scripts"
+    local scripts_real
+    scripts_real="$(cd -P "$ACFS_HOME/scripts" && pwd -P)"
+    # The installer can't enter the home (0750 to an admin on Ubuntu, 000
+    # here); root, behind $SUDO, can.
+    as_root() {
+        chmod 0700 "$TARGET_HOME"
+        "$@"
+        local rc=$?
+        chmod 0000 "$TARGET_HOME"
+        return "$rc"
+    }
+    chmod 0000 "$TARGET_HOME"
+
+    run acfs_chown_tree "tester:tester" "$ACFS_HOME/scripts"
+
+    chmod 0755 "$TARGET_HOME"
+    [[ "$status" -eq 0 ]]
+    [[ "$(cat "$CHOWNS")" == "in $scripts_real: chown -hR tester:tester ." ]]
+}
+
+@test "a path below the home spelt with a doubled or trailing slash is handed over as its plain spelling (acfs-y57c)" {
+    load_chown_tree
+    mkdir -p "$ACFS_HOME/scripts"
+    local home_real acfs_real scripts_real
+    home_real="$(cd -P "$TARGET_HOME" && pwd -P)"
+    acfs_real="$(cd -P "$ACFS_HOME" && pwd -P)"
+    scripts_real="$(cd -P "$ACFS_HOME/scripts" && pwd -P)"
+
+    acfs_chown_tree "tester:tester" "$ACFS_HOME/"
+    acfs_chown_tree "tester:tester" "$TARGET_HOME//.acfs/scripts"
+    acfs_chown_tree "tester:tester" "$ACFS_HOME//scripts/"
+    acfs_chown_tree "tester:tester" "$TARGET_HOME/"
+
+    [[ "$(sed -n 1p "$CHOWNS")" == "in $acfs_real: chown -hR tester:tester ." ]]
+    [[ "$(sed -n 2p "$CHOWNS")" == "in $scripts_real: chown -hR tester:tester ." ]]
+    [[ "$(sed -n 3p "$CHOWNS")" == "in $scripts_real: chown -hR tester:tester ." ]]
+    [[ "$(sed -n 4p "$CHOWNS")" == "in $home_real: chown -hR tester:tester ." ]]
+}
+
 @test "acfs_asset_dir's handover of a directory swapped for a link after its check is refused (acfs-y57c)" {
     load_chown_tree
     eval "$(sed -n '/^acfs_asset_dir() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
@@ -321,13 +372,19 @@ load_chown_tree() {
         "$ACFS_HOME/onboard" "$BATS_TEST_TMPDIR/swapped" "$ACFS_HOME/onboard" "$ACFS_HOME/onboard" \
         "$VICTIM" "$ACFS_HOME/onboard" "$BATS_TEST_TMPDIR/swapped" > "$FAKE_STAT"
     chmod 0755 "$FAKE_STAT"
-    acfs_early_system_binary_path() { if [[ "$1" == stat ]]; then printf '%s\n' "$FAKE_STAT"; else command -v "$1"; fi; }
+    acfs_early_system_binary_path() {
+        case "$1" in
+            stat) printf '%s\n' "$FAKE_STAT" ;;
+            chown) printf '%s\n' "$FAKE_BIN/chown" ;;
+            *) command -v "$1" ;;
+        esac
+    }
     run_as_target() { printf 'as target: %s\n' "$*" >> "$CHOWNS"; }
 
     run acfs_asset_dir "$ACFS_HOME/onboard/lessons"
 
     [[ -e "$BATS_TEST_TMPDIR/swapped" ]]
-    [[ "$status" -ne 0 && "$output" == *"through a link below $TARGET_HOME: $ACFS_HOME/onboard"* ]]
+    [[ "$status" -ne 0 && "$output" == *"a link below $TARGET_HOME leads to $(cd -P "$VICTIM" && pwd -P)"* ]]
     [[ ! -s "$CHOWNS" ]]
 }
 

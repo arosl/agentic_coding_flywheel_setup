@@ -6747,37 +6747,48 @@ acfs_chown_tree() {
     # Below the target's home the user owns every directory above PATH, so a
     # link at PATH or above it may be one the user put there, before this
     # call or during it: none is resolved, and nothing is handed over through
-    # one (acfs-y57c). The chown then runs from inside PATH's directory, once
-    # its physical path is the expected one, so a link swapped in after these
-    # checks can't send it anywhere else.
-    local home="${TARGET_HOME:-}" chown_dir="" chown_arg="." expected="" walk="" part=""
+    # one (acfs-y57c). One root process (below_home_script) enters PATH's
+    # directory with cd -P and chowns there only when getcwd's path ($PWD,
+    # which cd -P sets; pwd -P would resolve that string again) is the home's
+    # physical path plus the rest: a link anywhere below the home changes it,
+    # and a link swapped in once root is inside can't move the chown. Root
+    # does all of it, so a home the installer can't enter (a non-root admin
+    # installing for another user) works, and sudo's working directory
+    # doesn't matter. Here the path is only split, so a doubled or trailing
+    # slash is spelled away; '.' and '..' are refused.
+    local home="${TARGET_HOME:-}" rel="" part="" bash_bin="" chown_bin=""
+    local below_home_script='
+        home="$1" rel="$2" owner="$3" chown_bin="$4" arg=.
+        real="$(cd -P -- "$home" && printf "%s\n" "$PWD")" || exit 1
+        dir="$home$rel" expected="$real$rel"
+        if [[ -n "$rel" && -e "$dir" && ! -d "$dir" ]]; then
+            arg="./${rel##*/}" dir="${dir%/*}" expected="${expected%/*}"
+        fi
+        cd -P -- "$dir" || exit 1
+        if [[ "$PWD" != "$expected" ]]; then
+            echo "refusing to hand over $home$rel: a link below $home leads to $PWD"
+            exit 1
+        fi
+        exec "$chown_bin" -hR "$owner" "$arg"
+    '
     local -a parts=()
     home="${home%/}"
     if [[ -n "$home" && "$home" != "/" && "$path" == "$home"/* ]]; then
-        walk="$home"
         IFS=/ read -r -a parts <<< "${path#"$home"/}"
         for part in "${parts[@]}"; do
             [[ -n "$part" ]] || continue
-            walk="$walk/$part"
             if [[ "$part" == "." || "$part" == ".." ]]; then
                 log_error "acfs_chown_tree: refusing a path with '$part' below $home: $path"
                 return 1
             fi
-            if [[ -L "$walk" ]]; then
-                log_error "acfs_chown_tree: refusing to hand over through a link below $home: $walk"
-                return 1
-            fi
+            rel="$rel/$part"
         done
-        chown_dir="$path"
-        if [[ -e "$path" && ! -d "$path" ]]; then
-            chown_dir="${path%/*}"
-            chown_arg="./${path##*/}"
-        fi
-        expected="$(cd -P -- "$home" 2>/dev/null && pwd -P)" || {
-            log_error "acfs_chown_tree: unable to resolve the target's home: $home"
+        bash_bin="$(acfs_early_system_binary_path bash 2>/dev/null || true)"
+        chown_bin="$(acfs_early_system_binary_path chown 2>/dev/null || true)"
+        if [[ -z "$bash_bin" || -z "$chown_bin" ]]; then
+            log_error "acfs_chown_tree: Unable to locate bash or chown"
             return 1
-        }
-        expected="$expected${chown_dir#"$home"}"
+        fi
     fi
 
     # SECURITY: Prevent recursive chown from dereferencing symlinks under the tree.
@@ -6816,25 +6827,16 @@ acfs_chown_tree() {
     # Transient files (SSH control sockets, etc.) may vanish during the
     # recursive walk of a live home directory.  Only fail on non-transient errors.
     local _chown_err=""
-    if [[ -n "$chown_dir" ]]; then
-        _chown_err=$(
-            exec 2>&1
-            cd -P -- "$chown_dir" || exit 1
-            # cd -P sets PWD from getcwd: where this shell now is. pwd -P
-            # would resolve that string again, and a later swap changes it.
-            if [[ "$PWD" != "$expected" ]]; then
-                echo "acfs_chown_tree: $chown_dir is not $expected"
-                exit 1
-            fi
-            $SUDO chown -hR "$owner_group" "$chown_arg"
-        )
+    if [[ -n "$bash_bin" ]]; then
+        _chown_err=$($SUDO "$bash_bin" -c "$below_home_script" _ \
+            "$home" "$rel" "$owner_group" "$chown_bin" 2>&1)
     else
         _chown_err=$($SUDO chown -hR "$owner_group" "$resolved" 2>&1)
     fi || {
         local _real_err
         _real_err=$(printf '%s\n' "$_chown_err" | grep -v "No such file or directory" || true)
         if [[ -n "$_real_err" ]]; then
-            log_error "acfs_chown_tree: chown failed for $resolved"
+            log_error "acfs_chown_tree: chown failed for $resolved: ${_real_err%%$'\n'*}"
             return 1
         fi
         log_detail "acfs_chown_tree: transient file warnings during chown (safe to ignore)"
