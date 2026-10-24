@@ -120,6 +120,35 @@ load_helpers() {
     [[ "$status" -ne 0 ]] || fail "acfs_link_global_bin_command is still in install.sh: $output"
 }
 
+@test "finalize installs root's copy of acfs-global with the same helper, after the primary acfs link (acfs-yjwu)" {
+    local install_sh="$PROJECT_ROOT/install.sh" body link global
+    run grep -nF 'install_asset "scripts/acfs-global"' "$install_sh"
+    [[ "$status" -ne 0 ]] || fail "acfs-global is still installed onto the name with install_asset: $output"
+    body="$(sed -n '/^finalize() {$/,/^}$/p' "$install_sh")"
+    # shellcheck disable=SC2016  # The literal lines finalize holds.
+    link="$(grep -nF 'acfs_link_primary_bin_command "$ACFS_HOME/bin/acfs" "acfs"' <<<"$body" | cut -d: -f1)"
+    global="$(grep -nF 'acfs_install_global_command "scripts/acfs-global" "acfs"' <<<"$body" | cut -d: -f1)"
+    [[ -n "$link" && -n "$global" ]] || fail "finalize lacks the primary acfs link or the global acfs copy"
+    # So with ACFS_BIN_DIR=/usr/local/bin, root's copy takes the name last.
+    (( link < global ))
+}
+
+@test "with ACFS_BIN_DIR as the global bin dir (#211), root's acfs copy replaces the user's primary link, and the user's acfs stays (acfs-yjwu)" {
+    load_helpers
+    ACFS_BIN_DIR="$GB"
+    printf '#!/bin/sh\necho users-acfs\n' > "$HOMEDIR/.acfs/bin/acfs"
+    printf '#!/bin/sh\necho verified-acfs-global\n' > "$BATS_TEST_TMPDIR/src/scripts/acfs-global"
+    # The link finalize's primary step makes there just before.
+    ln -s "$HOMEDIR/.acfs/bin/acfs" "$GB/acfs"
+
+    acfs_install_global_command "scripts/acfs-global" "acfs"
+
+    [[ -f "$GB/acfs" && ! -L "$GB/acfs" && -x "$GB/acfs" ]] || fail "$GB/acfs is not root's regular copy"
+    [[ "$(cat "$GB/acfs")" == *verified-acfs-global* ]]
+    [[ "$(cat "$HOMEDIR/.acfs/bin/acfs")" == *users-acfs* ]] || fail "the user's acfs was written through the link"
+    [[ ! -e "$GB/.acfs.acfs-new" ]]
+}
+
 @test "no installer or update step links a file into /usr/local/bin" {
     local -a files=("$PROJECT_ROOT/install.sh" "$PROJECT_ROOT/scripts/lib/update.sh"
         "$PROJECT_ROOT/acfs.manifest.yaml" "$PROJECT_ROOT/scripts/lib/install_helpers.sh")

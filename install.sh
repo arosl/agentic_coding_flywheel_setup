@@ -6808,9 +6808,11 @@ acfs_chown_tree() {
 
     # SECURITY: Prevent recursive chown from dereferencing symlinks under the tree.
     # Outside the home, for top-level symlinks (e.g., symlinked /data), resolve to
-    # the real path so ownership is applied to the intended directory.
+    # the real path so ownership is applied to the intended directory. Below the
+    # home ($bash_bin set) nothing is resolved here, so the installer reads
+    # nothing there, and an error names the path, not a link's target.
     local resolved="$path"
-    if [[ -L "$path" ]]; then
+    if [[ -z "$bash_bin" && -L "$path" ]]; then
         if ! command_exists readlink; then
             log_error "acfs_chown_tree: readlink is required to resolve symlink: $path"
             return 1
@@ -12172,9 +12174,12 @@ finalize() {
     fi
 
     # Install global acfs wrapper (works for root and all users)
-    # This wrapper finds the target user from state and runs acfs as that user
-    try_step "Installing global acfs wrapper" install_asset "scripts/acfs-global" "/usr/local/bin/acfs" || return 1
-    try_step "Setting global acfs permissions" $SUDO chmod 755 "/usr/local/bin/acfs" || return 1
+    # This wrapper finds the target user from state and runs acfs as that user.
+    # Root's copy is staged and renamed over the name, as acfs-update's is: with
+    # ACFS_BIN_DIR=/usr/local/bin (upstream's #211) the name holds the user's
+    # primary link, made above, which install_asset would refuse in a root run
+    # and write through in a run as the user (acfs-yjwu).
+    try_step "Installing global acfs wrapper" acfs_install_global_command "scripts/acfs-global" "acfs" || return 1
 
     # Install DCG (Destructive Command Guard) hook automatically.
     #

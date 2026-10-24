@@ -463,6 +463,19 @@ load_checksums_yaml() {
     grep -q '^as target: ' "$CALLS"
 }
 
+@test "install_checksums_yaml hashes the fetched text with install.sh's own acfs_calculate_file_sha256 on /dev/stdin, and the user's sha-checked write takes it" {
+    load_checksums_yaml
+    # The real function, in place of load_install_asset's stub: it reads
+    # /dev/stdin through env -i and the system sha256sum.
+    eval "$(sed -n '/^acfs_calculate_file_sha256() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
+    [[ "$(type -t acfs_calculate_file_sha256)" == "function" ]]
+
+    install_checksums_yaml "$ACFS_HOME/checksums.yaml"
+
+    [[ "$(cat "$ACFS_HOME/checksums.yaml")" == "$(acfs_fetch_fresh_checksums_via_api)" ]]
+    grep -q '^as target: ' "$CALLS"
+}
+
 @test "install_checksums_yaml from a dedicated ref, outside the target's home, writes as before" {
     load_checksums_yaml
 

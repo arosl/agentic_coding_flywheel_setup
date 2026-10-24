@@ -10885,6 +10885,26 @@ global_commands_fixture() {
     assert_success
 }
 
+@test "global commands: with the global bin dir as the primary one (#211), a user's run keeps its onboard link, and root's run for that user removes it (acfs-yjwu)" {
+    local temp_root repo_root deployed_home global_bin log_file
+    global_commands_fixture
+    # The user's own state.json names the global bin dir as the primary one.
+    printf '{"bin_dir": "%s"}\n' "$global_bin" > "$deployed_home/state.json"
+
+    update_root_run_for_other_user() { return 1; }
+    run sync_acfs_global_commands
+    assert_success
+    [[ -L "$global_bin/onboard" ]] || fail "a user's run removed its primary onboard link"
+    run grep -F "Left $global_bin/onboard as it is (the primary bin dir's own command)" "$log_file"
+    assert_success
+
+    update_root_run_for_other_user() { return 0; }
+    run sync_acfs_global_commands
+    assert_success
+    [[ ! -e "$global_bin/onboard" && ! -L "$global_bin/onboard" ]] \
+        || fail "root's run kept the onboard link the user's state.json names"
+}
+
 @test "global commands: dry-run changes nothing" {
     local temp_root repo_root deployed_home global_bin log_file
     global_commands_fixture

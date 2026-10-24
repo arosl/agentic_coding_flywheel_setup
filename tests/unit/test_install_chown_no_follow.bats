@@ -255,6 +255,8 @@ EOF
     ln -s "$VICTIM" "$ACFS_HOME/scripts"
     run acfs_chown_tree "tester:tester" "$ACFS_HOME/scripts"
     [[ "$status" -ne 0 && "$output" == *"a link below $TARGET_HOME leads to $(cd -P "$VICTIM" && pwd -P)"* ]]
+    # The error names the path; nothing below the home was resolved (acfs-yjwu).
+    [[ "$output" == *"chown failed for $ACFS_HOME/scripts: refusing"* ]]
 
     rm -f "$ACFS_HOME/scripts"
     ln -s /root "$ACFS_HOME/scripts"

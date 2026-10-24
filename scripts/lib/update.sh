@@ -4307,11 +4307,22 @@ sync_acfs_global_commands() {
 # there, or a link elsewhere, stays, and the log says so.
 update_remove_global_home_link() {
     local path="$1" link_target="" target_user="" target_home="" acfs_home=""
-    local rm_bin="" sudo_bin=""
+    local rm_bin="" sudo_bin="" primary_bin=""
 
-    # Whatever bin_dir the user's state.json names: in safe mode the user
-    # writes that file, and could keep the link this removes. A #211 vibe
-    # host (ACFS_BIN_DIR=/usr/local/bin) loses its onboard there; acfs-yjwu.
+    # A global bin dir that is also the primary one (ACFS_BIN_DIR=/usr/local/bin,
+    # upstream's #211) holds the user's own primary onboard there, so a run
+    # that isn't root's for another user leaves it (acfs-yjwu). Such a run can
+    # remove it only through the user's own sudo -n: a user whose state.json
+    # bin_dir keeps it could put it back anyway, and one without passwordless
+    # sudo can't remove it either way. Root's run for another user removes it
+    # whatever that file names, since in safe mode the user writes it.
+    if ! update_root_run_for_other_user; then
+        primary_bin="$(update_runtime_primary_bin_dir 2>/dev/null || true)"
+        if [[ -n "$primary_bin" && "${path%/*}" == "${primary_bin%/}" ]]; then
+            [[ ! -e "$path" && ! -L "$path" ]] || log_to_file "Left $path as it is (the primary bin dir's own command)"
+            return 0
+        fi
+    fi
     [[ -L "$path" ]] || {
         [[ ! -e "$path" ]] || log_to_file "Left $path as it is (not a link)"
         return 0
