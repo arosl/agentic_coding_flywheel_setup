@@ -114,6 +114,20 @@ as_root() {
     [[ -f "$HOMEFIX/.codex/AGENTS.md" ]] || fail "the user's run didn't deploy"
 }
 
+@test "as root, finding the target runs no id, getent or cut from the caller's PATH" {
+    local name
+    mkdir -p "$FIX/userbin"
+    for name in id getent cut; do
+        printf '#!/bin/bash\nprintf "%%s\\n" "$0" >> "%s/userbin-ran"\nexit 1\n' "$FIX" > "$FIX/userbin/$name"
+        chmod 755 "$FIX/userbin/$name"
+    done
+    # `path` resolves the user and home and prints; it writes nothing.
+    run env FAKE_ROOT=1 PATH="$FIX/userbin:/usr/bin:/bin" bash "$GEN" path
+    assert_success
+    [[ ! -e "$FIX/userbin-ran" ]] || fail "root ran: $(cat "$FIX/userbin-ran")"
+    [[ "$output" == */.acfs/docs/flywheel-agent-guide.md ]] || fail "path printed: $output"
+}
+
 @test "the user's own run is unchanged: no runuser, and their tools are probed" {
     run env ACFS_TARGET_HOME="$HOMEFIX" PATH="/usr/bin:/bin" bash "$GEN"
     assert_success

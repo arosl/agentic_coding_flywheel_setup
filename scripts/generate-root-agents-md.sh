@@ -62,6 +62,16 @@ set -euo pipefail
 # The arguments as given, for a root run that goes on as the target user.
 ORIG_ARGS=("$@")
 
+# As root, every command comes from the system's directories, from here on
+# (acfs-evgn): a caller's PATH, under sudo -E or a root shell's own, may
+# hold the user's directories. A root target adds root's own tool
+# directories below.
+ROOT_PATH="/usr/sbin:/usr/bin:/sbin:/bin"
+if [[ $EUID -eq 0 ]]; then
+    PATH="$ROOT_PATH"
+    export PATH
+fi
+
 # --- Target-user context resolution ---
 # When run via sudo, root's restricted PATH hides user-local tools
 # (~/.local/bin, ~/go/bin, ...). Resolve the real target user and prepend
@@ -102,7 +112,6 @@ TARGET_HOME="$(resolve_target_home "$TARGET_USER")"
 # (acfs-evgn). Otherwise the target user's tool directories come first
 # (mirrors the installer's run_as_target PATH prefix), so `command -v` sees
 # user-local installs.
-ROOT_PATH="/usr/sbin:/usr/bin:/sbin:/bin"
 if [[ $EUID -eq 0 && "$TARGET_USER" != "root" ]]; then
     PATH="$ROOT_PATH"
 else

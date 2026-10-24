@@ -1144,6 +1144,8 @@ acfs agents install --root               # deploy to /AGENTS.md (legacy; not aut
 acfs agents install --to PATH            # deploy anywhere else
 ```
 
+`/AGENTS.md` needs root: `sudo flywheel-update-agents-md deploy --root` writes it, and nothing else, as root, with the guide taken from your own run. Every other target is written as you, also under sudo.
+
 Deployment creates the destination only when it is absent. If the destination already exists with different content, the deploy refuses, leaves your file untouched, and writes a merge candidate next to it (`<dest>.acfs-new`) so you can diff and merge manually. Redeploying identical content is an idempotent no-op.
 
 Discovery scopes worth knowing: Codex reads global guidance from `~/.codex/AGENTS.md` and project guidance from the project root down to the working directory; filesystem-root `/AGENTS.md` is **not** automatically read by any major harness, which is exactly why ACFS no longer writes it.
