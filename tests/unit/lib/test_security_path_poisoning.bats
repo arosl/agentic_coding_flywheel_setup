@@ -488,3 +488,69 @@ EOF
     grep -A1 'export PATH="$UPDATE_PRIVILEGED_PATH"' <<< "$ensure_path_body" | grep -q 'return 0' \
         || fail "ensure_path must return right after forcing the privileged PATH for root"
 }
+
+# Loads install.sh's acfs_primary_bin_dir_uses_root and
+# acfs_check_primary_bin_dir, for a target user tester (acfs-g1p1).
+load_primary_bin_dir_check() {
+    local fn
+    for fn in acfs_primary_bin_dir_uses_root acfs_check_primary_bin_dir; do
+        eval "$(awk -v fn="$fn" '$0 == (fn "() {") {flag=1} flag; /^}$/ && flag {flag=0; exit}' "$PROJECT_ROOT/install.sh")"
+        [[ "$(type -t "$fn")" == "function" ]]
+    done
+    log_warn() { printf 'WARN: %s\n' "$*"; }
+    log_error() { printf 'ERROR: %s\n' "$*"; }
+    TARGET_USER=tester
+    TARGET_HOME="$BATS_TEST_TMPDIR/home/tester"
+}
+
+@test "security: main checks ACFS_BIN_DIR after init_target_paths, whoever runs the installer (acfs-g1p1)" {
+    local body guard
+    body="$(sed -n '/^main() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
+    # At init_target_paths' depth, so not only when the installer isn't the
+    # target user, as the hard-link guard above it is.
+    guard="$(grep -n '^        acfs_check_primary_bin_dir || exit 1$' <<<"$body" | cut -d: -f1)"
+    [[ -n "$guard" ]]
+    (( guard > $(grep -n '^        init_target_paths$' <<<"$body" | head -1 | cut -d: -f1) ))
+    (( guard > $(grep -n 'acfs_check_protected_hardlinks || exit 1' <<<"$body" | head -1 | cut -d: -f1) + 1 ))
+    # Before ensure_ubuntu, and so before every phase that links into it.
+    (( guard < $(grep -n '^        ensure_ubuntu$' <<<"$body" | head -1 | cut -d: -f1) ))
+}
+
+@test "security: ACFS_BIN_DIR inside the target's home passes silently, in --mode safe (acfs-g1p1)" {
+    load_primary_bin_dir_check
+    local dir
+    for dir in "$TARGET_HOME/.local/bin" "$TARGET_HOME/bin" "$TARGET_HOME"; do
+        ACFS_BIN_DIR="$dir" MODE=safe run acfs_check_primary_bin_dir
+        assert_success
+        assert_output ""
+    done
+}
+
+@test "security: ACFS_BIN_DIR outside the target's home stops --mode safe, naming the fix (acfs-g1p1)" {
+    load_primary_bin_dir_check
+    local dir
+    # A sibling home that shares the target's prefix is outside it too.
+    for dir in /usr/local/bin /opt/acfs/bin "${TARGET_HOME}2/.local/bin"; do
+        ACFS_BIN_DIR="$dir" MODE=safe run acfs_check_primary_bin_dir
+        assert_failure 1
+        assert_output --partial "ERROR: ACFS_BIN_DIR=$dir is outside $TARGET_HOME:"
+        assert_output --partial "Leave ACFS_BIN_DIR unset (the default is $TARGET_HOME/.local/bin)"
+        refute_output --partial "WARN:"
+    done
+}
+
+@test "security: ACFS_BIN_DIR outside the target's home warns in vibe mode, and the install goes on (acfs-g1p1)" {
+    load_primary_bin_dir_check
+    ACFS_BIN_DIR=/usr/local/bin MODE=vibe run acfs_check_primary_bin_dir
+    assert_success
+    assert_output --partial "WARN: ACFS_BIN_DIR=/usr/local/bin is outside $TARGET_HOME:"
+    assert_output --partial "passwordless sudo"
+    refute_output --partial "ERROR:"
+}
+
+@test "security: a root target owns its commands, so ACFS_BIN_DIR outside its home passes, in --mode safe (acfs-g1p1)" {
+    load_primary_bin_dir_check
+    TARGET_USER=root TARGET_HOME=/root ACFS_BIN_DIR=/usr/local/bin MODE=safe run acfs_check_primary_bin_dir
+    assert_success
+    assert_output ""
+}

@@ -6870,6 +6870,7 @@ init_target_paths() {
     # Configurable binary install directory (fixes #211).
     # Override via ACFS_BIN_DIR for shared/multi-user machines:
     #   ACFS_BIN_DIR=/usr/local/bin ./install.sh
+    # Outside TARGET_HOME, --mode safe stops (acfs_check_primary_bin_dir).
     ACFS_BIN_DIR="${ACFS_BIN_DIR:-$TARGET_HOME/.local/bin}"
     if [[ -n "$explicit_target_home" ]] && [[ "$explicit_target_home" != "$TARGET_HOME" ]]; then
         case "$ACFS_BIN_DIR" in
@@ -6925,6 +6926,27 @@ acfs_primary_bin_dir_uses_root() {
             return 0
             ;;
     esac
+}
+
+# With ACFS_BIN_DIR outside the target's home (upstream's #211 opt-in for
+# shared machines: ACFS_BIN_DIR=/usr/local/bin), root links acfs,
+# acfs-update, onboard, claude and the other primary commands there, each a
+# link to a file TARGET_USER owns. Root, through its PATH or sudo's
+# secure_path, or another account, would then run code TARGET_USER can
+# change (acfs-g1p1). main runs this once, after init_target_paths. --mode
+# safe stops; vibe warns, since the user gets passwordless sudo there and
+# gains nothing. A root target owns those files itself.
+acfs_check_primary_bin_dir() {
+    [[ "${TARGET_USER:-}" != "root" ]] || return 0
+    acfs_primary_bin_dir_uses_root || return 0
+    if [[ "${MODE:-vibe}" == "safe" ]]; then
+        log_error "ACFS_BIN_DIR=$ACFS_BIN_DIR is outside $TARGET_HOME: its commands would be links to files $TARGET_USER owns, so root or another account with it on PATH would run code $TARGET_USER can change"
+        log_error "Leave ACFS_BIN_DIR unset (the default is $TARGET_HOME/.local/bin), or set it inside $TARGET_HOME, then run the installer again"
+        return 1
+    fi
+    log_warn "ACFS_BIN_DIR=$ACFS_BIN_DIR is outside $TARGET_HOME: its commands are links to files $TARGET_USER owns, so root or another account with it on PATH runs code $TARGET_USER can change"
+    log_warn "In vibe mode $TARGET_USER gets passwordless sudo, so it gains nothing; the default, $TARGET_HOME/.local/bin, keeps them out of root's PATH"
+    return 0
 }
 
 _acfs_primary_bin_tool_path() {
@@ -13164,6 +13186,8 @@ main() {
         if [[ "$(acfs_early_resolve_current_user 2>/dev/null || true)" != "$TARGET_USER" ]]; then
             acfs_check_protected_hardlinks || exit 1
         fi
+        # Before anything links into ACFS_BIN_DIR (acfs-g1p1).
+        acfs_check_primary_bin_dir || exit 1
         ensure_ubuntu
         if acfs_ubuntu_upgrade_requested; then
             if ! run_ubuntu_upgrade_phase "$@"; then
