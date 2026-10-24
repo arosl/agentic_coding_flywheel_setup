@@ -191,6 +191,12 @@ if [[ -n "${OFF_DEVICE:-}" && "$*" == "-c %d $OFF_DEVICE" ]]; then
     echo 4242
     exit 0
 fi
+# ROOT_OWNED names a path whose owner reads as root, as an earlier root
+# run can leave a directory in the home.
+if [[ -n "${ROOT_OWNED:-}" && "$*" == "-c %u -- $ROOT_OWNED" ]]; then
+    echo 0
+    exit 0
+fi
 PATH="${PATH#*:}" exec stat "$@"
 STUB
 
@@ -517,6 +523,19 @@ check "an import in a container whose instance has no lease is refused up front"
 AGE_FAIL=1 run "$C" import devbox "$WORK/a.tar.age"
 check "an archive age can't decrypt is refused" bash -c '[[ "$1" -ne 0 ]] && grep -q "could not decrypt" "$2"' _ "$RC" "$ERR"
 check "no refused archive changed the machine's home or root rows" bash -c '[[ "$1" == "$2" ]]' _ "$before" "$(snapshot "$C")"
+
+# The user moves the home rows, and moving a directory needs write on its
+# parent: a root-owned ~/.config would stop the import halfway
+# (acfs-essd). It stops before anything is staged or moved instead.
+G="$WORK/g"
+make_machine "$G"
+rm -rf "$G/home/.claude" "$G/home/.claude.json" "$G/home/.codex" "$G/home/.config/gh"
+before_g="$(snapshot "$G")"
+ROOT_OWNED="$G/home/.config" INSTANCE_LEASE="lease-g" run "$G" import devbox "$WORK/a.tar.age"
+after_g="$(snapshot "$G")"
+check "a root-owned directory above a home row stops the import before anything moves" \
+    bash -c '[[ "$1" -ne 0 ]] && grep -q "nothing was moved" "$2" && grep -qx "  $3/home/.config" "$2" && [[ "$4" == "$5" ]] && ! compgen -G "$3/home/.acfs-import-*" >/dev/null' \
+    _ "$RC" "$ERR" "$G" "$before_g" "$after_g"
 
 run "$C" import devbox "$WORK/a.tar.age" --dry-run
 check "import --dry-run validates and changes nothing" \

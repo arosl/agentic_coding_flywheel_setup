@@ -1204,6 +1204,7 @@ state_cmd_import() {
         [[ -n "$pending" ]] || state_die "no interrupted import to resume"
         trap 'state_restart_writers' EXIT
         state_quiesce
+        state_import_check_owners "$pending" <"$STATE_META/$pending/rows"
         state_import_swap "$pending"
         state_import_finish "$pending"
         return 0
@@ -1247,6 +1248,7 @@ state_cmd_import() {
         sed 's/^/  /' <<<"$held" >&2
         state_die "pass --replace to replace it (the old copy is kept on the volume)"
     fi
+    state_import_check_owners "$id" < <(jq -r '.rows[] | select(.present) | "\(.base):\(.path)"' "$manifest")
     if [[ "$dry_run" == "true" ]]; then
         echo "The archive is valid: $(jq -r '.kind' "$manifest") $(jq -r '.id' "$manifest"), $(jq -r '[.rows[] | select(.present)] | length' "$manifest") rows, $(jq -r '.files | length' "$manifest") files"
         return 0
@@ -1340,6 +1342,39 @@ state_import_apply_modes() {
             state_fix_modes "${new}${path:+/$path}"
         fi
     done < <(jq -r '.rows[] | select(.present) | "\(.base)|\(.path)|\(.policy)"' "$manifest")
+}
+
+# state_import_check_owners ID: dies before anything moves when the user
+# can't make every home row's move (acfs-essd). The user moves them
+# (acfs-z2c7), and moving a directory needs write on it, to update its
+# "..", and on its parent; root, which used to move them, never needed
+# that. So a row's directory, or a directory above it up to the home, that
+# isn't the user's would stop the import halfway. Reads "base:path" rows
+# on stdin, and skips those ID's journal has swapped already.
+state_import_check_owners() {
+    local id="$1" row base path uid target p
+    local -A unmovable=()
+    uid="$(state_uid)"
+    while IFS= read -r row; do
+        base="${row%%:*}"
+        path="${row#*:}"
+        [[ "$base" == "home" ]] || continue
+        state_journal_has "$id moved-new $row" && continue
+        target="$STATE_HOME${path:+/$path}"
+        p="$target"
+        [[ -d "$target" && ! -L "$target" ]] || p="$(dirname "$target")"
+        while :; do
+            if [[ -e "$p" && "$(stat -c %u -- "$p" 2>/dev/null)" != "$uid" ]]; then
+                unmovable["$p"]=1
+            fi
+            [[ "$p" == "$STATE_HOME" || "$p" != "$STATE_HOME"/* ]] && break
+            p="$(dirname "$p")"
+        done
+    done
+    [[ ${#unmovable[@]} -eq 0 ]] && return 0
+    state_err "these are not $STATE_USER's, so $STATE_USER can't move the home rows:"
+    printf '  %s\n' "${!unmovable[@]}" | sort >&2
+    state_die "nothing was moved; give them to $STATE_USER (sudo chown -h $STATE_USER: <path>), then run the import again, or with --resume if it was interrupted"
 }
 
 # mkdir -p for a row's parents, owned by the row's owner: a home row's by
