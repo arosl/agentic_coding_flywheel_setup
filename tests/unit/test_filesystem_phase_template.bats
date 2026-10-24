@@ -71,18 +71,24 @@ load_seed_helper() {
 # dir. run_as_target logs and runs the command as is, and the cp it resolves
 # logs that the caller copied. Not root here, so the link checks don't run.
 load_install_asset() {
-    eval "$(sed -n '/^install_asset() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
-    [[ "$(type -t install_asset)" == "function" ]]
+    local fn
+    for fn in acfs_write_file_as_target install_asset; do
+        eval "$(sed -n "/^$fn() {\$/,/^}\$/p" "$PROJECT_ROOT/install.sh")"
+        [[ "$(type -t "$fn")" == "function" ]]
+    done
 
     SOURCE_ROOT="$BATS_TEST_TMPDIR/source"
     mkdir -p "$SOURCE_ROOT/acfs"
     printf 'template\n' > "$SOURCE_ROOT/acfs/AGENTS.md"
+    chmod 0644 "$SOURCE_ROOT/acfs/AGENTS.md"
     ACFS_TRUSTED_INTERNAL_SOURCE_ROOT="$SOURCE_ROOT"
     ACFS_BOOTSTRAP_DIR="$SOURCE_ROOT"
     TARGET_USER=ubuntu
     TARGET_HOME="$BATS_TEST_TMPDIR/home"
     ACFS_HOME="$TARGET_HOME/.acfs"
-    mkdir -p "$ACFS_HOME"
+    # An allowed destination outside the target's home, as /usr/local/bin is.
+    ACFS_BIN_DIR="$BATS_TEST_TMPDIR/system-bin"
+    mkdir -p "$ACFS_HOME" "$ACFS_BIN_DIR"
 
     CALLS="$BATS_TEST_TMPDIR/calls"
     : > "$CALLS"
@@ -152,20 +158,95 @@ verified_files() {
 
     [[ "$(cat "$dest")" == "template" ]]
     grep -qxF "as target: $(command -v mkdir) -p $ACFS_HOME/docs" "$CALLS"
-    grep -qxF "as target: tee $dest" "$CALLS"
+    grep -qF " _ $dest 644 " "$CALLS"
     [[ -z "$(grep '^caller cp' "$CALLS" || true)" ]]
 }
 
-@test "install_asset without --as-target still copies as the caller" {
+@test "install_asset writes as the target user by default under the target's home (acfs-wiip)" {
     load_install_asset
-    local dest="$ACFS_HOME/docs/AGENTS.workspace.md"
-    mkdir -p "$ACFS_HOME/docs"
+    local dest="$ACFS_HOME/scripts/lib/thing.sh"
 
     install_asset "acfs/AGENTS.md" "$dest"
 
     [[ "$(cat "$dest")" == "template" ]]
+    grep -qF " _ $dest 644 " "$CALLS"
+    [[ -z "$(grep '^caller cp' "$CALLS" || true)" ]]
+}
+
+@test "install_asset copies as the caller outside the target's home, and for a root target" {
+    load_install_asset
+
+    install_asset "acfs/AGENTS.md" "$ACFS_BIN_DIR/tool"
+    [[ "$(cat "$ACFS_BIN_DIR/tool")" == "template" ]]
     grep -q '^caller cp ' "$CALLS"
     [[ -z "$(grep '^as target' "$CALLS" || true)" ]]
+
+    : > "$CALLS"
+    TARGET_USER=root
+    mkdir -p "$ACFS_HOME/docs"
+    install_asset "acfs/AGENTS.md" "$ACFS_HOME/docs/AGENTS.workspace.md"
+    grep -q '^caller cp ' "$CALLS"
+    [[ -z "$(grep '^as target' "$CALLS" || true)" ]]
+}
+
+@test "install_asset gives the user's copy the source's mode as cp would: 0775 lands at 0755, 0664 at 0644" {
+    load_install_asset
+    printf '#!/bin/bash\n' > "$SOURCE_ROOT/acfs/run.sh"
+    chmod 0775 "$SOURCE_ROOT/acfs/run.sh"
+    chmod 0664 "$SOURCE_ROOT/acfs/AGENTS.md"
+
+    install_asset "acfs/run.sh" "$ACFS_HOME/bin/run.sh"
+    install_asset "acfs/AGENTS.md" "$ACFS_HOME/docs/AGENTS.workspace.md"
+
+    [[ "$(stat -c %a "$ACFS_HOME/bin/run.sh")" == "755" ]]
+    [[ "$(stat -c %a "$ACFS_HOME/docs/AGENTS.workspace.md")" == "644" ]]
+    # The user's write set those modes, not a cp of the caller's.
+    [[ -z "$(grep '^caller cp' "$CALLS" || true)" ]]
+}
+
+@test "install_asset replaces a read-only file root left at the name, and a link there, without writing through it" {
+    load_install_asset
+    mkdir -p "$ACFS_HOME/docs"
+    printf 'old\n' > "$ACFS_HOME/docs/left.md"
+    chmod 0444 "$ACFS_HOME/docs/left.md"
+    printf 'not yours\n' > "$BATS_TEST_TMPDIR/elsewhere"
+    ln -s "$BATS_TEST_TMPDIR/elsewhere" "$ACFS_HOME/docs/linked.md"
+
+    install_asset "acfs/AGENTS.md" "$ACFS_HOME/docs/left.md"
+    install_asset "acfs/AGENTS.md" "$ACFS_HOME/docs/linked.md"
+
+    [[ "$(cat "$ACFS_HOME/docs/left.md")" == "template" ]]
+    [[ -f "$ACFS_HOME/docs/linked.md" && ! -L "$ACFS_HOME/docs/linked.md" ]]
+    [[ "$(cat "$ACFS_HOME/docs/linked.md")" == "template" ]]
+    [[ "$(cat "$BATS_TEST_TMPDIR/elsewhere")" == "not yours" ]]
+    [[ -z "$(find "$ACFS_HOME/docs" -name '.acfs-asset.*')" ]]
+}
+
+@test "install_asset's user write checks the verified sha before its rename, and renames nothing that differs" {
+    load_install_asset
+    mkdir -p "$ACFS_HOME/docs"
+    printf 'old\n' > "$ACFS_HOME/docs/AGENTS.workspace.md"
+    _acfs_internal_asset_expected_sha256() { printf '%064d\n' 0; }
+    acfs_calculate_file_sha256() { printf '%064d\n' 0; }
+
+    run install_asset "acfs/AGENTS.md" "$ACFS_HOME/docs/AGENTS.workspace.md"
+
+    [[ "$status" -ne 0 ]]
+    [[ "$(cat "$ACFS_HOME/docs/AGENTS.workspace.md")" == "old" ]]
+    [[ -z "$(find "$ACFS_HOME/docs" -name '.acfs-asset.*')" ]]
+    grep -qF "error: install_asset: Failed to write verified source asset as ubuntu: acfs/AGENTS.md" "$CALLS"
+}
+
+@test "install_asset under set -u with TARGET_HOME unset gives its own error, not an unbound variable" {
+    load_install_asset
+    # shellcheck disable=SC2016 # expanded by the child shell
+    run env -u TARGET_HOME TARGET_USER=ubuntu bash -uc "$(declare -f install_asset)"'
+        log_error() { printf "error: %s\n" "$*"; }
+        install_asset acfs/AGENTS.md /x'
+
+    [[ "$status" -ne 0 ]]
+    [[ "$output" == *"error: install_asset: ACFS_HOME/TARGET_HOME not set"* ]]
+    [[ "$output" != *"unbound variable"* ]]
 }
 
 @test "install_asset --as-target fails when the target user's write fails" {

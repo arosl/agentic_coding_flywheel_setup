@@ -4728,17 +4728,63 @@ _acfs_internal_asset_expected_sha256() {
     printf '%s\n' "$expected"
 }
 
+# Writes stdin to DEST with MODE as the target user: a temp file beside DEST,
+# renamed over it. The user owns DEST's directory, so the rename replaces a
+# file root left there, and a link at the name is replaced, never followed
+# (acfs-wiip, as acfs update's sync_acfs_deployed does since acfs-7kax).
+# With SHA256, the temp file must hash to it before the rename, so root never
+# reads the user's file afterwards.
+acfs_write_file_as_target() {
+    local dest="$1" mode="$2" expected_sha="${3:-}" name="" bin="" bash_bin=""
+    local -a bins=()
+    [[ "$dest" == /* && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+    [[ -z "$expected_sha" || "$expected_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+    bash_bin="$(acfs_early_system_binary_path bash 2>/dev/null || true)"
+    for name in mktemp cat chmod mv rm sha256sum; do
+        bin="$(acfs_early_system_binary_path "$name" 2>/dev/null || true)"
+        if [[ -z "$bin" || -z "$bash_bin" ]]; then
+            log_error "acfs_write_file_as_target: Unable to locate bash or $name"
+            return 1
+        fi
+        bins+=("$bin")
+    done
+    # shellcheck disable=SC2016 # expanded by the target user's shell
+    run_as_target "$bash_bin" -c '
+        dest="$1" mode="$2" expected_sha="$3" mktemp_bin="$4" cat_bin="$5" chmod_bin="$6" mv_bin="$7" rm_bin="$8" sha_bin="$9"
+        tmp="$("$mktemp_bin" "${dest%/*}/.acfs-asset.XXXXXX")" || exit 1
+        if "$cat_bin" > "$tmp" && "$chmod_bin" "$mode" "$tmp"; then
+            actual_sha=""
+            if [[ -n "$expected_sha" ]]; then
+                actual_sha="$("$sha_bin" "$tmp")" || actual_sha=""
+                actual_sha="${actual_sha%% *}"
+            fi
+            if [[ "$actual_sha" == "$expected_sha" ]] && "$mv_bin" -f -T -- "$tmp" "$dest"; then
+                exit 0
+            fi
+        fi
+        "$rm_bin" -f -- "$tmp"
+        exit 1
+    ' _ "$dest" "$mode" "$expected_sha" "${bins[@]}"
+}
+
 install_asset() {
     local rel_path="$1"
     local dest_path="$2"
-    # --as-target: the target user owns the destination's directory, so the
-    # user makes a missing directory and writes the file with the user's own
-    # rights, from the source root has verified. A link the user puts at the
-    # name, however late, then reaches only what the user could write
-    # (acfs-69gx). A new file gets tee's mode (0666 & ~umask), not the
-    # source's as with cp, so an executable needs its chmod as the user.
-    local as_target=false
+    # As the target user: the user makes a missing directory and writes the
+    # file with the user's own rights, from the source root has verified, and
+    # gives it the source's mode as cp would (& 0755), through a temp file
+    # renamed over the name (acfs_write_file_as_target): a link the user puts
+    # there is replaced, never followed. That is the default for a destination
+    # under the target's home, which the user owns (acfs-wiip); --as-target
+    # asks for it explicitly (acfs-69gx).
+    local as_target=false target_home="${TARGET_HOME:-}"
+    target_home="${target_home%/}"
     [[ "${3:-}" == "--as-target" ]] && as_target=true
+    if [[ -n "${TARGET_USER:-}" && "$TARGET_USER" != "root" && -n "$target_home" ]]; then
+        case "$dest_path" in
+            "$target_home"/*) as_target=true ;;
+        esac
+    fi
 
     # Security: Validate rel_path doesn't contain path traversal
     if [[ "$rel_path" == *".."* ]]; then
@@ -4811,6 +4857,14 @@ install_asset() {
         log_error "install_asset: Unable to locate cp"
         return 1
     fi
+    local stat_bin=""
+    if [[ "$as_target" == "true" ]]; then
+        stat_bin="$(acfs_early_system_binary_path stat 2>/dev/null || true)"
+        if [[ -z "$stat_bin" ]]; then
+            log_error "install_asset: Unable to locate stat for a target-user write"
+            return 1
+        fi
+    fi
 
     # Security: Validate dest_path is under expected directories
     local allowed_prefixes=("$ACFS_HOME" "$TARGET_HOME" "/data" "/usr/local/bin")
@@ -4878,10 +4932,20 @@ install_asset() {
     fi
 
     if [[ "$as_target" == "true" ]]; then
-        if ! run_as_target tee "$dest_path" < "$source_asset" > /dev/null; then
+        local source_mode=""
+        source_mode="$("$stat_bin" -c %a -- "$source_asset" 2>/dev/null || true)"
+        if [[ ! "$source_mode" =~ ^[0-7]{3,4}$ ]]; then
+            log_error "install_asset: Unable to read the source asset's mode: $rel_path"
+            return 1
+        fi
+        source_mode="$(printf '%o' "$(( 8#$source_mode & 8#0755 ))")"
+        # The user's write checks the sha before its rename, so root reads
+        # nothing at the name the user now owns.
+        if ! acfs_write_file_as_target "$dest_path" "$source_mode" "$expected_source_sha" < "$source_asset"; then
             log_error "install_asset: Failed to write verified source asset as $TARGET_USER: $rel_path"
             return 1
         fi
+        return 0
     elif [[ "$need_sudo" == "true" ]]; then
         if ! "${sudo_cmd[@]}" "$cp_bin" "$source_asset" "$dest_path"; then
             log_error "install_asset: Failed to copy verified source asset: $rel_path"
@@ -8077,12 +8141,19 @@ acfs_zshrc_is_managed_loader() {
 # write anyway, not /etc/profile.d (acfs-k9a9).
 
 # Writes stdin to the target user's dotfile $1 as that user; with --append
-# as $2, appends. Returns tee's status.
+# as $2, appends. Returns tee's status. tee comes from the system directories,
+# not from the PATH run_as_target gives the user (acfs-wiip).
 acfs_dotfile_write_as_target() {
+    local tee_bin=""
+    tee_bin="$(acfs_early_system_binary_path tee 2>/dev/null || true)"
+    if [[ -z "$tee_bin" ]]; then
+        log_error "Unable to locate tee for a target-user write"
+        return 1
+    fi
     if [[ "${2:-}" == "--append" ]]; then
-        run_as_target tee -a "$1" >/dev/null
+        run_as_target "$tee_bin" -a "$1" >/dev/null
     else
-        run_as_target tee "$1" >/dev/null
+        run_as_target "$tee_bin" "$1" >/dev/null
     fi
 }
 

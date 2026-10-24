@@ -217,6 +217,7 @@ run_setup_shell() {
         return "$rc"
     }
     acfs_run_verified_upstream_script_as_target() { :; }
+    acfs_early_system_binary_path() { command -v "$1"; }
     set_default_shell() { return 0; }
     chown() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/chown.log"; }
 
