@@ -148,9 +148,21 @@ class RecoveryTests(unittest.TestCase):
         state = {"workspaces": self.workspaces, "agents": self.agents}
         if getattr(self, "registered", None) is not None:
             state["registered"] = self.registered
-        if getattr(self, "bindings", None) is not None:
-            state["bindings"] = self.bindings
+        # Only nhm launches, so every agent has a binding unless a test sets
+        # self.bindings itself ({} for none at all).
+        bindings = getattr(self, "bindings", None)
+        state["bindings"] = self.default_bindings() if bindings is None else bindings
         (self.root / "herdr.json").write_text(json.dumps(state))
+
+    def default_bindings(self):
+        """nhm's binding of each agent as it stands: its label is its Agent
+        Mail name, and its tab number its start order, so the slot (9.N)
+        sorts as the tabs were made."""
+        return {a["pane_id"]: {"status": "active", "mail_name": a["label"], "mail_project_key": str(self.repo),
+                "workspace_id": a["workspace_id"], "tab_id": a["tab_id"], "pane_id": a["pane_id"],
+                "herdr_alias": a["label"].lower(), "kind": a["agent"],
+                "slot": "9." + str(int(a["tab_id"].rsplit(":t", 1)[1], 36))}
+                for a in self.agents}
 
     def nhm_launch(self, slots):
         """The agents as nhm starts them: one shared tab, named after the
@@ -234,34 +246,6 @@ class RecoveryTests(unittest.TestCase):
         self.invoke(code=2)
         self.assertFalse(self.result.exists())
 
-    def test_tabs_past_nine_keep_creation_order(self):
-        # herdr names the tab after t9 "tA", and a decimal parse would refuse it.
-        self.agents = [self.agent("A", "codex", "OnyxField"), self.agent(9, "claude", "AmberFox"),
-                       self.agent(8, "codex", "BlueLake")]
-        self.save_state()
-        self.adopt()
-        saved = json.loads(self.result.read_text())
-        self.assertEqual([(t["slot"], t["tab_id"]) for t in saved["targets"]],
-                         [(1, "w9:t8"), (2, "w9:t9"), (3, "w9:tA")])
-
-    def test_lowercase_tab_ids_are_refused(self):
-        # Base 36 ignores case, so "ta" would sort as "tA"; herdr's order past tZ is unknown.
-        self.agents[0]["tab_id"] = "w9:ta"
-        self.save_state()
-        self.invoke(code=2)
-        self.assertFalse(self.result.exists())
-
-    def test_tab_label_must_be_a_registered_agent_mail_name(self):
-        # A lost herdr name leaves only the editable tab label; Agent Mail must know it.
-        self.registered = [a["label"] for a in self.agents]
-        self.agents[0]["name"] = None
-        self.agents[0]["label"] = "RenamedTab"
-        self.save_state()
-        report = self.invoke(code=2)
-        self.assertIn("Agent Mail identity", report["error"])
-        self.assertIn(["agents", "list", "--project", str(self.repo), "--json"], self.calls())
-        self.assertFalse(self.result.exists())
-
     def test_nhm_launch_names_and_slots_come_from_its_bindings(self):
         # Slots sort as numbers: 29.2, 29.9, 29.10 (acfs-aahj).
         self.nhm_launch(["29.10", "29.9", "29.2"])
@@ -276,20 +260,24 @@ class RecoveryTests(unittest.TestCase):
         socket = str(self.root / "herdr.sock")
         self.assertIn(["resolve", "w9:p7", "--socket", socket, "--json"], self.calls())
 
-    def test_shared_tab_without_nhm_bindings_is_refused(self):
-        # The tab label is the project's directory, not a name: refused, not guessed.
-        self.nhm_launch(["5.1", "5.2", "5.3"])
-        self.bindings = {}
-        self.save_state()
-        self.invoke(code=2)
-        self.assertFalse(self.result.exists())
+    def test_agents_without_nhm_bindings_are_refused(self):
+        # Only nhm launches; a tab label is never read for a name (acfs-f2mc.5).
+        for layout in ("own tabs", "shared tab"):
+            with self.subTest(layout=layout):
+                if layout == "shared tab":
+                    self.nhm_launch(["5.1", "5.2", "5.3"])
+                self.bindings = {}
+                self.save_state()
+                report = self.invoke(code=2)
+                self.assertIn("no nhm binding", report["error"])
+                self.assertFalse(self.result.exists())
 
     def test_nhm_binding_only_some_agents_is_refused(self):
         self.nhm_launch(["5.1", "5.2", "5.3"])
         del self.bindings["w9:p3"]
         self.save_state()
         report = self.invoke(code=2)
-        self.assertIn("only some", report["error"])
+        self.assertIn("no nhm binding", report["error"])
         self.assertFalse(self.result.exists())
 
     def test_nhm_binding_that_does_not_match_is_refused(self):
@@ -324,12 +312,11 @@ class RecoveryTests(unittest.TestCase):
         self.assertIn("nhm could not report", report["error"])
         self.assertFalse(self.result.exists())
 
-    def test_without_nhm_tab_labels_are_used_and_nhm_is_not_asked(self):
+    def test_without_nhm_recovery_is_refused(self):
         (self.bin / "nhm").unlink()
-        self.adopt()
-        self.assertFalse([c for c in self.calls() if c[:1] == ["resolve"] or c[:2] == ["status", "server"]])
-        saved = json.loads(self.result.read_text())
-        self.assertEqual([t["agent_mail_name"] for t in saved["targets"]], ["BlueLake", "AmberFox", "OnyxField"])
+        report = self.invoke(code=2)
+        self.assertIn("nhm is unavailable", report["error"])
+        self.assertFalse(self.result.exists())
 
     def test_launch_state_is_not_part_of_approval(self):
         # A dialog answered between preview and adoption doesn't void the review.
@@ -340,7 +327,7 @@ class RecoveryTests(unittest.TestCase):
         self.save_state()
         self.adopt(review)
 
-    def test_lost_herdr_name_is_recovered_from_the_tab_label(self):
+    def test_lost_herdr_name_is_recovered_from_the_binding(self):
         for lost in (None, "-"):
             with self.subTest(lost=lost):
                 self.agents[0]["name"] = lost
@@ -351,15 +338,16 @@ class RecoveryTests(unittest.TestCase):
         saved = json.loads(self.result.read_text())
         self.assertEqual(saved["targets"][2]["herdr_name"], "onyxfield")
 
-    def test_renamed_tab_or_agent_is_refused_not_guessed(self):
-        for key, value in (("label", "Renamed"), ("name", "someoneelse"), ("label", "not a name")):
-            with self.subTest(key=key, value=value):
-                original = self.agents[0][key]
-                self.agents[0][key] = value
-                self.save_state()
-                self.invoke(code=2)
-                self.agents[0][key] = original
+    def test_renamed_agent_is_refused_and_a_relabelled_tab_is_ignored(self):
+        self.bindings = self.default_bindings()
+        self.registered = [a["label"] for a in self.agents]
+        # The binding names the agent; the tab label is never read.
+        self.agents[0]["label"] = "not a name"
         self.save_state()
+        self.preview()
+        self.agents[0]["name"] = "someoneelse"
+        self.save_state()
+        self.invoke(code=2)
         self.assertFalse(self.result.exists())
 
     def test_requires_distinct_recovery_approval_before_observation(self):
@@ -509,7 +497,7 @@ class RecoveryTests(unittest.TestCase):
                 self.invoke(code=2)
                 self.assertFalse(self.result.exists())
 
-    def test_duplicate_terminal_shell_or_tab_is_rejected(self):
+    def test_duplicate_terminal_or_shell_is_rejected(self):
         for key in ("terminal_id", "shell_pid"):
             with self.subTest(key=key):
                 original = self.agents[0][key]
