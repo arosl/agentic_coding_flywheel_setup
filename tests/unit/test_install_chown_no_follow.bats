@@ -56,7 +56,8 @@ variable_owner_chowns() {
     local chowns missing
     chowns="$(variable_owner_chowns)"
     # The pattern still finds the call sites, so the check can't pass empty.
-    (( $(wc -l <<<"$chowns") >= 40 ))
+    # 33 since acfs-me42 dropped the chowns after install_asset in the home.
+    (( $(wc -l <<<"$chowns") >= 30 ))
     # -R passes too: GNU and uutils chown -R lchown a link given on the command line.
     missing="$(grep -vE '(chown|"\$chown_bin")( +-[[:alpha:]]+)* +-[[:alpha:]]*[hR][[:alpha:]]* ' <<<"$chowns" || true)"
     printf '%s\n' "$missing"
@@ -514,7 +515,7 @@ run_setup_shell() {
     for fn in profile_path_has_fragment profile_path_sed_literal \
         acfs_zshrc_is_managed_loader acfs_dotfile_write_as_target \
         acfs_file_matches_as_target acfs_backup_file_as_target \
-        acfs_dotfile_own_for_target acfs_dotfile_warn_unwritten setup_shell; do
+        acfs_dotfile_own_for_target acfs_dotfile_warn_unwritten acfs_own_outside_home setup_shell; do
         eval "$(sed -n "/^$fn() {\$/,/^}\$/p" "$PROJECT_ROOT/install.sh")"
         [[ "$(type -t "$fn")" == "function" ]]
     done
