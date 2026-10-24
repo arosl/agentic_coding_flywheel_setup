@@ -3916,6 +3916,99 @@ EOF
     assert_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
 }
 
+@test "update.sh's shell cleanups edit the user's files only as the target user (acfs-48o3)" {
+    local fn body raw
+    # The sed helper itself runs as the target user.
+    grep -q 'update_run_in_target_context "" sed --follow-symlinks -i' <<<"$(declare -f _update_dotfile_sed_as_target)"
+    for fn in cleanup_legacy_bv_alias cleanup_legacy_br_alias cleanup_ast_grep_sg_launcher \
+        cleanup_unmanaged_atuin_init sync_acfs_zsh_loader; do
+        body="$(declare -f "$fn")"
+        # Each edits through the helper or update_run_in_target_context ...
+        grep -qE '_update_dotfile_sed_as_target|update_run_in_target_context' <<<"$body"
+        # ... and no sed -i, mv or chmod is left in update.sh's own shell.
+        raw="$(grep -E '(^|[^_[:alnum:]])(sed [^|]*-i|mv --|chmod a-x)' <<<"$body" || true)"
+        [[ -z "$(grep -v 'update_run_in_target_context' <<<"$raw" || true)" ]]
+    done
+}
+
+@test "sync_acfs_zsh_loader: a dotfiles ~/.zshrc link stays a link, and its file loses the duplicate (acfs-48o3)" {
+    local dotfiles
+    dotfiles="$(create_temp_dir)"
+    cat > "$dotfiles/zshrc" <<'EOF'
+source "$HOME/.acfs/zsh/acfs.zshrc"
+[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"
+EOF
+    ln -s "$dotfiles/zshrc" "$HOME/.zshrc"
+
+    run sync_acfs_zsh_loader
+    assert_success
+    [[ -L "$HOME/.zshrc" ]]
+
+    run cat "$dotfiles/zshrc"
+    assert_output 'source "$HOME/.acfs/zsh/acfs.zshrc"'
+}
+
+@test "cleanup_unmanaged_atuin_init: a dotfiles ~/.zshrc link stays a link, and its file's line is commented (acfs-48o3)" {
+    local dotfiles
+    dotfiles="$(create_temp_dir)"
+    mkdir -p "$HOME/.acfs/zsh"
+    printf 'eval "$(atuin init zsh)"\n' > "$HOME/.acfs/zsh/acfs.zshrc"
+    printf 'eval "$(atuin init zsh)"\n' > "$dotfiles/zshrc"
+    ln -s "$dotfiles/zshrc" "$HOME/.zshrc"
+
+    run cleanup_unmanaged_atuin_init
+    assert_success
+    [[ -L "$HOME/.zshrc" ]]
+
+    run cat "$dotfiles/zshrc"
+    assert_output --partial '# eval "$(atuin init zsh)"  # disabled by ACFS'
+}
+
+@test "cleanup_legacy_bv_alias: a dotfiles ~/.zshrc.local link stays a link, and its file loses the alias (acfs-48o3)" {
+    local dotfiles
+    dotfiles="$(create_temp_dir)"
+    printf '# mine\nalias bv="$HOME/.local/bin/bv"\n' > "$dotfiles/zshrc.local"
+    ln -s "$dotfiles/zshrc.local" "$HOME/.zshrc.local"
+
+    run cleanup_legacy_bv_alias
+    assert_success
+    [[ -L "$HOME/.zshrc.local" ]]
+
+    run cat "$dotfiles/zshrc.local"
+    assert_output '# mine'
+}
+
+@test "cleanup_legacy_bv_alias: a ~/.zshrc.local link to a file the user can't write is left alone, with a warning (acfs-48o3)" {
+    local locked
+    locked="$(create_temp_dir)"
+    printf 'alias bv="$HOME/.local/bin/bv"\n' > "$locked/zshrc.local"
+    chmod a-w "$locked/zshrc.local" "$locked"
+    ln -s "$locked/zshrc.local" "$HOME/.zshrc.local"
+
+    run cleanup_legacy_bv_alias
+    chmod u+w "$locked" "$locked/zshrc.local"
+    assert_success
+    assert_output --partial "couldn't edit $HOME/.zshrc.local as the target user"
+
+    run cat "$locked/zshrc.local"
+    assert_output 'alias bv="$HOME/.local/bin/bv"'
+}
+
+@test "cleanup_legacy_br_alias: a linked deployed acfs.zshrc stays a link, and its file's alias is commented (acfs-48o3)" {
+    local dotfiles
+    dotfiles="$(create_temp_dir)"
+    mkdir -p "$HOME/.acfs/zsh"
+    printf "alias br='bun run dev'\n" > "$dotfiles/acfs.zshrc"
+    ln -s "$dotfiles/acfs.zshrc" "$HOME/.acfs/zsh/acfs.zshrc"
+
+    run cleanup_legacy_br_alias
+    assert_success
+    [[ -L "$HOME/.acfs/zsh/acfs.zshrc" ]]
+
+    run cat "$dotfiles/acfs.zshrc"
+    assert_output --partial "# alias br='bun run dev'  # disabled"
+}
+
 @test "sync_acfs_profile_paths and sync_acfs_zprofile_paths write only as the target user (acfs-rxpd)" {
     local fn body edits
     for fn in sync_acfs_profile_paths sync_acfs_zprofile_paths; do

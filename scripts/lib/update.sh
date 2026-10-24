@@ -3151,6 +3151,14 @@ cleanup_legacy_git_safety_guard() {
     fi
 }
 
+# Edits the user's dotfile $1 with sed script $2, as the target user, so a
+# root update for a user never writes through a link the user put there;
+# --follow-symlinks keeps a dotfiles link a link and edits its file
+# (acfs-48o3, beside acfs-rxpd's _update_dotfile_write_as_target).
+_update_dotfile_sed_as_target() {
+    update_run_in_target_context "" sed --follow-symlinks -i "$2" "$1"
+}
+
 cleanup_legacy_bv_alias() {
     local runtime_home=""
     runtime_home="$(update_runtime_shell_home 2>/dev/null || true)"
@@ -3205,10 +3213,13 @@ cleanup_legacy_bv_alias() {
     # BV comment may precede a for/done block (PATH setup) with no fi,
     # causing sed to delete to EOF.
     if update_zshrc_local_has_active_bv_alias "$zshrc_local"; then
-        # Remove the if/elif/fi block containing bv alias checks
-        sed -i '/^[[:space:]]*if[[:space:]]\+\[.*\.local\/bin\/bv.*\][[:space:]]*;[[:space:]]*then[[:space:]]*$/,/^[[:space:]]*fi[[:space:]]*$/d' "$zshrc_local"
-        # Safety net: remove any standalone alias bv= lines
-        sed -i '/^[[:space:]]*alias[[:space:]]\+bv=/d' "$zshrc_local"
+        # Remove the if/elif/fi block containing bv alias checks, then, as a
+        # safety net, any standalone alias bv= lines.
+        if ! _update_dotfile_sed_as_target "$zshrc_local" '/^[[:space:]]*if[[:space:]]\+\[.*\.local\/bin\/bv.*\][[:space:]]*;[[:space:]]*then[[:space:]]*$/,/^[[:space:]]*fi[[:space:]]*$/d' \
+            || ! _update_dotfile_sed_as_target "$zshrc_local" '/^[[:space:]]*alias[[:space:]]\+bv=/d'; then
+            log_item "warn" "legacy cleanup" "couldn't edit $zshrc_local as the target user; remove its alias bv= block by hand"
+            return 0
+        fi
         log_item "ok" "legacy cleanup" "removed stale bv alias block from .zshrc.local"
         log_to_file "Removed bv alias block from $zshrc_local"
     fi
@@ -3216,7 +3227,10 @@ cleanup_legacy_bv_alias() {
     # Also clean up orphaned if/elif/fi skeletons left by earlier runs
     # that only deleted the alias lines but not the surrounding block.
     if update_zshrc_local_has_active_bv_block "$zshrc_local"; then
-        sed -i '/^[[:space:]]*if[[:space:]]\+\[.*\.local\/bin\/bv.*\][[:space:]]*;[[:space:]]*then[[:space:]]*$/,/^[[:space:]]*fi[[:space:]]*$/d' "$zshrc_local"
+        if ! _update_dotfile_sed_as_target "$zshrc_local" '/^[[:space:]]*if[[:space:]]\+\[.*\.local\/bin\/bv.*\][[:space:]]*;[[:space:]]*then[[:space:]]*$/,/^[[:space:]]*fi[[:space:]]*$/d'; then
+            log_item "warn" "legacy cleanup" "couldn't edit $zshrc_local as the target user; remove its empty bv if/elif/fi block by hand"
+            return 0
+        fi
         log_item "ok" "legacy cleanup" "removed orphaned bv if/elif/fi skeleton from .zshrc.local"
         log_to_file "Removed orphaned bv block skeleton from $zshrc_local"
     fi
@@ -3242,7 +3256,10 @@ cleanup_legacy_br_alias() {
     if grep -q "^alias br='bun run dev'" "$deployed" 2>/dev/null; then
         # Comment out the old alias (sync_acfs_zshrc will deploy the correct version later;
         # this sed is a safety net for when the repo isn't available)
-        sed -i "s|^alias br='bun run dev'|# alias br='bun run dev'  # disabled - conflicts with beads_rust (br)|" "$deployed"
+        if ! _update_dotfile_sed_as_target "$deployed" "s|^alias br='bun run dev'|# alias br='bun run dev'  # disabled - conflicts with beads_rust (br)|"; then
+            log_item "warn" "legacy cleanup" "couldn't edit $deployed as the target user; comment out its alias br='bun run dev' by hand"
+            return 0
+        fi
         log_item "ok" "legacy cleanup" "fixed br alias conflict in deployed acfs.zshrc"
         log_to_file "Commented out alias br='bun run dev' in $deployed"
     fi
@@ -3284,10 +3301,13 @@ cleanup_ast_grep_sg_launcher() {
     fi
 
     backup_path="${launcher}.acfs-backup.$(date +%s).$$"
-    if mv -- "$launcher" "$backup_path" 2>/dev/null; then
+    # Both run as the target user: ~/.local/bin is the user's, so the user
+    # can put a link at the backup name between the mv and the chmod, and
+    # root's chmod would follow it to any file (acfs-48o3).
+    if update_run_in_target_context "" mv -- "$launcher" "$backup_path" 2>/dev/null; then
         # A symlink (to ~/.cargo/bin/sg, say) moves as a link; chmod would
         # follow it to the target, which must stay runnable.
-        [[ -L "$backup_path" ]] || chmod a-x -- "$backup_path" 2>/dev/null || true
+        [[ -L "$backup_path" ]] || update_run_in_target_context "" chmod a-x -- "$backup_path" 2>/dev/null || true
         log_item "ok" "legacy cleanup" "moved ast-grep's sg launcher aside to $backup_path; $real_bin is used now"
         log_to_file "Moved sg launcher $launcher to $backup_path (acfs-zbrk)"
     else
@@ -3315,7 +3335,7 @@ cleanup_unmanaged_atuin_init() {
         return 0
     fi
 
-    if sed -i 's|^\([[:space:]]*\)eval "\$(atuin init zsh)"[[:space:]]*$|\1# eval "$(atuin init zsh)"  # disabled by ACFS: atuin init now lives in ~/.acfs/zsh/acfs.zshrc (#359)|' "$zshrc" 2>/dev/null; then
+    if _update_dotfile_sed_as_target "$zshrc" 's|^\([[:space:]]*\)eval "\$(atuin init zsh)"[[:space:]]*$|\1# eval "$(atuin init zsh)"  # disabled by ACFS: atuin init now lives in ~/.acfs/zsh/acfs.zshrc (#359)|' 2>/dev/null; then
         log_item "ok" "atuin init cleanup" "commented the unmanaged 'atuin init' line in ~/.zshrc; the managed acfs.zshrc block owns it now"
         log_to_file "Commented unmanaged atuin init line in $zshrc"
     fi
@@ -3388,7 +3408,10 @@ sync_acfs_zsh_loader() {
         return 0
     fi
 
-    sed -i '\|^[[:space:]]*\[ -f "\$HOME/\.zshrc\.local" \] && source "\$HOME/\.zshrc\.local"[[:space:]]*$|d' "$user_zshrc"
+    if ! _update_dotfile_sed_as_target "$user_zshrc" '\|^[[:space:]]*\[ -f "\$HOME/\.zshrc\.local" \] && source "\$HOME/\.zshrc\.local"[[:space:]]*$|d'; then
+        log_item "warn" "acfs.zsh loader" "couldn't edit $user_zshrc as the target user; remove its second ~/.zshrc.local source line by hand"
+        return 0
+    fi
     log_item "ok" "acfs.zsh loader" "removed duplicate ~/.zshrc.local sourcing from ~/.zshrc"
     log_to_file "Removed duplicate .zshrc.local sourcing from $user_zshrc"
 }
