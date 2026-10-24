@@ -4970,7 +4970,6 @@ update_slb_sidecar_path_for() {
     printf '%s/.slb.acfs-sha256\n' "${slb_path%/*}"
 }
 
-# shellcheck disable=SC2317,SC2329  # invoked indirectly via run_cmd()
 # update_slb_root_fallback_allowed WHAT: whether root may redo, through
 # update_sudo_prefix, a step of the SLB update that the target user's own
 # attempt failed. Not in a root run for another user (acfs-r7nv): the
@@ -4984,6 +4983,7 @@ update_slb_root_fallback_allowed() {
     return 1
 }
 
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via run_cmd()
 update_run_slb_verified_install() {
     local slb_path=""
     local sidecar_file=""
