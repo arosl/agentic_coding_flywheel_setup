@@ -953,7 +953,13 @@ support_reexec_as_owner() {
 
     runner_bin="$(support_system_binary_path runuser 2>/dev/null || true)"
     if [[ -n "$runner_bin" ]]; then
-        runner=("$runner_bin" -u "$owner" --)
+        runner=("$runner_bin" -u "$owner")
+        # The account's run gets a terminal of its own, not root's, which a
+        # process it leaves behind could read the admin's typing from
+        # (acfs-37bx). Only when all three are terminals: runuser's pty
+        # merges stderr into stdout and adds \r.
+        if [[ -t 0 && -t 1 && -t 2 ]]; then runner+=(--pty); fi
+        runner+=(--)
     else
         runner_bin="$(support_system_binary_path sudo 2>/dev/null || true)"
         [[ -n "$runner_bin" ]] && runner=("$runner_bin" -n -u "$owner" --)

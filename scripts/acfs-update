@@ -987,6 +987,7 @@ exec_as_target_user() {
   local -a cmd_with_env=()
   local env_bin=""
   local runuser_bin=""
+  local -a pty_args=()
   local sudo_bin=""
   local true_bin=""
 
@@ -1037,7 +1038,12 @@ exec_as_target_user() {
   if [[ "$EUID" -eq 0 ]]; then
     runuser_bin="$(system_binary_path runuser 2>/dev/null || true)"
     if [[ -n "$runuser_bin" ]]; then
-      exec "$runuser_bin" -u "$user" -- "${cmd_with_env[@]}"
+      # The account's code gets a terminal of its own, not root's, which a
+      # process it leaves behind could read the admin's typing from
+      # (acfs-37bx). Only when all three are terminals: runuser's pty merges
+      # stderr into stdout and adds \r.
+      if [[ -t 0 && -t 1 && -t 2 ]]; then pty_args=(--pty); fi
+      exec "$runuser_bin" -u "$user" "${pty_args[@]}" -- "${cmd_with_env[@]}"
     fi
 
     sudo_bin="$(system_binary_path sudo 2>/dev/null || true)"

@@ -492,7 +492,13 @@ run_as_user() {
         return 1
     fi
     self="$(readlink -f -- "${BASH_SOURCE[0]}")"
-    "$runuser_bin" -u "$TARGET_USER" -- /usr/bin/env -i \
+    # A terminal of its own, not root's, which a process the user's tools
+    # leave behind could read the admin's typing from (acfs-37bx). Only when
+    # all three are terminals: runuser's pty merges stderr into stdout and
+    # adds \r, which the captured --dry-run text must never get.
+    local -a pty_args=()
+    if [[ -t 0 && -t 1 && -t 2 ]]; then pty_args=(--pty); fi
+    "$runuser_bin" -u "$TARGET_USER" "${pty_args[@]}" -- /usr/bin/env -i \
         HOME="$TARGET_HOME" USER="$TARGET_USER" LOGNAME="$TARGET_USER" \
         PATH="/usr/local/bin:/usr/bin:/bin" \
         ACFS_TARGET_USER="$TARGET_USER" ACFS_TARGET_HOME="$TARGET_HOME" \

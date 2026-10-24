@@ -762,7 +762,13 @@ _acfs_doctor_reexec_as_target_if_root() {
     [[ -n "$target_bin" ]] || target_bin="$TARGET_HOME/.local/bin"
     target_path="$target_bin:$TARGET_HOME/.local/bin:$TARGET_HOME/.acfs/bin:$TARGET_HOME/.cargo/bin:$TARGET_HOME/.bun/bin:$TARGET_HOME/.atuin/bin:$TARGET_HOME/go/bin:$TARGET_HOME/google-cloud-sdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
 
-    exec "$runuser_bin" -u "$TARGET_USER" -- "$env_bin" \
+    # The user's helpers get a terminal of their own, not root's, which a
+    # process they leave behind could read the admin's typing from
+    # (acfs-37bx). Only when all three are terminals: runuser's pty merges
+    # stderr into stdout and adds \r.
+    local -a pty_args=()
+    if [[ -t 0 && -t 1 && -t 2 ]]; then pty_args=(--pty); fi
+    exec "$runuser_bin" -u "$TARGET_USER" "${pty_args[@]}" -- "$env_bin" \
         HOME="$TARGET_HOME" \
         TARGET_USER="$TARGET_USER" \
         TARGET_HOME="$TARGET_HOME" \
