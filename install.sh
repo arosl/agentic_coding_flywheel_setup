@@ -4731,6 +4731,14 @@ _acfs_internal_asset_expected_sha256() {
 install_asset() {
     local rel_path="$1"
     local dest_path="$2"
+    # --as-target: the target user owns the destination's directory, so the
+    # user makes a missing directory and writes the file with the user's own
+    # rights, from the source root has verified. A link the user puts at the
+    # name, however late, then reaches only what the user could write
+    # (acfs-69gx). A new file gets tee's mode (0666 & ~umask), not the
+    # source's as with cp, so an executable needs its chmod as the user.
+    local as_target=false
+    [[ "${3:-}" == "--as-target" ]] && as_target=true
 
     # Security: Validate rel_path doesn't contain path traversal
     if [[ "$rel_path" == *".."* ]]; then
@@ -4828,7 +4836,9 @@ install_asset() {
     local _ia_dest_dir
     _ia_dest_dir="$(dirname "$dest_path")"
     if [[ ! -d "$_ia_dest_dir" ]]; then
-        if [[ -w "$(dirname "$_ia_dest_dir" 2>/dev/null)" ]] || [[ $EUID -eq 0 ]]; then
+        if [[ "$as_target" == "true" ]]; then
+            run_as_target "$mkdir_bin" -p "$_ia_dest_dir" 2>/dev/null || true
+        elif [[ -w "$(dirname "$_ia_dest_dir" 2>/dev/null)" ]] || [[ $EUID -eq 0 ]]; then
             "$mkdir_bin" -p "$_ia_dest_dir" 2>/dev/null || true
         elif [[ ${#sudo_cmd[@]} -gt 0 ]]; then
             "${sudo_cmd[@]}" "$mkdir_bin" -p "$_ia_dest_dir" 2>/dev/null || true
@@ -4862,12 +4872,17 @@ install_asset() {
         [[ -w "$dest_dir" ]] || need_sudo=true
     fi
 
-    if [[ "$need_sudo" == "true" ]] && [[ ${#sudo_cmd[@]} -eq 0 ]]; then
+    if [[ "$need_sudo" == "true" ]] && [[ ${#sudo_cmd[@]} -eq 0 ]] && [[ "$as_target" != "true" ]]; then
         log_error "install_asset: Destination not writable and sudo not available: $dest_path"
         return 1
     fi
 
-    if [[ "$need_sudo" == "true" ]]; then
+    if [[ "$as_target" == "true" ]]; then
+        if ! run_as_target tee "$dest_path" < "$source_asset" > /dev/null; then
+            log_error "install_asset: Failed to write verified source asset as $TARGET_USER: $rel_path"
+            return 1
+        fi
+    elif [[ "$need_sudo" == "true" ]]; then
         if ! "${sudo_cmd[@]}" "$cp_bin" "$source_asset" "$dest_path"; then
             log_error "install_asset: Failed to copy verified source asset: $rel_path"
             return 1
@@ -7990,8 +8005,8 @@ setup_filesystem() {
 
     # base.filesystem's verify requires the ACFS-owned copy of the workspace
     # AGENTS.md template, which only the generated installer wrote (acfs-qe94).
-    try_step "Installing AGENTS.md template (~/.acfs/docs)" install_asset "acfs/AGENTS.md" "$ACFS_HOME/docs/AGENTS.workspace.md" || return 1
-    try_step_optional "Setting AGENTS.md template ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/docs/AGENTS.workspace.md" || true
+    # The user writes it, as base.filesystem's generated path does (acfs-69gx).
+    try_step "Installing AGENTS.md template (~/.acfs/docs)" install_asset "acfs/AGENTS.md" "$ACFS_HOME/docs/AGENTS.workspace.md" --as-target || return 1
     try_step_optional "Seeding /data/projects/AGENTS.md" acfs_seed_workspace_agents_md "$ACFS_HOME/docs/AGENTS.workspace.md" /data/projects/AGENTS.md || true
 
     # Install essential ACFS scripts early so `acfs doctor` works even after early failures.

@@ -34,7 +34,7 @@ run_filesystem_phase() {
     acfs_chown_tree() { :; }
     acfs_ensure_primary_bin_dir() { :; }
     user_container_tmp_policy() { :; }
-    install_asset() { printf 'asset=%s\n' "$2" >> "$ASSETS"; }
+    install_asset() { printf 'asset=%s%s\n' "$2" "${3:+ $3}" >> "$ASSETS"; }
     acfs_seed_workspace_agents_md() { printf 'seed=%s <- %s\n' "$2" "$1" >> "$ASSETS"; }
 
     SUDO=fake_sudo
@@ -65,6 +65,37 @@ load_seed_helper() {
     WORKSPACE="$BATS_TEST_TMPDIR/projects"
     printf 'template\n' > "$TEMPLATE"
     mkdir -p "$WORKSPACE"
+}
+
+# Loads install.sh's install_asset over a verified source tree in the test
+# dir. run_as_target logs and runs the command as is, and the cp it resolves
+# logs that the caller copied. Not root here, so the link checks don't run.
+load_install_asset() {
+    eval "$(sed -n '/^install_asset() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
+    [[ "$(type -t install_asset)" == "function" ]]
+
+    SOURCE_ROOT="$BATS_TEST_TMPDIR/source"
+    mkdir -p "$SOURCE_ROOT/acfs"
+    printf 'template\n' > "$SOURCE_ROOT/acfs/AGENTS.md"
+    ACFS_TRUSTED_INTERNAL_SOURCE_ROOT="$SOURCE_ROOT"
+    ACFS_BOOTSTRAP_DIR="$SOURCE_ROOT"
+    TARGET_USER=ubuntu
+    TARGET_HOME="$BATS_TEST_TMPDIR/home"
+    ACFS_HOME="$TARGET_HOME/.acfs"
+    mkdir -p "$ACFS_HOME"
+
+    CALLS="$BATS_TEST_TMPDIR/calls"
+    : > "$CALLS"
+    FAKE_CP="$BATS_TEST_TMPDIR/cp"
+    printf '#!/bin/bash\necho "caller cp $*" >> "%s"\nexec %s "$@"\n' "$CALLS" "$(command -v cp)" > "$FAKE_CP"
+    chmod 0755 "$FAKE_CP"
+    acfs_early_system_binary_path() { if [[ "$1" == cp ]]; then printf '%s\n' "$FAKE_CP"; else command -v "$1"; fi; }
+    acfs_early_sudo_binary_path() { return 1; }
+    _acfs_internal_asset_is_rendered_data() { return 1; }
+    _acfs_internal_asset_expected_sha256() { sha256sum "$SOURCE_ROOT/$1" | cut -d' ' -f1; }
+    acfs_calculate_file_sha256() { sha256sum "$1" | cut -d' ' -f1; }
+    log_error() { printf 'error: %s\n' "$*" >> "$CALLS"; }
+    run_as_target() { printf 'as target: %s\n' "$*" >> "$CALLS"; "$@"; }
 }
 
 # Each "$target_home/..." file that base.filesystem's verify tests with
@@ -105,6 +136,47 @@ verified_files() {
     [[ "$output" == *"rc=0"* ]]
     [[ "$output" == *"asset=$template"*"seed=/data/projects/AGENTS.md <- $template"* ]]
     [[ "$output" != *"asset=/data/projects/AGENTS.md"* ]]
+}
+
+@test "install.sh's filesystem phase writes the ~/.acfs/docs template as the target user (acfs-69gx)" {
+    run run_filesystem_phase
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"asset=$BATS_TEST_TMPDIR/home/.acfs/docs/AGENTS.workspace.md --as-target"* ]]
+}
+
+@test "install_asset --as-target makes the directory and writes the file as the target user, with no cp of its own (acfs-69gx)" {
+    load_install_asset
+    local dest="$ACFS_HOME/docs/AGENTS.workspace.md"
+
+    install_asset "acfs/AGENTS.md" "$dest" --as-target
+
+    [[ "$(cat "$dest")" == "template" ]]
+    grep -qxF "as target: $(command -v mkdir) -p $ACFS_HOME/docs" "$CALLS"
+    grep -qxF "as target: tee $dest" "$CALLS"
+    [[ -z "$(grep '^caller cp' "$CALLS" || true)" ]]
+}
+
+@test "install_asset without --as-target still copies as the caller" {
+    load_install_asset
+    local dest="$ACFS_HOME/docs/AGENTS.workspace.md"
+    mkdir -p "$ACFS_HOME/docs"
+
+    install_asset "acfs/AGENTS.md" "$dest"
+
+    [[ "$(cat "$dest")" == "template" ]]
+    grep -q '^caller cp ' "$CALLS"
+    [[ -z "$(grep '^as target' "$CALLS" || true)" ]]
+}
+
+@test "install_asset --as-target fails when the target user's write fails" {
+    load_install_asset
+    run_as_target() { printf 'as target: %s\n' "$*" >> "$CALLS"; return 1; }
+    mkdir -p "$ACFS_HOME/docs"
+
+    run install_asset "acfs/AGENTS.md" "$ACFS_HOME/docs/AGENTS.workspace.md" --as-target
+
+    [[ "$status" -ne 0 ]]
+    grep -qF "error: install_asset: Failed to write verified source asset as ubuntu: acfs/AGENTS.md" "$CALLS"
 }
 
 @test "the seed writes an absent workspace AGENTS.md, as the target user" {
