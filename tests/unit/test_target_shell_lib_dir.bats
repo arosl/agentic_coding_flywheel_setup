@@ -32,6 +32,7 @@ setup() {
 }
 
 teardown() {
+    chmod 755 "$BATS_TEST_TMPDIR/checkout" 2>/dev/null || true
     [[ -d "$CHECKOUT_LIB" ]] && chmod 755 "$CHECKOUT_LIB"
     common_teardown
 }
@@ -43,6 +44,13 @@ teardown() {
 
 @test "an ACFS_LIB_DIR the target can't read falls back to the deployed copy" {
     chmod 000 "$CHECKOUT_LIB"
+    run run_as_target_shell "$SOURCE_USER_SH"
+    [[ "$status" -eq 0 && "$output" == "deployed" ]]
+}
+
+@test "a readable lib dir under a parent the target can't traverse falls back too" {
+    # The real layout: /root is 0700, its checkout's scripts/lib is 0755.
+    chmod 000 "$BATS_TEST_TMPDIR/checkout"
     run run_as_target_shell "$SOURCE_USER_SH"
     [[ "$status" -eq 0 && "$output" == "deployed" ]]
 }
