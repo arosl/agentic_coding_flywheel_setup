@@ -63,8 +63,10 @@ Usage:
                                              nhm's [providers] capacity =
                                              ["acfs", "capacity", "--guard",
                                              "--json"], so nhm spawn refuses
-                                             while the guard is red; same
-                                             FILE and exits as learning-profile
+                                             while the guard is red (always,
+                                             with under 4 GiB available);
+                                             opt-in; same FILE and exits as
+                                             learning-profile
   nhm_hooks.sh plugin link|bind [--no-reload]|status
                                              nhm's herdr plugin (link) and its
                                              keys (bind: nhm bind for the
@@ -781,20 +783,23 @@ nhm_hooks_trust() {
 
 # ---- ACFS's settings in nhm's config ----
 #
-# ACFS ships two settings in nhm's config ($XDG_CONFIG_HOME/nhm/config.toml)
-# whose nhm defaults are off:
+# Two settings in nhm's config ($XDG_CONFIG_HOME/nhm/config.toml) whose nhm
+# defaults are off:
 #
-# - the learning profile (acfs-9hkh.88; plan-v8 2.13): [learning]
-#   implicit_outcome = "closed-assigned". `nhm feedback outcomes` then
-#   records a cm outcome for each bead that closed while assigned to an
-#   agent, the flywheel's OUTCOME step.
-# - the capacity provider (acfs-hd37): [providers] capacity = ["acfs",
-#   "capacity", "--guard", "--json"]. nhm's spawn admission then refuses
-#   to start an agent while ACFS's capacity guard is red (acfs-gmbo). nhm
-#   reads the whole file at each spawn, and a file it cannot read fails
-#   the spawn, so each edit is parsed before it is written. A user who
-#   wants no provider sets capacity = [], which nhm reads as none and
-#   ACFS leaves as it is.
+# - the learning profile (acfs-9hkh.88; plan-v8 2.13), which install and
+#   acfs update set: [learning] implicit_outcome = "closed-assigned".
+#   `nhm feedback outcomes` then records a cm outcome for each bead that
+#   closed while assigned to an agent, the flywheel's OUTCOME step.
+# - the capacity provider (acfs-hd37), which only the user sets:
+#   [providers] capacity = ["acfs", "capacity", "--guard", "--json"].
+#   nhm's spawn admission then refuses to start an agent while ACFS's
+#   capacity guard is red (acfs-gmbo), and nothing overrides that. The
+#   guard is red whenever under 4 GiB is available, so on a small host
+#   every agent is refused, and install leaves it unset. capacity = []
+#   turns it off again: nhm reads it as no provider, and set leaves it.
+#
+# nhm reads the whole file at each spawn, and a file it cannot read fails
+# the spawn, so each edit is parsed before it is written.
 #
 #   learning-profile|capacity-provider check [FILE]
 #                                  0: ACFS's value; 3: the user set another

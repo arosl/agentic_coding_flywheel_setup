@@ -3336,16 +3336,17 @@ check_nhm() {
             *) missing+=("nhm's learning profile is not set, so closed beads record no cm outcome")
                fixes+=("bash $helper learning-profile set (or acfs update)") ;;
         esac
-        # nhm's capacity provider (acfs-hd37): without it, nhm spawn starts
-        # agents while the capacity guard is red.
+        # nhm's capacity provider (acfs-hd37) is the user's choice, so it is
+        # a note, never a warning: install doesn't set it, since the guard is
+        # red whenever under 4 GiB is available, and nhm overrides no red, so
+        # a small host would refuse every agent.
         rc=0
         HOME="$home" bash "$helper" capacity-provider check "${XDG_CONFIG_HOME:-$home/.config}/nhm/config.toml" \
             </dev/null >/dev/null 2>&1 || rc=$?
         case "$rc" in
-            0) notes+=("capacity provider on") ;;
+            0) notes+=("capacity provider on ([providers] capacity = [] in nhm's config turns it off)") ;;
             3) notes+=("capacity provider set by your nhm config") ;;
-            *) missing+=("nhm's capacity provider is not set, so nhm spawn starts agents while the capacity guard is red")
-               fixes+=("bash $helper capacity-provider set (or acfs update)") ;;
+            *) notes+=("capacity provider off: 'bash $helper capacity-provider set' has nhm spawn refuse while 'acfs capacity --guard' is red, so a host with under ACFS_CAPACITY_GUARD_MIN_MEM_MIB (4096 MiB) available then refuses every start; [providers] capacity = [] in nhm's config turns it off again") ;;
         esac
     fi
 

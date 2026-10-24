@@ -8262,13 +8262,12 @@ update_nhm_hooks() {
     return 0
 }
 
-# One of ACFS's settings in nhm's config (nhm_hooks.sh learning-profile or
-# capacity-provider): set it as the target user, then report it.
-# Idempotent; a value the user set stays. Args: the nhm_hooks.sh
-# subcommand, the item's name, the setting and what "on" means.
-update_nhm_config_setting() {
-    local subcommand="$1" desc="$2" setting="$3" on_detail="$4"
-    local helper="" target_user="" current_user="" target_home="" rc=0
+# nhm's learning profile (nhm_hooks.sh learning-profile, acfs-9hkh.88):
+# [learning] implicit_outcome = "closed-assigned" in nhm's config, so
+# `nhm feedback outcomes` records cm outcomes for closed beads (plan-v8
+# 2.13). Idempotent; a value the user set stays.
+update_nhm_learning_profile() {
+    local desc="nhm learning profile" helper="" target_user="" current_user="" target_home="" rc=0
 
     [[ "${UPDATE_STACK:-true}" == "true" ]] || return 0
     update_binary_exists nhm || return 0
@@ -8278,13 +8277,13 @@ update_nhm_config_setting() {
         return 0
     fi
     if update_is_read_only_mode; then
-        log_item "skip" "$desc" "dry-run: would set $setting in nhm's config"
+        log_item "skip" "$desc" "dry-run: would set [learning] implicit_outcome in nhm's config"
         return 0
     fi
     target_user="$(update_target_user 2>/dev/null || true)"
     current_user="$(update_current_user 2>/dev/null || true)"
     if [[ -z "$target_user" || "$current_user" != "$target_user" ]]; then
-        log_item "warn" "$desc" "run as ${target_user:-the target user}: bash $helper $subcommand set"
+        log_item "warn" "$desc" "run as ${target_user:-the target user}: bash $helper learning-profile set"
         return 0
     fi
     target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
@@ -8293,33 +8292,17 @@ update_nhm_config_setting() {
         return 0
     fi
     # The target's own config dir: XDG_CONFIG_HOME when it is theirs.
-    if ! HOME="$target_home" bash "$helper" "$subcommand" set </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1; then
+    if ! HOME="$target_home" bash "$helper" learning-profile set </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1; then
         log_item "warn" "$desc" "could not set it; see the update log"
         return 0
     fi
-    HOME="$target_home" bash "$helper" "$subcommand" check </dev/null >/dev/null 2>&1 || rc=$?
+    HOME="$target_home" bash "$helper" learning-profile check </dev/null >/dev/null 2>&1 || rc=$?
     case "$rc" in
-        0) log_item "ok" "$desc" "$on_detail" ;;
+        0) log_item "ok" "$desc" "on ([learning] implicit_outcome = \"closed-assigned\")" ;;
         3) log_item "ok" "$desc" "left as your config sets it" ;;
         *) log_item "warn" "$desc" "not set; see the update log" ;;
     esac
     return 0
-}
-
-# nhm's learning profile (acfs-9hkh.88): [learning] implicit_outcome =
-# "closed-assigned", so `nhm feedback outcomes` records cm outcomes for
-# closed beads (plan-v8 2.13).
-update_nhm_learning_profile() {
-    update_nhm_config_setting learning-profile "nhm learning profile" "[learning] implicit_outcome" \
-        "on ([learning] implicit_outcome = \"closed-assigned\")"
-}
-
-# nhm's capacity provider (acfs-hd37): [providers] capacity = ["acfs",
-# "capacity", "--guard", "--json"], so nhm spawn refuses to start an agent
-# while the host's capacity guard is red (acfs-gmbo).
-update_nhm_capacity_provider() {
-    update_nhm_config_setting capacity-provider "nhm capacity provider" "[providers] capacity" \
-        "on (nhm spawn refuses while acfs capacity --guard is red)"
 }
 
 # dcg's Bash guard for Codex (stack.dcg; nhm_hooks.sh codex-dcg,
@@ -10141,7 +10124,6 @@ main() {
     update_agent_mail_stop_hook
     update_nhm_hooks
     update_nhm_learning_profile
-    update_nhm_capacity_provider
     update_codex_dcg_hook
     update_nhm_maintain_timer
     update_root_tool_ownership
