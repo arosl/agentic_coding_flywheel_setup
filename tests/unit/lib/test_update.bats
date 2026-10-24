@@ -3492,6 +3492,134 @@ EOF
     assert_output ""
 }
 
+@test "update.sh's atuin repair hands nothing over, and only the target user touches the agents' configs (acfs-tquv)" {
+    local fn
+    for fn in update_repair_atuin_install update_write_atuin_guard_wrapper update_write_atuin_guard_wrapper_as_user; do
+        [[ "$(declare -f "$fn")" != *chown* ]]
+    done
+    [[ "$(declare -f update_write_atuin_guard_wrapper)" == *'if update_for_user "$wrapper_path"; then'* ]]
+    # Every use of a config's path is the -f test, the user's cat, the
+    # user's write or the log line: no redirect, cat or jq of update.sh's own.
+    [[ -z "$(declare -f update_strip_atuin_agent_hooks_from_config | grep -F '"$config_path"' |
+        grep -vE -- '-f "\$config_path"|update_run_in_target_context "" cat --|_update_dotfile_write_as_target|log_to_file' || true)" ]]
+    [[ -z "$(declare -f update_disable_atuin_agent_integrations | grep -F '"$pi_extension"' |
+        grep -vE -- '-f "\$pi_extension"|update_run_in_target_context "" cat --|_update_dotfile_write_as_target|log_to_file' || true)" ]]
+}
+
+# The user's own atuin at ~/.local/bin/atuin, the real one in ~/.atuin/bin,
+# and a root run for that user (stub_sync_as_user).
+_atuin_wrapper_for_user() {
+    ATUIN_HOME="$(create_temp_dir)"
+    ATUIN_BIN="$ATUIN_HOME/.local/bin"
+    ATUIN_REAL="$ATUIN_HOME/.atuin/bin/atuin"
+    mkdir -p "$ATUIN_BIN" "${ATUIN_REAL%/*}"
+    printf '#!/bin/sh\necho real\n' > "$ATUIN_REAL"
+    chmod +x "$ATUIN_REAL"
+    printf '#!/bin/sh\necho mine\n' > "$ATUIN_BIN/atuin"
+    stub_sync_as_user "$ATUIN_HOME" "$ATUIN_HOME/as-user.log"
+}
+
+@test "update_write_atuin_guard_wrapper run by root for a user: a link swapped in after the move-aside is replaced, not written through (acfs-tquv)" {
+    local outside
+    _atuin_wrapper_for_user
+    outside="$(create_temp_dir)/root-file"
+    printf "root's own\n" > "$outside"
+    # The user swaps a link in at the wrapper's name as soon as a mv, root's
+    # or the user's, leaves the name free.
+    ATUIN_SWAP_NAME="$ATUIN_BIN/atuin" ATUIN_SWAP_TARGET="$outside" ATUIN_SWAP_MARK="$ATUIN_HOME/swapped"
+    export ATUIN_SWAP_NAME ATUIN_SWAP_TARGET ATUIN_SWAP_MARK
+    mv() {
+        command mv "$@" || return
+        [[ -e "$ATUIN_SWAP_NAME" || -L "$ATUIN_SWAP_NAME" ]] && return 0
+        ln -s "$ATUIN_SWAP_TARGET" "$ATUIN_SWAP_NAME" && printf 'swapped\n' >> "$ATUIN_SWAP_MARK"
+    }
+    export -f mv
+
+    run update_write_atuin_guard_wrapper "$ATUIN_BIN/atuin" "$ATUIN_REAL"
+    unset -f mv
+    assert_success
+
+    # The link was swapped in, and then replaced.
+    [[ "$(cat "$ATUIN_SWAP_MARK")" == "swapped" ]]
+    run cat "$outside"
+    assert_output "root's own"
+    [[ -f "$ATUIN_BIN/atuin" && ! -L "$ATUIN_BIN/atuin" ]]
+    grep -Fq "agent hook integration disabled by ACFS" "$ATUIN_BIN/atuin"
+    [[ "$(stat -c '%a' "$ATUIN_BIN/atuin")" == "755" ]]
+    run cat "$ATUIN_BIN/atuin.acfs-backup.2025-01-01.$$"
+    assert_output --partial "echo mine"
+    # The user made the directory and moved the old file aside.
+    grep -Fxq "mkdir -p -- $ATUIN_BIN" "$ATUIN_HOME/as-user.log"
+    grep -Fq "_ $ATUIN_BIN/atuin $ATUIN_BIN/atuin.acfs-backup.2025-01-01.$$" "$ATUIN_HOME/as-user.log"
+    [[ -z "$(find "$ATUIN_BIN" -name '.acfs-sync.*')" ]]
+}
+
+@test "update_write_atuin_guard_wrapper run by root for a user never moves the user's file into a directory a link at the backup name points to (acfs-tquv)" {
+    local elsewhere
+    _atuin_wrapper_for_user
+    elsewhere="$(create_temp_dir)"
+    ln -s "$elsewhere" "$ATUIN_BIN/atuin.acfs-backup.2025-01-01.$$"
+
+    run update_write_atuin_guard_wrapper "$ATUIN_BIN/atuin" "$ATUIN_REAL"
+
+    [[ -z "$(ls -A "$elsewhere")" ]]
+    # GNU mv -T replaces the link with the user's file; uutils mv refuses
+    # it, and then no wrapper is written.
+    if [[ "$status" -eq 0 ]]; then
+        grep -Fq "agent hook integration disabled by ACFS" "$ATUIN_BIN/atuin"
+        run cat "$ATUIN_BIN/atuin.acfs-backup.2025-01-01.$$"
+        assert_output --partial "echo mine"
+    else
+        run cat "$ATUIN_BIN/atuin"
+        assert_output --partial "echo mine"
+    fi
+}
+
+@test "update_repair_atuin_install run by root for a user writes nothing below a link in the user's home (acfs-tquv)" {
+    local home elsewhere
+    home="$(create_temp_dir)"
+    elsewhere="$(create_temp_dir)"
+    mkdir -p "$home/.atuin/bin"
+    printf '#!/bin/sh\necho real\n' > "$home/.atuin/bin/atuin"
+    chmod +x "$home/.atuin/bin/atuin"
+    # ~/.local is a link to a directory of root's, /usr say.
+    ln -s "$elsewhere" "$home/.local"
+    export TARGET_HOME="$home" ACFS_BIN_DIR="$home/.local/bin"
+    UPDATE_LOG_FILE="$home/update.log"
+    stub_sync_as_user "$home" "$home/as-user.log"
+
+    run update_repair_atuin_install
+    assert_failure
+
+    [[ -z "$(ls -A "$elsewhere")" ]]
+    grep -Fq "Atuin guard wrapper not installed at $home/.local/bin/atuin" "$home/update.log"
+}
+
+@test "update_disable_atuin_agent_integrations reads and writes the agents' configs as the target user, and a dotfiles link stays a link (acfs-tquv)" {
+    local dotfiles f
+    dotfiles="$(create_temp_dir)"
+    mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.pi/agent/extensions"
+    printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"atuin hook claude-code"}]}]}}\n' > "$dotfiles/settings.json"
+    ln -s "$dotfiles/settings.json" "$HOME/.claude/settings.json"
+    printf '{"hooks":{"PreToolUse":[{"matcher":"^Bash$","hooks":[{"type":"command","command":"atuin hook codex"}]}]}}\n' > "$HOME/.codex/hooks.json"
+    printf 'export default function atuin(): void {}\n' > "$HOME/.pi/agent/extensions/atuin.ts"
+    stub_sync_as_user "$HOME" "$HOME/as-user.log"
+
+    run update_disable_atuin_agent_integrations "$HOME"
+    assert_success
+
+    [[ -L "$HOME/.claude/settings.json" ]]
+    for f in "$dotfiles/settings.json" "$HOME/.codex/hooks.json"; do
+        run jq -e '[.. | objects | .command? // empty | select(test("atuin[[:space:]]+hook"))] | length == 0' "$f"
+        assert_success
+    done
+    grep -Fq "Atuin integration intentionally disabled by ACFS" "$HOME/.pi/agent/extensions/atuin.ts"
+    for f in "$HOME/.codex/hooks.json" "$HOME/.claude/settings.json" "$HOME/.pi/agent/extensions/atuin.ts"; do
+        grep -Fxq "cat -- $f" "$HOME/as-user.log"
+        grep -Fxq "tee $f" "$HOME/as-user.log"
+    done
+}
+
 @test "update_repair_atuin_install: normalizes custom and local shims" {
     export ACFS_BIN_DIR="$HOME/custom-bin"
     mkdir -p "$HOME/.atuin/bin"

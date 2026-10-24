@@ -1613,15 +1613,49 @@ update_shell_tool_state_improved() {
     [[ -z "$before_path" || "$after_path" != "$before_path" || "$after_version" != "$before_version" ]]
 }
 
+# A root run for another user (update_for_user) never writes the wrapper as
+# root (acfs-tquv). Root's steps there followed links the user put in that
+# bin dir: the move-aside put the user's file into whatever directory a link
+# at the backup name pointed to, the redirect wrote through a link swapped
+# in after the move, and the chowns handed over a hard-linked file or went
+# through a link above the bin dir. Here the user makes the directory
+# (update_user_mkdir), moves what isn't ACFS's wrapper aside with mv -T, and
+# writes the wrapper through update_user_write_file's temp file and rename,
+# so root neither writes there nor hands anything over. A link at either
+# name reaches only what the user could write.
+update_write_atuin_guard_wrapper_as_user() {
+    local wrapper_path="$1"
+    local real_bin="$2"
+    local bash_bin=""
+
+    bash_bin="$(update_system_binary_path bash 2>/dev/null || true)"
+    [[ -n "$bash_bin" ]] || return 1
+    update_user_mkdir "${wrapper_path%/*}" || return 1
+    update_run_in_target_context "" "$bash_bin" --noprofile --norc -c '
+        [[ -e "$1" || -L "$1" ]] || exit 0
+        if [[ -f "$1" && ! -L "$1" ]] && grep -Fq "agent hook integration disabled by ACFS" "$1"; then
+            exit 0
+        fi
+        mv -fT -- "$1" "$2"
+    ' _ "$wrapper_path" "${wrapper_path}.acfs-backup.$(date +%s).$$" >/dev/null 2>&1 || return 1
+    update_user_write_file "$wrapper_path" 755 "" <(update_atuin_guard_wrapper_text "$real_bin")
+}
+
 update_write_atuin_guard_wrapper() {
     local wrapper_path="${1:-}"
     local real_bin="${2:-}"
-    local real_bin_q=""
     local backup_path=""
 
     [[ -n "$wrapper_path" && -n "$real_bin" && -x "$real_bin" ]] || return 1
-    printf -v real_bin_q '%q' "$real_bin"
 
+    if update_for_user "$wrapper_path"; then
+        update_write_atuin_guard_wrapper_as_user "$wrapper_path" "$real_bin"
+        return
+    fi
+
+    # A user's own run, or root's for root or into a directory outside the
+    # target's home, writes by path.
+    mkdir -p "${wrapper_path%/*}" 2>/dev/null || true
     if [[ -e "$wrapper_path" || -L "$wrapper_path" ]]; then
         if [[ ! -L "$wrapper_path" ]] && grep -Fq "agent hook integration disabled by ACFS" "$wrapper_path" 2>/dev/null; then
             :
@@ -1631,16 +1665,24 @@ update_write_atuin_guard_wrapper() {
         fi
     fi
 
-    {
-        cat <<'ATUIN_ACFS_WRAPPER_HEAD'
+    update_atuin_guard_wrapper_text "$real_bin" > "$wrapper_path"
+    chmod 0755 "$wrapper_path"
+}
+
+# update_atuin_guard_wrapper_text REAL_BIN: prints the wrapper that runs the
+# real atuin binary REAL_BIN.
+update_atuin_guard_wrapper_text() {
+    local real_bin_q=""
+    printf -v real_bin_q '%q' "$1"
+    cat <<'ATUIN_ACFS_WRAPPER_HEAD'
 #!/usr/bin/env bash
 set -euo pipefail
 
 real_atuin_bin="${ATUIN_REAL_BIN:-}"
 if [[ -z "$real_atuin_bin" ]]; then
 ATUIN_ACFS_WRAPPER_HEAD
-        printf '    real_atuin_bin=%s\n' "$real_bin_q"
-        cat <<'ATUIN_ACFS_WRAPPER_TAIL'
+    printf '    real_atuin_bin=%s\n' "$real_bin_q"
+    cat <<'ATUIN_ACFS_WRAPPER_TAIL'
 fi
 
 if [[ ! -x "$real_atuin_bin" ]]; then
@@ -1683,10 +1725,13 @@ fi
 
 exec "$real_atuin_bin" "$@"
 ATUIN_ACFS_WRAPPER_TAIL
-    } > "$wrapper_path"
-    chmod 0755 "$wrapper_path"
 }
 
+# The target user reads and writes the agents' configs (acfs-tquv), as
+# _update_dotfile_write_as_target writes ~/.profile: a root update for a user
+# read and wrote them as root, through a link the user put there. As the
+# user, a dotfiles link stays a link and its file is written, and a link to a
+# file the user can't write fails the cleanup.
 update_strip_atuin_agent_hooks_from_config() {
     local config_path="${1:-}"
     local current_json=""
@@ -1695,7 +1740,7 @@ update_strip_atuin_agent_hooks_from_config() {
     [[ -f "$config_path" ]] || return 0
     command -v jq >/dev/null 2>&1 || return 1
 
-    current_json="$(cat "$config_path")" || return 1
+    current_json="$(update_run_in_target_context "" cat -- "$config_path")" || return 1
     cleaned_json="$(jq '
         def is_atuin_agent_hook:
           ((.command? // "") | type) == "string"
@@ -1713,10 +1758,10 @@ update_strip_atuin_agent_hooks_from_config() {
           )
           | .hooks |= with_entries(select(((.value | type) != "array") or ((.value | length) > 0)))
         else . end
-    ' "$config_path")" || return 1
+    ' <<<"$current_json")" || return 1
 
     if [[ "$cleaned_json" != "$current_json" ]]; then
-        printf '%s\n' "$cleaned_json" > "$config_path" || return 1
+        printf '%s\n' "$cleaned_json" | _update_dotfile_write_as_target "$config_path" || return 1
         log_to_file "Removed Atuin agent hooks from $config_path"
     fi
 }
@@ -1734,7 +1779,7 @@ update_disable_atuin_agent_integrations() {
 
     pi_extension="$target_home/.pi/agent/extensions/atuin.ts"
     if [[ -f "$pi_extension" ]]; then
-        current_pi_extension="$(cat "$pi_extension")" || return 1
+        current_pi_extension="$(update_run_in_target_context "" cat -- "$pi_extension")" || return 1
         desired_pi_extension="$(cat <<'ATUIN_PI_DISABLED'
 /** Atuin integration intentionally disabled by ACFS. */
 export default function atuinDisabled(): void {
@@ -1745,7 +1790,7 @@ ATUIN_PI_DISABLED
         if [[ "$current_pi_extension" == "$desired_pi_extension" ]]; then
             return 0
         fi
-        printf '%s\n' "$desired_pi_extension" > "$pi_extension" || return 1
+        printf '%s\n' "$desired_pi_extension" | _update_dotfile_write_as_target "$pi_extension" || return 1
         log_to_file "Disabled Atuin pi extension: $pi_extension"
     fi
 }
@@ -1772,22 +1817,16 @@ update_repair_atuin_install() {
     fi
 
     if [[ -x "$preferred_src" ]]; then
+        # No chown here (acfs-tquv): in a root run for the user, the user
+        # makes the directory and writes the wrapper. Root's chown -h of
+        # ~/.local/bin went through a link at ~/.local, onto /usr/bin say.
         for dir in "${bin_dirs[@]}"; do
             [[ -n "$dir" ]] || continue
-            mkdir -p "$dir" 2>/dev/null || true
-            if [[ "${EUID:-$(id -u)}" -eq 0 && -n "$target_home" && "$dir" == "$target_home/"* ]]; then
-                local chown_dir="$dir"
-                while [[ "$chown_dir" == "$target_home/"* && "$chown_dir" != "$target_home" ]]; do
-                    chown -h "$target_user:$target_user" "$chown_dir" 2>/dev/null || chown -h "$target_user" "$chown_dir" 2>/dev/null || true
-                    chown_dir="${chown_dir%/*}"
-                done
-            fi
             if update_write_atuin_guard_wrapper "$dir/atuin" "$preferred_src" 2>/dev/null; then
                 installed_wrapper=true
-                if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-                    chown -h "$target_user:$target_user" "$dir/atuin" 2>/dev/null || chown -h "$target_user" "$dir/atuin" 2>/dev/null || true
-                fi
                 log_to_file "Atuin guard wrapper installed: $dir/atuin -> $preferred_src"
+            else
+                log_to_file "Atuin guard wrapper not installed at $dir/atuin: $target_user could not write it there, or a link is below $target_home"
             fi
         done
     fi
