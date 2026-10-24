@@ -14,6 +14,11 @@
 # chmod follows a link too, so root's chmod of a path in the user's home had
 # root change any file's mode: /etc/shadow to 0755, or /etc to 0700.
 # acfs-1twj: those chmods run as the target user (acfs_chmod_as_target).
+#
+# chown -h doesn't help with a hard link, which is the file itself: where
+# fs.protected_hardlinks is 0, a hard link the user put in the home would
+# have a handover give that file away. acfs-wmgr: main checks the sysctl
+# before the first handover (acfs_check_protected_hardlinks).
 
 setup() {
     PROJECT_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
@@ -389,4 +394,62 @@ run_setup_shell() {
     [[ "$status" -eq 0 ]]
     [[ "$output" == *"rc=0"* ]]
     [[ -z "$(find "$TARGET_HOME" -maxdepth 1 -name '.p10k.zsh.pre-acfs.*')" ]]
+}
+
+# Loads install.sh's acfs_check_protected_hardlinks, with a sysctl file the
+# test writes in place of /proc/sys/fs/protected_hardlinks.
+load_hardlinks_guard() {
+    eval "$(sed -n '/^acfs_check_protected_hardlinks() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
+    [[ "$(type -t acfs_check_protected_hardlinks)" == "function" ]]
+    log_warn() { printf 'WARN: %s\n' "$*"; }
+    log_error() { printf 'ERROR: %s\n' "$*"; }
+    TARGET_USER=tester
+    ACFS_PROTECTED_HARDLINKS_FILE="$BATS_TEST_TMPDIR/protected_hardlinks"
+}
+
+@test "main checks fs.protected_hardlinks before the first handover, when the installer isn't the target user (acfs-wmgr)" {
+    local body guard first
+    body="$(sed -n '/^main() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
+    guard="$(grep -n 'acfs_check_protected_hardlinks || exit 1' <<<"$body" | cut -d: -f1)"
+    [[ -n "$guard" ]]
+    # shellcheck disable=SC2016  # The literal condition main holds.
+    grep -qF '[[ "$(acfs_early_resolve_current_user 2>/dev/null || true)" != "$TARGET_USER" ]]' <<<"$body"
+    # It follows init_target_paths and comes before anything that hands files over.
+    (( guard > $(grep -n '^\s*init_target_paths$' <<<"$body" | cut -d: -f1) ))
+    first="$(grep -nE 'acfs_log_init|state_init|acfs_chown_tree|acfs_dotfile_own_for_target|chown ' <<<"$body" | head -1 | cut -d: -f1)"
+    [[ -n "$first" ]]
+    (( guard < first ))
+}
+
+@test "fs.protected_hardlinks on: the install goes on, silently" {
+    load_hardlinks_guard
+    printf '1\n' > "$ACFS_PROTECTED_HARDLINKS_FILE"
+    MODE=safe run acfs_check_protected_hardlinks
+    [[ "$status" -eq 0 && -z "$output" ]]
+}
+
+@test "fs.protected_hardlinks off: --mode safe stops, naming the sysctl and the fix" {
+    load_hardlinks_guard
+    printf '0\n' > "$ACFS_PROTECTED_HARDLINKS_FILE"
+    MODE=safe run acfs_check_protected_hardlinks
+    [[ "$status" -eq 1 ]]
+    [[ "$output" == *"ERROR: fs.protected_hardlinks is 0"* ]]
+    [[ "$output" == *"sudo sysctl -w fs.protected_hardlinks=1"* ]]
+}
+
+@test "fs.protected_hardlinks off: vibe mode warns and goes on" {
+    load_hardlinks_guard
+    printf '0\n' > "$ACFS_PROTECTED_HARDLINKS_FILE"
+    MODE=vibe run acfs_check_protected_hardlinks
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"WARN: fs.protected_hardlinks is 0"* && "$output" != *"ERROR:"* ]]
+}
+
+@test "fs.protected_hardlinks unreadable or not a number: a warning, and the install goes on, in either mode" {
+    load_hardlinks_guard
+    MODE=safe run acfs_check_protected_hardlinks
+    [[ "$status" -eq 0 && "$output" == *"WARN: Unable to read fs.protected_hardlinks"* ]]
+    printf 'x\n' > "$ACFS_PROTECTED_HARDLINKS_FILE"
+    MODE=safe run acfs_check_protected_hardlinks
+    [[ "$status" -eq 0 && "$output" == *"WARN: Unable to read fs.protected_hardlinks"* ]]
 }

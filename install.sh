@@ -6439,6 +6439,34 @@ disable_needrestart_apt_hook() {
     fi
 }
 
+# Root hands the target user's trees to that user with chown -h and chown
+# -hR (acfs_chown_tree, acfs_dotfile_own_for_target). -h keeps a symlink from
+# being followed, but a hard link is the file itself. Where the kernel lets a
+# user make a hard link to a file the user doesn't own (fs.protected_hardlinks
+# is 0), one the user put in the home, before the install or during it, would
+# have root hand that file over, /etc/shadow say (acfs-wmgr). main runs this
+# once, before the first handover, when the installer isn't the target user.
+# Off: --mode safe stops; vibe warns, since the user gets passwordless sudo
+# there and gains nothing. Unreadable: warns.
+acfs_check_protected_hardlinks() {
+    local file="${ACFS_PROTECTED_HARDLINKS_FILE:-/proc/sys/fs/protected_hardlinks}"
+    local value=""
+    { IFS= read -r value < "$file"; } 2>/dev/null || true
+    if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+        log_warn "Unable to read fs.protected_hardlinks ($file); handing ${TARGET_USER}'s files over assumes it is on, as systemd's sysctl defaults set it"
+        return 0
+    fi
+    [[ "$value" != "0" ]] && return 0
+    if [[ "${MODE:-vibe}" == "safe" ]]; then
+        log_error "fs.protected_hardlinks is 0: a hard link $TARGET_USER makes to any file would have this install hand that file to $TARGET_USER"
+        log_error "Turn it on, then run the installer again: sudo sysctl -w fs.protected_hardlinks=1 (for a container, on its host)"
+        return 1
+    fi
+    log_warn "fs.protected_hardlinks is 0: a hard link $TARGET_USER makes to any file would have this install hand that file over"
+    log_warn "In vibe mode $TARGET_USER gets passwordless sudo, so it gains nothing; sudo sysctl -w fs.protected_hardlinks=1 closes it"
+    return 0
+}
+
 acfs_chown_tree() {
     local owner_group="$1"
     local path="$2"
@@ -12926,6 +12954,10 @@ main() {
         ensure_root
         validate_target_user
         init_target_paths
+        # Before the first handover of TARGET_USER's files (acfs-wmgr).
+        if [[ "$(acfs_early_resolve_current_user 2>/dev/null || true)" != "$TARGET_USER" ]]; then
+            acfs_check_protected_hardlinks || exit 1
+        fi
         ensure_ubuntu
         if acfs_ubuntu_upgrade_requested; then
             if ! run_ubuntu_upgrade_phase "$@"; then
