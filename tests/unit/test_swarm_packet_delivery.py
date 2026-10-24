@@ -1,8 +1,11 @@
 """Real Bash/Python delivery entry point with executable nhm/herdr/br fixtures."""
+import ast
+import grp
 import hashlib
 import json
 import os
 from pathlib import Path
+import pwd
 import shlex
 import stat
 import subprocess
@@ -299,11 +302,45 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(target.read_text(), "untouched")
         self.assertEqual(self.calls(), [])
 
+    def test_receipt_directory_group_write_needs_the_private_group(self):
+        # Ubuntu's umask 002 makes a new directory 0775: accepted when its group
+        # is this user's private group, refused for any other group (acfs-hifj).
+        me = pwd.getpwuid(os.geteuid())
+
+        def private(gid):
+            try:
+                group = grp.getgrgid(gid)
+            except KeyError:
+                return False
+            return (gid == me.pw_gid and group.gr_name == me.pw_name and not group.gr_mem
+                    and not [e for e in pwd.getpwall() if e.pw_gid == gid and e.pw_uid != me.pw_uid])
+
+        checked = 0
+        for gid in sorted(set(os.getgroups()) | {me.pw_gid}):
+            directory = self.root / ("group-%d" % gid)
+            directory.mkdir()
+            try:
+                os.chown(directory, -1, gid)
+            except OSError:
+                continue
+            directory.chmod(0o775)
+            self.receipt = directory / "delivery.json"
+            with self.subTest(gid=gid, private=private(gid)):
+                code, report = self.invoke(send=True)
+                if private(gid):
+                    self.assertEqual((code, report["status"]), (0, "submitted"), report)
+                else:
+                    self.assertEqual(code, 2, report)
+                    self.assertIn("Receipt directory", report["error"])
+                    self.assertEqual(list(directory.iterdir()), [])
+            checked += 1
+        self.assertGreaterEqual(checked, 1)
+
     def test_receipt_directory_others_can_write_is_refused(self):
         shared = self.root / "shared"
         shared.mkdir()
         self.receipt = shared / "delivery.json"
-        for mode in (0o775, 0o757, 0o1777):
+        for mode in (0o757, 0o777, 0o1777):
             with self.subTest(mode=oct(mode)):
                 shared.chmod(mode)
                 code, report = self.invoke(send=True)
@@ -324,6 +361,37 @@ class DeliveryTests(unittest.TestCase):
         self.write_packet()
         code, report = self.invoke(send=True)
         self.assertEqual((code, report["status"]), (0, "submitted"), report)
+
+
+def delivery_functions(*names):
+    """The named top-level functions of swarm_packet.sh's delivery program,
+    with its imports, loaded without running it."""
+    text = SCRIPT.read_text()
+    source = text.split("<<'PY_ACFS_PACKET_DELIVERY'\n", 1)[1].split("\nPY_ACFS_PACKET_DELIVERY\n", 1)[0]
+    tree = ast.parse(source)
+    body = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))
+            or (isinstance(n, ast.FunctionDef) and n.name in names)]
+    assert {n.name for n in body if isinstance(n, ast.FunctionDef)} == set(names)
+    namespace = {}
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(SCRIPT), "exec"), namespace)
+    return namespace
+
+
+class ReceiptDirectoryRuleTests(unittest.TestCase):
+    """The receipt-directory rule on any host, whatever its groups (acfs-hifj)."""
+
+    def test_group_write_counts_only_outside_the_private_group(self):
+        rule = delivery_functions("private_group", "has_access_acl", "writable_by_others")
+        with tempfile.TemporaryDirectory(prefix="acfs-receipt-rule-") as tmp:
+            path = Path(tmp)
+            for mode, private, acl, others in ((0o775, True, False, False), (0o775, False, False, True),
+                                               (0o775, True, True, True), (0o757, True, False, True),
+                                               (0o755, False, False, False)):
+                path.chmod(mode)
+                rule["private_group"] = lambda gid, private=private: private
+                rule["has_access_acl"] = lambda target, acl=acl: acl
+                with self.subTest(mode=oct(mode), private=private, acl=acl):
+                    self.assertIs(rule["writable_by_others"](path.stat(), path), others)
 
 
 if __name__ == "__main__":

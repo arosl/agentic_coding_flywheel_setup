@@ -823,10 +823,14 @@ swarm_packet_deliver() {
     python3 -I - "${BASH_SOURCE[0]}" "$@" <<'PY_ACFS_PACKET_DELIVERY'
 """Opt-in packet delivery through nhm's durable robot-send protocol."""
 import argparse
+import errno
+import functools
+import grp
 import hashlib
 import json
 import os
 from pathlib import Path
+import pwd
 import re
 import shlex
 import shutil
@@ -888,6 +892,38 @@ def directory(path):
         info = item.lstat()
         require(stat.S_ISDIR(info.st_mode), "Directory path contains a link or non-directory.")
     return path
+
+
+# The same rule as the fleet tools' (acfs-pkh): Ubuntu's default umask 002
+# makes a user's directories group-writable, which is safe only for their
+# private group (acfs-hifj).
+@functools.lru_cache(maxsize=None)
+def private_group(gid):
+    try:
+        me = pwd.getpwuid(os.geteuid())
+        group = grp.getgrgid(gid)
+        others = [entry for entry in pwd.getpwall() if entry.pw_gid == gid and entry.pw_uid != me.pw_uid]
+    except (KeyError, OSError):
+        return False
+    return me.pw_gid == gid and group.gr_name == me.pw_name and not group.gr_mem and not others
+
+
+def has_access_acl(path):
+    # With an access ACL the group bits are its mask, which may grant others write.
+    try:
+        names = os.listxattr(path, follow_symlinks=False)
+    except OSError as error:
+        # No xattr support means no ACL can exist; anything else fails closed.
+        return error.errno not in (errno.ENOTSUP, errno.EOPNOTSUPP)
+    return "system.posix_acl_access" in names
+
+
+def writable_by_others(info, path):
+    if info.st_mode & 0o002:
+        return True
+    if not info.st_mode & 0o020:
+        return False
+    return not private_group(info.st_gid) or has_access_acl(path)
 
 
 def read_file(path, private=False):
@@ -1062,9 +1098,11 @@ def prepare(args):
     receipt = Path(os.path.abspath(args.receipt))
     # A private receipt still dies with its directory entry: anyone who can write
     # the parent could unlink the intent and turn the next run into a resend.
-    info = directory(receipt.parent).stat()
-    require(info.st_uid == os.geteuid() and info.st_mode & 0o022 == 0,
-            "Receipt directory must be owned by this user and not group/world writable; no prompt was sent.")
+    parent = directory(receipt.parent)
+    info = parent.stat()
+    require(info.st_uid == os.geteuid() and not writable_by_others(info, parent),
+            "Receipt directory must be owned by this user and writable by no one else "
+            "(group write only for this user's private group); no prompt was sent.")
     require(receipt != Path(os.path.abspath(args.packet)), "Receipt must not replace the packet.")
     # nhm's session is the herdr workspace; its --panes takes the agent's herdr pane ID.
     argv = ["nhm", "--robot-send=" + args.workspace, "--panes=" + args.pane_id,
