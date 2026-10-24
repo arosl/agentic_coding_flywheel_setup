@@ -1724,7 +1724,7 @@ dispatch_fix() {
     esac
 
     # A WARN is advisory ("optional tool not installed", "service not
-    # running", "ssh keepalive not set"). Several of the fixers behind those
+    # running"). Several of the fixers behind those
     # ids run curl|bash installers, repair the Agent Mail database, or edit
     # sshd_config with sudo — far more than the config-level fixes the docs
     # promise for a bare --fix. Apply them only when the caller opted in.
