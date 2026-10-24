@@ -16,9 +16,14 @@
 # rules that must never be silently replaced.
 #
 # Tool detection always runs in the TARGET USER's context: when invoked via
-# sudo, the target user is resolved from SUDO_USER (override: ACFS_TARGET_USER)
-# and the user's tool directories (~/.local/bin, ~/go/bin, ...) are prepended
-# to PATH so user-local installs are not falsely reported as missing.
+# sudo, the target user is resolved from SUDO_USER (override: ACFS_TARGET_USER),
+# and the script runs again as that user, with a clean environment, from
+# root's own copy (acfs-evgn): the probes run the user's tools, and root
+# runs none of them. The user's tool directories (~/.local/bin, ~/go/bin,
+# ...) are prepended to PATH only in the user's run, so user-local installs
+# are not falsely reported as missing. Only `deploy --root` writes as root:
+# root takes the guide's text from the user's run and creates /AGENTS.md,
+# or its .acfs-new candidate, only where nothing is.
 #
 # Usage:
 #   flywheel-update-agents-md [--dry-run] [--output PATH]
@@ -53,6 +58,9 @@
 #   3  Deploy collision (destination exists and differs; candidate written)
 
 set -euo pipefail
+
+# The arguments as given, for a root run that goes on as the target user.
+ORIG_ARGS=("$@")
 
 # --- Target-user context resolution ---
 # When run via sudo, root's restricted PATH hides user-local tools
@@ -89,11 +97,21 @@ resolve_target_home() {
 TARGET_USER="$(resolve_target_user)"
 TARGET_HOME="$(resolve_target_home "$TARGET_USER")"
 
-# Prepend the target user's tool directories (mirrors the installer's
-# run_as_target PATH prefix) so `command -v` sees user-local installs even
-# when this script runs as root.
-PATH="$TARGET_HOME/.local/bin:$TARGET_HOME/.acfs/bin:$TARGET_HOME/.cargo/bin:$TARGET_HOME/.bun/bin:$TARGET_HOME/.atuin/bin:$TARGET_HOME/go/bin:$PATH"
+# As root for another user, PATH holds only the system's directories, so
+# root runs nothing of the user's; the run goes on as the user below
+# (acfs-evgn). Otherwise the target user's tool directories come first
+# (mirrors the installer's run_as_target PATH prefix), so `command -v` sees
+# user-local installs.
+ROOT_PATH="/usr/sbin:/usr/bin:/sbin:/bin"
+if [[ $EUID -eq 0 && "$TARGET_USER" != "root" ]]; then
+    PATH="$ROOT_PATH"
+else
+    PATH="$TARGET_HOME/.local/bin:$TARGET_HOME/.acfs/bin:$TARGET_HOME/.cargo/bin:$TARGET_HOME/.bun/bin:$TARGET_HOME/.atuin/bin:$TARGET_HOME/go/bin:$PATH"
+fi
 export PATH
+
+# deploy --root's destination, the only one root writes itself.
+ROOT_AGENTS_MD="/AGENTS.md"
 
 CANONICAL_DIR="$TARGET_HOME/.acfs/docs"
 CANONICAL="$CANONICAL_DIR/flywheel-agent-guide.md"
@@ -131,7 +149,7 @@ parse_deploy_target() {
             DEPLOY_SCOPE="a workspace convention; harnesses that walk up from a project root may read it"
             return 0 ;;
         --root)
-            DEPLOY_DEST="/AGENTS.md"
+            DEPLOY_DEST="$ROOT_AGENTS_MD"
             DEPLOY_LABEL="filesystem-root AGENTS.md (legacy)"
             DEPLOY_SCOPE="NOT auto-discovered by agent harnesses; legacy location only"
             return 0 ;;
@@ -372,15 +390,47 @@ write_canonical() {
 }
 
 # --- Deploy: explicit, optional, non-overwriting ---
-do_deploy() {
-    # Always refresh the canonical source first; it is the only file ACFS owns
-    # and may freely replace.
-    write_canonical
+# The hint after a write that failed for want of rights. Only deploy --root
+# writes as root; every other target is written as the target user, also
+# under sudo (acfs-evgn).
+perm_hint() {
+    if [[ "$DEPLOY_DEST" == "$ROOT_AGENTS_MD" && $EUID -ne 0 ]]; then
+        echo "       (/ needs root: sudo flywheel-update-agents-md deploy --root)" >&2
+    else
+        echo "       ($TARGET_USER may not write there; as root, only deploy --root writes as root)" >&2
+    fi
+}
 
+report_target() {
     echo ""
     echo "Deploy target: $DEPLOY_LABEL"
     echo "  Destination: $DEPLOY_DEST"
     echo "  Scope:       $DEPLOY_SCOPE"
+}
+
+report_refused() {
+    local candidate="$1"
+    echo "  Status:      REFUSED — destination already exists and differs"
+    echo ""
+    echo "  $DEPLOY_DEST was NOT modified (it may contain user-authored rules)."
+    echo "  A merge candidate was written to:"
+    echo "    $candidate"
+    echo "  Review the differences and merge manually:"
+    echo "    diff -u '$DEPLOY_DEST' '$candidate'"
+}
+
+report_created() {
+    echo "  Status:      created (destination was absent)"
+    echo ""
+    echo "  Future ACFS updates refresh only the canonical source; re-run this"
+    echo "  deploy command whenever you want to pick up a newer guide."
+}
+
+do_deploy() {
+    # Always refresh the canonical source first; it is the only file ACFS owns
+    # and may freely replace.
+    write_canonical
+    report_target
 
     local dest_dir
     dest_dir="$(dirname "$DEPLOY_DEST")"
@@ -395,37 +445,99 @@ do_deploy() {
         local candidate="$DEPLOY_DEST.acfs-new"
         if ! cp "$CANONICAL" "$candidate" 2>/dev/null; then
             echo "ERROR: destination exists and differs, and the merge candidate could not be written: $candidate" >&2
-            echo "       (insufficient permissions? re-run this exact deploy command with sudo)" >&2
+            perm_hint
             return 1
         fi
         fix_ownership "$candidate"
-        echo "  Status:      REFUSED — destination already exists and differs"
-        echo ""
-        echo "  $DEPLOY_DEST was NOT modified (it may contain user-authored rules)."
-        echo "  A merge candidate was written to:"
-        echo "    $candidate"
-        echo "  Review the differences and merge manually:"
-        echo "    diff -u '$DEPLOY_DEST' '$candidate'"
+        report_refused "$candidate"
         return 3
     fi
 
     if ! mkdir -p "$dest_dir" 2>/dev/null; then
         echo "ERROR: cannot create destination directory: $dest_dir" >&2
-        echo "       (insufficient permissions? re-run this exact deploy command with sudo)" >&2
+        perm_hint
         return 1
     fi
     if ! cp "$CANONICAL" "$DEPLOY_DEST" 2>/dev/null; then
         echo "ERROR: cannot write destination: $DEPLOY_DEST" >&2
-        echo "       (insufficient permissions? re-run this exact deploy command with sudo)" >&2
+        perm_hint
         return 1
     fi
     fix_ownership "$DEPLOY_DEST"
-    echo "  Status:      created (destination was absent)"
-    echo ""
-    echo "  Future ACFS updates refresh only the canonical source; re-run this"
-    echo "  deploy command whenever you want to pick up a newer guide."
+    report_created
     return 0
 }
+
+# --- Root runs for another user (acfs-evgn) ---
+# run_as_user ARGS...: this script again, as TARGET_USER, with a clean
+# environment and the system's PATH. That run probes the user's tools and
+# writes in their home with their own rights.
+run_as_user() {
+    local runuser_bin="" self=""
+    runuser_bin="$(command -v runuser 2>/dev/null || true)"
+    if [[ -z "$runuser_bin" ]]; then
+        echo "ERROR: runuser not found; run flywheel-update-agents-md as $TARGET_USER" >&2
+        return 1
+    fi
+    self="$(readlink -f -- "${BASH_SOURCE[0]}")"
+    "$runuser_bin" -u "$TARGET_USER" -- /usr/bin/env -i \
+        HOME="$TARGET_HOME" USER="$TARGET_USER" LOGNAME="$TARGET_USER" \
+        PATH="/usr/local/bin:/usr/bin:/bin" \
+        ACFS_TARGET_USER="$TARGET_USER" ACFS_TARGET_HOME="$TARGET_HOME" \
+        bash "$self" "$@"
+}
+
+# deploy --root as root: root writes only /AGENTS.md, in a directory only
+# root can write. The guide's text comes from the user's own run on stdout,
+# so root reads none of the user's files, and the file, or its .acfs-new
+# candidate, is made only where nothing is (noclobber opens it O_EXCL), so
+# no link at the name is followed.
+deploy_root_as_root() {
+    local text="" candidate="$DEPLOY_DEST.acfs-new"
+
+    run_as_user >/dev/null || echo "WARN: $TARGET_USER's canonical guide was not refreshed" >&2
+    if ! text="$(run_as_user --dry-run)"; then
+        echo "ERROR: $TARGET_USER's run could not generate the guide" >&2
+        return 1
+    fi
+    report_target
+
+    if [[ -e "$DEPLOY_DEST" || -L "$DEPLOY_DEST" ]]; then
+        if [[ ! -L "$DEPLOY_DEST" ]] && ! content_differs <(printf '%s\n' "$text") "$DEPLOY_DEST"; then
+            echo "  Status:      up to date (content already matches the canonical guide)"
+            return 0
+        fi
+        rm -f -- "$candidate"
+        if ! (set -C; printf '%s\n' "$text" > "$candidate") 2>/dev/null; then
+            echo "ERROR: destination exists and differs, and the merge candidate could not be written: $candidate" >&2
+            return 1
+        fi
+        fix_ownership "$candidate"
+        report_refused "$candidate"
+        return 3
+    fi
+
+    if ! (set -C; printf '%s\n' "$text" > "$DEPLOY_DEST") 2>/dev/null; then
+        echo "ERROR: cannot write destination: $DEPLOY_DEST" >&2
+        return 1
+    fi
+    fix_ownership "$DEPLOY_DEST"
+    report_created
+    return 0
+}
+
+if [[ $EUID -eq 0 && "$TARGET_USER" != "root" ]]; then
+    if [[ ! "$TARGET_USER" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+        echo "ERROR: invalid target user '$TARGET_USER'" >&2
+        exit 2
+    fi
+    if [[ "$MODE" == "deploy" && "$DEPLOY_DEST" == "$ROOT_AGENTS_MD" ]]; then
+        deploy_root_as_root
+        exit $?
+    fi
+    run_as_user "${ORIG_ARGS[@]}"
+    exit $?
+fi
 
 # --- Output ---
 case "$MODE" in
