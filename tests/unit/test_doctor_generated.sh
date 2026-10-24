@@ -485,13 +485,30 @@ printf 'sudo-called=%s\n' "$*"
 EOF
     chmod +x "$fake_bin/sudo"
 
+    # The root branch takes sudo from the system directories, not PATH, so
+    # the stub stands in there: it logs the call and runs it without -n.
+    # The host's own sudo would run the check as root (acfs-2fhq).
+    local root_sudo="$temp_root/root-sudo"
+    cat > "$root_sudo" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${0}.log"
+[[ "${1:-}" != "-n" ]] || shift
+exec "$@"
+EOF
+    chmod +x "$root_sudo"
+
     local root_output=""
     root_output=$(HOME="$fake_home" PATH="$fake_bin:/usr/bin:/bin" TARGET_USER=customuser "$ACFS_TEST_BASH_BIN" -c '
         source "'"$checks_file"'"
+        eval "real_$(declare -f acfs_generated_system_binary_path)"
+        acfs_generated_system_binary_path() {
+            if [[ "$1" == sudo ]]; then printf "%s\n" "'"$root_sudo"'"; else real_acfs_generated_system_binary_path "$1"; fi
+        }
         run_manifest_check_command root "printf \"%s\\n\" root-check-ran"
     ' 2>&1 || true)
 
-    if [[ "$root_output" == *"root-check-ran"* ]] && [[ "$root_output" != *"Unable to resolve TARGET_HOME"* ]]; then
+    if [[ "$root_output" == *"root-check-ran"* ]] && [[ "$root_output" != *"Unable to resolve TARGET_HOME"* ]] \
+        && { [[ $EUID -eq 0 ]] || grep -q '^-n ' "$root_sudo.log" 2>/dev/null; }; then
         harness_pass "root checks still dispatch when TARGET_HOME is unresolved"
     else
         harness_fail "root checks still dispatch when TARGET_HOME is unresolved" "$root_output"

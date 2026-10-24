@@ -6,7 +6,8 @@
 # Proves the gate runs every step with TMPDIR and HOME inside one temp
 # root, gives each command a fresh HOME, keeps going after a failure,
 # and removes the root on exit: on success, on failure, and on a
-# signal, but not with --keep.
+# signal, but not with --keep. And that no command can use the host's
+# sudo unless ACFS_GATE_ALLOW_SUDO=1 (acfs-2fhq).
 #
 # Usage: bash tests/unit/test_run_gate.sh
 # ============================================================
@@ -44,7 +45,8 @@ for stub in scripts/lib/policy_lint.sh scripts/tests/lint_rch_offload_policy.sh;
     cat >"$FIXTURE/$stub" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s TMPDIR=%s HOME=%s umask=%s\n' "$(basename "$0")" "$TMPDIR" "$HOME" "$(umask)" >>"$GATE_TEST_LOG"
+printf '%s TMPDIR=%s HOME=%s umask=%s nnp=%s\n' "$(basename "$0")" "$TMPDIR" "$HOME" "$(umask)" \
+    "$(sed -n 's/^NoNewPrivs:[[:space:]]*//p' /proc/self/status 2>/dev/null)" >>"$GATE_TEST_LOG"
 leak="$(mktemp -d)"
 mkdir -p "$leak/locked"
 chmod 0555 "$leak/locked"
@@ -53,6 +55,9 @@ STUB
 done
 export GATE_TEST_LOG="$LOG"
 export GATE_TEST_FAIL_DIR="$WORK/fail"
+# The gates here guard sudo even when this test runs under a gate that
+# doesn't; only the case that tests the opt-in sets it.
+unset ACFS_GATE_ALLOW_SUDO
 mkdir -p "$GATE_TEST_FAIL_DIR"
 
 run_gate() {
@@ -74,6 +79,9 @@ check "HOME is inside the same gate root" \
     bash -c '[[ "$1" == "${2%/tmp}"/home.* ]]' _ "$(field 1 HOME)" "$gate_tmp"
 check "each command gets its own HOME" test "$(field 1 HOME)" != "$(field 2 HOME)"
 check "the steps run with CI's umask" test "$(field 1 umask)" = 0022
+if command -v setpriv >/dev/null 2>&1; then
+    check "the steps run with no_new_privs (acfs-2fhq)" test "$(field 1 nnp)" = 1
+fi
 check "removes the gate root, read-only leftovers and all" parent_empty
 check "the summary passes both" grep -q "PASS  policy: rch offload lint" "$WORK/out"
 
@@ -122,6 +130,37 @@ check "the command runs from the current directory" test "$cmd_pwd" = "$WORK"
 check "the command's TMPDIR is in a gate root" bash -c '[[ "$1" == "$2"/acfs-gate.*/tmp ]]' _ "$cmd_tmp" "$PARENT"
 check "the command's HOME is in the same root" bash -c '[[ "$1" == "${2%/tmp}"/home.* ]]' _ "$cmd_home" "$cmd_tmp"
 check "removes the gate root after the command" parent_empty
+
+echo "run_gate: sudo (acfs-2fhq)"
+# What a command sees of sudo: its exit status, the sudo PATH finds, and
+# its NoNewPrivs. Under no_new_privs the kernel grants no setuid program
+# root, so even /usr/bin/sudo, which the scripts call by path, can't act.
+sudo_probe() { # sudo_probe call|nocall [VAR=VALUE...]: nocall runs no sudo at all
+    local call="$1"
+    shift
+    (cd "$WORK" && env "$@" bash "$GATE" --tmp-parent "$PARENT" -- bash -c '
+        rc=skipped
+        if [[ "$2" == call ]]; then rc=0; sudo -n true || rc=$?; fi
+        printf "%s|%s|%s\n" "$rc" "$(command -v sudo)" "$(sed -n "s/^NoNewPrivs:[[:space:]]*//p" /proc/self/status)" >"$1"' \
+        _ "$WORK/sudo" "$call") >"$WORK/out" 2>&1
+    IFS='|' read -r sudo_rc sudo_path sudo_nnp <"$WORK/sudo"
+}
+own_nnp="$(sed -n 's/^NoNewPrivs:[[:space:]]*//p' /proc/self/status 2>/dev/null)"
+sudo_probe call
+check "sudo -n true fails in a command" test "$sudo_rc" = 1
+check "the sudo on PATH is the gate's" bash -c '[[ "$1" == "$2"/acfs-gate.*/bin/sudo ]]' _ "$sudo_path" "$PARENT"
+check "the refusal names the call" grep -qxF 'run_gate: refused: sudo -n true (stub it, or set ACFS_GATE_ALLOW_SUDO=1 for a test that needs root)' "$WORK/out"
+check "the gate lists the refused calls at the end" grep -qxF "  $WORK: sudo -n true" "$WORK/out"
+check "removes the gate root after a refused sudo" parent_empty
+if command -v setpriv >/dev/null 2>&1; then
+    check "the command runs with no_new_privs" test "$sudo_nnp" = 1
+else
+    echo "  skip no_new_privs: no setpriv here"
+fi
+sudo_probe nocall ACFS_GATE_ALLOW_SUDO=1
+check "ACFS_GATE_ALLOW_SUDO=1: no gate sudo on PATH" bash -c '[[ "$1" != "$2"/* ]]' _ "$sudo_path" "$PARENT"
+check "ACFS_GATE_ALLOW_SUDO=1: no_new_privs as the caller has it" test "$sudo_nnp" = "$own_nnp"
+check "ACFS_GATE_ALLOW_SUDO=1: the run says so" grep -q "ACFS_GATE_ALLOW_SUDO=1: the commands may use this host's sudo" "$WORK/out"
 
 echo "run_gate: Playwright (acfs-l3r7)"
 pw_env() { # pw_env [VAR=VALUE...]: the gate's Playwright settings, for a caller whose HOME is $WORK/realhome

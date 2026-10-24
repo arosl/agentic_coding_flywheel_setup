@@ -8,6 +8,10 @@
 # runs every gate step with TMPDIR and HOME inside a single root,
 # and removes the root on exit, on success or failure.
 #
+# The commands can't use the host's sudo either (acfs-2fhq): they run
+# with no_new_privs, so no setuid program gains root, and a sudo first
+# on PATH refuses each call by name. ACFS_GATE_ALLOW_SUDO=1 turns that off.
+#
 # Steps, in order (each one runs even when an earlier one failed):
 #   manifest    generate:validate, generate --diff, bun test
 #   policy      policy_lint.sh, lint_rch_offload_policy.sh
@@ -67,6 +71,10 @@ Environment:
                           exists, else /tmp/acfs-browser-gate.lock)
   ACFS_PLAYWRIGHT_MIRROR  The browser zip mirror, kept across runs
                           (default: ~/.cache/acfs/playwright-mirror)
+  ACFS_GATE_ALLOW_SUDO    1 lets the commands use this host's sudo, for a
+                          test that needs root. Otherwise they run with
+                          no_new_privs, and a sudo first on PATH refuses
+                          each call; the gate lists them at the end
 
 Exit status: 0 when every step passed, 1 when one failed, 2 on bad usage.
 USAGE
@@ -161,9 +169,14 @@ GATE_ROOT="$(mktemp -d "$TMP_PARENT/acfs-gate.XXXXXX")"
 chmod 0755 "$GATE_ROOT"
 mkdir -m 0755 "$GATE_ROOT/tmp"
 mkdir "$GATE_ROOT/logs"
+SUDO_LOG="$GATE_ROOT/logs/sudo-refused.log"
 
 cleanup() {
     local status=$?
+    if [[ -s "$SUDO_LOG" ]]; then
+        echo "run_gate: refused these sudo calls (directory: call):" >&2
+        sed 's/^/  /' "$SUDO_LOG" >&2 || true
+    fi
     if [[ "$KEEP" == true ]]; then
         echo "run_gate: kept the temp root: $GATE_ROOT" >&2
     else
@@ -179,6 +192,33 @@ trap 'exit 143' TERM
 
 export TMPDIR="$GATE_ROOT/tmp"
 export TMP="$TMPDIR" TEMP="$TMPDIR"
+
+# A test that misses one stub must not reach the host's sudo: on
+# 2026-10-24 one ran `sudo -n rm` on the development host through its
+# passwordless sudo (acfs-2fhq). The scripts take sudo from /usr/bin, not
+# PATH, so the commands run with no_new_privs, under which no setuid
+# program gains root by any path. The sudo first on PATH names the call.
+NO_NEW_PRIVS=()
+if [[ "${ACFS_GATE_ALLOW_SUDO:-}" == 1 ]]; then
+    echo "run_gate: ACFS_GATE_ALLOW_SUDO=1: the commands may use this host's sudo" >&2
+else
+    mkdir -m 0755 "$GATE_ROOT/bin"
+    sudo_log_q="$(printf '%q' "$SUDO_LOG")"
+    cat >"$GATE_ROOT/bin/sudo" <<SHIM
+#!/usr/bin/env bash
+# run_gate's sudo (acfs-2fhq): a test must not use the host's sudo.
+printf 'run_gate: refused: sudo %s (stub it, or set ACFS_GATE_ALLOW_SUDO=1 for a test that needs root)\n' "\$*" >&2
+printf '%s: sudo %s\n' "\$PWD" "\$*" >>$sudo_log_q 2>/dev/null || true
+exit 1
+SHIM
+    chmod 0755 "$GATE_ROOT/bin/sudo"
+    export PATH="$GATE_ROOT/bin:$PATH"
+    if command -v setpriv >/dev/null 2>&1; then
+        NO_NEW_PRIVS=(setpriv --no-new-privs)
+    else
+        echo "run_gate: no setpriv: only the sudo on PATH guards the commands, not /usr/bin/sudo" >&2
+    fi
+fi
 
 STEP_HOME=""
 new_home() {
@@ -202,7 +242,7 @@ run_cmd_shown() {
     shift 3
     new_home
     echo "run_gate: [$label] $shown" >&2
-    if (cd "$dir" && HOME="$STEP_HOME" "$@"); then
+    if (cd "$dir" && HOME="$STEP_HOME" "${NO_NEW_PRIVS[@]}" "$@"); then
         PASSED+=("$label")
         return 0
     fi
@@ -345,7 +385,7 @@ if [[ ${#COMMAND[@]} -gt 0 ]]; then
     # One command: its own exit status, not the summary's.
     new_home
     rc=0
-    HOME="$STEP_HOME" "${COMMAND[@]}" || rc=$?
+    HOME="$STEP_HOME" "${NO_NEW_PRIVS[@]}" "${COMMAND[@]}" || rc=$?
     exit "$rc"
 fi
 for step in "${STEPS[@]}"; do
