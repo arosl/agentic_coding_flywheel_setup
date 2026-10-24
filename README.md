@@ -3064,6 +3064,9 @@ Plan names, specs, and prices below were verified against the provider sites in 
 | **Storage** | 250GB NVMe SSD | 300GB+ NVMe SSD |
 | **CPU** | 12 vCPU | 16 vCPU |
 | **Price** | ~$29/mo (48GB) | ~$43/mo (64GB) |
+| **Account** | A local account: an `/etc/passwd` entry with an absolute login shell, and zsh listed exactly in `/etc/shells` | The image's default user (`ubuntu`), or the one ACFS creates |
+
+An account that exists only in a directory service (LDAP, sssd, GCE OS Login, systemd-homed) stops the install at phase 1. ACFS changes group membership, ownership and the login shell only for a local account whose `/etc/passwd` entry matches what NSS reports ([#473](https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues/473)). Install for a local user instead.
 
 ### Other Providers
 
