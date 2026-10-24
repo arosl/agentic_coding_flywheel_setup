@@ -205,8 +205,8 @@ check_case "no capacity provider passes, noting the set command and the spawn-si
     bash -c '[[ "$1" == stack.nhm.setup\|pass\|*"capacity provider off: "*"capacity-provider set"*"acfs capacity --guard --for-spawn"*"one more agent doesn"*"t fit"*"1536 MiB by default"*"[providers] capacity = [] in nhm"*"s config turns it off again"\| ]]' _ "$out"
 CAPACITY=1 fixture yes none
 out="$(run_check none)"
-check_case "the capacity provider set passes, noting how to turn it off" \
-    bash -c '[[ "$1" == stack.nhm.setup\|pass\|*"capacity provider on ([providers] capacity = [] in nhm"*"s config turns it off)"* ]]' _ "$out"
+check_case "the capacity provider set passes, noting nhm's per-spawn override and how to turn it off" \
+    bash -c '[[ "$1" == stack.nhm.setup\|pass\|*"capacity provider on (--ignore-capacity on nhm spawn or add admits that spawn while the guard is red; [providers] capacity = [] in nhm"*"s config turns it off)"* ]]' _ "$out"
 fixture yes none
 printf '\n[providers]\ncapacity = []\n' >>"$WORK/home/.config/nhm/config.toml"
 out="$(run_check none)"

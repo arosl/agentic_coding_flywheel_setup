@@ -64,8 +64,9 @@ Usage:
                                              ["acfs", "capacity", "--guard",
                                              "--json", "--for-spawn"], so nhm
                                              spawn refuses while one more
-                                             agent doesn't fit; opt-in; same
-                                             FILE and exits as
+                                             agent doesn't fit, unless it
+                                             passes --ignore-capacity;
+                                             opt-in; same FILE and exits as
                                              learning-profile
   nhm_hooks.sh plugin link|bind [--no-reload]|status
                                              nhm's herdr plugin (link) and its
@@ -793,8 +794,9 @@ nhm_hooks_trust() {
 # - the capacity provider (acfs-hd37), which only the user sets:
 #   [providers] capacity = ["acfs", "capacity", "--guard", "--json",
 #   "--for-spawn"]. nhm's spawn admission then refuses to start an agent
-#   while ACFS's capacity guard is red (acfs-gmbo), and nothing overrides
-#   that. --for-spawn makes it red on memory only when one more agent
+#   while ACFS's capacity guard is red (acfs-gmbo), unless that spawn
+#   passes --ignore-capacity (nhm v0.1.16; --force covers only the
+#   quota). --for-spawn makes it red on memory only when one more agent
 #   doesn't fit, not under the host line of 4 GiB, so a small host still
 #   starts agents (acfs-w1f0). Install leaves it unset. capacity = []
 #   turns it off again: nhm reads it as no provider, and set leaves it.

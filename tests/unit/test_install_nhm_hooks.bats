@@ -225,8 +225,8 @@ statusline_command() {
 }
 
 # acfs-hd37: install and acfs update leave nhm's capacity provider unset.
-# The capacity guard is red whenever under 4 GiB is available, and nhm
-# overrides no red, so a small host would refuse every agent.
+# With it set, a red guard refuses every spawn that doesn't pass
+# --ignore-capacity, so turning it on is the user's choice.
 @test "install and acfs update never set nhm's capacity provider" {
     ! grep -n 'capacity-provider set' "$PROJECT_ROOT/install.sh" "$PROJECT_ROOT/scripts/lib/update.sh" \
         || fail "install.sh or update.sh sets nhm's capacity provider"
