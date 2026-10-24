@@ -507,7 +507,7 @@ const _flywheelTools: FlywheelTool[] = [
       "mcp-agent-mail doctor check --verbose",
     ],
     installCommand:
-      "curl --proto '=https' --proto-redir '=https' -fsSL \"https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/refs/heads/main/install.sh\" | bash -s -- --yes",
+      "curl --proto '=https' --proto-redir '=https' -fsSL \"https://raw.githubusercontent.com/arosl/mcp_agent_mail_rust/e12608a177ac50f001358f30f17de911b38ee6f6/install.sh\" | bash -s -- --yes",
     language: "Rust",
   },
   {

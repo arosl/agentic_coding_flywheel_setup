@@ -122,7 +122,7 @@ bv|bv|--version|verified_installer|https://github.com/Dicklesworthstone/beads_vi
 nhm|nhm|--version|verified_installer|https://github.com/arosl/nhm|nhm|
 herdr|herdr|--version|verified_installer|https://github.com/herdrdev/herdr|herdr|
 rch|rch|--version|verified_installer|https://github.com/Dicklesworthstone/remote_compilation_helper|rch|
-agent_mail|am|--version|verified_installer|https://github.com/Dicklesworthstone/mcp_agent_mail_rust|mcp_agent_mail|
+agent_mail|am|--version|verified_installer|https://github.com/arosl/mcp_agent_mail_rust|mcp_agent_mail|
 ubs|ubs|--version|verified_installer|https://github.com/Dicklesworthstone/ultimate_bug_scanner|ubs|
 cass|cass|--version|verified_installer|https://github.com/Dicklesworthstone/coding_agent_session_search|cass|
 cm|cm|--version|verified_installer|https://github.com/Dicklesworthstone/cass_memory_system|cm|

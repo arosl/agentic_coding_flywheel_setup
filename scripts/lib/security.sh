@@ -612,7 +612,10 @@ declare -gA KNOWN_INSTALLERS=(
     [herdr]="https://herdr.dev/install.sh"
     # nhm: the release tag pins the installer; acfs.manifest.yaml names the same version.
     [nhm]="https://raw.githubusercontent.com/arosl/nhm/v0.1.16/install.sh"
-    [mcp_agent_mail]="https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/refs/heads/main/install.sh"
+    # mcp_agent_mail: the herdr fork (acfs-7mu.4). A fork commit pins the
+    # installer, and that installer pins its release's SHA256SUMS, so this
+    # checksum covers the binaries too. Move it on purpose, with a review.
+    [mcp_agent_mail]="https://raw.githubusercontent.com/arosl/mcp_agent_mail_rust/e12608a177ac50f001358f30f17de911b38ee6f6/install.sh"
     [ubs]="https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/main/install.sh"
     [bv]="https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh"
     [cass]="https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_session_search/main/install.sh"
