@@ -11,9 +11,9 @@ Run it from a complete trusted ACFS checkout on a Linux controller. Remote hosts
 must already have their project and native ACFS launcher/packet preparer. The
 original private fleet launch journal supplies endpoints, repositories, sessions,
 receipts, providers, original process identities and each agent's Agent Mail
-name. The work specification
-cannot override those bindings. Claude, Codex and Antigravity (`agy`) are
-supported by the native launcher. This is a checkout command, not a newly installed `acfs` subcommand.
+name. The work specification cannot override those bindings. Claude and Codex
+are supported by the native launcher. This is a checkout command, not a newly
+installed `acfs` subcommand.
 
 ## One reviewed assignment set for one logical project
 

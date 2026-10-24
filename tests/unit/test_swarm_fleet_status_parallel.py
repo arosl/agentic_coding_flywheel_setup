@@ -69,14 +69,14 @@ class ParallelStatusTests(unittest.TestCase):
         self.assertEqual(report["observation_workers"], 2)
         for host in ("one", "two"):
             self.assertEqual([m for h, m in self.fx.calls if h == host], ["launch-status",
-                "read-receipt", "read-result", "read-receipt", "read-result", "work-snapshot"])
+                "read-receipt", "query-receipt", "read-receipt", "query-receipt", "work-snapshot"])
         self.assertEqual(report["summary"]["confirmed_submissions"], 4)
         self.assertFalse(report["task_completion_verified"])
         self.assertEqual(before, self.fx.snapshot())
 
     def test_serial_and_parallel_agree_on_all_evidence_and_failure_fields(self):
         def invoke(entry, mode):
-            if entry["host"]["id"] == "one" and mode == "read-result":
+            if entry["host"]["id"] == "one" and mode == "query-receipt":
                 return 1, b"PRIVATE-REMOTE-ERROR"
             return self.fx.observe(entry, mode)
         serial, serial_code = self.collect(invoke, workers=1)

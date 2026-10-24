@@ -49,7 +49,7 @@ step_E12() {
 
     preview="$(e12_deliver --workspace "$ws" --pane-id "$pane" --agent-type claude --operation-id e12-1 --receipt "$rdir/d1.json")"
     printf '%s\n' "$preview" >"$SANDBOX_EVIDENCE/e12-preview.json"
-    check "E12: the preview sends through nhm" jq -e '.backend == "nhm" and .status == "preview" and (.sends_prompt | not)' <<<"$preview"
+    check "E12: the preview sends through nhm" jq -e '.status == "preview" and (.sends_prompt | not)' <<<"$preview"
     check "E12: the preview names one target and no injection" jq -e --arg p "$pane" '
         (.nhm_argv | index("--panes=" + $p) != null) and (.nhm_argv | index("--no-cass") != null)
         and (.nhm_argv | index("--with-memory=false") != null) and (.nhm_argv[0] == "nhm")' <<<"$preview"
@@ -66,8 +66,8 @@ step_E12() {
     check "E12: nhm's receipt for the operation reads submitted" \
         jq -e '.success and (.. | objects | select(has("successful")) | .successful | length == 1)' <<<"$receipt"
 
-    # The same delivery receipt again: it reads the recorded outcome and
-    # never sends again.
+    # The same delivery receipt again: it queries nhm's receipt and never
+    # sends again.
     before="$(e12_mock_count "$bead")"
     again="$(e12_deliver --workspace "$ws" --pane-id "$pane" --agent-type claude --operation-id e12-1 --receipt "$rdir/d1.json" \
         --expect-sha256 "$sha" --send)"
@@ -76,5 +76,5 @@ step_E12() {
     after="$(e12_mock_count "$bead")"
     check "E12: reusing the receipt sends nothing again" test "$after" -eq "$before"
     manual "E12: acfs swarm launch through nhm (its planner refuses while RCH reports no workers; the sandbox has no network)"
-    manual "E12: a forced unconfirmed delivery is never re-sent on the next run (needs a submission herdr cannot confirm)"
+    manual "E12: a forced unconfirmed delivery is never re-sent on the next run (needs a submission nhm cannot confirm)"
 }

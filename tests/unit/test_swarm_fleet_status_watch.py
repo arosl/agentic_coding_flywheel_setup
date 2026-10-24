@@ -202,7 +202,7 @@ class WatchTests(unittest.TestCase):
             spec = {"schema": dispatch.SPEC_SCHEMA, "hosts": [
                 {"id": e["host"]["id"], "batch": e["batch"]} for e in self.fx.work["hosts"]]}
             def invoke(entry, mode):
-                if mode in ("read-receipt", "read-result"):
+                if mode in ("read-receipt", "query-receipt"):
                     return self.fx.observe(entry, mode)
                 return self.fx.preview(entry, mode)
             result, code = dispatch.execute(str(self.fx.launch_path), spec, self.fx.known, self.fx.key,
@@ -502,7 +502,7 @@ class WatchTests(unittest.TestCase):
             if not entered.is_set():
                 entered.set()  # Actual resume already holds both journal locks.
                 self.assertTrue(release.wait(3))
-            if mode in ("read-receipt", "read-result"):
+            if mode in ("read-receipt", "query-receipt"):
                 return fx.observe(entry, mode)
             return fx.preview(entry, mode)
         def observer(entry, mode):

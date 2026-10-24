@@ -159,7 +159,7 @@ finally:
 
 
 def remote_command(entry, mode):
-    require(mode in ("launch-status", "read-receipt", "read-result", "work-snapshot"),
+    require(mode in ("launch-status", "read-receipt", "query-receipt", "work-snapshot"),
             "status_operation_is_read_only")
     if mode != "work-snapshot":
         return dispatch.remote_command(entry, mode)

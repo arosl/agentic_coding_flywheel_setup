@@ -7,12 +7,8 @@ from pathlib import Path
 import shlex
 import stat
 import subprocess
-import sys
 import tempfile
 import unittest
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from herdr_socket_stub import HerdrStub, agent_row  # noqa: E402
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/lib/swarm_packet.sh"
 
@@ -38,7 +34,43 @@ if name == "bv":
     assert args == ["--robot-triage"] and pathlib.Path.cwd() == root / "repo", args
     print((root / "triage.json").read_text())
     sys.exit(0)
-sys.exit("unexpected tool: " + name)
+agents = {"w9:p42": "claude", "w9:p43": "codex", "w9:p44": "claude"}
+if name == "herdr":
+    # herdr's CLI answers as its socket API does, inside {"result": ...}.
+    if args == ["agent", "list"]:
+        print(json.dumps({"result": {"agents": [{"pane_id": pane, "workspace_id": "w9", "tab_id": "w9:t" + pane[4:],
+            "agent": kind, "agent_status": "idle", "cwd": str(root / "repo"), "name": None,
+            "terminal_id": "term_" + pane[4:]} for pane, kind in agents.items()]}}))
+        sys.exit(0)
+    assert args[:3] == ["pane", "process-info", "--pane"] and args[3] in agents, args
+    print(json.dumps({"result": {"process_info": {"pane_id": args[3], "shell_pid": 4200,
+        "foreground_processes": [{"name": agents[args[3]], "argv": [agents[args[3]]], "pid": 4242}]}}}))
+    sys.exit(0)
+assert name == "nhm", name
+if args[0].startswith("--robot-send-receipt="):
+    op = args[0].split("=", 1)[1]
+    data = json.loads((root / (op + ".json")).read_text())
+    print(json.dumps({"success": True, "session": "w9", "operation": data["operation"], "outcome": data}))
+    sys.exit(0)
+# nhm's session is the herdr workspace; it names each agent by its slot.
+assert "--robot-send=w9" in args and "--msg-file=-" in args, args
+pane = next(a.split("=", 1)[1] for a in args if a.startswith("--panes="))
+assert "--type=" + agents[pane] in args, args
+target = "1." + str(list(agents).index(pane) + 1)
+payload = sys.stdin.buffer.read()
+assert b"Acceptance criteria" in payload and b"Declared Write Scope" in payload
+assert (b"bd-api" if pane == "w9:p42" else b"bd-doc") in payload
+if "--dry-run" in args:
+    print(json.dumps({"success": True, "session": "w9", "dry_run": True, "blocked": False,
+                      "successful": [], "failed": [], "would_send_to": [target]}))
+    sys.exit(0)
+op = next(a.split("=", 1)[1] for a in args if a.startswith("--op-id="))
+data = {"success": True, "session": "w9", "targets": [target], "successful": [target], "failed": [],
+        "operation": {"operation_id": op, "status": "completed", "payload_sha256": hashlib.sha256(payload).hexdigest(),
+                      "payload_bytes": len(payload), "admissions": [{"target": target, "state": "submitted"}]}}
+(root / (op + ".json")).write_text(json.dumps(data))
+(root / (pane[4:] + ".prompt")).write_bytes(payload)
+print(json.dumps(data))
 '''
 
 
@@ -53,15 +85,12 @@ class PreparationTests(unittest.TestCase):
         (self.repo / "README.md").write_text("The project.\n")
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        for name in ("br", "bv", "cm", "cass"):
+        for name in ("br", "bv", "herdr", "nhm", "cm", "cass"):
             path = self.bin / name
             path.write_text(TOOLS)
             path.chmod(0o755)
-        self.herdr = HerdrStub([agent_row("w9:p42", self.repo), agent_row("w9:p43", self.repo, agent="codex"),
-                                agent_row("w9:p44", self.repo)])
-        self.addCleanup(self.herdr.close)
-        self.env = self.herdr.env(dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
-                                       PREPARATION_TEST_ROOT=str(self.root)))
+        self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
+                        PREPARATION_TEST_ROOT=str(self.root))
         self.output = self.root / "prepared work"
         self.assignments = {"schema_version": 1, "status": "pass", "advisory_only": True,
             "scope_admission": {"mode": "explicit-scopes", "status": "pass"},
@@ -204,17 +233,11 @@ class PreparationTests(unittest.TestCase):
             result = json.loads(sent.stdout)
             self.assertEqual(result["summary"]["submitted"], 2)
             self.assertEqual(result["summary"]["reconciled"], attempt * 2)
-        self.assert_prompts({"w9:p42": 1, "w9:p43": 3})
-
-    def assert_prompts(self, slots):
-        """Each pane got exactly its slot's full packet, once, over herdr's socket."""
-        prompts = self.herdr.prompts()
-        self.assertEqual([p["target"] for p in prompts], list(slots))
-        for prompt in prompts:
-            text = self.packet(slots[prompt["target"]])["packet_markdown"]
-            self.assertEqual(prompt["text"], text)
-            self.assertIn("Acceptance criteria", text)
-            self.assertIn("Declared Write Scope", text)
+        sends = [args for name, args in self.calls()
+                 if name == "nhm" and "--robot-send=w9" in args and "--dry-run" not in args]
+        self.assertEqual(len(sends), 2)
+        for slot, pane in ((1, "42"), (3, "43")):
+            self.assertEqual((self.root / (pane + ".prompt")).read_text(), self.packet(slot)["packet_markdown"])
 
     def test_overlapping_or_inferred_scopes_are_not_trusted(self):
         self.assignments["assignments"][1]["reservation_surfaces"] = ["src/api/routes.py"]
@@ -424,7 +447,10 @@ class PreparationTests(unittest.TestCase):
             data = json.loads(result.stdout)
             self.assertEqual(data["summary"]["submitted"], 2)
             self.assertEqual(data["summary"]["reconciled"], attempt * 2)
-        self.assert_prompts({"w9:p42": 1, "w9:p43": 2})
+        for slot, pane in ((1, "42"), (2, "43")):
+            self.assertEqual((self.root / (pane + ".prompt")).read_text(), self.packet(slot)["packet_markdown"])
+        self.assertEqual(sum(name == "nhm" and "--robot-send=w9" in argv and "--dry-run" not in argv
+                             for name, argv in self.calls()), 2)
 
 
 if __name__ == "__main__":

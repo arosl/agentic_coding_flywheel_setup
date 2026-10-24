@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Two-phase receipt verification: real private readers, processes and journals.
-
-Upstream's 61c803dc test, on the fork's herdr evidence: the batch reads every
-saved native intent in one remote operation, and each intent that holds then
-reads its delivery's own result file (read-result), where upstream queried
-NTM's operation (query-receipt). herdr keeps no record of a prompt, so that
-result file is the only submission evidence (acfs-qzc).
-"""
+"""Two-phase receipt verification: real private readers, processes and journals."""
 import base64
 import copy
 from contextlib import redirect_stdout
@@ -30,13 +23,17 @@ dispatch, fleet = fixtures.dispatch, fixtures.fleet
 
 def native(delivery):
     return {"schema": dispatch.PACKET_SCHEMA, "request": copy.deepcopy(delivery["request"]),
-            "target": "recorded:" + delivery["request"]["operation_id"], "agent_session": None}
+            "target": "recorded:" + delivery["request"]["operation_id"]}
 
 
-def result(delivery):
-    target = native(delivery)["target"]
-    return {"schema": dispatch.PACKET_SCHEMA, "request": copy.deepcopy(delivery["request"]), "target": target,
-            "status": "submitted", "evidence": {"pane_id": delivery["request"]["pane_id"], "terminal_id": target}}
+def proof(delivery):
+    # nhm's session is the herdr workspace the packet was sent in.
+    request, target = delivery["request"], native(delivery)["target"]
+    return {"success": True, "session": request["workspace"], "operation": {
+        "operation_id": request["operation_id"], "payload_sha256": request["payload_sha256"],
+        "payload_bytes": request["payload_bytes"], "status": "completed",
+        "admissions": [{"target": target, "state": "submitted"}]},
+        "outcome": {"success": True, "targets": [target], "successful": [target], "failed": []}}
 
 
 def deliveries(count=2):
@@ -50,7 +47,7 @@ def deliveries(count=2):
 class ProtocolPeer:
     def __init__(self):
         self.calls, self.probes = [], []
-        self.change_intent = self.change_result = self.change_batch = None
+        self.change_intent = self.change_proof = self.change_batch = None
 
     def __call__(self, entry, mode):
         self.calls.append(mode)
@@ -61,12 +58,12 @@ class ProtocolPeer:
                 self.change_intent(value)
             self.probes.append((item["request"]["operation_id"], "read"))
             return 0, fleet.encoded(value)
-        if mode == "read-result":
+        if mode == "query-receipt":
             item = entry["delivery"]
-            value = result(item)
-            if self.change_result:
-                self.change_result(value)
-            self.probes.append((item["request"]["operation_id"], "result"))
+            value = proof(item)
+            if self.change_proof:
+                self.change_proof(value)
+            self.probes.append((item["request"]["operation_id"], "query"))
             return 0, fleet.encoded(value)
         assert mode == "batch-read-receipts", mode
         request = entry["receipt_batch"]
@@ -97,48 +94,50 @@ class ProtocolTests(unittest.TestCase):
         individual = ProtocolPeer()
         for item in self.entry["deliveries"]:
             dispatch.query_submission(self.entry, item, individual)
-        outcome = dispatch.query_submissions_batched_reads(self.entry, self.peer)
-        self.assertEqual(outcome, [None] * 32)
+        result = dispatch.query_submissions_batched_reads(self.entry, self.peer)
+        self.assertEqual(result, [None] * 32)
         self.assertEqual(len(individual.calls), 64)
         self.assertEqual(self.peer.calls[0], "batch-read-receipts")
-        self.assertEqual(self.peer.calls[1:], ["read-result"] * 32)
+        self.assertEqual(self.peer.calls[1:], ["query-receipt"] * 32)
         self.assertEqual(len(self.peer.calls), 33)
 
-    def test_wrong_native_intent_never_enters_result_read(self):
+    def test_wrong_native_intent_never_enters_query_path(self):
         def wrong(value):
             if value["request"]["operation_id"] == "op-1":
                 value["request"]["repo"] = "/wrong"
         self.peer.change_intent = wrong
         self.assertEqual(dispatch.query_submissions_batched_reads(self.entry, self.peer),
                          ["native_receipt_mismatch", None])
-        self.assertNotIn(("op-1", "result"), self.peer.probes)
-        self.assertIn(("op-2", "result"), self.peer.probes)
+        self.assertNotIn(("op-1", "query"), self.peer.probes)
+        self.assertIn(("op-2", "query"), self.peer.probes)
 
-    def test_no_valid_intents_means_no_result_reads(self):
+    def test_no_valid_intents_means_no_nhm_queries(self):
         self.peer.change_intent = lambda v: v.update(schema="wrong")
         self.assertEqual(dispatch.query_submissions_batched_reads(self.entry, self.peer),
                          ["native_receipt_mismatch"] * 2)
         self.assertEqual(self.peer.calls, ["batch-read-receipts"])
 
-    def test_existing_result_identity_checks_remain_required(self):
-        changes = [(lambda v: v.update(status="refused"), "delivery_refused"),
-                   (lambda v: v.update(status="pending"), "delivery_result_mismatch"),
-                   (lambda v: v.update(schema="acfs.packet-delivery.v1"), "delivery_result_mismatch"),
-                   (lambda v: v.update(target="other"), "delivery_result_mismatch"),
-                   (lambda v: v["request"].update(payload_sha256="0" * 64), "delivery_result_mismatch"),
-                   (lambda v: v.update(evidence=[]), "delivery_result_mismatch"),
-                   (lambda v: v.update(extra=True), "delivery_result_mismatch")]
-        for change, code in changes:
-            with self.subTest(code=code, change=change):
+    def test_existing_nhm_identity_checks_remain_required(self):
+        changes = [lambda v: v.update(success=False),
+                   lambda v: v.update(session="other"),
+                   lambda v: v["operation"].update(payload_sha256="0" * 64),
+                   lambda v: v["operation"].update(status="pending"),
+                   lambda v: v["operation"].update(admissions=[]),
+                   lambda v: v["outcome"].update(success=False),
+                   lambda v: v["outcome"].update(targets=["other"])]
+        for change in changes:
+            with self.subTest(change=change):
                 self.peer = ProtocolPeer()
-                self.peer.change_result = change
-                self.assertEqual(dispatch.query_submissions_batched_reads(self.entry, self.peer), [code] * 2)
+                self.peer.change_proof = change
+                self.assertEqual(dispatch.query_submissions_batched_reads(self.entry, self.peer),
+                                 ["submission_not_confirmed"] * 2)
 
     def test_batched_and_single_reads_give_the_same_verdicts(self):
-        for change in (None, lambda v: v.update(status="refused"), lambda v: v.update(target="other")):
+        for change in (None, lambda v: v["operation"].update(status="pending"),
+                       lambda v: v["outcome"].update(targets=["other"])):
             with self.subTest(change=change):
                 single, batched = ProtocolPeer(), ProtocolPeer()
-                single.change_result = batched.change_result = change
+                single.change_proof = batched.change_proof = change
                 expected = []
                 for item in self.entry["deliveries"]:
                     try:
@@ -166,18 +165,18 @@ class ProtocolTests(unittest.TestCase):
         self.peer.change_batch = unavailable
         self.assertEqual(dispatch.query_submissions_batched_reads(self.entry, self.peer),
                          ["native_receipt_unavailable", None])
-        self.assertEqual(self.peer.calls, ["batch-read-receipts", "read-result"])
+        self.assertEqual(self.peer.calls, ["batch-read-receipts", "query-receipt"])
 
-    def test_malformed_item_is_local_and_not_read_further(self):
+    def test_malformed_item_is_local_and_not_queried(self):
         def malformed(value):
             value["rows"][0]["stdout_base64"] = base64.b64encode(b"not-json").decode()
         self.peer.change_batch = malformed
         self.assertEqual(dispatch.query_submissions_batched_reads(self.entry, self.peer),
                          ["invalid_json", None])
-        self.assertEqual(self.peer.calls, ["batch-read-receipts", "read-result"])
+        self.assertEqual(self.peer.calls, ["batch-read-receipts", "query-receipt"])
 
     def test_batch_reader_is_strictly_read_only(self):
-        for word in ("subprocess", "robot-send", "herdr", "ntm", "--send"):
+        for word in ("subprocess", "robot-send", "nhm", "herdr", "ntm", "--send"):
             self.assertNotIn(word, dispatch.READ_RECEIPT_BATCH)
 
 
@@ -201,7 +200,7 @@ class RecoveryTests(unittest.TestCase):
             with fleet.directory_fd(directory, private=True) as fd:
                 with self.assertRaises(BlockingIOError):
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if mode.startswith("batch-") or mode == "read-result":
+        if mode.startswith("batch-") or mode == "query-receipt":
             return self.peer(entry, mode)
         return self.fx.peer(entry, mode)
 
@@ -213,30 +212,30 @@ class RecoveryTests(unittest.TestCase):
         return {str(p): (p.read_bytes(), p.stat().st_mode, p.stat().st_mtime_ns)
                 for parent in (self.fx.launch_dir, self.fx.state) for p in parent.iterdir()}
 
-    def test_partial_reconcile_reads_attempted_host_without_writes_or_launch_checks(self):
+    def test_partial_reconcile_queries_attempted_host_without_writes_or_launch_checks(self):
         before = self.snapshot()
-        report, code = self.execute()
-        self.assertEqual((code, report["status"]), (1, "partial"))
+        result, code = self.execute()
+        self.assertEqual((code, result["status"]), (1, "partial"))
         self.assertEqual(self.calls, [("worker-0", "batch-read-receipts"),
-                                      ("worker-0", "read-result"), ("worker-0", "read-result")])
+                                      ("worker-0", "query-receipt"), ("worker-0", "query-receipt")])
         self.assertEqual(before, self.snapshot())
-        self.assertFalse(report["send_attempted"])
+        self.assertFalse(result["send_attempted"])
 
     def test_resume_recovers_lost_result_and_only_sends_untouched_host(self):
         before = self.fx.snapshot()
-        report, code = self.execute("resume", self.approval)
-        self.assertEqual((code, report["status"]), (0, "submitted"))
+        result, code = self.execute("resume", self.approval)
+        self.assertEqual((code, result["status"]), (0, "submitted"))
         self.assertEqual([c for c in self.calls if c[1] == "send"], [("worker-1", "send")])
         self.assertEqual(before, self.fx.snapshot())
         self.assertTrue((self.fx.state / "worker-0.result.json").is_file())
         self.assertTrue((self.fx.state / "worker-1.result.json").is_file())
 
-    def test_unconfirmed_submission_blocks_every_pending_send_without_result_repair(self):
-        self.peer.change_result = lambda v: v.update(status="refused")
+    def test_unknown_submission_blocks_every_pending_send_without_result_repair(self):
+        self.peer.change_proof = lambda v: v["operation"].update(status="pending")
         before = self.snapshot()
-        report, code = self.execute("resume", self.approval)
-        self.assertEqual((code, report["status"]), (1, "unconfirmed"))
-        self.assertEqual({d.get("code") for d in report["hosts"][0]["deliveries"]}, {"delivery_refused"})
+        result, code = self.execute("resume", self.approval)
+        self.assertEqual((code, result["status"]), (1, "unconfirmed"))
+        self.assertEqual({d.get("code") for d in result["hosts"][0]["deliveries"]}, {"submission_not_confirmed"})
         self.assertEqual(before, self.snapshot())
         self.assertFalse(any(mode == "send" for _, mode in self.calls))
 
@@ -393,13 +392,13 @@ class RemoteReadBatchTests(unittest.TestCase):
         with self.assertRaises(fleet.Refused):
             dispatch.remote_command({"receipt_batch_command": "exec /bin/sh -c id"}, "batch-read-receipts")
 
-    def test_batch_mode_keeps_the_result_read(self):
+    def test_batch_mode_keeps_existing_nhm_query_path(self):
         items = deliveries(2)
         peer = ProtocolPeer()
         failures = dispatch.query_submissions_batched_reads({"deliveries": items}, peer)
         self.assertEqual(failures, [None, None])
         self.assertEqual(peer.calls[0], "batch-read-receipts")
-        self.assertEqual(peer.calls[1:], ["read-result", "read-result"])
+        self.assertEqual(peer.calls[1:], ["query-receipt", "query-receipt"])
 
 
 if __name__ == "__main__":

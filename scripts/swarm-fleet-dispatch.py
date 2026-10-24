@@ -92,10 +92,10 @@ except (OSError, ValueError):
 '''
 
 
-# Fixed read-only multi-receipt reader. It never runs herdr or any command from
+# Fixed read-only multi-receipt reader. It never runs nhm or any command from
 # journal data, and it applies READ_RECEIPT's directory and file rules;
-# controller-side validation still decides which operations go on to the
-# single-operation read of their delivery's result.
+# controller-side validation still decides which operations may enter the
+# existing single-operation nhm receipt query path.
 READ_RECEIPT_BATCH = r'''import base64, errno, grp, hashlib, json, os, pwd, re, stat, sys
 PRIVATE = {}
 def private_group(gid):
@@ -263,20 +263,22 @@ def select_batches(spec, launch, history):
 
 
 def remote_command(entry, mode):
-    require(mode in ("launch-status", "preview", "send", "read-receipt", "read-result", "batch-read-receipts"),
+    require(mode in ("launch-status", "preview", "send", "read-receipt", "query-receipt", "batch-read-receipts"),
             "invalid_dispatch_operation")
     if mode == "batch-read-receipts":
         require(type(entry.get("receipt_batch_command")) is str
                 and entry["receipt_batch_command"].startswith("exec /usr/bin/python3 -I -c "),
                 "invalid_receipt_batch_command")
         return entry["receipt_batch_command"]
-    if mode in ("read-receipt", "read-result"):
-        # herdr keeps no record of a prompt, so the delivery's own result file
-        # is the only evidence. Both reads are file reads that cannot send.
+    if mode == "read-receipt":
         path = fleet.absolute_path(entry["delivery"]["receipt"])
-        if mode == "read-result":
-            path += ".result.json"
         return "exec python3 -I -c " + shlex.quote(READ_RECEIPT) + " " + shlex.quote(path)
+    if mode == "query-receipt":
+        operation = entry["delivery"]["request"]["operation_id"]
+        require(fleet.matches(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", operation), "invalid_operation_id")
+        # This branch has no --robot-send, batch, packet payload or fallback.
+        return "exec /bin/bash --noprofile --norc -p -c " + shlex.quote('exec nhm "$@"') + " " + shlex.join([
+            "acfs-fleet-receipt", "--robot-send-receipt=" + operation, "--robot-format=json"])
     request = entry["host"]["request"]
     args = ["--reconcile", "--receipt", request["receipt"]] if mode == "launch-status" else [
         "--dispatch-batch", entry["batch"], "--receipt", request["receipt"]]
@@ -507,42 +509,38 @@ def audit_local_history(context, selected, source_guard):
         return report, 0 if complete else 1
 
 
-def checked_intent(saved, delivery):
-    """The delivery's saved native intent, bound to its request."""
-    require(type(saved) is dict and set(saved) == {"schema", "request", "target", "agent_session"}
-            and saved["schema"] == PACKET_SCHEMA
-            and encoded(saved["request"]) == encoded(delivery["request"])
-            and fleet.matches(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", saved["target"])
-            and (saved["agent_session"] is None
-                 or fleet.matches(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", saved["agent_session"])),
-            "native_receipt_mismatch")
-    return saved
-
-
-def confirm_result(query, saved, invoke):
-    """Read the result the delivery recorded for that intent; never send."""
-    code, raw = invoke(query, "read-result")
-    require(type(code) is int and code == 0 and type(raw) is bytes, "delivery_result_unavailable")
-    value = decode(raw)
-    require(type(value) is dict and set(value) == {"schema", "request", "target", "status", "evidence"}
-            and value["schema"] == PACKET_SCHEMA and encoded(value["request"]) == encoded(query["delivery"]["request"])
-            and value["target"] == saved["target"] and type(value["evidence"]) is dict, "delivery_result_mismatch")
-    require(value["status"] == "submitted", "delivery_refused" if value["status"] == "refused" else "delivery_result_mismatch")
-
-
 def query_submission(entry, delivery, invoke):
-    """Snapshot the native intent, then read the result its delivery recorded; never send.
-
-    herdr cannot be asked afterwards whether a prompt arrived, so a delivery
-    without a recorded `submitted` result stays unconfirmed for good."""
+    """Snapshot the native intent, then query nhm's exact operation; never send."""
     query = {**entry, "delivery": delivery}
     code, raw = invoke(query, "read-receipt")
     require(type(code) is int and code == 0 and type(raw) is bytes, "native_receipt_unavailable")
-    confirm_result(query, checked_intent(decode(raw), delivery), invoke)
+    saved = decode(raw)
+    require(type(saved) is dict and set(saved) == {"schema", "request", "target"}
+            and saved["schema"] == PACKET_SCHEMA
+            and encoded(saved["request"]) == encoded(delivery["request"])
+            and type(saved["target"]) is str and 1 <= len(saved["target"]) <= 128
+            and all(32 <= ord(c) < 127 for c in saved["target"]), "native_receipt_mismatch")
+    code, raw = invoke(query, "query-receipt")
+    require(type(code) is int and code == 0 and type(raw) is bytes, "nhm_receipt_unavailable")
+    value = decode(raw)
+    require(type(value) is dict, "nhm_receipt_invalid")
+    operation, outcome = value.get("operation"), value.get("outcome")
+    request, target = delivery["request"], saved["target"]
+    # nhm's session is the herdr workspace the packet was sent in.
+    require(value.get("success") is True and value.get("session") == request["workspace"]
+            and type(operation) is dict and operation.get("operation_id") == request["operation_id"]
+            and operation.get("payload_sha256") == request["payload_sha256"]
+            and type(operation.get("payload_bytes")) is int and operation["payload_bytes"] == request["payload_bytes"]
+            and operation.get("status") == "completed" and type(outcome) is dict
+            and outcome.get("success") is True and outcome.get("targets") == [target]
+            and outcome.get("successful") == [target] and outcome.get("failed") == []
+            and operation.get("admissions") == [{"target": target, "state": "submitted"}],
+            "submission_not_confirmed")
+
 
 
 def query_submissions_batched_reads(entry, invoke):
-    """Batch the immutable intent reads; each intent that holds then reads its result."""
+    """Batch immutable intent reads; preserve the existing nhm query path."""
     deliveries = entry["deliveries"]
     frames = receipt_read_batch(entry, deliveries, invoke)
     failures, saved = [None] * len(deliveries), {}
@@ -551,18 +549,38 @@ def query_submissions_batched_reads(entry, invoke):
             failures[index] = error
             continue
         try:
-            saved[index] = checked_intent(decode(raw), delivery)
+            body = decode(raw)
+            require(type(body) is dict and set(body) == {"schema", "request", "target"}
+                    and body["schema"] == PACKET_SCHEMA
+                    and encoded(body["request"]) == encoded(delivery["request"])
+                    and type(body["target"]) is str and 1 <= len(body["target"]) <= 128
+                    and all(32 <= ord(ch) < 127 for ch in body["target"]), "native_receipt_mismatch")
+            saved[index] = body
         except fleet.Refused as exc:
             failures[index] = str(exc)
     for index, delivery in enumerate(deliveries):
         if failures[index] is not None:
             continue
         try:
-            confirm_result({**entry, "delivery": delivery}, saved[index], invoke)
+            query = {**entry, "delivery": delivery}
+            code, raw = invoke(query, "query-receipt")
+            require(type(code) is int and code == 0 and type(raw) is bytes, "nhm_receipt_unavailable")
+            value = decode(raw)
+            require(type(value) is dict, "nhm_receipt_invalid")
+            operation, outcome = value.get("operation"), value.get("outcome")
+            request, target = delivery["request"], saved[index]["target"]
+            require(value.get("success") is True and value.get("session") == request["workspace"]
+                    and type(operation) is dict and operation.get("operation_id") == request["operation_id"]
+                    and operation.get("payload_sha256") == request["payload_sha256"]
+                    and type(operation.get("payload_bytes")) is int and operation["payload_bytes"] == request["payload_bytes"]
+                    and operation.get("status") == "completed" and type(outcome) is dict
+                    and outcome.get("success") is True and outcome.get("targets") == [target]
+                    and outcome.get("successful") == [target] and outcome.get("failed") == []
+                    and operation.get("admissions") == [{"target": target, "state": "submitted"}],
+                    "submission_not_confirmed")
         except fleet.Refused as exc:
             failures[index] = str(exc)
     return failures
-
 
 def recover(context, selected, mode, approval, invoke, source_guard, *, batch_receipts=False):
     with fleet.directory_fd(context["state_directory"], private=True) as fd:

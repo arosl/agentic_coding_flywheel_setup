@@ -4,7 +4,7 @@
 #
 # Builds a bounded prompt packet for one Beads issue. The packet
 # packages current repo instructions, Beads metadata, bounded CASS/CM context,
-# and Agent Mail/RCH/UBS workflow commands, for delivery to a herdr agent.
+# and Agent Mail/RCH/UBS workflow commands for nhm prompt injection.
 # ============================================================
 
 set -euo pipefail
@@ -821,13 +821,7 @@ swarm_packet_main() {
 swarm_packet_deliver() {
     command -v python3 >/dev/null 2>&1 || { echo 'Error: python3 is required for packet delivery' >&2; return 2; }
     python3 -I - "${BASH_SOURCE[0]}" "$@" <<'PY_ACFS_PACKET_DELIVERY'
-"""Opt-in packet delivery to a herdr agent over herdr's socket API.
-
-The prompt travels only in the agent.prompt request on herdr's socket, never in
-argv or a log. herdr keeps no record of a prompt, so the create-only intent and
-result files beside the receipt are the only record: a receipt is never sent
-again, whatever it holds.
-"""
+"""Opt-in packet delivery through nhm's durable robot-send protocol."""
 import argparse
 import hashlib
 import json
@@ -837,7 +831,6 @@ import re
 import shlex
 import shutil
 import signal
-import socket
 import stat
 import subprocess
 import sys
@@ -849,26 +842,16 @@ SCHEMA = "acfs.packet-delivery.v2"
 BATCH_SCHEMA = "acfs.packet-delivery-batch.v2"
 MAX_DELIVERIES = 32
 RUNTIME = Path(sys.argv.pop(1)).resolve(strict=True)
-AGENT_TYPES = ("claude", "codex", "agy")
+AGENT_TYPES = ("claude", "codex")
 # herdr identifiers: a workspace such as w9, a pane such as w9:p3, a terminal
 # such as term_65d6a6.
 WORKSPACE_ID = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,31}"
 PANE_ID = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,31}:p[0-9A-Za-z]{1,12}"
 TERMINAL_ID = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
-# Error codes herdr returns before it types anything into the pane. Any other
-# error, and any transport trouble, leaves the delivery unconfirmed.
-REFUSED_BEFORE_TYPING = frozenset({"agent_not_found", "agent_blocked"})
-# nhm's robot error codes for a send it refused before any operation began.
-NHM_REFUSED_BEFORE_SEND = frozenset({"NOT_OWNER", "PANE_NOT_FOUND", "SESSION_NOT_FOUND", "INVALID_FLAG",
-                                     "DEPENDENCY_MISSING"})
 
 
 class DeliveryError(Exception):
     pass
-
-
-class Unconfirmed(Exception):
-    """herdr's answer is missing, late, oversized or malformed."""
 
 
 def require(ok, message):
@@ -955,92 +938,24 @@ def binary(name):
     return os.path.abspath(value)
 
 
-def socket_path(repo):
-    """herdr's socket: $HERDR_SOCKET_PATH inside herdr, else what the server reports."""
-    value = os.environ.get("HERDR_SOCKET_PATH")
-    if not value:
-        code, data = run([binary("herdr"), "status", "server"], repo)
-        text = data.decode("utf-8", "replace")
-        match = re.search(r"(?m)^\s*socket: (/[^\n]+)$", text)
-        require(code == 0 and re.search(r"(?m)^\s*status: running\s*$", text)
-                and re.search(r"(?m)^\s*endpoint_compatible: yes\s*$", text) and match,
-                "The herdr server is not running or not compatible; no prompt was sent.")
-        value = match[1].strip()
-    path = Path(value)
-    require(path.is_absolute(), "The herdr socket path is not absolute; no prompt was sent.")
-    info = os.lstat(path)
-    require(stat.S_ISSOCK(info.st_mode) and info.st_uid == os.geteuid(),
-            "The herdr socket is not this user's socket; no prompt was sent.")
-    return str(path)
-
-
-def herdr_call(path, method, params, timeout=10):
-    """One request on herdr's socket. The answer is bounded in size and time."""
-    request_id = "acfs-" + os.urandom(8).hex()
-    frame = json.dumps({"id": request_id, "method": method, "params": params}, ensure_ascii=True).encode() + b"\n"
-    deadline = time.monotonic() + timeout
-    data = b""
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.settimeout(timeout)
-            client.connect(path)
-            client.sendall(frame)
-            while not data.endswith(b"\n"):
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise Unconfirmed("herdr did not answer in time.")
-                client.settimeout(remaining)
-                chunk = client.recv(65536)
-                if not chunk:
-                    raise Unconfirmed("herdr closed the connection without an answer.")
-                data += chunk
-                if len(data) > LIMIT:
-                    raise Unconfirmed("herdr's answer exceeds 1 MiB.")
-    except OSError:
-        raise Unconfirmed("The herdr connection failed.") from None
-    try:
-        reply = parse(data)
-    except DeliveryError:
-        raise Unconfirmed("herdr's answer is not valid JSON.") from None
-    if not (isinstance(reply, dict) and reply.get("id") == request_id
-            and (isinstance(reply.get("result"), dict) or isinstance(reply.get("error"), dict))):
-        raise Unconfirmed("herdr's answer does not match the request.")
-    return reply
-
-
-def herdr_result(path, method, params, message):
-    try:
-        reply = herdr_call(path, method, params)
-    except Unconfirmed:
-        raise DeliveryError(message) from None
-    require(isinstance(reply.get("result"), dict), message)
-    return reply["result"]
+def herdr_result(herdr, args, repo, message):
+    code, data = run([herdr, *args], repo)
+    require(code == 0, message)
+    value = parse(data)
+    require(isinstance(value, dict) and isinstance(value.get("result"), dict), message)
+    return value["result"]
 
 
 def runs_agent(process, agent_type):
-    # agy-locked runs agy-real under the name agy (acfs-zg0), so check argv[0] too.
-    if not isinstance(process, dict):
-        return False
-    argv = process.get("argv")
-    first = argv[0] if isinstance(argv, list) and argv and isinstance(argv[0], str) else ""
-    return process.get("name") == agent_type or Path(first).name == agent_type
+    return isinstance(process, dict) and process.get("name") == agent_type
 
 
-def agent_session(row):
-    # herdr's integrations report the agent's own session ID; a freshly started
-    # agent may not have reported one yet.
-    session = row.get("agent_session")
-    value = session.get("value") if isinstance(session, dict) else None
-    return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value) else None
-
-
-def target_check(path, request):
-    """The pane is the requested agent, in its workspace and repository, and
-    ready for input. Returns its terminal ID and agent session, which the send
-    must match: a different agent restarted in the same terminal changes the
-    session even though the terminal stays."""
+def target_check(herdr, request):
+    """Upstream's check of the tmux pane, on the agent's herdr pane: the
+    requested agent, in its workspace and repository, and not waiting at a
+    dialog. Returns its terminal ID, which the second check must match."""
     message = "Unable to verify the target pane; no prompt was sent."
-    agents = herdr_result(path, "agent.list", {}, message).get("agents")
+    agents = herdr_result(herdr, ["agent", "list"], request["repo"], message).get("agents")
     require(isinstance(agents, list), message)
     rows = [row for row in agents if isinstance(row, dict) and row.get("pane_id") == request["pane_id"]]
     require(len(rows) == 1, "The target pane is not a herdr agent; no prompt was sent.")
@@ -1054,78 +969,16 @@ def target_check(path, request):
     require(current == root or root in current.parents, "Target agent is in a different repository.")
     require(row.get("agent_status") != "blocked",
             "The target agent is waiting at a dialog; answer it in its tab. No prompt was sent.")
-    info = herdr_result(path, "pane.process_info", {"pane_id": request["pane_id"]}, message).get("process_info")
+    info = herdr_result(herdr, ["pane", "process-info", "--pane", request["pane_id"]], request["repo"],
+                        message).get("process_info")
     require(isinstance(info, dict) and info.get("pane_id") == request["pane_id"]
             and isinstance(info.get("foreground_processes"), list)
             and any(runs_agent(p, request["agent_type"]) for p in info["foreground_processes"]),
             "Target pane is not running the agent it reports; no prompt was sent.")
-    return {"terminal_id": row["terminal_id"], "agent_session": agent_session(row)}
-
-
-def submit(path, request, target, payload):
-    """Send the prompt once. Only an error herdr returns before typing is
-    'refused'; everything else that isn't a matching answer is 'unconfirmed'."""
-    try:
-        reply = herdr_call(path, "agent.prompt", {"target": request["pane_id"], "text": payload.decode("utf-8")},
-                           timeout=30)
-    except Unconfirmed as exc:
-        return "unconfirmed", {"reason": str(exc)}
-    error, result = reply.get("error"), reply.get("result")
-    if error is not None or not isinstance(result, dict):
-        code = error.get("code") if isinstance(error, dict) and result is None else None
-        code = code if isinstance(code, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code) else None
-        return ("refused" if code in REFUSED_BEFORE_TYPING else "unconfirmed"), {"error_code": code}
-    agent = result.get("agent")
-    if (result.get("type") == "agent_prompted" and isinstance(agent, dict)
-            and agent.get("pane_id") == request["pane_id"] and agent.get("terminal_id") == target["terminal_id"]
-            and agent.get("workspace_id") == request["workspace"]
-            and (target["agent_session"] is None or agent_session(agent) == target["agent_session"])):
-        return "submitted", {"pane_id": request["pane_id"], **target}
-    return "unconfirmed", {"reason": "herdr's answer does not name the target agent."}
-
-
-def backend(repo):
-    """Who prompts the agents (acfs-9hkh.27, ruling b2): nhm only when
-    herdr_agents.sh owner says nhm (installed, enrolled for this herdr server,
-    and its owner). Anything else, a failed probe included, is acfs-bash."""
-    helper = RUNTIME.with_name("herdr_agents.sh")
-    try:
-        require(helper.is_file() and not helper.is_symlink(), "The acfs agents helper is unavailable.")
-        code, data = run([binary("bash"), str(helper), "owner"], repo)
-        lines = data.decode("utf-8").splitlines()
-        return "nhm" if code == 0 and lines and lines[-1] == "nhm" else "acfs-bash"
-    except (DeliveryError, OSError, UnicodeError):
-        return "acfs-bash"
-
-
-def nhm_argv(request):
-    # Upstream's ntm argv with nhm in ntm's place: the session is the herdr
-    # workspace, the pane the agent's herdr pane ID (nhm takes either a slot
-    # or a pane ID in --panes).
-    return ["nhm", "--robot-send=" + request["workspace"], "--panes=" + request["pane_id"],
-            "--type=" + request["agent_type"], "--msg-file=-", "--op-id=" + request["operation_id"],
-            "--robot-format=json", "--no-cass", "--with-memory=false"]
-
-
-def send_preview(preview, request):
-    # Upstream's check of ntm's send dry run, on nhm's (tests/fixtures/nhm/).
-    require(isinstance(preview, dict) and preview.get("success") is True
-            and preview.get("session") == request["workspace"] and preview.get("dry_run") is True
-            and preview.get("blocked") is False and preview.get("successful") == []
-            and preview.get("failed") == [] and isinstance(preview.get("would_send_to"), list)
-            and len(preview["would_send_to"]) == 1 and isinstance(preview["would_send_to"][0], str),
-            "nhm did not confirm exactly one matching agent target; no prompt was sent.")
-    # Send-time context would add unreviewed text to a reviewed packet.
-    for key in ("cm_injection", "memory_injection", "cass_injection"):
-        enrichment = preview.get(key)
-        require(enrichment is None or (isinstance(enrichment, dict) and enrichment.get("enabled") is False),
-                "Disable nhm send-time context injection before delivering an already-reviewed packet.")
-    return preview["would_send_to"][0]
+    return row["terminal_id"]
 
 
 def outcome(response, request, target, receipt_query=False):
-    # Upstream's outcome: only nhm's durable operation, matching this packet
-    # and naming exactly this one submitted target, counts as submitted.
     require(isinstance(response, dict), "Unrecognized nhm response; inspect the receipt.")
     operation = response.get("operation")
     require(isinstance(operation, dict), "nhm did not return a durable operation; inspect the receipt.")
@@ -1144,76 +997,12 @@ def outcome(response, request, target, receipt_query=False):
     return "submitted" if submitted else "unconfirmed"
 
 
-def nhm_refused(code, response):
-    """nhm refused before it made a durable operation, so nothing was typed:
-    its answer carries one of these codes and no operation. Any other
-    failure (an operation id used before, an error after the operation
-    began) stays unconfirmed."""
-    return (code != 0 and isinstance(response, dict) and response.get("success") is False
-            and response.get("error_code") in NHM_REFUSED_BEFORE_SEND and "operation" not in response)
-
-
-def nhm_record(receipt, request, target):
-    """A confirmed submission gets the same result file as the herdr path, so
-    reconcile and acfs swarm launch read it without asking nhm again."""
-    evidence = {"operation_id": request["operation_id"], "nhm_target": target}
-    publish(result_path(receipt), {"schema": SCHEMA, "request": request, "target": target,
-                                   "status": "submitted", "evidence": evidence})
-    return {"status": "submitted", "evidence": evidence}
-
-
-def nhm_reconcile(prepared, saved):
-    """Upstream's receipt query for an intent nhm sent; never a resend."""
-    request = prepared["request"]
-    try:
-        code, data = run([binary("nhm"), "--robot-send-receipt=" + request["operation_id"], "--robot-format=json"],
-                         Path(request["repo"]))
-        if code == 0 and outcome(parse(data), request, saved["target"], receipt_query=True) == "submitted":
-            return nhm_record(prepared["receipt"], request, saved["target"])
-    except (DeliveryError, OSError, UnicodeError):
-        pass
-    return None
-
-
-def nhm_deliver(prepared, report):
-    """Upstream's delivery with nhm: a dry run that names exactly one target,
-    the create-only intent, then one send. herdr's own checks of the pane run
-    before and after the dry run, as on the herdr path."""
-    request, receipt, payload = prepared["request"], prepared["receipt"], prepared["payload"]
-    repo = Path(request["repo"])
-    nhm, argv = binary("nhm"), nhm_argv(request)
-    path = socket_path(repo)
-    checked = target_check(path, request)
-    code, data = run([nhm, *[a for a in argv[1:] if not a.startswith("--op-id=")], "--dry-run"], repo, payload)
-    require(code == 0, "nhm did not confirm exactly one matching agent target; no prompt was sent.")
-    target = send_preview(parse(data), request)
-    require(target_check(path, request) == checked, "The target agent changed; no prompt was sent.")
-    publish(receipt, {"schema": SCHEMA, "request": request, "target": target, "via": "nhm"})
-    report.update(status="unconfirmed", sends_prompt=True, reconciled_only=False)
-    try:
-        code, data = run([nhm, *argv[1:]], repo, payload)
-        response = parse(data)
-        if code == 0 and outcome(response, request, target) == "submitted":
-            report.update(nhm_record(receipt, request, target))
-        elif nhm_refused(code, response):
-            evidence = {"operation_id": request["operation_id"], "error_code": response["error_code"]}
-            publish(result_path(receipt), {"schema": SCHEMA, "request": request, "target": target,
-                                           "status": "refused", "evidence": evidence})
-            report.update(status="refused", evidence=evidence, sends_prompt=False)
-    except (DeliveryError, OSError, UnicodeError):
-        pass
-
-
-def result_path(receipt):
-    return receipt.with_name(receipt.name + ".result.json")
-
-
-def publish(path, value):
+def publish_intent(path, request, target):
     # Create-only intent is the recovery boundary. Never delete/replace it on an
     # error: a killed client may already have submitted keystrokes to the agent.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "wb") as handle:
-        handle.write(encode(value))
+        handle.write(encode({"schema": SCHEMA, "request": request, "target": target}))
         handle.flush()
         os.fsync(handle.fileno())
     fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
@@ -1225,8 +1014,8 @@ def publish(path, value):
 
 def single_arguments(arguments=None):
     parser = argparse.ArgumentParser(prog="acfs swarm packet --deliver", allow_abbrev=False,
-        description="Preview a saved packet, then explicitly submit it to one existing herdr agent. "
-                    "This can start paid model work. Reusing a receipt only reads its recorded outcome; it never resends.")
+        description="Preview a saved packet, then explicitly submit it to one existing nhm agent. "
+                    "This can start paid model work. Reusing a receipt only queries the outcome; it never resends.")
     parser.add_argument("packet")
     parser.add_argument("--repo", default=os.getcwd())
     parser.add_argument("--workspace", required=True, help="herdr workspace ID of the agent, e.g. w9")
@@ -1276,23 +1065,21 @@ def prepare(args):
     info = directory(receipt.parent).stat()
     require(info.st_uid == os.geteuid() and info.st_mode & 0o022 == 0,
             "Receipt directory must be owned by this user and not group/world writable; no prompt was sent.")
-    require(Path(os.path.abspath(args.packet)) not in (receipt, result_path(receipt)),
-            "Receipt and its result file must not replace the packet.")
-    owner = backend(repo)
+    require(receipt != Path(os.path.abspath(args.packet)), "Receipt must not replace the packet.")
+    # nhm's session is the herdr workspace; its --panes takes the agent's herdr pane ID.
+    argv = ["nhm", "--robot-send=" + args.workspace, "--panes=" + args.pane_id,
+            "--type=" + args.agent_type, "--msg-file=-", "--op-id=" + args.operation_id,
+            "--robot-format=json", "--no-cass", "--with-memory=false"]
     report = {"schema": SCHEMA, "status": "preview", "request": request,
-              "receipt": str(receipt), "result_file": str(result_path(receipt)), "backend": owner,
+              "receipt": str(receipt), "nhm_argv": argv,
               "sends_prompt": False, "agent_execution_verified": False,
               "note": "Submission can start paid model work. No agent is spawned, interrupted, or trusted automatically. "
                       "Beads claims and Agent Mail registration/reservations remain the agent's responsibility."}
-    if owner == "nhm":
-        report["nhm_argv"] = nhm_argv(request)
-    else:
-        report["herdr_request"] = {"method": "agent.prompt", "target": args.pane_id}
     report["send_command"] = shlex.join(["acfs", "swarm", "packet", "--deliver", os.path.abspath(args.packet),
         "--repo", str(repo), "--workspace", args.workspace, "--pane-id", args.pane_id, "--agent-type", args.agent_type,
         "--operation-id", args.operation_id, "--receipt", str(receipt), "--expect-sha256", packet_hash, "--send"])
-    return {"args": args, "request": request, "receipt": receipt, "payload": payload, "backend": owner,
-            "report": report, "packet_path": Path(os.path.abspath(args.packet))}
+    return {"args": args, "request": request, "receipt": receipt, "payload": payload,
+            "argv": argv, "report": report, "packet_path": Path(os.path.abspath(args.packet))}
 
 
 def existing_intent(prepared):
@@ -1305,71 +1092,58 @@ def existing_intent(prepared):
     return saved
 
 
-def saved_result(prepared, saved):
-    """The recorded outcome of an earlier send, or None if it never got one."""
-    path = result_path(prepared["receipt"])
-    if not os.path.lexists(path):
-        return None
-    value = parse(read_file(path, private=True))
-    require(isinstance(value, dict) and value.get("schema") == SCHEMA
-            and value.get("request") == prepared["request"] and value.get("target") == saved["target"]
-            and value.get("status") in ("submitted", "refused") and isinstance(value.get("evidence"), dict),
-            "Delivery result belongs to a different delivery; it was not changed.")
-    return value
-
-
 def deliver(prepared):
     request, receipt = prepared["request"], prepared["receipt"]
-    payload, report = prepared["payload"], dict(prepared["report"])
+    payload, argv, report = prepared["payload"], prepared["argv"], dict(prepared["report"])
     repo = Path(request["repo"])
     report.pop("send_command", None)
     saved = existing_intent(prepared)
+    nhm = binary("nhm")
     if saved is not None:
-        # A known intent is only read back, never sent again: herdr cannot say
-        # whether an earlier prompt arrived, so nothing may guess that it didn't.
-        result = saved_result(prepared, saved)
-        if result is None and saved.get("via") == "nhm":
-            result = nhm_reconcile(prepared, saved)
-        report["status"] = result["status"] if result else "unconfirmed"
-        if result:
-            report["evidence"] = result["evidence"]
+        report["status"] = "unconfirmed"
+        try:
+            code, data = run([nhm, "--robot-send-receipt=" + request["operation_id"], "--robot-format=json"], repo)
+            if code == 0:
+                report["status"] = outcome(parse(data), request, saved["target"], receipt_query=True)
+        except (DeliveryError, OSError):
+            pass
         report["reconciled_only"] = True
     else:
-        br = binary("br")
+        herdr, br = binary("herdr"), binary("br")
         code, data = run([br, "ready", "--json"], repo)
         ready = parse(data)
         require(code == 0 and isinstance(ready, list)
                 and sum(isinstance(b, dict) and b.get("id") == request["bead_id"]
                         and b.get("status", "open") == "open" for b in ready) == 1,
                 "Bead is not in the current ready queue; no prompt was sent.")
-        # A result file is created only after the send; one that already exists
-        # would make the outcome unrecordable after paid work had started.
-        require(not os.path.lexists(result_path(receipt)),
-                "A delivery result file already exists for this receipt; it was not changed and no prompt was sent.")
-        if prepared["backend"] == "nhm":
-            nhm_deliver(prepared, report)
-            report["recovery"] = ("Run the identical --deliver command with the same receipt to query nhm; "
-                                  "ACFS will not resend.")
-            return report, 0 if report["status"] == "submitted" else 1
-        path = socket_path(repo)
-        target = target_check(path, request)
-        require(target_check(path, request) == target, "The target agent changed; no prompt was sent.")
-        terminal = target["terminal_id"]
-        publish(receipt, {"schema": SCHEMA, "request": request, "target": terminal,
-                          "agent_session": target["agent_session"]})
+        checked = target_check(herdr, request)
+        code, data = run([nhm, *[a for a in argv[1:] if not a.startswith("--op-id=")], "--dry-run"], repo, payload)
+        preview = parse(data)
+        require(code == 0 and isinstance(preview, dict) and preview.get("success") is True
+                and preview.get("session") == request["workspace"] and preview.get("dry_run") is True
+                and preview.get("blocked") is False and preview.get("successful") == []
+                and preview.get("failed") == [] and isinstance(preview.get("would_send_to"), list)
+                and len(preview["would_send_to"]) == 1 and isinstance(preview["would_send_to"][0], str),
+                "nhm did not confirm exactly one matching agent target; no prompt was sent.")
+        # nhm can enable CM injection from its config even with a false CLI
+        # flag. Refuse that mode rather than silently adding unreviewed context.
+        for key in ("cm_injection", "memory_injection", "cass_injection"):
+            enrichment = preview.get(key)
+            require(enrichment is None or (isinstance(enrichment, dict) and enrichment.get("enabled") is False),
+                    "Disable nhm send-time context injection before delivering an already-reviewed packet.")
+        target = preview["would_send_to"][0]
+        require(target_check(herdr, request) == checked, "The target agent changed; no prompt was sent.")
+        publish_intent(receipt, request, target)
         report["status"] = "unconfirmed"
         report["sends_prompt"] = True
+        try:
+            code, data = run([nhm, *argv[1:]], repo, payload)
+            if code == 0:
+                report["status"] = outcome(parse(data), request, target)
+        except (DeliveryError, OSError):
+            pass
         report["reconciled_only"] = False
-        status, evidence = submit(path, request, target, payload)
-        report["evidence"] = evidence
-        if status != "unconfirmed":
-            publish(result_path(receipt), {"schema": SCHEMA, "request": request, "target": terminal,
-                                           "status": status, "evidence": evidence})
-            report["status"] = status
-            report["sends_prompt"] = status == "submitted"
-    report["recovery"] = ("Run the identical --deliver command with the same receipt to read its recorded outcome; "
-                          "ACFS will not resend. An unconfirmed delivery may have reached the agent: look with "
-                          "herdr agent read " + request["pane_id"] + " before preparing new work for it.")
+    report["recovery"] = "Run the identical --deliver command with the same receipt to query nhm; ACFS will not resend."
     return report, 0 if report["status"] == "submitted" else 1
 
 
@@ -1434,18 +1208,10 @@ def batch_main(arguments):
         seen_ops.add(request["operation_id"])
         seen_receipts.add(current["receipt"])
         seen_beads.add(bead_key)
-        saved = existing_intent(current)  # validate prior intent and result without contacting herdr
-        if saved is not None:
-            saved_result(current, saved)
-        else:
-            require(not os.path.lexists(result_path(current["receipt"])),
-                    "A delivery result file exists without its intent; it was not changed.")
+        existing_intent(current)  # validate prior intent without invoking nhm
         prepared.append(current)
     input_paths = {batch_path, *(entry["packet_path"] for entry in prepared)}
-    results = {result_path(receipt) for receipt in seen_receipts}
-    require(not input_paths.intersection(seen_receipts | results),
-            "A receipt or its result file must not replace any batch or packet input.")
-    require(not results.intersection(seen_receipts), "A receipt must not be another delivery's result file.")
+    require(not input_paths.intersection(seen_receipts), "A receipt must not replace any batch or packet input.")
     review = {"schema": BATCH_SCHEMA, "manifest_sha256": digest(batch_bytes),
               "deliveries": [{"request": entry["request"], "receipt": str(entry["receipt"]),
                               "packet": str(entry["packet_path"])} for entry in prepared]}
@@ -1477,7 +1243,7 @@ def batch_main(arguments):
             except (DeliveryError, OSError, UnicodeError, KeyboardInterrupt) as exc:
                 result = dict(entry["report"], status="error", error=error_message(exc))
                 result.pop("send_command", None)
-                # A signal can land just after the herdr submission. Treat any intent
+                # A signal can land just after nhm submission. Treat any intent
                 # file as possibly submitted, never as permission to start over.
                 result["submission_may_have_occurred"] = entry["receipt"].exists()
                 code = 2
@@ -1488,9 +1254,9 @@ def batch_main(arguments):
     report["sends_prompt"] = any(item.get("sends_prompt") for item in results)
     report["deliveries"] = results
     report["summary"] = {key: sum(item["status"] == key for item in results)
-                         for key in ("submitted", "refused", "unconfirmed", "error", "not_attempted")}
+                         for key in ("submitted", "unconfirmed", "error", "not_attempted")}
     report["summary"]["reconciled"] = sum(item.get("reconciled_only") is True for item in results)
-    report["recovery"] = "Keep the unchanged batch, packets and receipts. Repeat this command to read existing outcomes " \
+    report["recovery"] = "Keep the unchanged batch, packets and receipts. Repeat this command to query existing intents " \
                          "and continue only after earlier submissions are confirmed. Never delete receipts to force a resend."
     print(encode(report).decode(), end="")
     return exit_code
@@ -1546,7 +1312,7 @@ def preparation_targets(values, workspace, items=None):
     for value in values:
         # The pane ID itself contains a colon (w9:p3).
         parts = value.split(":", 3)
-        require(len(parts) == 4, "Use --target SLOT:AGENT_NAME:claude|codex|agy:PANE_ID.")
+        require(len(parts) == 4, "Use --target SLOT:AGENT_NAME:claude|codex:PANE_ID.")
         slot, name, agent_type, pane = parts
         require(re.fullmatch(r"[0-9]{1,3}", slot) and 1 <= int(slot) <= 100
                 and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", name)
@@ -1668,7 +1434,7 @@ def preparation_main(arguments):
     parser.add_argument("--triage-file", help="Saved bv triage JSON for automatic selection; {} disables enrichment")
     parser.add_argument("--repo", required=True)
     parser.add_argument("--workspace", required=True, help="herdr workspace ID of the target agents, e.g. w9")
-    parser.add_argument("--target", action="append", required=True, help="SLOT:AGENT_NAME:claude|codex|agy:PANE_ID")
+    parser.add_argument("--target", action="append", required=True, help="SLOT:AGENT_NAME:claude|codex:PANE_ID")
     parser.add_argument("--beads-file", help="Saved full Beads objects; otherwise read br show for each assignment")
     parser.add_argument("--no-live-context", action="store_true", help="Do not query CM or CASS during preparation")
     args = parser.parse_args(arguments)

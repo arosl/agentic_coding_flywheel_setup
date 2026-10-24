@@ -21,8 +21,7 @@ The local fleet launch journal must contain a confirmed result for every selecte
 host. Partial fleets are allowed only when each selected host has that evidence.
 Endpoint, remote user, session, repository, receipt and original native process
 identities come exclusively from that journal; they cannot be overridden by a
-batch selection. Native support is Claude, Codex and Antigravity (`agy`), as in
-the fleet launcher.
+batch selection. Native support is Claude and Codex, as in the fleet launcher.
 
 Create a private, mode-0600 file containing only explicit existing host IDs and
 absolute paths to their reviewed remote batches:
@@ -83,7 +82,7 @@ Send rechecks every selected host before the first batch invocation. If any
 preview fails, no local dispatch journal is created and nothing is sent. Hosts
 then dispatch sequentially. Each native sender retains its live ready-queue,
 pane-identity, exact-payload and durable-receipt checks. Capacity is not reserved
-fleet-wide, and identity checks are not atomic with the eventual herdr prompt.
+fleet-wide, and identity checks are not atomic with the eventual nhm send.
 Do not restart agents or change packets/receipts during dispatch.
 
 ## Durable intent and partial failure
@@ -127,18 +126,15 @@ For each attempted host, a fixed read-only Python program snapshots the original
 private per-delivery intent over SSH. It checks ownership, permissions, regular
 file type, hardlinks, symlink-free directories and a 1 MiB bound; it creates no
 remote files. The controller validates that intent against the approved packet
-request, then reads the delivery's result file, `RECEIPT.result.json`, with the
-same fixed program. herdr keeps no record of a prompt that could be queried
-later, so that file is the only evidence. Successful proof is a `submitted`
-result for the exact request (operation, payload hash and byte count, workspace
-and pane) and the terminal the intent recorded. A `refused` result is reported
-as `delivery_refused`: nothing was typed, and the controller still never resends.
-Raw receipt contents are never copied into reports.
+request, then calls only `nhm --robot-send-receipt=OPERATION --robot-format=json`.
+Successful proof must match the exact operation, payload hash and byte count,
+session (the herdr workspace), recorded native target and completed submission
+admission. Raw receipt and nhm diagnostics are never copied into reports.
 
-This historical read does not need live panes, herdr or the original batch and
-packet files on the remote. It does need both the original native delivery
-intent and its result file. A missing, malformed, conflicting or unavailable
-result remains `unconfirmed` even when a local result previously said submitted.
+This historical query does not need live panes or the original batch/packet
+files on the remote. It does need both the original native delivery intent and
+nhm's operation receipt. A missing, malformed, conflicting, partial or unavailable
+receipt remains `unconfirmed` even when a local result previously said submitted.
 No queried host can enter a preview or send path in this invocation. All
 attempted hosts are checked, so one failed query does not hide its peers.
 
@@ -146,7 +142,7 @@ After reviewing the result, use `--resume --accept-plan ORIGINAL_DISPATCH_DIGEST
 instead. Resume first confirms every delivery on every attempted host. Only
 then can it reconstruct a missing local result from the remote evidence, preview
 all untouched hosts again, require byte-identical approved work/targets, and send
-to those untouched hosts. A fully submitted fleet's resume only reads receipts;
+to those untouched hosts. A fully submitted fleet's resume only queries receipts;
 it neither writes files nor starts model work. Earlier local results are never
 replaced, and an attempted host is never sent its batch again by this controller.
 
@@ -172,7 +168,7 @@ marked `not_attempted`; any unknown submission returns `unconfirmed`/exit 1.
 Resume requires the original digest; changing the batch or source evidence is
 not a recovery override. Local state errors return 2, without a send fallback.
 
-A native `submitted` result means herdr accepted the prompt for that agent, not task
+A native `submitted` result means matching nhm submission evidence, not task
 execution, task completion, or Agent Mail registration. Reports contain reviewed
 IDs and digests, never packet text or raw remote diagnostics. The private local
 journal does contain endpoints, paths and operation metadata; it is not a
@@ -203,10 +199,10 @@ Tests execute the actual controller with real private launch/dispatch journals,
 locks, file changes and protocol peers. They check all-host barriers, exact
 binding, argument quoting, transport restrictions, immutable results, and failure
 stops. Recovery tests kill an actual controller child after its durable attempt,
-then assert that its batch is read back rather than resent. The fixed remote
+then assert that its batch is queried rather than resent. The fixed remote
 receipt reader is exercised as an unprivileged user with real private files,
 symlinks, hardlinks, FIFOs, oversized input and literal shell arguments.
-These tests are not real SSH/VPS/herdr or authenticated-provider acceptance.
+These tests are not real SSH/VPS/nhm or authenticated-provider acceptance.
 The command requires Linux and system OpenSSH on the controller, a complete
 trusted ACFS checkout, and already installed native launchers on remote hosts.
 It is not a new installed `acfs` subcommand.
@@ -217,63 +213,65 @@ Add `--batch-receipts` to `--reconcile` or to an explicitly approved `--resume`
 operation to group immutable intent reads without changing send authority:
 
 ```bash
-python3 -I scripts/swarm-fleet-dispatch.py \
+acfs-fleet dispatch \
   --launch-state "$HOME/fleet-wave-1" --batches fleet-batches.json \
   --known-hosts "$HOME/.ssh/known_hosts" --identity-file "$HOME/.ssh/id_ed25519" \
   --state-dir "$HOME/fleet-work-wave-1" --reconcile --batch-receipts
 ```
 
-It changes neither the dispatch journal schema nor its approval digest. It is
-rejected for new preview/send operations and never silently falls back to
-individual reads after a batch failure. Omitting it keeps individual reads.
+This requires a fleet runtime installed or upgraded from code supporting the
+flag. It changes neither the original journal schema nor its approval digest.
+It is rejected for new preview/send operations and never silently falls back to
+individual queries after a batch failure. Omitting it keeps individual queries.
 
 For each attempted host, one SSH operation snapshots up to 32 selected native
 intents with a fixed read-only Python helper. The controller validates each exact
-request locally. Only intents that pass go on to the existing single-operation
-read of their delivery's result file. A missing or invalid intent never
-authorizes a result read, much less another send. Thus 32 successfully verified
-deliveries need 33 SSH operations instead of 64: one bounded intent-read batch
-plus the same 32 result-file reads that ordinary recovery makes.
+request locally. Only intents that pass enter the existing single-operation nhm
+receipt query path. A missing or invalid intent never authorizes an nhm query,
+much less another send. Thus 32 successfully verified deliveries need 33 SSH
+operations instead of 64: one bounded intent-read batch plus the same 32 exact
+nhm receipt queries used by ordinary recovery.
 
-Every result goes through the same controller-side request, target, status and
-evidence checks as an individual read; a `refused` result is still
-`delivery_refused`. A batch's successful transport status is not submission
-proof. Responses are bound to the complete nonce-bearing request, exact item
-count and operation order. Malformed, reordered or mismatched envelopes are
-unconfirmed. Valid envelopes can report individual unavailable intents without
-hiding healthy peers. Raw evidence is carried only on the private SSH
-connection, never in user reports.
+Every nhm response goes through the same controller-side operation, payload,
+byte-count, session, target, admission and outcome checks as an individual query.
+A batch's successful transport status is not submission proof. Responses are
+bound to the complete nonce-bearing request, exact item count and operation order.
+Malformed, reordered or mismatched envelopes are unconfirmed. Valid envelopes
+can report individual unavailable or invalid proofs without hiding healthy peers.
+Raw proof is carried only on the private SSH connection, never in user reports.
 
-The fixed batch helper starts no agent, receives no work payload, runs no herdr
-command and creates no files. It only opens the reviewed private intent paths,
-with the single reader's directory and file rules (the user's private group may
-write a directory, but not through an access ACL).
+The fixed batch helper starts no agent, receives no work payload, runs no nhm
+process and creates no receipt files. It only opens the reviewed private intent
+paths, with the single reader's directory and file rules (the user's private
+group may write a directory, but not through an access ACL). nhm verification
+continues through the existing per-operation query path, so its process and
+timeout behavior are unchanged.
 
 Batch mode has explicit additional bounds: 32 unique receipt items, 64 KiB of
 request data, 32 KiB per captured intent and 1 MiB for the framed response.
 Unsafe paths, oversized intents, transport loss or an invalid envelope fail
-closed.
+closed. Omitting the flag keeps the original individual read/query behavior.
 
 ```bash
 python3 -B tests/unit/test_swarm_fleet_receipt_batch.py -v
 ```
 
-These tests cover intent-before-result ordering, per-delivery result validation,
-batch-envelope binding, journal reconciliation, approved continuation and the
-offline audit below. The batch helper runs for real on private files, links,
-FIFOs, hardlinks and oversized input. The tests do not establish live
-SSH/herdr/provider acceptance or task completion.
+These tests cover intent-before-query ordering, per-delivery proof validation,
+batch-envelope binding, journal reconciliation and approved continuation. They
+use protocol fixtures and do not establish live SSH/nhm/provider acceptance or
+task completion.
+
 
 ## Offline local recovery audit
 
 Use `--audit` with the same launch state, batch selection, trust files and dispatch
 state to validate only the controller journals. Audit acquires the same locks and
 runs the same launch/dispatch history validators, but it does not construct SSH
-transport, contact a host, read a result file, start agents or send work.
+transport, contact a host, query nhm, start agents or send work.
 
 The report labels each selected host `recorded_submitted`,
 `attempted_unconfirmed`, or `not_attempted`. A complete local journal returns
 `recorded`/exit 0; incomplete history returns `partial`/exit 1. These labels
 describe local evidence only: `remote_submission_verified` and
 `agent_execution_verified` are always false. Use `--reconcile` when live
-submission evidence is required.
+submission proof is required.

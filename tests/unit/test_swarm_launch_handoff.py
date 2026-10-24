@@ -6,12 +6,8 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from herdr_socket_stub import HerdrStub, agent_row  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 LAUNCH = ROOT / "scripts/lib/swarm_launch.sh"
@@ -39,7 +35,7 @@ if name == "plan":
         "quiesce_advisory":{"recommendation":"proceed"},"recommendation":"launch",
         "checks":[{"id":"capacity","status":"pass"}]}))
 elif name == "ntm":
-    raise AssertionError("nhm starts the agents and delivery goes through herdr's socket, never ntm")
+    raise AssertionError("nhm starts the agents and sends their work, never ntm")
 elif name == "nhm":
     if args[:1] == ["resolve"]:
         # nhm's binding of a pane, as recovery asks for it, or nhm's not-found error.
@@ -50,10 +46,44 @@ elif name == "nhm":
             print(json.dumps({**envelope,"error":"bindings: no such binding: " + args[1]})); sys.exit(1)
         print(json.dumps({**envelope,"result":{"binding":binding,"verification":{"verdict":"verified","checks":[]}}}))
         sys.exit(0)
+    def opt(key): return next(a.split("=",1)[1] for a in args if a.startswith(key + "="))
+    if args[0].startswith("--robot-send-receipt="):
+        assert args[1:] == ["--robot-format=json"]
+        path = root / ("nhm-" + opt("--robot-send-receipt") + ".json")
+        if not path.exists():
+            print('{"success":false,"error_code":"NOT_FOUND"}'); sys.exit(1)
+        data = json.loads(path.read_text())
+        if mode == "query-wrong-digest": data["operation"]["payload_sha256"] = "0" * 64
+        if mode == "query-wrong-target": data["successful"] = ["wrong"]
+        if mode == "query-scalar": print("[]"); sys.exit(0)
+        print(json.dumps({"success":True,"session":"w9","operation":data["operation"],"outcome":data}))
+        sys.exit(0)
+    if args[0].startswith("--robot-send="):
+        # nhm's session is the herdr workspace; it names the agent in the
+        # herdr pane by its slot in nhm's binding.
+        assert opt("--robot-send") == "w9" and "--msg-file=-" in args
+        assert "--no-cass" in args and "--with-memory=false" in args
+        binding, kind = st["bindings"][opt("--panes")], opt("--type")
+        assert kind == binding["kind"], (binding,kind)
+        target = binding["slot"]
+        payload = sys.stdin.buffer.read()
+        assert payload.startswith(b"# ACFS Swarm Startup Packet\n")
+        if "--dry-run" in args:
+            print(json.dumps({"success":True,"session":"w9","dry_run":True,"blocked":False,
+                "would_send_to":[target],"successful":[],"failed":[]})); sys.exit(0)
+        op = opt("--op-id")
+        result = {"success":True,"session":"w9","targets":[target],"successful":[target],"failed":[],
+            "operation":{"operation_id":op,"payload_sha256":hashlib.sha256(payload).hexdigest(),
+                "payload_bytes":len(payload),"status":"completed","admissions":[{"target":target,"state":"submitted"}]}}
+        (root / "sent").write_text("yes")
+        (root / ("payload-" + op)).write_bytes(payload)
+        if mode != "missing-upstream": (root / ("nhm-" + op + ".json")).write_text(json.dumps(result))
+        if mode == "missing-upstream" or (mode == "lost-first" and op == "work-1"):
+            print("private-provider-error",file=sys.stderr); sys.exit(1)
+        print(json.dumps(result)); sys.exit(0)
     # nhm's --robot-spawn (tests/fixtures/nhm/robot_spawn*.json): claude before
     # codex, each agent with a new Agent Mail name, in a new herdr workspace
     # labelled with the --robot-spawn value.
-    def opt(key): return next(a.split("=",1)[1] for a in args if a.startswith(key + "="))
     assert "--spawn-safety" in args and "--spawn-no-user" in args
     assert not any("robot-send" in a or "assign-work" in a for a in args)
     session = opt("--robot-spawn")
@@ -97,7 +127,7 @@ elif name == "herdr":
         rows = [] if mode == "missing-pane" else [dict(a) for a in st["agents"]]
         for a in rows:
             # Slot 2's agent (claude, w9:p2) changes after slot 1's work is sent.
-            if changed or (mode == "change-after-first" and a["pane_id"] == "w9:p2" and (root / "sends").exists()):
+            if changed or (mode == "change-after-first" and a["pane_id"] == "w9:p2" and (root / "sent").exists()):
                 a["terminal_id"] += "x"
             if mode == "wrong-repo": a["cwd"] = str(root)
         ok({"agents":rows})
@@ -137,10 +167,10 @@ else:
 
 
 # Stands in for swarm_packet.sh --deliver: it writes the same create-only intent
-# and <receipt>.result.json that the real deliverer writes around herdr's
-# agent.prompt, and logs each prompt that reached a pane in `sends`.
+# that the real deliverer writes, naming the target of nhm's dry run, then sends
+# the packet once through nhm.
 DISPATCH_PACKET = r'''#!/usr/bin/env python3
-import hashlib, json, os, pathlib, sys
+import hashlib, json, os, pathlib, subprocess, sys
 root = pathlib.Path(os.environ["HANDOFF_ROOT"])
 args = sys.argv[1:]
 mode = os.environ.get("HANDOFF_MODE", "ok")
@@ -160,10 +190,6 @@ def request(item, parent):
          "agent_type":item["agent_type"],"operation_id":item["operation_id"],"bead_id":packet["bead"]["id"],
          "packet_sha256":digest(raw),"payload_sha256":digest(payload),"payload_bytes":len(payload)}
     return r, path, (parent/item["receipt"]).absolute(), payload
-def publish(path, value):
-    fd = os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
-    with os.fdopen(fd,"wb") as f:
-        f.write(enc(value)); f.flush(); os.fsync(f.fileno())
 def fail():
     print('{"schema":"acfs.packet-delivery.v2","status":"error"}'); sys.exit(2)
 try:
@@ -198,38 +224,21 @@ try:
     item["packet"] = args[1]
     r, packet, receipt, payload = request(item,pathlib.Path.cwd())
     assert flag("--expect-sha256") == r["packet_sha256"]
-    assert r["workspace"] == "w9" and r["agent_type"] == ("codex" if r["pane_id"] == "w9:p3" else "claude"), r
     # A recovery request must never call this send-capable path.
-    assert not receipt.exists() and not pathlib.Path(str(receipt) + ".result.json").exists()
-    terminal = "term_" + r["pane_id"].rsplit(":p",1)[1]
-    op = r["operation_id"]
-    if mode == "nhm-lost-first" and op == "work-1":
-        # nhm sent it (acfs-9hkh.27): the intent names nhm's target, the answer
-        # was lost, and only nhm's receipt (the fake nhm reads this) knows.
-        publish(receipt,{"schema":"acfs.packet-delivery.v2","request":r,"target":"1.1","via":"nhm"})
-        (root / "nhm-op.json").write_text(json.dumps({"session":r["workspace"],"operation":{"operation_id":op,
-            "status":"completed","payload_sha256":r["payload_sha256"],"payload_bytes":r["payload_bytes"],
-            "admissions":[{"target":"1.1","state":"submitted"}]}}))
-        with (root / "sends").open("a") as f: f.write(json.dumps([r["pane_id"],op]) + "\n")
-        print(json.dumps({"schema":"acfs.packet-delivery.v2","status":"unconfirmed","evidence":{},"request":r,
-            "receipt":str(receipt),"sends_prompt":True,"reconciled_only":False,"agent_execution_verified":False}))
-        sys.exit(1)
-    publish(receipt,{"schema":"acfs.packet-delivery.v2","request":r,"target":terminal,"agent_session":None})
-    if mode == "refused-first" and op == "work-1":
-        status, evidence = "refused", {"error_code":"agent_blocked"}
-    else:
-        with (root / "sends").open("a") as f: f.write(json.dumps([r["pane_id"],op]) + "\n")
-        (root / ("payload-" + op)).write_bytes(payload)
-        status, evidence = ("unconfirmed", {}) if mode == "lost-first" and op == "work-1" else \
-            ("submitted", {"pane_id":r["pane_id"],"terminal_id":terminal,"workspace_id":"w9"})
-    if status != "unconfirmed":
-        publish(str(receipt) + ".result.json",{"schema":"acfs.packet-delivery.v2","request":r,"target":terminal,
-            "status":status,"evidence":evidence})
+    assert not receipt.exists()
+    argv = ["nhm","--robot-send="+r["workspace"],"--panes="+r["pane_id"],"--type="+r["agent_type"],
+        "--msg-file=-","--robot-format=json","--no-cass","--with-memory=false"]
+    preview = subprocess.run([*argv,"--dry-run"],input=payload,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    assert preview.returncode == 0
+    fd = os.open(receipt,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+    with os.fdopen(fd,"wb") as f:
+        f.write(enc({"schema":"acfs.packet-delivery.v2","request":r,"target":json.loads(preview.stdout)["would_send_to"][0]}))
+        f.flush(); os.fsync(f.fileno())
+    sent = subprocess.run([*argv,"--op-id="+r["operation_id"]],input=payload,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     if mode == "bad-child-response": print("[]"); sys.exit(0)
-    print(json.dumps({"schema":"acfs.packet-delivery.v2","status":status,"evidence":evidence,
-        "request":r,"receipt":str(receipt),"sends_prompt":status != "refused","reconciled_only":False,
-        "agent_execution_verified":False}))
-    sys.exit(0 if status == "submitted" else 1)
+    print(json.dumps({"schema":"acfs.packet-delivery.v2","status":"submitted" if sent.returncode==0 else "unconfirmed",
+        "request":r,"receipt":str(receipt),"sends_prompt":True,"reconciled_only":False,"agent_execution_verified":False}))
+    sys.exit(0 if sent.returncode==0 else 1)
 except (AssertionError, KeyError, ValueError, OSError):
     fail()
 '''
@@ -501,8 +510,8 @@ class DispatchTests(unittest.TestCase):
         return report
 
     def sends(self):
-        path = self.root / "sends"
-        return [json.loads(s) for s in path.read_text().splitlines()] if path.exists() else []
+        return [argv for name,argv in self.case.calls()
+                if name == "nhm" and "--robot-send=w9" in argv and "--dry-run" not in argv]
 
     def assert_no_new_spawn(self):
         self.assertEqual(sum(name == "nhm" and any(a.startswith("--robot-spawn=") for a in argv)
@@ -536,8 +545,7 @@ class DispatchTests(unittest.TestCase):
             self.assertEqual(report["summary"]["reconciled"],attempt*2)
             self.assertFalse(report["agent_execution_verified"])
             if attempt:
-                # Reconciling reads the recorded results; it calls nothing that can send.
-                self.assertEqual([n for n,_ in self.case.calls()[before:]],["packet"])
+                self.assertEqual([n for n,_ in self.case.calls()[before:]],["packet","nhm","nhm"])
         self.assertEqual(len(self.sends()),2)
         for i in (1,2):
             expected = json.loads((self.bundle/f"packet-{i}.json").read_text())["packet_markdown"].encode()
@@ -587,57 +595,26 @@ class DispatchTests(unittest.TestCase):
         self.assertTrue((self.bundle/"delivery-1.json").exists())
         self.assertFalse((self.bundle/"delivery-2.json").exists())
 
-    def test_lost_answer_stays_unconfirmed_and_never_resends(self):
-        # herdr keeps no receipt to query, so a lost answer is never settled by
-        # guessing: the intent stays unconfirmed and blocks later work.
+    def test_lost_response_stops_then_queries_and_continues_once(self):
         review = self.preview()["review_sha256"]
         code, report = self.invoke(mode="lost-first",review=review,send=True)
         self.assertEqual((code,report["status"]),(1,"stopped"),report)
         self.assertEqual([d["status"] for d in report["deliveries"]],["unconfirmed","not_attempted"])
-        self.assertTrue(report["submission_may_have_occurred"])
-        for _ in (0,1):
-            code, report = self.invoke(review=review,send=True)
-            self.assertEqual((code,report["status"]),(1,"stopped"),report)
-            self.assertEqual([d["status"] for d in report["deliveries"]],["unconfirmed","not_attempted"])
-            self.assertTrue(report["deliveries"][0]["reconciled_only"])
-        self.assertEqual(len(self.sends()),1)
-        self.assertFalse((self.bundle/"delivery-2.json").exists())
-
-    def test_lost_nhm_answer_reconciles_from_nhms_receipt(self):
-        # acfs-9hkh.27 review: dispatch asks nhm's receipt (read-only) for an
-        # intent nhm sent, then goes on; work-1 is never sent again.
-        nhm = self.case.bin / "nhm"
-        nhm.write_text("#!/usr/bin/env python3\nimport json, os, pathlib, sys\n"
-                       "root = pathlib.Path(os.environ['HANDOFF_ROOT'])\n"
-                       "with (root / 'nhm-calls').open('a') as f: f.write(json.dumps(sys.argv[1:]) + '\\n')\n"
-                       "assert sys.argv[1:] == ['--robot-send-receipt=work-1', '--robot-format=json'], sys.argv\n"
-                       "op = json.loads((root / 'nhm-op.json').read_text())\n"
-                       "print(json.dumps({'success': True, 'session': op['session'], 'operation': op['operation'],\n"
-                       "    'outcome': {'success': True, 'targets': ['1.1'], 'successful': ['1.1'], 'failed': []}}))\n")
-        nhm.chmod(0o755)
-        review = self.preview()["review_sha256"]
-        code, report = self.invoke(mode="nhm-lost-first",review=review,send=True)
-        self.assertEqual([d["status"] for d in report["deliveries"]],["unconfirmed","not_attempted"],report)
+        self.assertNotIn("private-provider",json.dumps(report))
+        # Slot 1's agent (codex, w9:p3) is the second agent nhm started.
+        self.assertEqual(json.loads((self.bundle/"delivery-1.json").read_text())["target"],"1.2")
         code, report = self.invoke(review=review,send=True)
         self.assertEqual((code,report["status"]),(0,"submitted"),report)
-        self.assertEqual([d["status"] for d in report["deliveries"]],["submitted","submitted"])
-        self.assertTrue(report["deliveries"][0]["reconciled_only"])
-        self.assertEqual([op for _,op in self.sends()],["work-1","work-2"])
-        calls = (self.root / "nhm-calls").read_text().splitlines()
-        self.assertTrue(calls and all(json.loads(c)[0] == "--robot-send-receipt=work-1" for c in calls))
+        self.assertEqual(report["summary"]["reconciled"],1)
+        self.assertEqual(len(self.sends()),2)
 
-    def test_refused_delivery_is_recorded_and_stops_later_work(self):
+    def test_missing_upstream_receipt_never_resends(self):
         review = self.preview()["review_sha256"]
-        code, report = self.invoke(mode="refused-first",review=review,send=True)
-        self.assertEqual((code,report["status"]),(1,"stopped"),report)
-        self.assertEqual([d["status"] for d in report["deliveries"]],["refused","not_attempted"])
-        self.assertEqual(report["summary"]["refused"],1)
-        self.assertFalse(report["submission_may_have_occurred"])
+        self.assertEqual(self.invoke(mode="missing-upstream",review=review,send=True)[0],1)
         code, report = self.invoke(review=review,send=True)
         self.assertEqual((code,report["status"]),(1,"stopped"),report)
-        self.assertEqual(report["deliveries"][0]["status"],"refused")
         self.assertTrue(report["deliveries"][0]["reconciled_only"])
-        self.assertEqual(self.sends(),[])
+        self.assertEqual(len(self.sends()),1)
         self.assertFalse((self.bundle/"delivery-2.json").exists())
 
     def test_confirmed_submissions_reconcile_after_agents_exit(self):
@@ -646,28 +623,17 @@ class DispatchTests(unittest.TestCase):
         before = len(self.case.calls())
         code, report = self.invoke(mode="missing-pane",review=review,send=True)
         self.assertEqual((code,report["status"]),(0,"submitted"),report)
-        self.assertEqual([n for n,_ in self.case.calls()[before:]],["packet"])
+        self.assertEqual([n for n,_ in self.case.calls()[before:]],["packet","nhm","nhm"])
         self.assertEqual(report["summary"]["reconciled"],2)
         self.assertEqual(len(self.sends()),2)
 
-    def test_recorded_result_must_match_request_target_and_shape(self):
+    def test_query_digest_target_and_shape_must_match(self):
         review = self.preview()["review_sha256"]
         self.assertEqual(self.invoke(review=review,send=True)[0],0)
-        path = self.bundle/"delivery-1.json.result.json"
-        original = path.read_text()
-        good = json.loads(original)
-        for name,value in (("digest",{**good,"request":{**good["request"],"payload_sha256":"0"*64}}),
-                           ("target",{**good,"target":"term_99"}),("status",{**good,"status":"delivered"}),
-                           ("scalar",[])):
-            with self.subTest(name=name):
-                path.write_text(json.dumps(value))
-                code, report = self.invoke(review=review,send=True)
+        for mode in ("query-wrong-digest","query-wrong-target","query-scalar"):
+            with self.subTest(mode=mode):
+                code, report = self.invoke(mode=mode,review=review,send=True)
                 self.assertEqual((code,report["status"]),(1,"stopped"),report)
-                self.assertEqual(report["deliveries"][0]["status"],"unconfirmed")
-        path.write_text(original)
-        path.chmod(0o644)
-        code, report = self.invoke(review=review,send=True)
-        self.assertEqual((code,report["deliveries"][0]["status"]),(1,"unconfirmed"),report)
         self.assertEqual(len(self.sends()),2)
 
     def test_removing_known_intent_during_validation_cannot_turn_query_into_send(self):
@@ -720,10 +686,6 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(self.sends(),[])
 
     def test_real_launch_prepare_review_dispatch_and_reconcile(self):
-        herdr = HerdrStub([agent_row("w9:p2",self.repo,terminal_id="term_2"),
-                           agent_row("w9:p3",self.repo,agent="codex",terminal_id="term_3")])
-        self.addCleanup(herdr.close)
-        self.case.env = herdr.env(self.case.env)
         shutil.copyfile(PACKET,self.case.lib/PACKET.name)
         shutil.copyfile(ASSIGN,self.case.lib/ASSIGN.name)
         path = self.case.bin/"br"; path.write_text(PROBE); path.chmod(0o755)
@@ -748,8 +710,8 @@ class DispatchTests(unittest.TestCase):
         code, result = self.case.invoke(send,mode="missing-pane")
         self.assertEqual(code,0,result)
         self.assertEqual(result["summary"]["reconciled"],2)
-        self.assertEqual([p["target"] for p in herdr.prompts()],["w9:p3","w9:p2"])
-        self.assertTrue(all(p["text"].startswith("# ACFS Swarm Startup Packet\n") for p in herdr.prompts()))
+        self.assertEqual([[a for a in argv if a.startswith("--panes=")] for argv in self.sends()],
+                         [["--panes=w9:p3"],["--panes=w9:p2"]])
         self.assert_no_new_spawn()
 
 

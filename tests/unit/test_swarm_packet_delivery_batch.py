@@ -5,29 +5,75 @@ import os
 from pathlib import Path
 import shlex
 import subprocess
-import sys
 import tempfile
 import unittest
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from herdr_socket_stub import HerdrStub, agent_row  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/lib/swarm_packet.sh"
 
-BR = r'''#!/usr/bin/env python3
-import json, os, pathlib, sys
+FIXTURE = r'''#!/usr/bin/env python3
+import hashlib, json, os, pathlib, sys
 root = pathlib.Path(os.environ["BATCH_FIXTURE_ROOT"])
+name, args = pathlib.Path(sys.argv[0]).name, sys.argv[1:]
+mode = os.environ.get("BATCH_FIXTURE_MODE", "ok")
 with (root / "calls.jsonl").open("a") as f:
-    f.write(json.dumps([pathlib.Path(sys.argv[0]).name, sys.argv[1:]]) + "\n")
-assert sys.argv[1:] == ["ready", "--json"], sys.argv
-not_ready = (root / "not-ready").exists()
-print(json.dumps([{"id": "bd-" + str(i), "status": "open"} for i in (1, 2, 3) if not (not_ready and i == 2)]))
+    f.write(json.dumps([name, args]) + "\n")
+if name == "br":
+    assert args == ["ready", "--json"], args
+    print(json.dumps([{"id": "bd-" + str(i), "status": "open"} for i in (1, 2, 3)
+                      if not (mode == "not-ready" and i == 2)]))
+    sys.exit(0)
+if name == "herdr":
+    # herdr's CLI answers as its socket API does, inside {"result": ...}.
+    if args == ["agent", "list"]:
+        print(json.dumps({"result": {"agents": [{"pane_id": "w9:p" + str(i), "workspace_id": "w9",
+            "tab_id": "w9:t" + str(i), "agent": "codex" if i == 2 else "claude", "agent_status": "idle",
+            "cwd": str(root / "repo"), "name": None, "terminal_id": "term_" + str(i)} for i in (1, 2, 3)]}}))
+        sys.exit(0)
+    assert args[:3] == ["pane", "process-info", "--pane"], args
+    number = int(args[3].rsplit(":p", 1)[1])
+    command = "codex" if number == 2 else "claude"
+    if mode == "wrong-pane" and number == 2: command = "bash"
+    print(json.dumps({"result": {"process_info": {"pane_id": args[3], "shell_pid": 4200 + number,
+        "foreground_processes": [{"name": command, "argv": [command], "pid": 4300 + number}]}}}))
+    sys.exit(0)
+assert name == "nhm"
+if args[0].startswith("--robot-send-receipt="):
+    op = args[0].split("=", 1)[1]
+    store = root / (op + ".nhm.json")
+    if not store.exists():
+        print(json.dumps({"success": False, "error_code": "NOT_FOUND"}))
+        sys.exit(1)
+    recorded = json.loads(store.read_text())
+    print(json.dumps({"success": True, "session": "w9", "operation": recorded["operation"], "outcome": recorded}))
+    sys.exit(0)
+# nhm's session is the herdr workspace; it names each agent by its slot.
+assert args[0] == "--robot-send=w9", args
+pane = next(a.split("=", 1)[1] for a in args if a.startswith("--panes="))
+number = int(pane.rsplit(":p", 1)[1])
+target = "1." + str(number)
+assert "--type=" + ("codex" if number == 2 else "claude") in args, args
+assert "--msg-file=-" in args and "--no-cass" in args and "--with-memory=false" in args, args
+payload = sys.stdin.buffer.read()
+expected = (root / ("expected-" + str(number))).read_bytes()
+assert payload == expected
+if "--dry-run" in args:
+    print(json.dumps({"success": True, "session": "w9", "dry_run": True, "blocked": False,
+                      "successful": [], "failed": [], "would_send_to": [target]}))
+    sys.exit(0)
+op = next(a.split("=", 1)[1] for a in args if a.startswith("--op-id="))
+assert op == "batch-op-" + str(number)
+recorded = {"success": True, "session": "w9", "targets": [target],
+            "successful": [target], "failed": [], "operation": {"operation_id": op, "status": "completed",
+            "payload_sha256": hashlib.sha256(payload).hexdigest(), "payload_bytes": len(payload),
+            "admissions": [{"target": target, "state": "submitted"}]}}
+if mode != "missing" or number != 2:
+    (root / (op + ".nhm.json")).write_text(json.dumps(recorded))
+if mode in ("lost", "missing") and number == 2:
+    print("private stderr must not leak", file=sys.stderr)
+    sys.exit(1)
+print(json.dumps(recorded))
 '''
-
-
-def pane(i):
-    return "w9:p" + str(i)
 
 
 class BatchDeliveryTests(unittest.TestCase):
@@ -41,40 +87,40 @@ class BatchDeliveryTests(unittest.TestCase):
         self.bin.mkdir()
         if Path("/usr/bin/python3").exists():
             (self.bin / "python3").symlink_to("/usr/bin/python3")
-        (self.bin / "br").write_text(BR)
-        (self.bin / "br").chmod(0o755)
-        self.herdr = HerdrStub([agent_row(pane(i), self.repo, agent="codex" if i == 2 else "claude")
-                                for i in (1, 2, 3)])
-        self.addCleanup(self.herdr.close)
-        self.env = self.herdr.env(dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
-                                       BATCH_FIXTURE_ROOT=str(self.root)))
+        for name in ("nhm", "br", "herdr"):
+            path = self.bin / name
+            path.write_text(FIXTURE)
+            path.chmod(0o755)
+        self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
+                        BATCH_FIXTURE_ROOT=str(self.root))
         self.batch = self.root / "batch.json"
         self.spec = {"schema": "acfs.packet-delivery-batch.v2", "deliveries": []}
-        self.prompts = {}
         for i in (1, 2, 3):
             prompt = "# ACFS Swarm Startup Packet\n\nTask bd-" + str(i) + "; private code context.\n"
-            self.prompts[pane(i)] = prompt
             packet = {"schema_version": 1, "status": "pass", "repository": {"path": str(self.repo)},
                       "bead": {"id": "bd-" + str(i), "status": "open"},
                       "output": {"truncated": False}, "packet_markdown": prompt}
             (self.root / ("packet-" + str(i) + ".json")).write_text(json.dumps(packet))
+            (self.root / ("expected-" + str(i))).write_bytes(prompt.encode())
             self.spec["deliveries"].append({"packet": "packet-" + str(i) + ".json", "repo": "repo",
-                "workspace": "w9", "pane_id": pane(i), "agent_type": "codex" if i == 2 else "claude",
+                "workspace": "w9", "pane_id": "w9:p" + str(i), "agent_type": "codex" if i == 2 else "claude",
                 "operation_id": "batch-op-" + str(i), "receipt": "receipt-" + str(i) + ".json"})
         self.save()
 
     def save(self):
         self.batch.write_text(json.dumps(self.spec))
 
-    def invoke(self, review_hash=None, send=False):
+    def invoke(self, review_hash=None, send=False, mode="ok"):
         args = ["bash", str(SCRIPT), "--deliver-batch", str(self.batch)]
         if review_hash is not None:
             args += ["--expect-sha256", review_hash]
         if send:
             args.append("--send")
-        result = subprocess.run(args, cwd="/", env=self.env, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(args, cwd="/", env=dict(self.env, BATCH_FIXTURE_MODE=mode),
+                                capture_output=True, text=True, timeout=60)
         self.assertEqual(result.stderr, "", result.stderr)
         report = json.loads(result.stdout)
+        self.assertNotIn("private stderr", result.stdout)
         self.assertNotIn("private code context", result.stdout)
         return result.returncode, report
 
@@ -83,19 +129,19 @@ class BatchDeliveryTests(unittest.TestCase):
         self.assertEqual(code, 0, report)
         return report["review_sha256"]
 
-    def tool_calls(self):
+    def calls(self):
         path = self.root / "calls.jsonl"
-        br = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
-        return br + self.herdr.calls
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
     def sends(self):
-        return [params["target"] for params in self.herdr.prompts()]
+        return [next(a for a in args if a.startswith("--op-id=")) for name, args in self.calls()
+                if name == "nhm" and args[0] == "--robot-send=w9" and "--dry-run" not in args]
 
     def test_preview_binds_every_payload_and_does_not_probe_or_write(self):
         code, report = self.invoke()
         self.assertEqual((code, report["status"]), (0, "preview"))
         self.assertEqual(report["delivery_count"], 3)
-        self.assertEqual(self.tool_calls(), [])
+        self.assertEqual(self.calls(), [])
         self.assertEqual(list(self.root.glob("receipt*")), [])
         self.assertIn("--send", shlex.split(report["send_command"]))
         self.assertFalse(report["agent_execution_verified"])
@@ -108,12 +154,10 @@ class BatchDeliveryTests(unittest.TestCase):
         self.assertEqual((code, report["status"]), (0, "submitted"), report)
         self.assertEqual(report["summary"]["submitted"], 3)
         self.assertEqual(report["summary"]["not_attempted"], 0)
-        self.assertEqual(self.sends(), [pane(1), pane(2), pane(3)])
-        self.assertEqual([p["text"] for p in self.herdr.prompts()], [self.prompts[pane(i)] for i in (1, 2, 3)])
-        self.assertEqual(len(list(self.root.glob("receipt-?.json"))), 3)
-        self.assertEqual(len(list(self.root.glob("receipt-?.json.result.json"))), 3)
+        self.assertEqual(self.sends(), ["--op-id=batch-op-1", "--op-id=batch-op-2", "--op-id=batch-op-3"])
+        self.assertEqual(len(list(self.root.glob("receipt*"))), 3)
 
-    def test_retry_reads_all_results_without_resubmitting(self):
+    def test_retry_queries_all_receipts_without_resubmitting(self):
         review = self.preview_hash()
         self.invoke(review, send=True)
         code, report = self.invoke(review, send=True)
@@ -122,33 +166,27 @@ class BatchDeliveryTests(unittest.TestCase):
         self.assertFalse(report["sends_prompt"])
         self.assertEqual(len(self.sends()), 3)
 
-    def test_lost_middle_answer_stops_and_is_never_resent(self):
+    def test_lost_middle_response_stops_then_resumes_remaining_agent(self):
         review = self.preview_hash()
-        self.herdr.pane_modes[pane(2)] = "disconnect"
-        code, report = self.invoke(review, send=True)
+        code, report = self.invoke(review, send=True, mode="lost")
         self.assertEqual((code, report["status"]), (1, "stopped"), report)
         self.assertEqual([item["status"] for item in report["deliveries"]],
                          ["submitted", "unconfirmed", "not_attempted"])
+        self.assertEqual(len(self.sends()), 2)
         self.assertFalse((self.root / "receipt-3.json").exists())
-        # herdr keeps no record, so a rerun cannot learn that the middle prompt
-        # arrived: it stays unconfirmed, and the later agent is never reached.
-        self.herdr.pane_modes.clear()
+        code, report = self.invoke(review, send=True)
+        self.assertEqual((code, report["status"]), (0, "submitted"), report)
+        self.assertEqual(report["summary"]["reconciled"], 2)
+        self.assertEqual(self.sends(), ["--op-id=batch-op-1", "--op-id=batch-op-2", "--op-id=batch-op-3"])
+
+    def test_missing_middle_receipt_keeps_later_agents_unattempted(self):
+        review = self.preview_hash()
+        self.invoke(review, send=True, mode="missing")
         for _ in range(2):
             code, report = self.invoke(review, send=True)
             self.assertEqual((code, report["status"]), (1, "stopped"), report)
-            self.assertEqual([item["status"] for item in report["deliveries"]],
-                             ["submitted", "unconfirmed", "not_attempted"])
-        self.assertEqual(self.sends(), [pane(1), pane(2)])
-
-    def test_refused_middle_agent_stops_the_batch(self):
-        review = self.preview_hash()
-        self.herdr.pane_modes[pane(2)] = "blocked"
-        code, report = self.invoke(review, send=True)
-        self.assertEqual((code, report["status"]), (1, "stopped"), report)
-        self.assertEqual([item["status"] for item in report["deliveries"]],
-                         ["submitted", "refused", "not_attempted"])
-        self.assertEqual(report["summary"]["refused"], 1)
-        self.assertFalse(report["deliveries"][1]["sends_prompt"])
+            self.assertEqual(report["summary"]["not_attempted"], 1)
+        self.assertEqual(len(self.sends()), 2)
 
     def test_invalid_later_packet_blocks_entire_batch_before_tools(self):
         path = self.root / "packet-3.json"
@@ -157,7 +195,7 @@ class BatchDeliveryTests(unittest.TestCase):
         path.write_text(json.dumps(packet))
         code, _ = self.invoke(send=True, review_hash="0" * 64)
         self.assertEqual(code, 2)
-        self.assertEqual(self.tool_calls(), [])
+        self.assertEqual(self.calls(), [])
 
     def test_changed_later_packet_requires_new_review(self):
         review = self.preview_hash()
@@ -168,7 +206,7 @@ class BatchDeliveryTests(unittest.TestCase):
         code, report = self.invoke(review, send=True)
         self.assertEqual(code, 2)
         self.assertIn("changed since review", report["error"])
-        self.assertEqual(self.tool_calls(), [])
+        self.assertEqual(self.calls(), [])
 
     def test_changed_batch_requires_new_review(self):
         review = self.preview_hash()
@@ -176,13 +214,13 @@ class BatchDeliveryTests(unittest.TestCase):
         self.save()
         code, _ = self.invoke(review, send=True)
         self.assertEqual(code, 2)
-        self.assertEqual(self.tool_calls(), [])
+        self.assertEqual(self.calls(), [])
 
     def test_send_requires_combined_review_hash(self):
         code, report = self.invoke(send=True)
         self.assertEqual(code, 2)
         self.assertIn("Preview the batch", report["error"])
-        self.assertEqual(self.tool_calls(), [])
+        self.assertEqual(self.calls(), [])
 
     def test_duplicate_targets_operations_and_receipts_are_rejected(self):
         original = copy.deepcopy(self.spec)
@@ -193,7 +231,7 @@ class BatchDeliveryTests(unittest.TestCase):
                 self.save()
                 code, _ = self.invoke()
                 self.assertEqual(code, 2)
-                self.assertEqual(self.tool_calls(), [])
+                self.assertEqual(self.calls(), [])
 
     def test_same_bead_cannot_be_dispatched_twice(self):
         path = self.root / "packet-2.json"
@@ -213,23 +251,7 @@ class BatchDeliveryTests(unittest.TestCase):
                 self.save()
                 code, _ = self.invoke()
                 self.assertEqual(code, 2)
-                self.assertEqual(self.tool_calls(), [])
-
-    def test_orphan_later_result_file_prevents_any_new_sends(self):
-        path = self.root / "receipt-3.json.result.json"
-        path.write_text("not ours")
-        path.chmod(0o600)
-        code, report = self.invoke()
-        self.assertEqual(code, 2, report)
-        self.assertEqual(path.read_text(), "not ours")
-        self.assertEqual(self.tool_calls(), [])
-
-    def test_receipt_cannot_be_another_deliverys_result_file(self):
-        self.spec["deliveries"][1]["receipt"] = "receipt-1.json.result.json"
-        self.save()
-        code, _ = self.invoke()
-        self.assertEqual(code, 2)
-        self.assertEqual(self.tool_calls(), [])
+                self.assertEqual(self.calls(), [])
 
     def test_conflicting_later_receipt_prevents_any_new_sends(self):
         path = self.root / "receipt-3.json"
@@ -238,17 +260,15 @@ class BatchDeliveryTests(unittest.TestCase):
         code, _ = self.invoke(send=True, review_hash="0" * 64)
         self.assertEqual(code, 2)
         self.assertEqual(path.read_text(), '{"schema":"unrelated"}')
-        self.assertEqual(self.tool_calls(), [])
+        self.assertEqual(self.calls(), [])
 
     def test_live_middle_preflight_failure_preserves_first_submission(self):
         review = self.preview_hash()
-        (self.root / "not-ready").write_text("")
-        code, report = self.invoke(review, send=True)
+        code, report = self.invoke(review, send=True, mode="not-ready")
         self.assertEqual((code, report["status"]), (2, "stopped"), report)
         self.assertEqual([item["status"] for item in report["deliveries"]],
                          ["submitted", "error", "not_attempted"])
         self.assertEqual(len(self.sends()), 1)
-        (self.root / "not-ready").unlink()
         code, report = self.invoke(review, send=True)
         self.assertEqual(code, 0, report)
         self.assertEqual(report["summary"]["reconciled"], 1)
@@ -264,7 +284,7 @@ class BatchDeliveryTests(unittest.TestCase):
                 self.batch.write_text(json.dumps(spec))
                 code, _ = self.invoke()
                 self.assertEqual(code, 2)
-        self.assertEqual(self.tool_calls(), [])
+        self.assertEqual(self.calls(), [])
 
     def test_invalid_manifest_shapes_and_entry_types_are_rejected(self):
         original = copy.deepcopy(self.spec)
@@ -281,13 +301,13 @@ class BatchDeliveryTests(unittest.TestCase):
                 self.batch.write_text(json.dumps(spec))
                 code, _ = self.invoke()
                 self.assertEqual(code, 2)
-        self.assertEqual(self.tool_calls(), [])
+        self.assertEqual(self.calls(), [])
 
     def test_duplicate_manifest_keys_are_rejected(self):
         self.batch.write_text('{"schema":"ignored",' + json.dumps(self.spec)[1:])
         code, _ = self.invoke()
         self.assertEqual(code, 2)
-        self.assertEqual(self.tool_calls(), [])
+        self.assertEqual(self.calls(), [])
 
 
 if __name__ == "__main__":

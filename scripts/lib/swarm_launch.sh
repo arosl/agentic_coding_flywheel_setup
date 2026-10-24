@@ -518,42 +518,29 @@ def packet_intent(path, request=None):
     return saved
 
 
-def nhm_receipt_submitted(request, target):
-    """Upstream's receipt query, with nhm: the durable operation must match
-    this packet and name exactly this one submitted target."""
-    code, data = run([binary("nhm"), "--robot-send-receipt=" + request["operation_id"], "--robot-format=json"],
-                     request["repo"])
-    response = parse(data)
-    operation = response.get("operation") if isinstance(response, dict) else None
-    outcome = response.get("outcome") if isinstance(response, dict) else None
-    return (code == 0 and isinstance(response, dict) and response.get("success") is True
-            and response.get("session") == request["workspace"]
-            and isinstance(operation, dict) and operation.get("operation_id") == request["operation_id"]
-            and operation.get("payload_sha256") == request["payload_sha256"]
-            and type(operation.get("payload_bytes")) is int and operation["payload_bytes"] == request["payload_bytes"]
-            and operation.get("status") == "completed" and isinstance(outcome, dict)
-            and outcome.get("success") is True and outcome.get("targets") == [target]
-            and outcome.get("successful") == [target] and outcome.get("failed") == []
-            and operation.get("admissions") == [{"target": target, "state": "submitted"}])
-
-
 def query_delivery(entry, saved):
-    """A known intent NEVER goes back through a send-capable execution path:
-    the delivery's recorded result file is read, and an intent nhm sent
-    without a result is asked of nhm's receipt (read-only)."""
+    """A known intent NEVER goes back through a send-capable execution path."""
     request, target = entry["request"], saved["target"]
     report = {"schema": PACKET_SCHEMA, "request": request, "receipt": str(entry["receipt"]),
               "status": "unconfirmed", "sends_prompt": False, "reconciled_only": True,
               "agent_execution_verified": False}
     try:
-        with receipt_directory(entry["receipt"]) as fd:
-            result = read_receipt(fd, entry["receipt"].name + ".result.json")
-        if (isinstance(result, dict) and result.get("schema") == PACKET_SCHEMA and result.get("request") == request
-                and result.get("target") == target and result.get("status") in ("submitted", "refused")
-                and isinstance(result.get("evidence"), dict)):
-            report.update(status=result["status"], evidence=result["evidence"])
-        elif result is None and saved.get("via") == "nhm" and nhm_receipt_submitted(request, target):
-            report.update(status="submitted", evidence={"operation_id": request["operation_id"], "nhm_target": target})
+        code, data = run([binary("nhm"), "--robot-send-receipt=" + request["operation_id"],
+                          "--robot-format=json"], request["repo"])
+        response = parse(data)
+        operation = response.get("operation") if isinstance(response, dict) else None
+        outcome = response.get("outcome") if isinstance(response, dict) else None
+        # nhm's session is the herdr workspace the packet was sent in.
+        if (code == 0 and isinstance(response, dict) and response.get("success") is True
+                and response.get("session") == request["workspace"]
+                and isinstance(operation, dict) and operation.get("operation_id") == request["operation_id"]
+                and operation.get("payload_sha256") == request["payload_sha256"]
+                and type(operation.get("payload_bytes")) is int and operation["payload_bytes"] == request["payload_bytes"]
+                and operation.get("status") == "completed" and isinstance(outcome, dict)
+                and outcome.get("success") is True and outcome.get("targets") == [target]
+                and outcome.get("successful") == [target] and outcome.get("failed") == []
+                and operation.get("admissions") == [{"target": target, "state": "submitted"}]):
+            report["status"] = "submitted"
     except (LaunchError, OSError, UnicodeError):
         pass
     return report, 0 if report["status"] == "submitted" else 1
@@ -672,7 +659,7 @@ def dispatch_main(arguments):
                         outcome = parse(data)
                         require(isinstance(outcome, dict) and outcome.get("schema") == PACKET_SCHEMA
                                 and outcome.get("request") == r and outcome.get("receipt") == str(entry["receipt"])
-                                and (code, outcome.get("status")) in ((0, "submitted"), (1, "refused"), (1, "unconfirmed"))
+                                and (code, outcome.get("status")) in ((0, "submitted"), (1, "unconfirmed"))
                                 and type(outcome.get("sends_prompt")) is bool,
                                 "Delivery did not return matching submission evidence; retain its receipt.")
                     result.update(outcome)
@@ -686,7 +673,7 @@ def dispatch_main(arguments):
             sends_prompt=any(r.get("sends_prompt") for r in results),
             submission_may_have_occurred=any(r.get("sends_prompt") or r.get("submission_may_have_occurred") for r in results))
         report["summary"] = {s: sum(r["status"] == s for r in results)
-                             for s in ("submitted", "refused", "unconfirmed", "error", "not_attempted")}
+                             for s in ("submitted", "unconfirmed", "error", "not_attempted")}
         report["summary"]["reconciled"] = sum(r.get("reconciled_only") is True for r in results)
         report["recovery"] = "Keep launch and delivery receipts plus unchanged packets and manifest. Repeat this command to " \
                              "query known intents and continue pending entries; never delete receipts to force a resend."
