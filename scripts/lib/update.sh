@@ -5230,11 +5230,13 @@ update_note_held_tool() {
 # ============================================================
 # minisign prerequisite (issue #375)
 # ============================================================
-# The mcp_agent_mail (>= 0.3.31) installer verifies release signatures with
-# minisign and fails closed without it. (caam's did too; the arosl fork's
-# installer checks ACFS's archive pins instead: update_caam.) Fresh installs
-# provision it in the base phase; hosts installed before that get it here,
-# before any installer that needs it runs, so the nightly never fails on a
+# Upstream's mcp_agent_mail (>= 0.3.31) installer verifies release signatures
+# with minisign and fails closed without it, and caam's did too. The arosl
+# forks' installers that ACFS pins don't run it: Agent Mail's checks its pinned
+# SHA256SUMS (acfs-7mu.4), caam's checks ACFS's archive pins (update_caam).
+# The Agent Mail step still requires minisign, as upstream's does (acfs-c4ya).
+# Fresh installs provision it in the base phase; hosts installed before that
+# get it here, before the Agent Mail step runs, so the nightly never fails on a
 # silent missing prerequisite.
 # ============================================================
 
@@ -5273,7 +5275,7 @@ update_ensure_minisign() {
     fi
 
     if [[ "$DRY_RUN" == "true" ]]; then
-        log_item "skip" "minisign" "dry-run: would install (required by the MCP Agent Mail installer)"
+        log_item "skip" "minisign" "dry-run: would install (required before the MCP Agent Mail step)"
         UPDATE_MINISIGN_STATUS="missing"
         return 1
     fi
@@ -8585,8 +8587,10 @@ update_stack() {
     update_nhm_owner
     update_herdr_palette_key
 
-    # minisign (issue #375): the MCP Agent Mail installer fails closed
-    # without it, so provision it once here, before it runs.
+    # minisign (issue #375): upstream's MCP Agent Mail installer fails closed
+    # without it, so provision it once here, before it runs. The fork's pinned
+    # installer doesn't run it; the step still requires it, as upstream's does
+    # (acfs-c4ya).
     local minisign_ready=true
     update_ensure_minisign || minisign_ready=false
 

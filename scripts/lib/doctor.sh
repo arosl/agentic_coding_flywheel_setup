@@ -2782,7 +2782,9 @@ check_shell() {
 # install.sh); ACFS always installs the current release. Warning every Ubuntu
 # 26.04 host, whose cosign package is 2.6.2 with no version stamp ("devel"),
 # and advising a manual sudo download no longer protects anything. Report the
-# optional tool accurately instead.
+# optional tool accurately instead. On the fork, Agent Mail's pinned installer
+# checks its pinned SHA256SUMS and uses neither tool (acfs-7mu.4); only the
+# caam fork's installer checks a signature with cosign, where it's installed.
 check_cosign_version() {
     local cosign_bin=""
     cosign_bin="$(doctor_binary_path cosign 2>/dev/null || true)"
@@ -2811,10 +2813,10 @@ check_cosign_version() {
 
     if [[ -n "$cosign_ver" ]]; then
         check "tool.cosign" "cosign (v$cosign_ver)" "pass" \
-            "installed${source_note}; current Agent Mail releases verify with minisign, not cosign"
+            "installed${source_note}; optional: the caam fork's installer also checks its release signature with it"
     else
         check "tool.cosign" "cosign" "pass" \
-            "installed (version unknown); current Agent Mail releases verify with minisign, not cosign"
+            "installed (version unknown); optional: the caam fork's installer also checks its release signature with it"
     fi
 }
 
@@ -3038,10 +3040,13 @@ check_core_tools() {
     check_command "tool.lsof" "lsof" "lsof" "sudo apt-get -o DPkg::Lock::Timeout=120 install -y lsof"
     check_command "tool.zstd" "zstd" "zstd" "sudo apt-get -o DPkg::Lock::Timeout=120 install -y zstd"
     check_cosign_version
-    # minisign (#375): the MCP Agent Mail (>= 0.3.31) installer verifies
-    # release signatures with it and fails closed without it. (The arosl
-    # caam fork's installer checks ACFS's archive pins instead, acfs-7mu.3.)
-    check_command "tool.minisign" "minisign (Agent Mail release verification)" "minisign" "$(doctor_pkg_install_hint minisign)"
+    # minisign (#375): upstream's MCP Agent Mail (>= 0.3.31) installer
+    # verifies release signatures with it and fails closed without it, and
+    # acfs update still requires it before the Agent Mail step, as upstream's
+    # does. The arosl forks' installers that ACFS pins don't run it: Agent
+    # Mail's checks its pinned SHA256SUMS (acfs-7mu.4), caam's checks ACFS's
+    # archive pins (acfs-7mu.3).
+    check_command "tool.minisign" "minisign (release signature verification)" "minisign" "$(doctor_pkg_install_hint minisign)"
     # age encrypts `acfs state export` archives, and apr computes its
     # convergence signals with bc. cli.modern installs both, and
     # _is_bespoke_covered skips its manifest checks as covered here
