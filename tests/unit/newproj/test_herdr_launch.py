@@ -236,7 +236,7 @@ class LaunchTests(unittest.TestCase):
         self.assertIn("--spawn-safety", spawns[1])
 
     def test_refusal_capacity_cannot_override_is_not_retried_again(self):
-        for mode, expected in (("refused_quota", 1), ("refused_both", 2), ("refused_always", 2)):
+        for mode, expected in (("refused_quota", 1), ("refused_both", 1), ("refused_always", 2)):
             with self.subTest(mode=mode):
                 self.calls.unlink(missing_ok=True)
                 result = self.run_bash('newproj_start_nhm "$PROJECT" acfs-my-app 1 1 1', "yes\nyes\nyes\n",

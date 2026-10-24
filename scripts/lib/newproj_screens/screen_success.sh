@@ -322,9 +322,11 @@ newproj_start_nhm() {
             "--spawn-cc=$cc" "--spawn-cod=$cod" "--spawn-agy=$agy" --trust-folder \
             "--socket=$(newproj_nhm_socket)" "${work_args[@]}" "${capacity_args[@]}") || status=$?
         newproj_nhm_report_refusal "$response" || break
-        # Only the capacity check can be overridden, once, and only on a typed yes.
+        # Only the capacity check can be overridden, once, and only on a typed
+        # yes. A quota or guard reason beside it would refuse the retry too.
         if ((${#capacity_args[@]} > 0)) || ! jq -e \
-            'any(.admission.reasons[]?; type == "string" and test("^capacity (red|unknown):"))' \
+            '.admission.reasons | type == "array" and length > 0 and
+                all(.[]; type == "string" and test("^capacity (red|unknown):"))' \
             >/dev/null 2>&1 <<< "$response"; then
             return 1
         fi
