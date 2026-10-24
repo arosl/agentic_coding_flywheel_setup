@@ -88,6 +88,11 @@ acfs_read_upgrade_checkpoint() {
     printf '%s\n' "$TEST_STAGE"
 }
 acfs_remember_install_lock() { trace install_lock; }
+# The lock in the fixture's ~/.acfs, as a run as the user takes it, and none
+# of root's (acfs-0dmd); and the hard-link guard passes (acfs-wmgr).
+acfs_install_lock_file() { mkdir -p "$ACFS_HOME"; printf '%s/.install.lock\n' "$ACFS_HOME"; }
+acfs_install_lock_root_held() { return 1; }
+acfs_check_protected_hardlinks() { :; }
 source_generated_installers() { trace generated; }
 acfs_apply_legacy_skips() { :; }
 acfs_apply_profile() { trace profile; return "$TEST_SELECTION_STATUS"; }
