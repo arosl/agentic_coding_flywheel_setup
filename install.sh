@@ -1196,6 +1196,86 @@ log_section() {
 # Log file capture (tee stderr to file)
 # ============================================================
 
+acfs_running_as_root() {
+    [[ "$EUID" -eq 0 ]]
+}
+
+# The install's log, summary and performance budget go to ~/.acfs/logs, the
+# target user's own directory, where any name can be a link the user put
+# there. Root writing there by path follows it: a redirect truncates or
+# creates the link's target, and sed -i copies the target to the name, which
+# root then chowned to the user (acfs-grmg). So when root installs for
+# another account, these writes run as that user. True for such a run when
+# PATH is under TARGET_HOME and the account and home exist; until they do,
+# no one else can have put a link there, and root writes as before.
+acfs_log_path_as_target() {
+    local path="$1" home="${TARGET_HOME:-}" id_bin=""
+    acfs_running_as_root || return 1
+    [[ -n "${TARGET_USER:-}" && "$TARGET_USER" != "root" ]] || return 1
+    home="${home%/}"
+    [[ "$home" == /* && "$path" == "$home/"* && -d "$home" ]] || return 1
+    id_bin="$(acfs_early_system_binary_path id 2>/dev/null || true)"
+    [[ -n "$id_bin" ]] && "$id_bin" -u "$TARGET_USER" >/dev/null 2>&1
+}
+
+# acfs_log_mkdir DIR: makes DIR, as the target user when
+# acfs_log_path_as_target DIR.
+acfs_log_mkdir() {
+    local dir="$1" mkdir_bin=""
+    if ! acfs_log_path_as_target "$dir"; then
+        mkdir -p "$dir" 2>/dev/null
+        return
+    fi
+    mkdir_bin="$(acfs_early_system_binary_path mkdir 2>/dev/null || true)"
+    [[ -n "$mkdir_bin" ]] && run_as_target "$mkdir_bin" -p -- "$dir" >/dev/null 2>&1
+}
+
+# acfs_log_write FILE [--append]: writes stdin to FILE, as the target user
+# when acfs_log_path_as_target FILE.
+acfs_log_write() {
+    if acfs_log_path_as_target "$1"; then
+        acfs_dotfile_write_as_target "$@" 2>/dev/null
+    elif [[ "${2:-}" == "--append" ]]; then
+        cat >> "$1"
+    else
+        cat > "$1"
+    fi
+}
+
+# acfs_log_read FILE: prints FILE, read as the target user when
+# acfs_log_path_as_target FILE, so a link there can't show root's files.
+acfs_log_read() {
+    local cat_bin=""
+    if ! acfs_log_path_as_target "$1"; then
+        cat -- "$1"
+        return
+    fi
+    cat_bin="$(acfs_early_system_binary_path cat 2>/dev/null || true)"
+    [[ -n "$cat_bin" ]] && run_as_target "$cat_bin" -- "$1"
+}
+
+# acfs_log_skip_as_target DIR: in a root run for the target user, a log the
+# user can't make in DIR is skipped with a warning, and the install goes on;
+# root can't write there safely. A ~/.acfs that root left behind is handed
+# to the user later in the run (acfs-grmg).
+acfs_log_skip_as_target() {
+    acfs_log_path_as_target "$1" || return 1
+    log_warn "No install log this run: $TARGET_USER can't write $1; the terminal shows everything"
+    ACFS_LOG_FILE=""
+}
+
+# acfs_log_tee FD: copies stdin to fd FD (the terminal) and to ACFS_LOG_FILE.
+# When the target user writes the log, root's tee -p feeds the user's tee
+# through a pipe. -p keeps root's tee, and so the install's stderr, going if
+# the user's side stops (acfs-grmg).
+acfs_log_tee() {
+    if acfs_log_path_as_target "$ACFS_LOG_FILE"; then
+        tee -p >(acfs_log_write "$ACFS_LOG_FILE" --append) >&"$1"
+    else
+        tee -a "$ACFS_LOG_FILE" >&"$1"
+    fi
+}
+
 # Initialize log file capture: tee stderr to a timestamped log file.
 # After calling, all stderr output is captured to ACFS_LOG_FILE.
 acfs_log_init() {
@@ -1212,7 +1292,10 @@ acfs_log_init() {
     ACFS_LOG_ORIGINAL_STDERR_FD=""
 
     # Create log directory
-    mkdir -p "$log_dir" 2>/dev/null || return 1
+    if ! acfs_log_mkdir "$log_dir"; then
+        acfs_log_skip_as_target "$log_dir" && return 0
+        return 1
+    fi
 
     ACFS_LOG_FILE="${log_dir}/install-$(date +%Y%m%d_%H%M%S).log"
     export ACFS_LOG_FILE
@@ -1227,11 +1310,15 @@ acfs_log_init() {
         printf 'Mode: %s\n' "${MODE:-unknown}"
         printf 'Bash: %s\n' "${BASH_VERSION:-unknown}"
         printf '========================\n\n'
-    } > "$ACFS_LOG_FILE" 2>/dev/null || return 1
+    } | acfs_log_write "$ACFS_LOG_FILE" 2>/dev/null || {
+        acfs_log_skip_as_target "$log_dir" && return 0
+        return 1
+    }
     ACFS_LOG_INITIALIZED=true
 
-    # Fix ownership so target user can read logs
-    if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
+    # Fix ownership so target user can read logs; a log the user wrote is
+    # theirs already (acfs-grmg).
+    if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]] && ! acfs_log_path_as_target "$ACFS_LOG_FILE"; then
         chown -h "${TARGET_USER}:${TARGET_USER}" "$log_dir" "$ACFS_LOG_FILE" 2>/dev/null || true
     fi
 
@@ -1257,8 +1344,8 @@ acfs_log_init() {
                 # Now redirect stderr to tee (which sends to both log and original stderr)
                 # shellcheck disable=SC2261
                 # Use subshell test first to prevent exec from exiting under bash 5.3+
-                if (set +e; exec 2> >(tee -a "$ACFS_LOG_FILE" >&"$saved_stderr_fd")) 2>/dev/null; then
-                    if exec 2> >(tee -a "$ACFS_LOG_FILE" >&"$saved_stderr_fd"); then
+                if (set +e; exec 2> >(acfs_log_tee "$saved_stderr_fd")) 2>/dev/null; then
+                    if exec 2> >(acfs_log_tee "$saved_stderr_fd"); then
                         tee_logging_ok=true
                         ACFS_LOG_STDERR_CAPTURED=true
                     fi
@@ -1297,18 +1384,26 @@ acfs_log_close() {
     fi
 
     if [[ "${ACFS_LOG_INITIALIZED:-false}" == "true" && -n "${ACFS_LOG_FILE:-}" && -f "$ACFS_LOG_FILE" ]]; then
-        # Strip ANSI escape codes for clean log
-        sed -i $'s/\033\[[0-9;]*m//g' "$ACFS_LOG_FILE" 2>/dev/null || true
+        # Strip ANSI escape codes for clean log. sed -i reads a link at the
+        # name and writes its target's text there, so the user's log is the
+        # user's to rewrite (acfs-grmg).
+        if acfs_log_path_as_target "$ACFS_LOG_FILE"; then
+            local sed_bin=""
+            sed_bin="$(acfs_early_system_binary_path sed 2>/dev/null || true)"
+            [[ -z "$sed_bin" ]] || run_as_target "$sed_bin" -i $'s/\033\[[0-9;]*m//g' "$ACFS_LOG_FILE" >/dev/null 2>&1 || true
+        else
+            sed -i $'s/\033\[[0-9;]*m//g' "$ACFS_LOG_FILE" 2>/dev/null || true
+        fi
 
         # Append footer
         {
             printf '\n========================\n'
             printf 'Finished: %s\n' "$(date -Iseconds)"
             printf '========================\n'
-        } >> "$ACFS_LOG_FILE"
+        } | acfs_log_write "$ACFS_LOG_FILE" --append || true
 
         # Fix ownership
-        if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
+        if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]] && ! acfs_log_path_as_target "$ACFS_LOG_FILE"; then
             chown -h "${TARGET_USER}:${TARGET_USER}" "$ACFS_LOG_FILE" 2>/dev/null || true
         fi
     fi
@@ -1339,7 +1434,7 @@ acfs_performance_budget_emit() {
     generated_at="$(date -Iseconds)"
 
     jq -n \
-        --slurpfile summary "$summary_file" \
+        --slurpfile summary <(acfs_log_read "$summary_file") \
         --arg generated_at "$generated_at" \
         --arg source_summary "$summary_base" '
         ($summary[0] // {}) as $s |
@@ -1413,12 +1508,12 @@ acfs_performance_budget_emit() {
                 status: "unknown"
             },
             recommendations: []
-        }' > "$budget_file" 2>/dev/null || return 0
+        }' 2>/dev/null | acfs_log_write "$budget_file" || return 0
 
     ACFS_PERFORMANCE_BUDGET_FILE="$budget_file"
     export ACFS_PERFORMANCE_BUDGET_FILE
 
-    if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
+    if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]] && ! acfs_log_path_as_target "$budget_file"; then
         chown -h "${TARGET_USER}:${TARGET_USER}" "$budget_file" 2>/dev/null || true
     fi
 
@@ -1454,7 +1549,7 @@ acfs_summary_emit() {
     fi
 
     local summary_dir="${summary_home}/logs"
-    mkdir -p "$summary_dir" 2>/dev/null || return 1
+    acfs_log_mkdir "$summary_dir" || return 1
 
     ACFS_SUMMARY_FILE="${summary_dir}/install_summary_$(date +%Y%m%d_%H%M%S).json"
     export ACFS_SUMMARY_FILE
@@ -1525,10 +1620,11 @@ acfs_summary_emit() {
             phases: $phases,
             failure: $failure,
             log_file: (if $log_file != "" then $log_file else null end)
-        }' > "$ACFS_SUMMARY_FILE" 2>/dev/null || return 1
+        }' 2>/dev/null | acfs_log_write "$ACFS_SUMMARY_FILE" || return 1
 
-    # Fix ownership so target user can read
-    if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
+    # Fix ownership so target user can read; a summary the user wrote is
+    # theirs already (acfs-grmg).
+    if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]] && ! acfs_log_path_as_target "$ACFS_SUMMARY_FILE"; then
         chown -h "${TARGET_USER}:${TARGET_USER}" "$ACFS_SUMMARY_FILE" 2>/dev/null || true
     fi
 
