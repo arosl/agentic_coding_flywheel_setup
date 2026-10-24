@@ -259,6 +259,8 @@ class LaunchTests(unittest.TestCase):
     def test_lost_response_never_relaunches_or_adopts_unknown_session(self):
         code, report = self.invoke(launch=True, mode="lost-response")
         self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
+        # An uncertain launch keeps the generic advice: never retry under a new receipt.
+        self.assertIn("Do not delete receipts or change the receipt path", report["recovery"])
         self.assertNotIn("private-provider", json.dumps(report))
         before = len(self.calls())
         code, report = self.invoke(launch=True)
@@ -326,18 +328,25 @@ class LaunchTests(unittest.TestCase):
         # Refused at the preview: no receipt and no spawn.
         code, report = self.invoke(mode="nhm-refused", launch=True)
         self.assertEqual(code, 2, report)
-        self.assertIn("nhm's admission check refused this launch, so nothing was started and no launch receipt "
-                      "was created: capacity red: MemAvailable is under one agent's need [31m", report["error"])
+        # The reasons come first, then the advice.
+        self.assertTrue(report["error"].startswith(
+            "nhm's admission check refused this launch, so nothing was started: capacity red: MemAvailable is "
+            "under one agent's need [31m"), report["error"])
         self.assertIn("--ignore-capacity for this spawn", report["error"])
-        self.assertIn("nhm quota, nhm doctor and the capacity provider say why", report["error"])
+        self.assertTrue(report["error"].endswith(
+            "nhm quota, nhm doctor and the capacity provider say why. No launch receipt was created."), report["error"])
         self.assertNotIn("\x1b", report["error"])
         self.assertFalse(self.receipt.exists())
         self.assertEqual(self.count_spawns(), 0)
-        # Refused at the launch, after the preview admitted: the intent stays and has no result.
+        # Refused at the launch, after the preview admitted: the intent stays and has no result,
+        # and the report's recovery advice agrees with the error.
         code, report = self.invoke(mode="nhm-refused-launch", launch=True)
         self.assertEqual((code, report["status"]), (1, "unconfirmed"), report)
-        self.assertIn("so nothing was started; this receipt never launches, so launch again with a new "
-                      "--receipt: capacity red:", report["error"])
+        self.assertIn("so nothing was started: capacity red:", report["error"])
+        self.assertTrue(report["error"].endswith(
+            "say why. This receipt never launches; launch again with a new --receipt."), report["error"])
+        self.assertEqual(report["recovery"], "nhm refused before it started anything. This receipt stays "
+                         "unconfirmed and never relaunches; launch again with a new --receipt.")
         self.assertTrue(self.receipt.exists())
         self.assertFalse((self.root / "intent.json.result.json").exists())
         self.assertEqual(self.count_spawns(), 1)

@@ -245,9 +245,14 @@ def spawn_response(data, request, dry_run):
     return agents
 
 
-def refuse_on_admission(data, after):
+class AdmissionRefused(LaunchError):
+    """nhm refused before it made anything: not an uncertain launch."""
+
+
+def refuse_on_admission(data, advice):
     """nhm's admission check refuses before it makes anything, and says why
-    (acfs-wpbc): fail with its reasons and hint, control characters replaced."""
+    (acfs-wpbc): fail with its reasons and hint, control characters replaced,
+    then the advice."""
     try:
         result = parse(data)
     except LaunchError:
@@ -258,8 +263,8 @@ def refuse_on_admission(data, after):
     said = admission.get("reasons") if isinstance(admission.get("reasons"), list) else []
     said = [text for text in [*said, admission.get("hint")] if isinstance(text, str)]
     reasons = "; ".join(re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", text) for text in said)
-    raise LaunchError("nhm's admission check refused this launch, so nothing was started" + after
-                      + (": " + reasons if reasons else "."))
+    raise AdmissionRefused("nhm's admission check refused this launch, so nothing was started"
+                           + (": " + reasons if reasons else "") + ". " + advice)
 
 
 def verify_targets(agents, request):
@@ -806,7 +811,7 @@ def main():
             nhm = binary("nhm")
             binary("herdr")
             code, data = run([nhm, *argv[1:], "--dry-run"], repo, timeout=90)
-            refuse_on_admission(data, " and no launch receipt was created")
+            refuse_on_admission(data, "No launch receipt was created.")
             require(code == 0, "nhm launch preview failed; no launch receipt was created.")
             spawn_response(data, request, True)
             report["nhm_argv"] = argv
@@ -826,7 +831,7 @@ def main():
                 try:
                     # nhm's --timeout is each agent's ready wait, not the total (G9).
                     code, data = run([nhm, *argv[1:]], repo, timeout=60 + 90 * len(request["agents"]))
-                    refuse_on_admission(data, "; this receipt never launches, so launch again with a new --receipt")
+                    refuse_on_admission(data, "This receipt never launches; launch again with a new --receipt.")
                     require(code == 0, "nhm launch did not complete; inspect the retained workspace "
                             + workspace_label(request) + ".")
                     targets = verify_targets(spawn_response(data, request, False), request)
@@ -835,10 +840,13 @@ def main():
                 except (LaunchError, OSError, UnicodeError, KeyboardInterrupt) as exc:
                     report["error"] = str(exc) if isinstance(exc, LaunchError) else \
                         "Launch interrupted; inspect the retained workspace " + workspace_label(request) + "."
+                    if isinstance(exc, AdmissionRefused):
+                        report["recovery"] = "nhm refused before it started anything. This receipt stays " \
+                                             "unconfirmed and never relaunches; launch again with a new --receipt."
     if report.get("targets"):
         report["preparation_targets"] = preparation_targets(report["targets"])
-    report["recovery"] = "Keep this receipt and its result file. Repeat the identical command only to verify saved agents. " \
-                         "Do not delete receipts or change the receipt path to retry an uncertain launch."
+    report.setdefault("recovery", "Keep this receipt and its result file. Repeat the identical command only to verify "
+                      "saved agents. Do not delete receipts or change the receipt path to retry an uncertain launch.")
     print(encode(report).decode(), end="")
     return 1 if report["status"] == "unconfirmed" else 0
 
