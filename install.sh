@@ -11505,6 +11505,21 @@ acfs_install_nhm_learning_profile() {
         log_warn "nhm's learning profile was not set (optional): see nhm_hooks.sh learning-profile check"
 }
 
+# nhm's capacity provider (stack.nhm; nhm_hooks.sh capacity-provider,
+# acfs-hd37, on by default since acfs-5px6): [providers] capacity =
+# ["acfs", "capacity", "--guard", "--json", "--for-spawn"] in nhm's
+# config, so nhm spawn refuses to start an agent while one more doesn't
+# fit (acfs-gmbo, acfs-w1f0), unless it passes --ignore-capacity. A value
+# the user set stays, capacity = [] (off) among them.
+acfs_install_nhm_capacity_provider() {
+    local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh"
+    [[ -f "$nhm_hooks" ]] || return 0
+    acfs_legacy_module_selected "stack.nhm" || return 0
+    try_step_optional "Setting nhm's capacity provider" \
+        run_as_target bash "$nhm_hooks" capacity-provider set || \
+        log_warn "nhm's capacity provider was not set (optional): see nhm_hooks.sh capacity-provider check"
+}
+
 # nhm owns the herdr server on every install (acfs-9hkh.93): nhm_hooks.sh
 # owner take runs nhm's takeover, a dry run first. nhm reads ACFS's Bash
 # state with the acfs command, so this runs once finalize has installed
@@ -11982,6 +11997,7 @@ finalize() {
 
     acfs_install_nhm_hook_lines
     acfs_install_nhm_learning_profile
+    acfs_install_nhm_capacity_provider
     acfs_install_codex_dcg_hook
     acfs_install_nhm_maintain_timer
 

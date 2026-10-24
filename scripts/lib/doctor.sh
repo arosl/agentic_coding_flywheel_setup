@@ -3343,18 +3343,20 @@ check_nhm() {
             *) missing+=("nhm's learning profile is not set, so closed beads record no cm outcome")
                fixes+=("bash $helper learning-profile set (or acfs update)") ;;
         esac
-        # nhm's capacity provider (acfs-hd37) is the user's choice, so it is
-        # a note, never a warning: install doesn't set it, and a red refuses
-        # every spawn that doesn't pass --ignore-capacity (nhm v0.1.16). Its
-        # guard is spawn-sized (--for-spawn, acfs-w1f0): red on memory only
-        # when one more agent doesn't fit.
+        # nhm's capacity provider (acfs-hd37, on by default since acfs-5px6):
+        # without it, nhm spawn starts agents while one more doesn't fit. Its
+        # guard is spawn-sized (--for-spawn, acfs-w1f0), and --ignore-capacity
+        # admits one spawn (nhm v0.1.16). Off by the user's choice
+        # (capacity = []) is a note, not a warning.
         rc=0
         HOME="$home" bash "$helper" capacity-provider check "${XDG_CONFIG_HOME:-$home/.config}/nhm/config.toml" \
             </dev/null >/dev/null 2>&1 || rc=$?
         case "$rc" in
             0) notes+=("capacity provider on (--ignore-capacity on nhm spawn or add admits that spawn while the guard is red; [providers] capacity = [] in nhm's config turns it off)") ;;
             3) notes+=("capacity provider set by your nhm config") ;;
-            *) notes+=("capacity provider off: 'bash $helper capacity-provider set' has nhm spawn refuse while 'acfs capacity --guard --for-spawn' is red, that is while one more agent doesn't fit (ACFS_CAPACITY_GUARD_AGENT_MIB plus ACFS_CAPACITY_GUARD_SPAWN_RESERVE_MIB, 1536 MiB by default) or a disk, PSI or container line is crossed; [providers] capacity = [] in nhm's config turns it off again") ;;
+            4) notes+=("capacity provider off by your nhm config ([providers] capacity = [])") ;;
+            *) missing+=("nhm's capacity provider is not set, so nhm spawn starts agents while one more doesn't fit")
+               fixes+=("bash $helper capacity-provider set (or acfs update)") ;;
         esac
     fi
 

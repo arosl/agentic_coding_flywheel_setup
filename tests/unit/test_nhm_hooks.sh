@@ -599,13 +599,21 @@ check "capacity-provider set again: nothing changes" cmp -s "$CP/table.toml" "$C
 
 # The host-sized argv, from before --for-spawn (acfs-w1f0), is a valid
 # provider too, so it counts as the user's choice and set keeps it.
+# capacity = [] is the user's opt-out (acfs-5px6): check says 4, and set
+# keeps it too.
 for own in '[]' '["my-guard", "--json"]' '["acfs", "capacity", "--guard", "--json"]'; do
     printf '[providers]\ncapacity = %s\n' "$own" >"$CP/own.toml"
     cp "$CP/own.toml" "$CP/own.before"
-    check "capacity-provider check: the user's own value ($own) is 3" bash -c 'bash "$1" capacity-provider check "$2"; [[ $? -eq 3 ]]' _ "$HOOKS" "$CP/own.toml"
+    want_rc=3
+    [[ "$own" != '[]' ]] || want_rc=4
+    check "capacity-provider check: the user's own value ($own) is $want_rc" bash -c 'bash "$1" capacity-provider check "$2"; [[ $? -eq $3 ]]' _ "$HOOKS" "$CP/own.toml" "$want_rc"
     cp_ set "$CP/own.toml" 2>/dev/null
     check "capacity-provider set: the user's own value ($own) stays" cmp -s "$CP/own.toml" "$CP/own.before"
 done
+unset want_rc
+printf '[learning]\nimplicit_outcome = []\n' >"$CP/learning_list.toml"
+check "learning-profile check: it has no off value, so [] is the user's other value (3)" \
+    bash -c 'bash "$1" learning-profile check "$2"; [[ $? -eq 3 ]]' _ "$HOOKS" "$CP/learning_list.toml"
 
 printf '[providers\ncapacity = \n' >"$CP/bad.toml"
 cp "$CP/bad.toml" "$CP/bad.before"

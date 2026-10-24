@@ -65,9 +65,11 @@ Usage:
                                              "--json", "--for-spawn"], so nhm
                                              spawn refuses while one more
                                              agent doesn't fit, unless it
-                                             passes --ignore-capacity;
-                                             opt-in; same FILE and exits as
-                                             learning-profile
+                                             passes --ignore-capacity; same
+                                             FILE and exits as
+                                             learning-profile, and check: 4
+                                             the user turned it off
+                                             (capacity = [])
   nhm_hooks.sh plugin link|bind [--no-reload]|status
                                              nhm's herdr plugin (link) and its
                                              keys (bind: nhm bind for the
@@ -785,29 +787,32 @@ nhm_hooks_trust() {
 # ---- ACFS's settings in nhm's config ----
 #
 # Two settings in nhm's config ($XDG_CONFIG_HOME/nhm/config.toml) whose nhm
-# defaults are off:
+# defaults are off, and which install and acfs update set:
 #
-# - the learning profile (acfs-9hkh.88; plan-v8 2.13), which install and
-#   acfs update set: [learning] implicit_outcome = "closed-assigned".
-#   `nhm feedback outcomes` then records a cm outcome for each bead that
-#   closed while assigned to an agent, the flywheel's OUTCOME step.
-# - the capacity provider (acfs-hd37), which only the user sets:
+# - the learning profile (acfs-9hkh.88; plan-v8 2.13): [learning]
+#   implicit_outcome = "closed-assigned". `nhm feedback outcomes` then
+#   records a cm outcome for each bead that closed while assigned to an
+#   agent, the flywheel's OUTCOME step.
+# - the capacity provider (acfs-hd37, on by default since acfs-5px6):
 #   [providers] capacity = ["acfs", "capacity", "--guard", "--json",
 #   "--for-spawn"]. nhm's spawn admission then refuses to start an agent
 #   while ACFS's capacity guard is red (acfs-gmbo), unless that spawn
 #   passes --ignore-capacity (nhm v0.1.16; --force covers only the
 #   quota). --for-spawn makes it red on memory only when one more agent
 #   doesn't fit, not under the host line of 4 GiB, so a small host still
-#   starts agents (acfs-w1f0). Install leaves it unset. capacity = []
-#   turns it off again: nhm reads it as no provider, and set leaves it.
+#   starts agents (acfs-w1f0). capacity = [] turns it off: nhm reads it
+#   as no provider, and set leaves it, as it leaves any value the user
+#   set.
 #
 # nhm reads the whole file at each spawn, and a file it cannot read fails
 # the spawn, so each edit is parsed before it is written.
 #
 #   learning-profile|capacity-provider check [FILE]
 #                                  0: ACFS's value; 3: the user set another
-#                                  value (theirs, left as is); 1: not set,
-#                                  or FILE cannot be read as TOML
+#                                  value (theirs, left as is); 4 (capacity
+#                                  only): the user turned it off with
+#                                  capacity = []; 1: not set, or FILE
+#                                  cannot be read as TOML
 #   learning-profile|capacity-provider set [FILE]
 #                                  adds the setting when it is not set:
 #                                  under an existing table, or as a new
@@ -820,10 +825,12 @@ nhm_hooks_config_file() {
 }
 
 # The checker and editor, in Python for its TOML parser (tomllib). argv:
-# check|set FILE TABLE KEY WANT_JSON VALUE_TOML COMMENT: the setting is
-# TABLE.KEY, ACFS's value is WANT_JSON as JSON and VALUE_TOML as TOML, and
-# COMMENT follows the line set writes. set writes FILE itself and prints
-# "changed" or "unchanged"; check exits 0, 3 or 1 as above.
+# check|set FILE TABLE KEY WANT_JSON VALUE_TOML COMMENT OFF_JSON: the
+# setting is TABLE.KEY, ACFS's value is WANT_JSON as JSON and VALUE_TOML
+# as TOML, COMMENT follows the line set writes, and OFF_JSON, when not
+# empty, is the value with which the user turns the setting off. set
+# writes FILE itself and prints "changed" or "unchanged"; check exits 0,
+# 3, 4 or 1 as above.
 nhm_hooks_config_driver() {
     cat <<'PY'
 import json, os, re, sys, tempfile
@@ -833,7 +840,7 @@ except ImportError:
     print("nhm_hooks: python3 has no tomllib (3.11+ needed)", file=sys.stderr)
     sys.exit(1)
 
-mode, path, table, key, want_json, value_toml, comment = sys.argv[1:8]
+mode, path, table, key, want_json, value_toml, comment, off_json = sys.argv[1:9]
 WANT = json.loads(want_json)
 text = ""
 if os.path.exists(path):
@@ -853,7 +860,11 @@ if section is not None and not isinstance(section, dict):
     sys.exit(1)
 value = (section or {}).get(key)
 if mode == "check":
-    sys.exit(0 if value == WANT else (3 if value is not None else 1))
+    if value == WANT:
+        sys.exit(0)
+    if off_json and value == json.loads(off_json):
+        sys.exit(4)
+    sys.exit(3 if value is not None else 1)
 if value is not None:
     print("unchanged")
     sys.exit(0)
@@ -913,10 +924,10 @@ PY
 }
 
 # check|set [FILE] for one setting: TABLE KEY WANT_JSON VALUE_TOML COMMENT
-# (the driver's arguments), then the verb and FILE.
+# OFF_JSON (the driver's arguments), then the verb and FILE.
 nhm_hooks_config_setting() {
-    local table="$1" key="$2" want_json="$3" value_toml="$4" comment="$5"
-    local verb="${6:-}" file="${7:-}" target="" result="" rc=0
+    local table="$1" key="$2" want_json="$3" value_toml="$4" comment="$5" off_json="$6"
+    local verb="${7:-}" file="${8:-}" target="" result="" rc=0
     [[ -n "$file" ]] || file="$(nhm_hooks_config_file)"
     command -v python3 >/dev/null 2>&1 || { nhm_hooks_note "python3 not found"; return 1; }
     target="$file"
@@ -930,14 +941,14 @@ nhm_hooks_config_setting() {
     case "$verb" in
         check)
             python3 -I -c "$(nhm_hooks_config_driver)" check "$target" \
-                "$table" "$key" "$want_json" "$value_toml" "$comment" </dev/null || rc=$?
+                "$table" "$key" "$want_json" "$value_toml" "$comment" "$off_json" </dev/null || rc=$?
             return "$rc"
             ;;
         set)
             # The driver writes the file itself (atomically, keeping its
             # mode and line ends) and says whether it changed it.
             result="$(python3 -I -c "$(nhm_hooks_config_driver)" set "$target" \
-                "$table" "$key" "$want_json" "$value_toml" "$comment" </dev/null)" || return 1
+                "$table" "$key" "$want_json" "$value_toml" "$comment" "$off_json" </dev/null)" || return 1
             if [[ "$result" == changed ]]; then
                 nhm_hooks_note "set [$table] $key = $value_toml in $file"
             else
@@ -950,13 +961,13 @@ nhm_hooks_config_setting() {
 
 nhm_hooks_learning_profile() {
     nhm_hooks_config_setting learning implicit_outcome '"closed-assigned"' '"closed-assigned"' \
-        'ACFS: record cm outcomes for closed beads (plan-v8 2.13)' "$@"
+        'ACFS: record cm outcomes for closed beads (plan-v8 2.13)' '' "$@"
 }
 
 nhm_hooks_capacity_provider() {
     nhm_hooks_config_setting providers capacity \
         '["acfs", "capacity", "--guard", "--json", "--for-spawn"]' '["acfs", "capacity", "--guard", "--json", "--for-spawn"]' \
-        "ACFS: nhm spawn refuses while one more agent doesn't fit (acfs-hd37, acfs-w1f0)" "$@"
+        "ACFS: nhm spawn refuses while one more agent doesn't fit (acfs-hd37, acfs-w1f0); capacity = [] turns it off" '[]' "$@"
 }
 
 # --- nhm's herdr plugin and keys (stack.nhm, acfs-9hkh.50) -------------------
