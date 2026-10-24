@@ -750,7 +750,67 @@ test_guard_unreadable_and_bad_args() {
               run_guard "$ARTIFACT_DIR/guard_no_tools-host" --json)"
     jq -e '.rch.posture == "not_installed" and .agents.live == null and .agents.more == 28
            and .agents.suggested_max == null and any(.warnings[]; test("rch is not installed"))' <<<"$output" >/dev/null || return 1
+
+    status=0
+    bash "$CAPACITY_SH" --for-spawn --json 2>/dev/null || status=$?
+    [[ "$status" -eq 2 ]] || return 1
     pass "guard_unreadable_and_bad_args"
+}
+
+# nhm's capacity provider asks whether one more agent fits (acfs-w1f0): a
+# 4 GB host that the host guard calls red still starts an agent.
+test_guard_for_spawn() {
+    local host output status=0 err human
+    host="$(make_guard_host guard_spawn 2097152 8388608 0.00)"
+    output="$(FAKE_TMP_FSTYPE=ext4 run_guard "$host" --json)"
+    jq -e '.mode == "host" and .status == "red" and .thresholds.min_mem_available_mib == 4096
+           and .thresholds.spawn_reserve_mib == 512' <<<"$output" >/dev/null || return 1
+
+    # 2048 MiB available: one agent (1024 MiB) and the 512 MiB reserve fit,
+    # with room for (2048 - 512) / 1024 = 1 more.
+    output="$(FAKE_TMP_FSTYPE=ext4 run_guard "$host" --for-spawn --json)"
+    write_output_artifact guard_spawn json "$output"
+    jq -e '.mode == "spawn" and .status == "green" and .reasons == [] and .warnings == []
+           and .agents.more == 1 and .agents.live == null and .rch.posture == "skipped"
+           and .thresholds.min_mem_available_mib == 1536 and .thresholds.spawn_reserve_mib == 512' <<<"$output" >/dev/null || return 1
+    FAKE_TMP_FSTYPE=ext4 run_guard "$host" --for-spawn --check || return 1
+    human="$(FAKE_TMP_FSTYPE=ext4 run_guard "$host" --for-spawn)"
+    write_output_artifact guard_spawn txt "$human"
+    [[ "$human" == *"Host capacity guard (spawn): green"* && "$human" == *"(red under 1536 MiB)"* \
+        && "$human" == *"(1024 MiB per agent, 512 MiB kept in reserve)"* ]] || return 1
+
+    # It reads neither rch nor herdr, which never make it red.
+    printf '#!/usr/bin/env bash\ntouch "%s/%s.ran"\n' "$host" rch > "$host/bin/rch"
+    printf '#!/usr/bin/env bash\ntouch "%s/%s.ran"\n' "$host" herdr > "$host/bin/herdr"
+    FAKE_TMP_FSTYPE=ext4 run_guard "$host" --for-spawn --json >/dev/null || return 1
+    [[ ! -e "$host/rch.ran" && ! -e "$host/herdr.ran" ]] || return 1
+
+    # 1400 MiB available: the agent and its reserve don't fit.
+    host="$(make_guard_host guard_spawn_full 1433600 8388608 0.00)"
+    output="$(FAKE_TMP_FSTYPE=ext4 run_guard "$host" --for-spawn --json)"
+    jq -e '.status == "red" and .agents.more == 0 and (.reasons | length) == 1
+           and .reasons[0] == "MemAvailable is 1400 MiB, under 1536 MiB (one agent, 1024 MiB, and a 512 MiB reserve)"' <<<"$output" >/dev/null || return 1
+    err="$(FAKE_TMP_FSTYPE=ext4 run_guard "$host" --for-spawn --check 2>&1 >/dev/null)" || status=$?
+    [[ "$status" -eq 1 && "$err" == *"MemAvailable is 1400 MiB, under 1536 MiB"* ]] || return 1
+
+    # The line moves with the agent and reserve knobs, not the host's.
+    FAKE_TMP_FSTYPE=ext4 ACFS_CAPACITY_GUARD_SPAWN_RESERVE_MIB=256 run_guard "$host" --for-spawn --check || return 1
+    status=0
+    FAKE_TMP_FSTYPE=ext4 ACFS_CAPACITY_GUARD_MIN_MEM_MIB=1024 run_guard "$host" --for-spawn --check 2>/dev/null || status=$?
+    [[ "$status" -eq 1 ]] || return 1
+
+    # Disk, PSI and the container's cgroup still turn it red.
+    host="$(make_guard_host guard_spawn_disk 33554432 8388608 12.50)"
+    output="$(FAKE_TMP_FSTYPE=ext4 FAKE_WORK_AVAIL_KB=50000 run_guard "$host" --for-spawn --json)"
+    jq -e '.status == "red" and (.reasons | length) == 2
+           and any(.reasons[]; test("^/ \\(work\\) has 5% free"))
+           and any(.reasons[]; test("PSI memory full avg60 is 12.50"))' <<<"$output" >/dev/null || return 1
+    host="$(make_guard_host guard_spawn_container 33554432 8388608 0.00)"
+    make_guard_cgroup "$host" 13200 16384 0.00
+    status=0
+    FAKE_TMP_FSTYPE=ext4 FAKE_VIRT=lxc run_guard "$host" --for-spawn --check 2>/dev/null || status=$?
+    [[ "$status" -eq 1 ]] || return 1
+    pass "guard_for_spawn"
 }
 
 run_test() {
@@ -785,6 +845,7 @@ main() {
     run_test test_guard_red_on_disk_and_psi
     run_test test_guard_warns_without_refusing
     run_test test_guard_unreadable_and_bad_args
+    run_test test_guard_for_spawn
     run_test test_guard_container_reads_its_cgroup
     run_test test_guard_container_refuses_over_80_percent
     run_test test_guard_container_without_limit_or_cgroup

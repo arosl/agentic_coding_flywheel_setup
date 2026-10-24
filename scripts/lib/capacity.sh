@@ -17,6 +17,7 @@ CAPACITY_RESOURCE_PROFILE_DISABLE=false
 CAPACITY_RESOURCE_PROFILE_ROOT=""
 CAPACITY_GUARD=false
 CAPACITY_GUARD_CHECK=false
+CAPACITY_GUARD_FOR_SPAWN=false
 
 capacity_usage() {
     cat <<'EOF'
@@ -39,11 +40,18 @@ Options:
   --check                 With --guard: exit 1 when the guard is red, with the
                           reasons on stderr; 0 otherwise; 2 when unreadable.
                           It reads neither rch nor herdr, which never make it red
+  --for-spawn             With --guard: answer whether one more agent fits, for
+                          nhm's capacity provider. MemAvailable is red only
+                          under one agent's need plus a reserve; the other
+                          rules stay. Like --check, it reads neither rch nor herdr
   -h, --help              Show this help
 
 The guard is red when MemAvailable is under 4 GiB, a work or temp filesystem
 has under 10% free, or PSI memory "full" avg60 is over 10. It warns when the
 host has no swap, rch has no workers, or a tmpfs /tmp is more than 50% full.
+With --for-spawn, the MemAvailable line is ACFS_CAPACITY_GUARD_AGENT_MIB plus
+ACFS_CAPACITY_GUARD_SPAWN_RESERVE_MIB (1024 + 512 MiB) instead of 4 GiB, so a
+small host can still start an agent while one fits.
 In an Incus system container (systemd-detect-virt -c says lxc) it reads the
 container's own cgroup: it is red when the working set (memory.current less
 inactive_file, so reclaimable page cache doesn't count) is over 80% of
@@ -52,8 +60,9 @@ cgroup's memory.pressure, not /proc/pressure.
 Thresholds: ACFS_CAPACITY_GUARD_MIN_MEM_MIB (4096),
 ACFS_CAPACITY_GUARD_MIN_DISK_PCT (10), ACFS_CAPACITY_GUARD_MAX_PSI_FULL (10),
 ACFS_CAPACITY_GUARD_MAX_CGROUP_PCT (80),
-ACFS_CAPACITY_GUARD_AGENT_MIB (1024, one Claude agent with its MCP children)
-and ACFS_CAPACITY_GUARD_GATE_MIB (4096, headroom kept for one gate run).
+ACFS_CAPACITY_GUARD_AGENT_MIB (1024, one Claude agent with its MCP children),
+ACFS_CAPACITY_GUARD_GATE_MIB (4096, headroom kept for one gate run)
+and ACFS_CAPACITY_GUARD_SPAWN_RESERVE_MIB (512, kept free past a new agent).
 
 Environment overrides for tests:
   ACFS_CAPACITY_CPU_COUNT
@@ -116,6 +125,10 @@ capacity_parse_args() {
                 CAPACITY_GUARD_CHECK=true
                 shift
                 ;;
+            --for-spawn)
+                CAPACITY_GUARD_FOR_SPAWN=true
+                shift
+                ;;
             -h|--help)
                 capacity_usage
                 return 100
@@ -138,6 +151,10 @@ capacity_parse_args() {
 
     if [[ "$CAPACITY_GUARD_CHECK" == true && "$CAPACITY_GUARD" != true ]]; then
         echo "Error: --check needs --guard" >&2
+        return 2
+    fi
+    if [[ "$CAPACITY_GUARD_FOR_SPAWN" == true && "$CAPACITY_GUARD" != true ]]; then
+        echo "Error: --for-spawn needs --guard" >&2
         return 2
     fi
 
@@ -1297,16 +1314,31 @@ capacity_guard_gt() {
 
 capacity_guard_collect() {
     local min_mem_mib min_disk_pct max_psi_full agent_mib gate_mib max_cg_pct
+    local spawn_reserve_mib headroom_mib mem_line_note=""
     min_mem_mib="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_MIN_MEM_MIB:-}" 4096)"
     min_disk_pct="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_MIN_DISK_PCT:-}" 10)"
     max_psi_full="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_MAX_PSI_FULL:-}" 10)"
     agent_mib="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_AGENT_MIB:-}" 1024)"
     gate_mib="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_GATE_MIB:-}" 4096)"
     max_cg_pct="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_MAX_CGROUP_PCT:-}" 80)"
+    spawn_reserve_mib="$(capacity_guard_threshold "${ACFS_CAPACITY_GUARD_SPAWN_RESERVE_MIB:-}" 512)"
     (( agent_mib > 0 )) || agent_mib=1024
     (( max_cg_pct > 0 && max_cg_pct <= 100 )) || max_cg_pct=80
 
+    # The host line keeps room for a gate run beside the swarm. Spawn asks
+    # only whether one more agent fits, so a small host that preflight
+    # accepts can still start one (acfs-w1f0).
+    headroom_mib="$gate_mib"
+    CAPACITY_GUARD_MODE="host"
+    if [[ "$CAPACITY_GUARD_FOR_SPAWN" == true ]]; then
+        CAPACITY_GUARD_MODE="spawn"
+        min_mem_mib=$((agent_mib + spawn_reserve_mib))
+        headroom_mib="$spawn_reserve_mib"
+        mem_line_note=" (one agent, ${agent_mib} MiB, and a ${spawn_reserve_mib} MiB reserve)"
+    fi
+
     CAPACITY_GUARD_MIN_MEM_MIB="$min_mem_mib"
+    CAPACITY_GUARD_SPAWN_RESERVE_MIB="$spawn_reserve_mib"
     CAPACITY_GUARD_MIN_DISK_PCT="$min_disk_pct"
     CAPACITY_GUARD_MAX_PSI_FULL="$max_psi_full"
     CAPACITY_GUARD_MAX_CGROUP_PCT="$max_cg_pct"
@@ -1330,7 +1362,7 @@ capacity_guard_collect() {
     if [[ "$mem_avail_kb" =~ ^[0-9]+$ ]]; then
         CAPACITY_GUARD_MEM_AVAILABLE_MIB=$((mem_avail_kb / 1024))
         if (( CAPACITY_GUARD_MEM_AVAILABLE_MIB < min_mem_mib )); then
-            CAPACITY_GUARD_REASONS+=("MemAvailable is ${CAPACITY_GUARD_MEM_AVAILABLE_MIB} MiB, under ${min_mem_mib} MiB")
+            CAPACITY_GUARD_REASONS+=("MemAvailable is ${CAPACITY_GUARD_MEM_AVAILABLE_MIB} MiB, under ${min_mem_mib} MiB${mem_line_note}")
         fi
     else
         CAPACITY_GUARD_MEM_AVAILABLE_MIB=""
@@ -1447,8 +1479,10 @@ capacity_guard_collect() {
     done
 
     # rch and herdr only warn and inform, never turn the guard red, so
-    # --check (spawn's question) doesn't wait on them.
-    if [[ "$CAPACITY_GUARD_CHECK" == true ]]; then
+    # spawn's question (--check, --for-spawn) doesn't wait on them.
+    local spawn_question=false
+    [[ "$CAPACITY_GUARD_CHECK" == true || "$CAPACITY_GUARD_FOR_SPAWN" == true ]] && spawn_question=true
+    if [[ "$spawn_question" == true ]]; then
         CAPACITY_GUARD_RCH_POSTURE="skipped"
         CAPACITY_GUARD_RCH_WORKERS=""
         CAPACITY_GUARD_RCH_HEALTHY=""
@@ -1469,12 +1503,12 @@ capacity_guard_collect() {
     esac
 
     CAPACITY_GUARD_LIVE_AGENTS=""
-    [[ "$CAPACITY_GUARD_CHECK" == true ]] || CAPACITY_GUARD_LIVE_AGENTS="$(capacity_guard_live_agents)"
+    [[ "$spawn_question" == true ]] || CAPACITY_GUARD_LIVE_AGENTS="$(capacity_guard_live_agents)"
     [[ "$CAPACITY_GUARD_LIVE_AGENTS" =~ ^[0-9]+$ ]] || CAPACITY_GUARD_LIVE_AGENTS=""
     CAPACITY_GUARD_MORE_AGENTS=""
     CAPACITY_GUARD_MAX_AGENTS=""
     if [[ -n "$CAPACITY_GUARD_MEM_AVAILABLE_MIB" ]]; then
-        CAPACITY_GUARD_MORE_AGENTS=$(((CAPACITY_GUARD_MEM_AVAILABLE_MIB - gate_mib) / agent_mib))
+        CAPACITY_GUARD_MORE_AGENTS=$(((CAPACITY_GUARD_MEM_AVAILABLE_MIB - headroom_mib) / agent_mib))
         # In a container, the room left under the admission line can be less
         # than MemAvailable, which lxcfs may show as the host's.
         if [[ -n "$cg_room_mib" ]] && (( cg_room_mib / agent_mib < CAPACITY_GUARD_MORE_AGENTS )); then
@@ -1516,6 +1550,7 @@ capacity_guard_emit_json() {
     jq -n \
         --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --arg status "$CAPACITY_GUARD_STATUS" \
+        --arg mode "$CAPACITY_GUARD_MODE" \
         --argjson reasons "$reasons_json" \
         --argjson warnings "$warnings_json" \
         --argjson filesystems "$fs_json" \
@@ -1544,11 +1579,13 @@ capacity_guard_emit_json() {
         --argjson min_disk "$CAPACITY_GUARD_MIN_DISK_PCT" \
         --argjson max_psi "$CAPACITY_GUARD_MAX_PSI_FULL" \
         --argjson agent_mib "$CAPACITY_GUARD_AGENT_MIB" \
-        --argjson gate_mib "$CAPACITY_GUARD_GATE_MIB" '
+        --argjson gate_mib "$CAPACITY_GUARD_GATE_MIB" \
+        --argjson spawn_reserve_mib "$CAPACITY_GUARD_SPAWN_RESERVE_MIB" '
         def num: if . == "" then null else tonumber end;
         {
             schema_version: 1,
             generated_at: $generated_at,
+            mode: $mode,
             status: $status,
             reasons: $reasons,
             warnings: $warnings,
@@ -1589,14 +1626,19 @@ capacity_guard_emit_json() {
                 max_psi_memory_full_avg60: $max_psi,
                 max_container_memory_percent: $max_cg,
                 per_agent_mib: $agent_mib,
-                gate_headroom_mib: $gate_mib
+                gate_headroom_mib: $gate_mib,
+                spawn_reserve_mib: $spawn_reserve_mib
             }
         }'
 }
 
 capacity_guard_emit_human() {
     local line role mount fstype size_mib avail_mib free_pct item
-    echo "Host capacity guard: $CAPACITY_GUARD_STATUS"
+    if [[ "$CAPACITY_GUARD_MODE" == spawn ]]; then
+        echo "Host capacity guard (spawn): $CAPACITY_GUARD_STATUS"
+    else
+        echo "Host capacity guard: $CAPACITY_GUARD_STATUS"
+    fi
     echo "  MemAvailable:        ${CAPACITY_GUARD_MEM_AVAILABLE_MIB:-unknown} MiB of ${CAPACITY_GUARD_MEM_TOTAL_MIB:-unknown} MiB (red under ${CAPACITY_GUARD_MIN_MEM_MIB} MiB)"
     if [[ "$CAPACITY_GUARD_SWAP_TOTAL_MIB" == 0 ]]; then
         echo "  Swap:                none"
@@ -1622,7 +1664,11 @@ capacity_guard_emit_human() {
     done
     echo "  rch:                 $CAPACITY_GUARD_RCH_POSTURE, ${CAPACITY_GUARD_RCH_HEALTHY:-?} of ${CAPACITY_GUARD_RCH_WORKERS:-?} workers healthy"
     echo "  Agents:              ${CAPACITY_GUARD_LIVE_AGENTS:-unknown} live; room for ${CAPACITY_GUARD_MORE_AGENTS:-unknown} more; suggested max ${CAPACITY_GUARD_MAX_AGENTS:-unknown}"
-    echo "                       (${CAPACITY_GUARD_AGENT_MIB} MiB per agent, ${CAPACITY_GUARD_GATE_MIB} MiB kept for one gate)"
+    if [[ "$CAPACITY_GUARD_MODE" == spawn ]]; then
+        echo "                       (${CAPACITY_GUARD_AGENT_MIB} MiB per agent, ${CAPACITY_GUARD_SPAWN_RESERVE_MIB} MiB kept in reserve)"
+    else
+        echo "                       (${CAPACITY_GUARD_AGENT_MIB} MiB per agent, ${CAPACITY_GUARD_GATE_MIB} MiB kept for one gate)"
+    fi
     for item in "${CAPACITY_GUARD_REASONS[@]}"; do
         echo "  RED: $item"
     done

@@ -62,10 +62,10 @@ Usage:
   nhm_hooks.sh capacity-provider check|set [FILE]
                                              nhm's [providers] capacity =
                                              ["acfs", "capacity", "--guard",
-                                             "--json"], so nhm spawn refuses
-                                             while the guard is red (always,
-                                             with under 4 GiB available);
-                                             opt-in; same FILE and exits as
+                                             "--json", "--for-spawn"], so nhm
+                                             spawn refuses while one more
+                                             agent doesn't fit; opt-in; same
+                                             FILE and exits as
                                              learning-profile
   nhm_hooks.sh plugin link|bind [--no-reload]|status
                                              nhm's herdr plugin (link) and its
@@ -791,11 +791,12 @@ nhm_hooks_trust() {
 #   `nhm feedback outcomes` then records a cm outcome for each bead that
 #   closed while assigned to an agent, the flywheel's OUTCOME step.
 # - the capacity provider (acfs-hd37), which only the user sets:
-#   [providers] capacity = ["acfs", "capacity", "--guard", "--json"].
-#   nhm's spawn admission then refuses to start an agent while ACFS's
-#   capacity guard is red (acfs-gmbo), and nothing overrides that. The
-#   guard is red whenever under 4 GiB is available, so on a small host
-#   every agent is refused, and install leaves it unset. capacity = []
+#   [providers] capacity = ["acfs", "capacity", "--guard", "--json",
+#   "--for-spawn"]. nhm's spawn admission then refuses to start an agent
+#   while ACFS's capacity guard is red (acfs-gmbo), and nothing overrides
+#   that. --for-spawn makes it red on memory only when one more agent
+#   doesn't fit, not under the host line of 4 GiB, so a small host still
+#   starts agents (acfs-w1f0). Install leaves it unset. capacity = []
 #   turns it off again: nhm reads it as no provider, and set leaves it.
 #
 # nhm reads the whole file at each spawn, and a file it cannot read fails
@@ -952,8 +953,8 @@ nhm_hooks_learning_profile() {
 
 nhm_hooks_capacity_provider() {
     nhm_hooks_config_setting providers capacity \
-        '["acfs", "capacity", "--guard", "--json"]' '["acfs", "capacity", "--guard", "--json"]' \
-        "ACFS: nhm spawn refuses while 'acfs capacity --guard' is red (acfs-hd37)" "$@"
+        '["acfs", "capacity", "--guard", "--json", "--for-spawn"]' '["acfs", "capacity", "--guard", "--json", "--for-spawn"]' \
+        "ACFS: nhm spawn refuses while one more agent doesn't fit (acfs-hd37, acfs-w1f0)" "$@"
 }
 
 # --- nhm's herdr plugin and keys (stack.nhm, acfs-9hkh.50) -------------------

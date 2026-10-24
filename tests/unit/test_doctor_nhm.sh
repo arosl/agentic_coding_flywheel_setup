@@ -196,12 +196,13 @@ check_case "the user's own learning value passes, noted as theirs" \
     bash -c '[[ "$1" == stack.nhm.setup\|pass\|*"learning profile set by your nhm config"* ]]' _ "$out"
 
 # nhm's capacity provider (acfs-hd37) is the user's choice: unset, the
-# check still passes and notes the set command with the small-host caveat;
-# set, it notes how to turn it off; the user's own value is noted as theirs.
+# check still passes and notes the set command and the spawn-sized line
+# (acfs-w1f0); set, it notes how to turn it off; the user's own value is
+# noted as theirs.
 fixture yes none
 out="$(run_check none)"
-check_case "no capacity provider passes, noting the set command and the small-host caveat" \
-    bash -c '[[ "$1" == stack.nhm.setup\|pass\|*"capacity provider off: "*"capacity-provider set"*"ACFS_CAPACITY_GUARD_MIN_MEM_MIB (4096 MiB)"*"refuses every start; [providers] capacity = [] in nhm"*"s config turns it off again"\| ]]' _ "$out"
+check_case "no capacity provider passes, noting the set command and the spawn-sized line" \
+    bash -c '[[ "$1" == stack.nhm.setup\|pass\|*"capacity provider off: "*"capacity-provider set"*"acfs capacity --guard --for-spawn"*"one more agent doesn"*"t fit"*"1536 MiB by default"*"[providers] capacity = [] in nhm"*"s config turns it off again"\| ]]' _ "$out"
 CAPACITY=1 fixture yes none
 out="$(run_check none)"
 check_case "the capacity provider set passes, noting how to turn it off" \

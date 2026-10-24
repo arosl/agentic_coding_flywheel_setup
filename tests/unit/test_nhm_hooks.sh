@@ -575,29 +575,31 @@ mkdir -p "$CP"
 cp_() { bash "$HOOKS" capacity-provider "$@"; }
 # [providers] capacity of FILE as compact JSON; "none" when unset
 cap_value() { python3 -I -c 'import json, sys, tomllib; v = tomllib.load(open(sys.argv[1], "rb")).get("providers", {}).get("capacity"); print("none" if v is None else json.dumps(v, separators=(",", ":")))' "$1"; }
-CAP_WANT='["acfs","capacity","--guard","--json"]'
+CAP_WANT='["acfs","capacity","--guard","--json","--for-spawn"]'
 
 check "capacity-provider check: no file is not set (1)" bash -c 'bash "$1" capacity-provider check "$2"; [[ $? -eq 1 ]]' _ "$HOOKS" "$CP/none/config.toml"
 cp_ set "$CP/new/config.toml" 2>/dev/null
-check "capacity-provider set: a new config holds acfs capacity --guard --json" test "$(cap_value "$CP/new/config.toml")" = "$CAP_WANT"
+check "capacity-provider set: a new config holds acfs capacity --guard --json --for-spawn" test "$(cap_value "$CP/new/config.toml")" = "$CAP_WANT"
 check "capacity-provider check: then 0" cp_ check "$CP/new/config.toml"
 check "capacity-provider set: a new file is 0600" test "$(stat -c %a "$CP/new/config.toml")" = 600
 
 printf '[reap]\nkeep = ["GreenCastle"]\n' >"$CP/other.toml"
 cp_ set "$CP/other.toml" 2>/dev/null
 check "capacity-provider set: a config without [providers] gets the table, its other settings kept" \
-    bash -c '[[ "$(python3 -I -c "import sys, tomllib; d = tomllib.load(open(sys.argv[1], \"rb\")); print(d[\"reap\"][\"keep\"][0], \" \".join(d[\"providers\"][\"capacity\"]))" "$1")" == "GreenCastle acfs capacity --guard --json" ]]' _ "$CP/other.toml"
+    bash -c '[[ "$(python3 -I -c "import sys, tomllib; d = tomllib.load(open(sys.argv[1], \"rb\")); print(d[\"reap\"][\"keep\"][0], \" \".join(d[\"providers\"][\"capacity\"]))" "$1")" == "GreenCastle acfs capacity --guard --json --for-spawn" ]]' _ "$CP/other.toml"
 
 printf '[providers]  # mine\nother = ["x"]\n\n[quota]\nadmit_unknown = ["agy"]\n' >"$CP/table.toml"
 cp_ set "$CP/table.toml" 2>/dev/null
 check "capacity-provider set: an existing [providers] table gets the key, the user's key stays" \
-    bash -c '[[ "$(sed -n 1,3p "$1")" == "[providers]  # mine"$'"'"'\n'"'"'"capacity = [\"acfs\", \"capacity\", \"--guard\", \"--json\"]"*$'"'"'\n'"'"'"other = [\"x\"]" ]] && [[ $(grep -c "^\[providers\]" "$1") -eq 1 ]]' _ "$CP/table.toml"
+    bash -c '[[ "$(sed -n 1,3p "$1")" == "[providers]  # mine"$'"'"'\n'"'"'"capacity = [\"acfs\", \"capacity\", \"--guard\", \"--json\", \"--for-spawn\"]"*$'"'"'\n'"'"'"other = [\"x\"]" ]] && [[ $(grep -c "^\[providers\]" "$1") -eq 1 ]]' _ "$CP/table.toml"
 check "capacity-provider set: the result is valid TOML with the value" test "$(cap_value "$CP/table.toml")" = "$CAP_WANT"
 cp "$CP/table.toml" "$CP/table.before"
 cp_ set "$CP/table.toml" 2>/dev/null
 check "capacity-provider set again: nothing changes" cmp -s "$CP/table.toml" "$CP/table.before"
 
-for own in '[]' '["my-guard", "--json"]'; do
+# The host-sized argv, from before --for-spawn (acfs-w1f0), is a valid
+# provider too, so it counts as the user's choice and set keeps it.
+for own in '[]' '["my-guard", "--json"]' '["acfs", "capacity", "--guard", "--json"]'; do
     printf '[providers]\ncapacity = %s\n' "$own" >"$CP/own.toml"
     cp "$CP/own.toml" "$CP/own.before"
     check "capacity-provider check: the user's own value ($own) is 3" bash -c 'bash "$1" capacity-provider check "$2"; [[ $? -eq 3 ]]' _ "$HOOKS" "$CP/own.toml"

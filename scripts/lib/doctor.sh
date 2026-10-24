@@ -3341,16 +3341,16 @@ check_nhm() {
                fixes+=("bash $helper learning-profile set (or acfs update)") ;;
         esac
         # nhm's capacity provider (acfs-hd37) is the user's choice, so it is
-        # a note, never a warning: install doesn't set it, since the guard is
-        # red whenever under 4 GiB is available, and nhm overrides no red, so
-        # a small host would refuse every agent.
+        # a note, never a warning: install doesn't set it, and nhm overrides
+        # no red. Its guard is spawn-sized (--for-spawn, acfs-w1f0): red on
+        # memory only when one more agent doesn't fit.
         rc=0
         HOME="$home" bash "$helper" capacity-provider check "${XDG_CONFIG_HOME:-$home/.config}/nhm/config.toml" \
             </dev/null >/dev/null 2>&1 || rc=$?
         case "$rc" in
             0) notes+=("capacity provider on ([providers] capacity = [] in nhm's config turns it off)") ;;
             3) notes+=("capacity provider set by your nhm config") ;;
-            *) notes+=("capacity provider off: 'bash $helper capacity-provider set' has nhm spawn refuse while 'acfs capacity --guard' is red, so a host with under ACFS_CAPACITY_GUARD_MIN_MEM_MIB (4096 MiB) available then refuses every start; [providers] capacity = [] in nhm's config turns it off again") ;;
+            *) notes+=("capacity provider off: 'bash $helper capacity-provider set' has nhm spawn refuse while 'acfs capacity --guard --for-spawn' is red, that is while one more agent doesn't fit (ACFS_CAPACITY_GUARD_AGENT_MIB plus ACFS_CAPACITY_GUARD_SPAWN_RESERVE_MIB, 1536 MiB by default) or a disk, PSI or container line is crossed; [providers] capacity = [] in nhm's config turns it off again") ;;
         esac
     fi
 
