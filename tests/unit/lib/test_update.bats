@@ -4108,11 +4108,55 @@ _zshrc_sync_repo() {
     run sync_acfs_zshrc
     chmod u+w "$locked" "$locked/passwd"
     assert_success
-    assert_output --partial "couldn't copy $ACFS_REPO_ROOT/acfs/zsh/acfs.zshrc to $HOME/.acfs/zsh/acfs.zshrc as the target user"
+    assert_output --partial "couldn't write $HOME/.acfs/zsh/acfs.zshrc as "
+    assert_output --partial "run: sudo chown -h "
     refute_output --partial "synced from repo"
 
     run cat "$locked/passwd"
     assert_output "root:x:0:0:root:/root:/bin/bash"
+}
+
+@test "sync_acfs_zshrc run by root for a user replaces a copy the user can't write, as sync_acfs_deployed does (acfs-2e08)" {
+    _zshrc_sync_repo
+    mkdir -p "$HOME/.acfs/zsh"
+    # Stands in for the root-owned copy an older root update left: the
+    # user's cp can't open it for writing, but may rename over it.
+    printf '# stale, from an old root update\n' > "$HOME/.acfs/zsh/acfs.zshrc"
+    chmod 0444 "$HOME/.acfs/zsh/acfs.zshrc"
+    UPDATE_LOG_FILE="$HOME/update.log"
+    stub_sync_as_user "$HOME" "$HOME/as-user.log"
+
+    run sync_acfs_zshrc
+    assert_success
+    assert_output --partial "the deployed copy differed and was replaced"
+    refute_output --partial "couldn't write"
+
+    run cat "$HOME/.acfs/zsh/acfs.zshrc"
+    assert_output "# acfs.zshrc from the repo"
+    [[ -z "$(find "$HOME/.acfs/zsh" -name '.acfs-sync.*')" ]]
+    # The user read the checkout's source itself.
+    run grep -F "$ACFS_REPO_ROOT/acfs/zsh/acfs.zshrc" "$HOME/as-user.log"
+    assert_success
+}
+
+@test "sync_acfs_zshrc run by root for a user replaces a link at the deployed path instead of writing through it (acfs-2e08)" {
+    local outside
+    _zshrc_sync_repo
+    outside="$(create_temp_dir)/root-file"
+    printf "root's own\n" > "$outside"
+    mkdir -p "$HOME/.acfs/zsh"
+    ln -s "$outside" "$HOME/.acfs/zsh/acfs.zshrc"
+    UPDATE_LOG_FILE="$HOME/update.log"
+    stub_sync_as_user "$HOME" "$HOME/as-user.log"
+
+    run sync_acfs_zshrc
+    assert_success
+
+    run cat "$outside"
+    assert_output "root's own"
+    [[ ! -L "$HOME/.acfs/zsh/acfs.zshrc" ]]
+    run cat "$HOME/.acfs/zsh/acfs.zshrc"
+    assert_output "# acfs.zshrc from the repo"
 }
 
 @test "sync_acfs_profile_paths: respects TARGET_HOME when HOME differs" {

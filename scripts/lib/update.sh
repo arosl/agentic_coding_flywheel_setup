@@ -1098,6 +1098,38 @@ update_user_mkdir() {
     update_no_link_below "$UPDATE_FOR_USER_HOME" "$dir" && [[ -d "$dir" ]]
 }
 
+# update_user_write_file FILE MODE SOURCE [STREAM]: the user update_for_user
+# found makes FILE's directory (update_user_mkdir) and writes a temp file
+# beside FILE, from SOURCE, or from STREAM when SOURCE is empty, which the
+# user then renames over FILE with MODE (acfs-7kax). The rename replaces a
+# link rather than following it, and also replaces a root-owned copy an
+# earlier root run left. The user reads SOURCE itself, so a link there
+# reaches only what the user can read.
+update_user_write_file() {
+    local deployed_file="$1"
+    local mode="$2"
+    local user_source="$3"
+    local streamed_source="${4:-/dev/null}"
+    local bash_bin=""
+
+    bash_bin="$(update_system_binary_path bash 2>/dev/null || true)"
+    [[ -n "$bash_bin" ]] || return 1
+    update_user_mkdir "$(dirname "$deployed_file")" || return 1
+    # mv -T never moves the file into a target that is a directory or a
+    # link to one: GNU mv replaces such a link, and uutils mv refuses it,
+    # which counts as refused (acfs-guwc).
+    update_run_in_target_context "" "$bash_bin" --noprofile --norc -c '
+        set -uo pipefail
+        tmp="$(mktemp "${1%/*}/.acfs-sync.XXXXXX")" || exit 1
+        if { if [[ -n "$3" ]]; then cat -- "$3"; else cat; fi; } > "$tmp" &&
+            chmod "$2" "$tmp" && mv -fT -- "$tmp" "$1"; then
+            exit 0
+        fi
+        rm -f -- "$tmp"
+        exit 1
+    ' _ "$deployed_file" "$mode" "$user_source" < "$streamed_source" >/dev/null 2>&1
+}
+
 # update_user_fd_is_path FD PATH TEST: descriptor FD, which root opened from
 # PATH, is PATH's own inode, passes TEST (-f or -d), and belongs to the user
 # update_for_user found. A link swapped in at PATH shows another inode.
@@ -3364,14 +3396,30 @@ sync_acfs_zshrc() {
     local had_deployed=false
     [[ -f "$deployed_zshrc" ]] && had_deployed=true
 
-    # The target user makes the directory and copies the file (acfs-n9l8).
-    # As root, cp wrote through a link the user put at the deployed path, onto
-    # any file of root's; as the user, a link there or in the checkout reaches
-    # only what the user could read or write.
-    if ! update_run_in_target_context "" mkdir -p -- "$(dirname "$deployed_zshrc")" >/dev/null 2>&1 \
-        || ! update_run_in_target_context "" cp -- "$repo_zshrc" "$deployed_zshrc" >/dev/null 2>&1; then
-        log_item "warn" "acfs.zshrc" "couldn't copy $repo_zshrc to $deployed_zshrc as the target user; not synced"
-        log_to_file "Refused syncing $repo_zshrc -> $deployed_zshrc: the target user could not read the source or write the file"
+    # Never written as root (acfs-n9l8): root's cp wrote through a link the
+    # user put at the deployed path, onto any file of root's. A root run for
+    # a user writes as sync_acfs_deployed does (update_user_write_file), which
+    # also replaces a root-owned copy an earlier root run left (acfs-2e08).
+    # Any other run is the target user's own, or root's for root: that user
+    # makes the directory and copies. Either way a link there or in the
+    # checkout reaches only what the user could read or write.
+    local zsh_dir="${deployed_zshrc%/*}"
+    local copied=false
+    if update_for_user "$deployed_zshrc"; then
+        local zshrc_mode=""
+        zshrc_mode="$(stat -c '%a' "$repo_zshrc" 2>/dev/null || true)"
+        [[ "$zshrc_mode" =~ ^[0-7]{3,4}$ ]] || zshrc_mode=644
+        update_user_write_file "$deployed_zshrc" "$zshrc_mode" "$repo_zshrc" && copied=true
+    elif update_run_in_target_context "" mkdir -p -- "$zsh_dir" >/dev/null 2>&1 \
+        && update_run_in_target_context "" cp -- "$repo_zshrc" "$deployed_zshrc" >/dev/null 2>&1; then
+        copied=true
+    fi
+    if [[ "$copied" != "true" ]]; then
+        local zsh_user=""
+        zsh_user="$(update_target_user 2>/dev/null || true)"
+        [[ -n "$zsh_user" ]] || zsh_user="<user>"
+        log_item "warn" "acfs.zshrc" "couldn't write $deployed_zshrc as $zsh_user; not synced. If root owns it or $zsh_dir, run: sudo chown -h $zsh_user: $zsh_dir $deployed_zshrc"
+        log_to_file "Refused syncing $repo_zshrc -> $deployed_zshrc: $zsh_user could not read the source or write the file, or a link is below the home"
         return 0
     fi
     if [[ "$had_deployed" == "true" ]]; then
@@ -3662,41 +3710,13 @@ sync_acfs_deployed() {
 
     # A root run for another user (update_for_user) never writes into that
     # user's runtime as root (acfs-7kax): root's mkdir -p, cp and chmod would
-    # follow a link the user swapped in there, onto a file of root's. The user
-    # makes the directory (update_user_mkdir) and writes a temp file beside
-    # the target, which the user then renames over it: the rename replaces a
-    # link rather than following it, and also replaces a root-owned copy an
-    # earlier root run left. The user reads a checkout source itself, so a
-    # link there reaches only what the user can read; root streams only the
-    # temp file it made with git show.
+    # follow a link the user swapped in there, onto a file of root's. Each
+    # file goes through update_user_write_file instead, and root streams only
+    # the temp file it made with git show.
     local sync_as_user=false
     if update_for_user "$acfs_home"; then
         sync_as_user=true
     fi
-    _acfs_sync_deployed_file_as_user() {
-        local deployed_file="$1"
-        local mode="$2"
-        local user_source="$3"
-        local streamed_source="${4:-/dev/null}"
-        local bash_bin=""
-
-        bash_bin="$(update_system_binary_path bash 2>/dev/null || true)"
-        [[ -n "$bash_bin" ]] || return 1
-        update_user_mkdir "$(dirname "$deployed_file")" || return 1
-        # mv -T never moves the file into a target that is a directory or a
-        # link to one: GNU mv replaces such a link, and uutils mv refuses it,
-        # which counts as refused (acfs-guwc).
-        update_run_in_target_context "" "$bash_bin" --noprofile --norc -c '
-            set -uo pipefail
-            tmp="$(mktemp "${1%/*}/.acfs-sync.XXXXXX")" || exit 1
-            if { if [[ -n "$3" ]]; then cat -- "$3"; else cat; fi; } > "$tmp" &&
-                chmod "$2" "$tmp" && mv -fT -- "$tmp" "$1"; then
-                exit 0
-            fi
-            rm -f -- "$tmp"
-            exit 1
-        ' _ "$deployed_file" "$mode" "$user_source" < "$streamed_source" >/dev/null 2>&1
-    }
 
     _acfs_sync_deployed_file() {
         local repo_rel="$1"
@@ -3768,7 +3788,7 @@ sync_acfs_deployed() {
                 user_mode="$(stat -c '%a' "$source_file" 2>/dev/null || true)"
                 [[ "$user_mode" =~ ^[0-7]{3,4}$ ]] || user_mode=644
             fi
-            if ! _acfs_sync_deployed_file_as_user "$deployed_file" "$user_mode" "$user_source" "$streamed_source"; then
+            if ! update_user_write_file "$deployed_file" "$user_mode" "$user_source" "$streamed_source"; then
                 log_to_file "Refused syncing $source_label -> $deployed_file: $UPDATE_FOR_USER could not read the source or write the file, or a link is below $UPDATE_FOR_USER_HOME"
                 refused=$((refused + 1))
                 if [[ -n "$source_tmp" ]]; then
