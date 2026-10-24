@@ -19,6 +19,10 @@
 # fs.protected_hardlinks is 0, a hard link the user put in the home would
 # have a handover give that file away. acfs-wmgr: main checks the sysctl
 # before the first handover (acfs_check_protected_hardlinks).
+#
+# A script in ~/.acfs is the user's: install_asset writes it as the user, who
+# can change it before root runs it. acfs-uhbz: root runs only the verified
+# source tree's copy (acfs_verified_source_path), never one in the home.
 
 setup() {
     PROJECT_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
@@ -91,6 +95,101 @@ home_mkdirs() {
     as_root="$(grep -vE 'acfs_asset_dir|run_as_target|_acfs_run_root_bin_command|"\$TARGET_HOME/\.ssh"' <<<"$mkdirs" || true)"
     printf 'as root: %s\n' "$as_root"
     [[ -z "$as_root" ]]
+}
+
+# Each code line of install.sh that runs a script in the user's home
+# ($ACFS_HOME, $TARGET_HOME), named literally or through a variable install.sh
+# sets to one: through bash, sh, source, . or exec, or as the command itself,
+# on its own line or after env or $SUDO.
+home_script_runs() {
+    local install_sh="$PROJECT_ROOT/install.sh" names="" ref=""
+    names="$(grep -oE '[a-z_]+="\$\{?(ACFS_HOME|TARGET_HOME)\}?/[^"]*\.(sh|py)"' "$install_sh" \
+        | cut -d= -f1 | sort -u | paste -sd '|' -)"
+    ref='"\$\{?((ACFS_HOME|TARGET_HOME)\}?/[^"]*\.(sh|py)'"${names:+|($names)\\\}?}"')"'
+    grep -nE "(^|[[:space:];&|(])(bash|sh|source|exec|\\.)( +-[[:alpha:]-]+)* +${ref}|^[[:space:]]*${ref}( |\$)|(env|\\\$SUDO)( +\"[A-Z_]+=[^\"]*\")* +${ref}" \
+        "$install_sh" | grep -vE '^[0-9]+:[[:space:]]*#'
+}
+
+@test "install.sh runs a script in the user's home only as the target user (acfs-uhbz)" {
+    local runs as_root
+    runs="$(home_script_runs)"
+    # The pattern still finds the call sites, so the check can't pass empty:
+    # nhm's hooks and timer, and Agent Mail's hook, which the user runs.
+    (( $(wc -l <<<"$runs") >= 15 ))
+    as_root="$(grep -v 'run_as_target' <<<"$runs" || true)"
+    printf 'as root: %s\n' "$as_root"
+    [[ -z "$as_root" ]]
+}
+
+@test "finalize's root runs of services-setup.sh and state_layer.sh take the verified tree's copy (acfs-uhbz)" {
+    local body
+    body="$(sed -n '/^finalize() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
+    # shellcheck disable=SC2016  # The literal lines finalize holds.
+    grep -qF 'state_layer_script="$(acfs_verified_source_path "scripts/lib/state_layer.sh")" || return 1' <<<"$body"
+    # shellcheck disable=SC2016
+    grep -qF 'bash "$state_layer_script" setup-guest' <<<"$body"
+    # shellcheck disable=SC2016
+    grep -qF 'if services_setup_script="$(acfs_verified_source_path "scripts/services-setup.sh")"; then' <<<"$body"
+    # shellcheck disable=SC2016
+    grep -qF 'bash "$services_setup_script" --install-claude-guard --yes' <<<"$body"
+    # Each variable is set only there.
+    [[ "$(grep -cE '(state_layer|services_setup)_script=' <<<"$body")" -eq 4 ]]
+}
+
+# Loads install.sh's acfs_verified_source_path over a verified tree the test
+# makes, whose ledger holds each file's sha256 as it was when made.
+load_verified_source() {
+    eval "$(sed -n '/^acfs_verified_source_path() {$/,/^}$/p' "$PROJECT_ROOT/install.sh")"
+    [[ "$(type -t acfs_verified_source_path)" == "function" ]]
+    SOURCE_ROOT="$BATS_TEST_TMPDIR/source"
+    mkdir -p "$SOURCE_ROOT/scripts/lib"
+    printf '#!/bin/bash\necho verified\n' > "$SOURCE_ROOT/scripts/services-setup.sh"
+    printf '#!/bin/bash\necho verified\n' > "$SOURCE_ROOT/scripts/lib/state_layer.sh"
+    ACFS_TRUSTED_INTERNAL_SOURCE_ROOT="$SOURCE_ROOT"
+    ACFS_BOOTSTRAP_DIR="$SOURCE_ROOT"
+    declare -gA LEDGER=()
+    local rel
+    for rel in scripts/services-setup.sh scripts/lib/state_layer.sh; do
+        LEDGER[$rel]="$(sha256sum "$SOURCE_ROOT/$rel" | cut -d' ' -f1)"
+    done
+    _acfs_internal_asset_expected_sha256() { [[ -n "${LEDGER[$1]:-}" ]] && printf '%s\n' "${LEDGER[$1]}"; }
+    acfs_calculate_file_sha256() { sha256sum "$1" | cut -d' ' -f1; }
+    log_error() { printf 'error: %s\n' "$*"; }
+}
+
+@test "acfs_verified_source_path prints the verified tree's copy when it is the ledger's" {
+    load_verified_source
+    run acfs_verified_source_path "scripts/services-setup.sh"
+    [[ "$status" -eq 0 && "$output" == "$SOURCE_ROOT/scripts/services-setup.sh" ]]
+    run acfs_verified_source_path "scripts/lib/state_layer.sh"
+    [[ "$status" -eq 0 && "$output" == "$SOURCE_ROOT/scripts/lib/state_layer.sh" ]]
+}
+
+@test "acfs_verified_source_path refuses a changed file, a link, a file outside the ledger, a bad path and an unverified tree" {
+    load_verified_source
+    printf 'echo changed\n' >> "$SOURCE_ROOT/scripts/services-setup.sh"
+    run acfs_verified_source_path "scripts/services-setup.sh"
+    [[ "$status" -ne 0 && "$output" == *"Not the ledger's copy"* ]]
+
+    rm -f "$SOURCE_ROOT/scripts/lib/state_layer.sh"
+    ln -s "$TARGET_HOME/state_layer.sh" "$SOURCE_ROOT/scripts/lib/state_layer.sh"
+    run acfs_verified_source_path "scripts/lib/state_layer.sh"
+    [[ "$status" -ne 0 && "$output" == *"Missing or unsafe"* ]]
+
+    printf 'x\n' > "$SOURCE_ROOT/scripts/other.sh"
+    run acfs_verified_source_path "scripts/other.sh"
+    [[ "$status" -ne 0 && "$output" == *"Not the ledger's copy"* ]]
+
+    run acfs_verified_source_path "../scripts/services-setup.sh"
+    [[ "$status" -ne 0 && "$output" == *"Invalid path"* ]]
+    run acfs_verified_source_path "$SOURCE_ROOT/scripts/services-setup.sh"
+    [[ "$status" -ne 0 && "$output" == *"Invalid path"* ]]
+
+    rm -f "$SOURCE_ROOT/scripts/lib/state_layer.sh"
+    load_verified_source
+    ACFS_BOOTSTRAP_DIR="$TARGET_HOME"
+    run acfs_verified_source_path "scripts/services-setup.sh"
+    [[ "$status" -ne 0 && "$output" == *"not the verified ACFS tree"* ]]
 }
 
 # Loads install.sh's acfs_chmod_as_target, acfs_find_chmod_as_target and

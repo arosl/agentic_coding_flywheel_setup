@@ -11835,7 +11835,8 @@ EOF
     run grep -F "$env_line" "$installer"
     assert_success
 
-    run grep -F '"$ACFS_HOME/scripts/services-setup.sh" --install-claude-guard --yes' "$installer"
+    # The verified tree's copy, never the user's in ~/.acfs (acfs-uhbz).
+    run grep -F 'bash "$services_setup_script" --install-claude-guard --yes' "$installer"
     assert_success
 
     run grep -F 'try_step_eval "Installing DCG hook"' "$installer"

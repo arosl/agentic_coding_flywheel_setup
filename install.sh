@@ -4987,6 +4987,46 @@ acfs_asset_dir() {
     done
 }
 
+# Prints the verified source tree's copy of REL_PATH, by install_asset's own
+# source checks: the tree is the one verified against the internal checksum
+# ledger, the file is a regular file there, and its sha256 is still the
+# ledger's. A script root runs comes from here, never from the copy
+# install_asset put in the target's home, which the target user owns and can
+# change before root runs it (acfs-uhbz).
+acfs_verified_source_path() {
+    local rel_path="${1:-}"
+    local source_root="" source_path="" expected_sha="" actual_sha=""
+    local trusted_source_root="${ACFS_TRUSTED_INTERNAL_SOURCE_ROOT:-}"
+
+    if [[ -z "$rel_path" || "$rel_path" == /* || "$rel_path" == *".."* ]]; then
+        log_error "acfs_verified_source_path: Invalid path: ${rel_path:-<empty>}"
+        return 1
+    fi
+    if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]]; then
+        source_root="$ACFS_BOOTSTRAP_DIR"
+    else
+        source_root="${SCRIPT_DIR:-}"
+    fi
+    if [[ -z "$trusted_source_root" || "$trusted_source_root" != /* || "$trusted_source_root" == "/" ]] \
+        || [[ ! -d "$trusted_source_root" || -L "$trusted_source_root" ]] \
+        || [[ "$source_root" != "$trusted_source_root" ]]; then
+        log_error "acfs_verified_source_path: Selected source tree is not the verified ACFS tree"
+        return 1
+    fi
+    source_path="$source_root/$rel_path"
+    if [[ ! -f "$source_path" || -L "$source_path" ]]; then
+        log_error "acfs_verified_source_path: Missing or unsafe in the verified ACFS tree: $rel_path"
+        return 1
+    fi
+    expected_sha="$(_acfs_internal_asset_expected_sha256 "$rel_path" 2>/dev/null || true)"
+    actual_sha="$(acfs_calculate_file_sha256 "$source_path" 2>/dev/null || true)"
+    if [[ ! "$expected_sha" =~ ^[0-9a-f]{64}$ || "$actual_sha" != "$expected_sha" ]]; then
+        log_error "acfs_verified_source_path: Not the ledger's copy: $rel_path"
+        return 1
+    fi
+    printf '%s\n' "$source_path"
+}
+
 install_asset() {
     local rel_path="$1"
     local dest_path="$2"
@@ -12046,11 +12086,15 @@ finalize() {
     # State layer (acfs-ioo3.3): where the launcher mounted a state volume
     # (/etc/acfs/state), install the lease unit that keeps the volume to
     # one running machine, and keep sshd's host keys on the volume.
-    # Elsewhere there is nothing to set up.
+    # Elsewhere there is nothing to set up. Root runs the verified tree's
+    # copy: the one in ~/.acfs is the user's, and setup-guest also installs
+    # the copy it runs as root's lease unit (acfs-uhbz).
     if [[ -d /etc/acfs/state ]]; then
+        local state_layer_script=""
+        state_layer_script="$(acfs_verified_source_path "scripts/lib/state_layer.sh")" || return 1
         try_step "Setting up the state layer (lease unit, SSH host keys)" \
             $SUDO env "ACFS_STATE_USER=$TARGET_USER" "ACFS_STATE_HOME=$TARGET_HOME" \
-            bash "$ACFS_HOME/scripts/lib/state_layer.sh" setup-guest || return 1
+            bash "$state_layer_script" setup-guest || return 1
     fi
 
     # Install global acfs wrapper (works for root and all users)
@@ -12062,11 +12106,18 @@ finalize() {
     #
     # This is especially important because ACFS config includes "dangerous mode"
     # aliases (e.g., `cc`) that can run commands without interactive approvals.
+    # As root this runs the verified tree's services-setup.sh, which hands
+    # the work to the user; the copy in ~/.acfs is the user's (acfs-uhbz).
     log_detail "Installing DCG (Destructive Command Guard) PreToolUse hook"
-    try_step_optional "Installing DCG hook" \
-        env "TARGET_USER=$TARGET_USER" "TARGET_HOME=$TARGET_HOME" \
-        "$ACFS_HOME/scripts/services-setup.sh" --install-claude-guard --yes || \
-        log_warn "DCG hook installation failed (optional)"
+    local services_setup_script=""
+    if services_setup_script="$(acfs_verified_source_path "scripts/services-setup.sh")"; then
+        try_step_optional "Installing DCG hook" \
+            env "TARGET_USER=$TARGET_USER" "TARGET_HOME=$TARGET_HOME" \
+            bash "$services_setup_script" --install-claude-guard --yes || \
+            log_warn "DCG hook installation failed (optional)"
+    else
+        log_warn "DCG hook installation skipped (optional): no verified services-setup.sh"
+    fi
 
     # Agent Mail Stop hook (acfs-gen.4): an agent whose turn ends with unread
     # Agent Mail is sent back to read it before it goes idle. Registering is
