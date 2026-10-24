@@ -2109,13 +2109,16 @@ acfs_install_lock_as_root() {
 }
 
 # acfs_install_lock_file HOME: prints the install lock's path, after making
-# its directory. The lock is opened with a redirect, which truncates and
-# follows a link. So a root run never takes it in the user's ~/.acfs, where
-# the user can put a link at any name (acfs-0dmd): it locks
-# /run/acfs/install-<user>.lock. A run as the user keeps
-# $ACFS_HOME/.install.lock, the user's own file.
+# its directory and the file. A root run never takes it in the user's
+# ~/.acfs, where the user can put a link at any name (acfs-0dmd): it locks
+# /run/acfs/install-<user>.lock. Any other run takes $ACFS_HOME/.install.lock.
+# That is the user's own file, or, for a sudo user installing for another
+# account, a name that account controls. So the file is made only where
+# nothing is, with noclobber's O_EXCL, which makes nothing through a
+# dangling link either; a name that isn't a regular file is refused; and
+# main opens the lock read-only, which truncates nothing (acfs-hhse).
 acfs_install_lock_file() {
-    local home="$1" user="${TARGET_USER:-ubuntu}" dir="" owner_mode=""
+    local home="$1" user="${TARGET_USER:-ubuntu}" dir="" owner_mode="" file=""
     if acfs_install_lock_as_root; then
         # main checks TARGET_USER only after the lock; it names a file here.
         if [[ ! "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
@@ -2132,15 +2135,23 @@ acfs_install_lock_file() {
             log_error "Refusing the ACFS install lock directory $dir: it must be root's own directory, writable only by root"
             return 1
         fi
-        printf '%s/install-%s.lock\n' "$dir" "$user"
-        return 0
+        file="$dir/install-$user.lock"
+    else
+        dir="${ACFS_HOME:-$home/.acfs}"
+        if ! mkdir -p "$dir" 2>/dev/null; then
+            log_error "Unable to create ACFS install lock directory: $dir"
+            return 1
+        fi
+        file="$dir/.install.lock"
     fi
-    dir="${ACFS_HOME:-$home/.acfs}"
-    if ! mkdir -p "$dir" 2>/dev/null; then
-        log_error "Unable to create ACFS install lock directory: $dir"
+    if [[ ! -e "$file" && ! -L "$file" ]]; then
+        (set -C; : > "$file") 2>/dev/null || true
+    fi
+    if [[ -L "$file" || ! -f "$file" ]]; then
+        log_error "Refusing the ACFS install lock $file: it must be a regular file, not a link"
         return 1
     fi
-    printf '%s/.install.lock\n' "$dir"
+    printf '%s\n' "$file"
 }
 
 # acfs_install_lock_is_free FILE: true when no installer holds FILE's lock.
@@ -12982,15 +12993,17 @@ main() {
         local _acfs_lock_dir="${ACFS_HOME:-${_acfs_lock_home}/.acfs}"
         local _acfs_lock_file=""
         _acfs_lock_file="$(acfs_install_lock_file "$_acfs_lock_home")" || exit 1
-        # NOTE: On bash 5.3+, `exec N>file` under set -e exits the script
+        # NOTE: On bash 5.3+, `exec N<file` under set -e exits the script
         # before `if` can catch the failure. We test in a subshell first,
         # then only exec in the main shell if the subshell succeeded.
+        # Read-only: flock needs no write access, and a read truncates
+        # nothing behind a link (acfs-hhse).
         local _acfs_lock_fd=""
-        if (exec 199>"$_acfs_lock_file") 2>/dev/null; then
-            exec 199>"$_acfs_lock_file"
+        if (exec 199<"$_acfs_lock_file") 2>/dev/null; then
+            exec 199<"$_acfs_lock_file"
             _acfs_lock_fd=199
-        elif (exec 198>"$_acfs_lock_file") 2>/dev/null; then
-            exec 198>"$_acfs_lock_file"
+        elif (exec 198<"$_acfs_lock_file") 2>/dev/null; then
+            exec 198<"$_acfs_lock_file"
             _acfs_lock_fd=198
         fi
         if [[ -n "$_acfs_lock_fd" ]]; then

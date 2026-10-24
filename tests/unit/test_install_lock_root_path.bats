@@ -9,6 +9,12 @@
 # the user keeps its own ~/.acfs/.install.lock, and probes root's lock for it
 # read-only.
 #
+# acfs-hhse: a sudo user installing for another account still took that
+# account's ~/.acfs/.install.lock with `exec 199>`, so a link there truncated
+# or created the sudo user's files. Every run now makes the lock only where
+# nothing is (noclobber's O_EXCL), refuses a name that isn't a regular file,
+# and main opens it read-only.
+#
 # The tests load acfs_install_lock_file and its helpers from install.sh.
 # They can't run as root, so the root case is selected by overriding
 # acfs_install_lock_as_root, and /run/acfs is a directory under the temp
@@ -39,7 +45,7 @@ as_user() { acfs_install_lock_as_root() { return 1; }; }
 # main's open of the lock, as it runs after acfs_install_lock_file.
 take_lock() {
     local file="$1"
-    exec 199>"$file"
+    exec 199<"$file"
     flock -n 199
 }
 
@@ -85,7 +91,7 @@ take_lock() {
     file="$(acfs_install_lock_file "$TEST_HOME")"
     take_lock "$file"
     # A second installer, as a separate process: its own open and flock -n.
-    run bash -c 'exec 198>"$1"; flock -n 198' _ "$(acfs_install_lock_file "$TEST_HOME")"
+    run bash -c 'exec 198<"$1"; flock -n 198' _ "$(acfs_install_lock_file "$TEST_HOME")"
     [[ "$status" -ne 0 ]]
 }
 
@@ -132,7 +138,52 @@ take_lock() {
     grep -qF '_acfs_lock_file="$(acfs_install_lock_file "$_acfs_lock_home")" || exit 1' <<<"$body"
     [[ "$body" != *'_acfs_lock_file="$_acfs_lock_dir/.install.lock"'* ]]
     [[ "$body" != *'mkdir -p "$_acfs_lock_dir"'* ]]
-    grep -qF 'exec 199>"$_acfs_lock_file"' <<<"$body"
+    # Read-only opens: no redirect in main truncates the lock (acfs-hhse).
+    grep -qF 'exec 199<"$_acfs_lock_file"' <<<"$body"
+    grep -qF 'exec 198<"$_acfs_lock_file"' <<<"$body"
+    [[ "$body" != *'exec 199>"$_acfs_lock_file"'* && "$body" != *'exec 198>"$_acfs_lock_file"'* ]]
+}
+
+@test "any run makes its lock file only where nothing is, as a regular file, and keeps an existing one's content" {
+    as_user
+    local file
+    file="$(acfs_install_lock_file "$TEST_HOME")"
+    [[ "$file" == "$TEST_HOME/.acfs/.install.lock" ]]
+    [[ -f "$file" && ! -L "$file" && ! -s "$file" ]]
+
+    printf 'keep\n' > "$file"
+    file="$(acfs_install_lock_file "$TEST_HOME")"
+    take_lock "$file"
+    [[ "$(cat "$file")" == "keep" ]]
+
+    as_root
+    file="$(acfs_install_lock_file "$TEST_HOME")"
+    [[ "$file" == "$LOCK_ROOT/install-tester.lock" && -f "$file" && ! -L "$file" ]]
+}
+
+@test "a run that isn't root, a sudo user's for another account say, never writes through a link at ~/.acfs/.install.lock" {
+    as_user
+    printf 'ssh-ed25519 AAAA admin\n' > "$OUTSIDE/authorized_keys"
+    ln -s "$OUTSIDE/authorized_keys" "$TEST_HOME/.acfs/.install.lock"
+    run acfs_install_lock_file "$TEST_HOME"
+    [[ "$status" -ne 0 ]]
+    [[ "$(cat "$OUTSIDE/authorized_keys")" == "ssh-ed25519 AAAA admin" ]]
+    grep -qF "Refusing the ACFS install lock $TEST_HOME/.acfs/.install.lock" "$ERRORS"
+
+    rm "$TEST_HOME/.acfs/.install.lock"
+    ln -s "$OUTSIDE/created" "$TEST_HOME/.acfs/.install.lock"
+    run acfs_install_lock_file "$TEST_HOME"
+    [[ "$status" -ne 0 ]]
+    [[ ! -e "$OUTSIDE/created" ]]
+}
+
+@test "a root run refuses a link at its own lock name too" {
+    as_root
+    mkdir -m 0755 "$LOCK_ROOT"
+    ln -s "$OUTSIDE/elsewhere.lock" "$LOCK_ROOT/install-tester.lock"
+    run acfs_install_lock_file "$TEST_HOME"
+    [[ "$status" -ne 0 ]]
+    [[ ! -e "$OUTSIDE/elsewhere.lock" ]]
 }
 
 @test "the probe finds a free lock free and a held one busy, and changes nothing" {
