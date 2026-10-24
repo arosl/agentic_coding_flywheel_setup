@@ -81,8 +81,7 @@ else
         target="${out:-$(readlink "/proc/$$/fd/1")}"
         [[ "$target" == /* ]] || { echo "age stub: output is not a file: $target" >&2; exit 1; }
         rm -f -- "$target"
-        ln -s "$AGE_SWAP_LINK" "$target"
-        touch "$AGE_SWAP_LINK.swapped"
+        ln -s "$AGE_SWAP_LINK" "$target" && touch "$AGE_SWAP_LINK.swapped"
     fi
     { echo AGESTUB; cat; } >"${out:-/dev/stdout}"
 fi
@@ -120,7 +119,22 @@ cat >"$BIN/runuser" <<'STUB'
 #!/usr/bin/env bash
 while [[ $# -gt 0 && "$1" != "--" ]]; do shift; done
 shift
+args="$*"
+printf 'as-user %s\n' "${args//$'\n'/ }" >>"$STUB_LOG"
 exec "$@"
+STUB
+
+# mv and mkdir: record root's own calls. What runs as the user goes
+# through runuser with PATH=/usr/bin:/bin, so it never reaches these.
+cat >"$BIN/mv" <<'STUB'
+#!/usr/bin/env bash
+echo "mv $*" >>"$STUB_LOG"
+PATH="${PATH#*:}" exec mv "$@"
+STUB
+cat >"$BIN/mkdir" <<'STUB'
+#!/usr/bin/env bash
+echo "mkdir $*" >>"$STUB_LOG"
+PATH="${PATH#*:}" exec mkdir "$@"
 STUB
 
 # chown: the tests don't run as root; record what would be chowned.
@@ -363,6 +377,9 @@ printf 'root file\n' >"$WORK/victim"
 ACTIVE_UNITS="user@$UID_NOW.service" AGE_SWAP_LINK="$WORK/victim" run "$A" export devbox "$WORK/swap.tar.age" --recipient age1example
 check "a link swapped in at the partial archive's name is not written through" \
     bash -c '[[ -e "$1.swapped" && "$(cat "$1")" == "root file" ]]' _ "$WORK/victim"
+check "and the export fails, never hashing the link's target" \
+    bash -c '[[ "$1" -ne 0 && ! -e "$2" && ! -L "$2" ]] && grep -q "no archive was written" "$3" && ! grep -q "^sha256:" "$4"' \
+    _ "$RC" "$WORK/swap.tar.age" "$ERR" "$OUT"
 check "the swap left nothing in the working directory" \
     bash -c '[[ -z "$(find . -maxdepth 1 -lname "$1")" ]]' _ "$WORK/victim"
 
@@ -380,6 +397,7 @@ check "--snapshot-pool snapshots acfs-state-<name> through the host remote" \
     bash -c 'grep -q "incus storage volume snapshot create host:fast acfs-state-devbox acfs-export-" "$1"' _ "$LOG"
 
 echo "import"
+: >"$LOG"
 INSTANCE_LEASE="lease-b" run "$B" import devbox "$WORK/a.tar.age"
 check "import into a fresh machine succeeds" bash -c '[[ "$1" -eq 0 ]]' _ "$RC"
 check "a fresh ~/.claude.json is no login: the archive's replaces it, the old copy kept" \
@@ -402,8 +420,14 @@ check "the private key on the ssh row is 0600 and its .pub 0644" \
     bash -c '[[ "$(stat -c %a "$1/ssh/ssh_host_ed25519_key")" == 600 && "$(stat -c %a "$1/ssh/ssh_host_ed25519_key.pub")" == 644 ]]' _ "$B"
 check "the import writes this instance's lease into the volume" bash -c '[[ "$(cat "$1/meta/lease")" == lease-b ]]' _ "$B"
 check "the journal ends with done" bash -c 'tail -1 "$1/meta/journal" | grep -q " done$"' _ "$B"
-check "home rows are chowned to the user, root rows to root" \
-    bash -c 'grep -q "chown -R -h $2:$3 $1/home/.acfs-import-" "$4" && grep -q "chown -R -h 0:0 $1/ssh/.acfs-import-" "$4"' _ "$B" "$UID_NOW" "$(id -g)" "$LOG"
+check "root rows are chowned to root, and root chowns nothing in the home" \
+    bash -c 'grep -q "chown -R -h 0:0 $1/ssh/.acfs-import-" "$2" && ! grep -q "^chown .*$1/home/" "$2"' _ "$B" "$LOG"
+# The user owns the home and can swap any name in it for a link, which
+# root would follow (acfs-z2c7): the user does the home rows' work.
+check "the user extracts, swaps and merges the home rows; root renames and makes nothing in the home" \
+    bash -c 'grep -q "^as-user .*extract $1/home/.acfs-import-" "$2" && grep -q "^as-user .*mv -T -- $1/home/.acfs-import-" "$2" && grep -q "^as-user .*authorized_keys" "$2" && ! grep -qE "^(mv|mkdir) .*$1/home/" "$2"' _ "$B" "$LOG"
+check "the user's extract never sees the root rows" \
+    bash -c '! grep -rq ed25519-private "$1"/home/.acfs-import-*/' _ "$B"
 
 INSTANCE_LEASE="lease-b" run "$B" import devbox "$WORK/a.tar.age"
 check "a second import refuses the login this machine now holds" \

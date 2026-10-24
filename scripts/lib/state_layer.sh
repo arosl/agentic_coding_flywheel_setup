@@ -473,12 +473,21 @@ def verify(manifest_out):
     with open(manifest_out, "w") as f:
         json.dump(manifest, f)
 
-def extract(dest, manifest_path):
-    manifest = json.load(open(manifest_path))
-    listed = {f["path"]: f["sha256"] for f in manifest.get("files", [])}
+def extract(dest, manifest_path, home_out=None):
+    # With "-" the manifest is the stream's first member, as split writes
+    # it. With home_out the home rows' members go there, a tar stream for
+    # the user's own extract, and are never written here (acfs-z2c7).
+    manifest = None if manifest_path == "-" else json.load(open(manifest_path))
+    listed = None if manifest is None else {f["path"]: f["sha256"] for f in manifest.get("files", [])}
     tf = tarfile.open(fileobj=sys.stdin.buffer, mode="r|")
     seen, links, dirs = {}, set(), []
     for m in tf:
+        if manifest is None:
+            if m.name != "manifest.json" or not m.isreg():
+                raise Refuse("the staged stream does not start with manifest.json")
+            manifest = json.load(tf.extractfile(m))
+            listed = {f["path"]: f["sha256"] for f in manifest.get("files", [])}
+            continue
         abs_links = []
         check_member(m, seen, links, abs_links)
         check_abs_links(manifest, abs_links)
@@ -486,6 +495,9 @@ def extract(dest, manifest_path):
             continue
         if not rows_cover(manifest["rows"], m.name):
             raise Refuse("member not under a manifest row: %r" % m.name)
+        if home_out is not None and under(m.name, "home"):
+            home_out.addfile(m, tf.extractfile(m) if m.isreg() else None)
+            continue
         path = os.path.join(dest, m.name)
         parent = os.path.dirname(path)
         p = parent
@@ -526,6 +538,19 @@ def extract(dest, manifest_path):
         os.chmod(path, mode)
         os.utime(path, (mtime, mtime))
 
+def split(dest, manifest_path):
+    # Root extracts the root rows into dest, a root-only directory, and
+    # writes manifest.json and then the home rows' members to stdout, for
+    # an extract run as the user into the user's home (acfs-z2c7).
+    out = tarfile.open(fileobj=sys.stdout.buffer, mode="w|", format=tarfile.PAX_FORMAT)
+    with open(manifest_path, "rb") as f:
+        data = f.read()
+    ti = tarfile.TarInfo("manifest.json")
+    ti.size, ti.mode = len(data), 0o600
+    out.addfile(ti, io.BytesIO(data))
+    extract(dest, manifest_path, home_out=out)
+    out.close()
+
 def drain():
     # Read to the end, so age never fails on a closed pipe.
     while sys.stdin.buffer.read(1 << 20):
@@ -541,6 +566,9 @@ try:
     elif cmd == "extract":
         extract(sys.argv[2], sys.argv[3])
         drain()
+    elif cmd == "split":
+        split(sys.argv[2], sys.argv[3])
+        drain()
     else:
         raise Refuse("unknown helper command %r" % cmd)
 except Refuse as e:
@@ -554,6 +582,21 @@ PY
 
 state_py() {
     ACFS_STATE_BASES="$(jq -cn --arg h "$STATE_HOME" --arg s "$STATE_SSH_DIR" --arg t "$STATE_TS_DIR" \
+        '{"home": $h, "root/ssh-host": $s, "root/tailscale": $t}')" \
+        ACFS_STATE_ROWS="$(state_rows_json true)" \
+        python3 -I -c "$STATE_PY" "$@"
+}
+
+# state_as_user CMD...: runs CMD as the user, for work inside the user's
+# home. There a link the user puts in a path reaches only what the user
+# may write already; root following it could reach any file (acfs-z2c7).
+state_as_user() {
+    runuser -u "$STATE_USER" -- env PATH=/usr/bin:/bin "$@"
+}
+
+# state_py_as_user ARGS...: state_py, run as the user.
+state_py_as_user() {
+    state_as_user env ACFS_STATE_BASES="$(jq -cn --arg h "$STATE_HOME" --arg s "$STATE_SSH_DIR" --arg t "$STATE_TS_DIR" \
         '{"home": $h, "root/ssh-host": $s, "root/tailscale": $t}')" \
         ACFS_STATE_ROWS="$(state_rows_json true)" \
         python3 -I -c "$STATE_PY" "$@"
@@ -986,8 +1029,11 @@ state_cmd_export() {
     for r in "${recipients[@]}"; do age_args+=(-r "$r"); done
     for r in "${recipient_files[@]}"; do age_args+=(-R "$r"); done
     state_info "Writing the archive"
-    if ! (umask 077; state_py create "$spec" "$summary" | state_exec_to_new_file "$partial" age "${age_args[@]}"); then
-        [[ -f "$partial" ]] && rm -f -- "$partial"
+    # A name the user swapped while age wrote is no archive; hashing it
+    # would read the link's target as root (acfs-z2c7).
+    if ! (umask 077; state_py create "$spec" "$summary" | state_exec_to_new_file "$partial" age "${age_args[@]}") \
+        || [[ -L "$partial" || ! -f "$partial" ]]; then
+        [[ -e "$partial" || -L "$partial" ]] && rm -f -- "$partial"
         if [[ "$move" == "true" ]]; then
             if [[ -n "$prev_lease" ]]; then state_write_lease "$prev_lease"; else rm -f -- "$STATE_META/lease"; fi
             STATE_KEEP_STOPPED=false
@@ -1138,40 +1184,43 @@ state_cmd_import() {
     trap 'state_restart_writers' EXIT
     state_quiesce
 
-    # Stage on the volume: everything under the home's staging dir, then
-    # the root rows copied into their own mounts, so every swap is a
-    # rename within one mount.
-    local hstage
+    # Stage on the volume, so every swap is a rename within one mount: the
+    # home rows in the home's staging dir, the root rows in their own
+    # mounts. The user makes and fills the home's staging dir (acfs-z2c7):
+    # the user owns the home and can swap any name in it for a link, which
+    # root would follow. Root extracts only the root rows, into its own
+    # $work, and streams just the home rows to the user's extract, so the
+    # user never reads the host keys.
+    local hstage rstage
     hstage="$STATE_HOME/.acfs-import-$id"
-    mkdir -m 0700 "$hstage"
-    chown 0:0 "$hstage"
+    rstage="$work/x"
+    state_as_user mkdir -m 0700 -- "$hstage" || state_die "$STATE_USER could not make $hstage"
     state_info "Extracting into $hstage"
     set +e
-    state_age_decrypt "$file" "$identity" | state_py extract "$hstage/x" "$manifest"
+    state_age_decrypt "$file" "$identity" | state_py split "$rstage" "$manifest" | state_py_as_user extract "$hstage/x" -
     rcs=("${PIPESTATUS[@]}")
     set -e
-    if [[ "${rcs[0]}" -ne 0 || "${rcs[1]}" -ne 0 ]]; then
-        state_die "extraction failed; the machine is unchanged (staging left at $hstage)"
+    if [[ "${rcs[0]}" -ne 0 || "${rcs[1]}" -ne 0 || "${rcs[2]}" -ne 0 ]]; then
+        state_die "extraction failed; the machine is unchanged (staging left at $hstage and $rstage)"
     fi
     local base dir arc stage
     for base in home ssh-host tailscale; do
         dir="$(state_base_dir "$base")"
         arc="$(state_base_arc "$base")"
         stage="$dir/.acfs-import-$id"
-        [[ -e "$hstage/x/$arc" ]] || continue
         if [[ "$base" == "home" ]]; then
-            mv "$hstage/x/home" "$hstage/new"
-        else
-            mkdir -p "$dir"
-            mkdir -m 0700 "$stage"
-            cp -a "$hstage/x/$arc" "$stage/new"
+            state_as_user bash -c '[[ ! -e "$1/x/home" ]] || mv -- "$1/x/home" "$1/new"' _ "$hstage"
+            continue
         fi
-        chown -R -h "$(state_owner_for_base "$base")" "$( [[ "$base" == "home" ]] && echo "$hstage/new" || echo "$stage/new")"
+        [[ -e "$rstage/$arc" ]] || continue
+        mkdir -p "$dir"
+        mkdir -m 0700 "$stage"
+        cp -a "$rstage/$arc" "$stage/new"
+        chown -R -h "$(state_owner_for_base "$base")" "$stage/new"
     done
-    # The root rows' extracted copies are in their own mounts now; this
-    # copy would only leave a second set of host keys in the home.
-    rm -rf -- "$hstage/x"
-    chown 0:0 "$hstage"
+    # The root rows are in their own mounts now.
+    rm -rf -- "$rstage"
+    state_as_user rm -rf -- "$hstage/x"
     state_import_apply_modes "$id" "$manifest"
     jq -r '.rows[] | select(.present) | "\(.base):\(.path)"' "$manifest" >"$work/rows"
     state_journal "$id staged"
@@ -1210,12 +1259,19 @@ state_import_apply_modes() {
     local id="$1" manifest="$2" base path policy new
     while IFS='|' read -r base path policy; do
         [[ "$policy" == "private" ]] || continue
-        if [[ "$base" == "home" ]]; then new="$STATE_HOME/.acfs-import-$id/new"; else new="$(state_base_dir "$base")/.acfs-import-$id/new"; fi
-        state_fix_modes "${new}${path:+/$path}"
+        if [[ "$base" == "home" ]]; then
+            # As the user: find's chmod follows a link swapped in (acfs-z2c7).
+            state_as_user bash -c "$(declare -f state_fix_modes)"'; state_fix_modes "$1"' _ \
+                "$STATE_HOME/.acfs-import-$id/new${path:+/$path}"
+        else
+            new="$(state_base_dir "$base")/.acfs-import-$id/new"
+            state_fix_modes "${new}${path:+/$path}"
+        fi
     done < <(jq -r '.rows[] | select(.present) | "\(.base)|\(.path)|\(.policy)"' "$manifest")
 }
 
-# mkdir -p for a home row's parents, owned by the user.
+# mkdir -p for a row's parents, owned by the row's owner: a home row's by
+# the user, who makes them (acfs-z2c7).
 state_make_parents() {
     local base="$1" rel="$2" dir parent="" part
     dir="$(state_base_dir "$base")"
@@ -1224,33 +1280,42 @@ state_make_parents() {
         [[ "$part" == "." || -z "$part" ]] && continue
         parent="${parent:+$parent/}$part"
         if [[ ! -d "$dir/$parent" ]]; then
-            mkdir -m 0700 "$dir/$parent"
-            chown -h "$(state_owner_for_base "$base")" "$dir/$parent"
+            if [[ "$base" == "home" ]]; then
+                state_as_user mkdir -m 0700 -- "$dir/$parent"
+            else
+                mkdir -m 0700 "$dir/$parent"
+                chown -h "$(state_owner_for_base "$base")" "$dir/$parent"
+            fi
         fi
     done
 }
 
 # Swap each staged row into place. Each step is a rename within one
-# mount, recorded in the journal, and safe to run again.
+# mount, recorded in the journal, and safe to run again. A home row's
+# renames run as the user: rename(2) follows a link in any directory part
+# of its paths, and the user can put one there (acfs-z2c7).
 state_import_swap() {
     local id="$1" row base path dir stage entry
+    local -a as=()
     [[ -f "$STATE_META/$id/rows" ]] || state_die "import $id has no row list; it cannot be resumed"
     while IFS= read -r row; do
         base="${row%%:*}"
         path="${row#*:}"
         dir="$(state_base_dir "$base")"
         stage="$dir/.acfs-import-$id"
+        as=()
+        [[ "$base" == "home" ]] && as=(state_as_user)
         state_journal_has "$id moved-new $row" && continue
         if ! state_journal_has "$id moved-old $row"; then
             if [[ -n "$path" ]]; then
                 if [[ -e "$dir/$path" || -L "$dir/$path" ]]; then
-                    mkdir -p "$stage/old/$(dirname "$path")"
-                    mv -T -- "$dir/$path" "$stage/old/$path"
+                    "${as[@]}" mkdir -p -- "$stage/old/$(dirname "$path")"
+                    "${as[@]}" mv -T -- "$dir/$path" "$stage/old/$path"
                 fi
             else
-                mkdir -p "$stage/old"
+                "${as[@]}" mkdir -p -- "$stage/old"
                 while IFS= read -r -d '' entry; do
-                    mv -- "$entry" "$stage/old/"
+                    "${as[@]}" mv -- "$entry" "$stage/old/"
                 done < <(find "$dir" -mindepth 1 -maxdepth 1 ! -name '.acfs-import-*' -print0)
             fi
             state_journal "$id moved-old $row"
@@ -1258,12 +1323,12 @@ state_import_swap() {
         if [[ -n "$path" ]]; then
             if [[ -e "$stage/new/$path" || -L "$stage/new/$path" ]]; then
                 state_make_parents "$base" "$path"
-                mv -T -- "$stage/new/$path" "$dir/$path"
+                "${as[@]}" mv -T -- "$stage/new/$path" "$dir/$path"
             fi
             [[ "$row" == "home:.ssh" ]] && state_merge_authorized_keys "$stage/old/.ssh/authorized_keys" "$dir/.ssh/authorized_keys"
         else
             while IFS= read -r -d '' entry; do
-                mv -- "$entry" "$dir/"
+                "${as[@]}" mv -- "$entry" "$dir/"
             done < <(find "$stage/new" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
         fi
         state_journal "$id moved-new $row"
@@ -1273,22 +1338,24 @@ state_import_swap() {
 # The keys this machine was launched with keep working after an import
 # brings the source's ~/.ssh: the result holds both sets, this
 # machine's first. Running it again changes nothing.
+# As the user, whose ~/.ssh it is (acfs-z2c7): root's write of the temp
+# file and read of the current keys would follow a link the user swapped
+# in there, onto any file. mktemp makes the temp 0600 and the user's.
 state_merge_authorized_keys() {
-    local old="$1" new="$2" tmp dir
-    dir="$(dirname "$new")"
-    [[ -f "$old" && ! -L "$old" ]] || return 0
-    # Only into a real ~/.ssh directory, never through a link.
-    [[ -d "$dir" && ! -L "$dir" && ! -L "$new" ]] || return 0
-    tmp="$(mktemp "$dir/.authorized_keys.XXXXXX")"
-    if [[ -f "$new" ]]; then
-        awk 'NF && !seen[$0]++' "$old" "$new" >"$tmp"
-    else
-        awk 'NF && !seen[$0]++' "$old" >"$tmp"
-    fi
-    # mktemp made it 0600; a chmod here would follow a link the user swapped
-    # in, in a ~/.ssh the user owns (acfs-6lwb).
-    chown -h "$(state_uid):$(state_gid)" "$tmp"
-    mv -f "$tmp" "$new"
+    state_as_user bash -c '
+        set -euo pipefail
+        old="$1" new="$2" dir="${2%/*}"
+        [[ -f "$old" && ! -L "$old" ]] || exit 0
+        # Only into a real ~/.ssh directory, never through a link.
+        [[ -d "$dir" && ! -L "$dir" && ! -L "$new" ]] || exit 0
+        tmp="$(mktemp "$dir/.authorized_keys.XXXXXX")"
+        if [[ -f "$new" ]]; then
+            awk "NF && !seen[\$0]++" "$old" "$new" >"$tmp"
+        else
+            awk "NF && !seen[\$0]++" "$old" >"$tmp"
+        fi
+        mv -f -- "$tmp" "$new"
+    ' _ "$1" "$2"
 }
 
 state_import_finish() {
