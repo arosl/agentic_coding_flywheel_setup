@@ -190,6 +190,7 @@ run_setup_shell() {
     local fn
     for fn in profile_path_has_fragment profile_path_sed_literal \
         acfs_zshrc_is_managed_loader acfs_dotfile_write_as_target \
+        acfs_file_matches_as_target acfs_backup_file_as_target \
         acfs_dotfile_own_for_target acfs_dotfile_warn_unwritten setup_shell; do
         eval "$(sed -n "/^$fn() {\$/,/^}\$/p" "$PROJECT_ROOT/install.sh")"
         [[ "$(type -t "$fn")" == "function" ]]
@@ -361,4 +362,31 @@ run_setup_shell() {
     [[ "$output" == *"rc=0"* ]]
     [[ -z "$(grep -F "$TARGET_HOME/.profile" "$BATS_TEST_TMPDIR/chown.log" || true)" ]]
     [[ "$(grep -F "$TARGET_HOME/.zprofile" "$BATS_TEST_TMPDIR/chown.log")" == "-h tester:tester $TARGET_HOME/.zprofile" ]]
+}
+
+@test "a differing ~/.p10k.zsh is backed up by the user; a link planted at the backup name is replaced, its target untouched (acfs-qz1k)" {
+    mkdir -p "$BATS_TEST_TMPDIR/bootstrap/acfs/zsh"
+    printf 'acfs p10k\n' > "$BATS_TEST_TMPDIR/bootstrap/acfs/zsh/p10k.zsh"
+    printf 'my p10k\n' > "$TARGET_HOME/.p10k.zsh"
+    printf 'root file\n' > "$ROOT_DIR/victim"
+    ln -s "$ROOT_DIR/victim" "$TARGET_HOME/.p10k.zsh.pre-acfs.20261024000000"
+    # The backup name is predictable to the second; pin that second.
+    date() { printf '20261024000000\n'; }
+    run run_setup_shell
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"rc=0"* ]]
+    [[ "$(cat "$ROOT_DIR/victim")" == "root file" ]]
+    [[ -f "$TARGET_HOME/.p10k.zsh.pre-acfs.20261024000000" && ! -L "$TARGET_HOME/.p10k.zsh.pre-acfs.20261024000000" ]]
+    [[ "$(cat "$TARGET_HOME/.p10k.zsh.pre-acfs.20261024000000")" == "my p10k" ]]
+    [[ -z "$(find "$TARGET_HOME" -maxdepth 1 -name '.acfs-backup.*')" ]]
+}
+
+@test "an unchanged ~/.p10k.zsh gets no backup" {
+    mkdir -p "$BATS_TEST_TMPDIR/bootstrap/acfs/zsh"
+    printf 'acfs p10k\n' > "$BATS_TEST_TMPDIR/bootstrap/acfs/zsh/p10k.zsh"
+    printf 'acfs p10k\n' > "$TARGET_HOME/.p10k.zsh"
+    run run_setup_shell
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"rc=0"* ]]
+    [[ -z "$(find "$TARGET_HOME" -maxdepth 1 -name '.p10k.zsh.pre-acfs.*')" ]]
 }

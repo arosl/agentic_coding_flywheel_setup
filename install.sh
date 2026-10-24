@@ -8157,6 +8157,47 @@ acfs_dotfile_write_as_target() {
     fi
 }
 
+# True when the target user's FILE, read by the user, has the bytes of root's
+# trusted REF. Root never opens FILE, which may be a link to a root file
+# (acfs-qz1k).
+acfs_file_matches_as_target() {
+    local file="$1" ref="$2" sha_bin="" ref_sha="" user_sha=""
+    sha_bin="$(acfs_early_system_binary_path sha256sum 2>/dev/null || true)"
+    [[ -n "$sha_bin" ]] || return 1
+    ref_sha="$("$sha_bin" "$ref" 2>/dev/null)" || return 1
+    user_sha="$(run_as_target "$sha_bin" "$file" 2>/dev/null)" || return 1
+    [[ -n "${ref_sha%% *}" && "${ref_sha%% *}" == "${user_sha%% *}" ]]
+}
+
+# Copies the target user's file SRC to DEST as the user: cp -p into a temp
+# file beside DEST, renamed over DEST. A link at DEST, a predictable backup
+# name in a directory the user owns, is replaced, never written through, and
+# root opens neither name (acfs-qz1k).
+acfs_backup_file_as_target() {
+    local src="$1" dest="$2" name="" bin="" bash_bin=""
+    local -a bins=()
+    [[ "$src" == /* && "$dest" == /* ]] || return 1
+    bash_bin="$(acfs_early_system_binary_path bash 2>/dev/null || true)"
+    for name in mktemp cp mv rm; do
+        bin="$(acfs_early_system_binary_path "$name" 2>/dev/null || true)"
+        if [[ -z "$bin" || -z "$bash_bin" ]]; then
+            log_error "acfs_backup_file_as_target: Unable to locate bash or $name"
+            return 1
+        fi
+        bins+=("$bin")
+    done
+    # shellcheck disable=SC2016 # expanded by the target user's shell
+    run_as_target "$bash_bin" -c '
+        src="$1" dest="$2" mktemp_bin="$3" cp_bin="$4" mv_bin="$5" rm_bin="$6"
+        tmp="$("$mktemp_bin" "${dest%/*}/.acfs-backup.XXXXXX")" || exit 1
+        if "$cp_bin" -p -- "$src" "$tmp" && "$mv_bin" -f -T -- "$tmp" "$dest"; then
+            exit 0
+        fi
+        "$rm_bin" -f -- "$tmp"
+        exit 1
+    ' _ "$src" "$dest" "${bins[@]}"
+}
+
 # A regular dotfile that root left behind goes to the user first, so the
 # user's own write can change it. -h: a link swapped in after the test is
 # changed itself, not followed (acfs-573x). One link only: a hard link to a
@@ -8298,9 +8339,10 @@ setup_shell() {
     if [[ "$ACFS_DISTRO_FAMILY" != "arch" ]]; then
         log_detail "Installing Powerlevel10k configuration"
         # ~/.p10k.zsh is user-tuned; keep a backup like ~/.zshrc gets instead
-        # of silently clobbering it on --force-reinstall or a state reset.
-        if [[ -f "$TARGET_HOME/.p10k.zsh" ]] && ! $SUDO cmp -s "$TARGET_HOME/.p10k.zsh" "$ACFS_BOOTSTRAP_DIR/acfs/zsh/p10k.zsh" 2>/dev/null; then
-            try_step_optional "Backing up existing p10k config" $SUDO cp -a "$TARGET_HOME/.p10k.zsh" "$TARGET_HOME/.p10k.zsh.pre-acfs.$(date +%Y%m%d%H%M%S)" || log_warn "Could not back up existing ~/.p10k.zsh"
+        # of silently clobbering it on --force-reinstall or a state reset. The
+        # compare and the backup run as the user (acfs-qz1k).
+        if [[ -f "$TARGET_HOME/.p10k.zsh" ]] && ! acfs_file_matches_as_target "$TARGET_HOME/.p10k.zsh" "$ACFS_BOOTSTRAP_DIR/acfs/zsh/p10k.zsh"; then
+            try_step_optional "Backing up existing p10k config" acfs_backup_file_as_target "$TARGET_HOME/.p10k.zsh" "$TARGET_HOME/.p10k.zsh.pre-acfs.$(date +%Y%m%d%H%M%S)" || log_warn "Could not back up existing ~/.p10k.zsh"
         fi
         try_step "Installing p10k config" install_asset "acfs/zsh/p10k.zsh" "$TARGET_HOME/.p10k.zsh" || return 1
         try_step "Setting p10k config ownership" $SUDO chown -h "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/.p10k.zsh" || return 1
