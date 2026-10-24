@@ -10937,10 +10937,38 @@ refusing_sudo() {
 
     run sync_acfs_global_commands
     assert_success
-    assert_output --partial "Root's acfs-update is out of date"
-    assert_output --partial "re-run the ACFS installer as root"
+    assert_output --partial "$global_bin/acfs-update can't be refreshed by this run"
+    assert_output --partial "replacing it without root's rights failed; re-run the ACFS installer as root"
     [[ -d "$global_bin/acfs-update" ]] || fail "the name changed"
     [[ ! -e "$global_bin/.acfs-update.acfs-new" ]] || fail "the staged copy was left"
+}
+
+# A sudo -n that works, as root's rights do: it runs the command as is.
+accepting_sudo() {
+    printf '#!/bin/sh\n[ "$1" = -n ] && shift\nexec "$@"\n' > "$temp_root/sudo"
+    chmod 755 "$temp_root/sudo"
+    update_system_binary_path() {
+        if [[ "$1" == sudo ]]; then printf '%s\n' "$temp_root/sudo"; return 0; fi
+        PATH=/usr/bin:/bin command -v "$1"
+    }
+}
+
+@test "global commands: a refresh that fails with root's rights says so, and names no installer re-run" {
+    local temp_root repo_root deployed_home global_bin log_file
+    global_commands_fixture
+    accepting_sudo
+    rm -f "$global_bin/acfs-update"
+    mkdir "$global_bin/acfs-update"
+
+    run sync_acfs_global_commands
+    assert_success
+    assert_output --partial "$global_bin/acfs-update can't be refreshed by this run"
+    assert_output --partial "installing scripts/acfs-update there failed, with root's rights; see the update log"
+    refute_output --partial "re-run the ACFS installer"
+    [[ -d "$global_bin/acfs-update" ]] || fail "the name changed"
+    [[ ! -e "$global_bin/.acfs-update.acfs-new" ]] || fail "the staged copy was left"
+    run grep -F "Skipped syncing scripts/acfs-update -> $global_bin/acfs-update (failed with root's rights)" "$log_file"
+    assert_success
 }
 
 @test "global commands: with no checkout, a root copy that differs from the runtime's is reported" {
@@ -10953,14 +10981,14 @@ refusing_sudo() {
 
     run sync_acfs_global_commands
     assert_success
-    assert_output --partial "Root's acfs-update is out of date"
-    assert_output --partial "differs from $deployed_home/bin/acfs-update, and this run has no checkout"
+    assert_output --partial "$global_bin/acfs-update can't be refreshed by this run"
+    assert_output --partial "isn't the same as $deployed_home/bin/acfs-update, and there's no checkout here to refresh it from; re-run the ACFS installer as root"
     [[ "$(cat "$global_bin/acfs-update")" == *old-root-copy* ]] || fail "root's copy was replaced from the runtime's"
 
     cp "$deployed_home/bin/acfs-update" "$global_bin/acfs-update"
     run sync_acfs_global_commands
     assert_success
-    refute_output --partial "Root's acfs-update is out of date"
+    refute_output --partial "can't be refreshed by this run"
 }
 
 @test "self-update done sentinel does not sync from unexpected origin" {

@@ -4189,8 +4189,9 @@ update_normalize_runtime_modes() {
 # /usr/local/bin/acfs-update one before acfs-evgn) is replaced, never
 # written through. When this run can't refresh it and it differs from the
 # source, or, with no source here, from RUNTIME_COPY (the runtime's copy in
-# ~/.acfs, only compared, never copied from), the run says so: only the
-# installer, re-run as root, refreshes it then.
+# ~/.acfs, only compared, never copied from), the run says so. The hint to
+# re-run the installer as root comes only where that is the fix: no
+# checkout, or a run without root's rights.
 sync_acfs_global_wrapper() {
     local source_ref="${1:-}"
     local deployed_file="${2:-${ACFS_GLOBAL_BIN_DIR:-/usr/local/bin}/acfs}"
@@ -4216,8 +4217,8 @@ sync_acfs_global_wrapper() {
             # No checkout to refresh from (a deployed ~/.acfs only).
             if [[ -n "$runtime_copy" && -f "$runtime_copy" ]] \
                 && { [[ ! -f "$deployed_file" || -L "$deployed_file" ]] || ! cmp -s "$runtime_copy" "$deployed_file"; }; then
-                log_item "warn" "Root's ${deployed_file##*/} is out of date" \
-                    "$deployed_file differs from $runtime_copy, and this run has no checkout to refresh it from; re-run the ACFS installer as root"
+                log_item "warn" "$deployed_file can't be refreshed by this run" \
+                    "it isn't the same as $runtime_copy, and there's no checkout here to refresh it from; re-run the ACFS installer as root"
             fi
             return 0
         fi
@@ -4257,15 +4258,20 @@ sync_acfs_global_wrapper() {
         return 0
     fi
 
-    local sudo_bin=""
+    # As root, the attempt above already ran as root; otherwise retry with
+    # sudo -n. as_root says whether this run had root's rights for it.
+    local sudo_bin="" as_root=false
+    [[ "${EUID:-$(id -u)}" -ne 0 ]] || as_root=true
     sudo_bin="$(update_system_binary_path sudo 2>/dev/null || true)"
-    if [[ -n "$sudo_bin" ]] && "$sudo_bin" -n true >/dev/null 2>&1 \
-        && "$sudo_bin" -n "${install_cmd[@]}" && "$sudo_bin" -n "${mv_cmd[@]}"; then
-        log_to_file "Synced $source_label -> $deployed_file"
-        if [[ -n "$source_tmp" ]]; then
-            rm -f "$source_tmp" 2>/dev/null || true
+    if [[ "$as_root" != true && -n "$sudo_bin" ]] && "$sudo_bin" -n true >/dev/null 2>&1; then
+        as_root=true
+        if "$sudo_bin" -n "${install_cmd[@]}" && "$sudo_bin" -n "${mv_cmd[@]}"; then
+            log_to_file "Synced $source_label -> $deployed_file"
+            if [[ -n "$source_tmp" ]]; then
+                rm -f "$source_tmp" 2>/dev/null || true
+            fi
+            return 0
         fi
-        return 0
     fi
 
     # No staged copy stays behind (one install made before its mv failed).
@@ -4273,9 +4279,17 @@ sync_acfs_global_wrapper() {
         rm -f -- "$stage_file" 2>/dev/null \
             || { [[ -n "$sudo_bin" ]] && "$sudo_bin" -n rm -f -- "$stage_file" 2>/dev/null; } || true
     fi
-    log_to_file "Skipped syncing $source_label -> $deployed_file (needs root)"
-    log_item "warn" "Root's ${deployed_file##*/} is out of date" \
-        "$deployed_file differs from $source_label, and this run can't replace it; re-run the ACFS installer as root"
+    # Only a run without root's rights is fixed by the installer as root; a
+    # root run that failed names neither cause nor fix it can't know.
+    if [[ "$as_root" == true ]]; then
+        log_to_file "Skipped syncing $source_label -> $deployed_file (failed with root's rights)"
+        log_item "warn" "$deployed_file can't be refreshed by this run" \
+            "installing $source_label there failed, with root's rights; see the update log"
+    else
+        log_to_file "Skipped syncing $source_label -> $deployed_file (needs root)"
+        log_item "warn" "$deployed_file can't be refreshed by this run" \
+            "replacing it without root's rights failed; re-run the ACFS installer as root"
+    fi
     if [[ -n "$source_tmp" ]]; then
         rm -f "$source_tmp" 2>/dev/null || true
     fi
