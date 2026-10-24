@@ -8302,8 +8302,10 @@ EOF
 install_github_cli() {
     # GitHub CLI (gh) is a core tool for ACFS workflows (PRs, auth, issues).
     # Prefer distro apt; fall back to the official GitHub CLI apt repo if needed.
+    # Only a gh in the system directories counts: cli.modern's verify runs
+    # `gh --version` as root with them alone on PATH (acfs-iabw).
 
-    if binary_installed "gh"; then
+    if acfs_early_system_binary_path gh >/dev/null 2>&1; then
         return 0
     fi
 
@@ -8459,9 +8461,12 @@ install_cli_tools() {
         try_step "Installing required apt packages" $SUDO apt-get -o DPkg::Lock::Timeout=120 install -y ripgrep fzf direnv jq git-lfs lsof dnsutils netcat-openbsd strace rsync zstd minisign libsqlite3-dev age bc || return 1
     fi
 
-    # GitHub CLI (gh)
+    # GitHub CLI (gh). Look only where cli.modern's root verify looks. A gh in
+    # /usr/local/bin, /snap/bin or the target user's bin directories gets the
+    # apt gh beside it, as the manifest's install does, and root never runs a
+    # gh from a user-owned directory here (acfs-iabw).
     local gh_bin=""
-    gh_bin="$(binary_path gh 2>/dev/null || true)"
+    gh_bin="$(acfs_early_system_binary_path gh 2>/dev/null || true)"
     if [[ -n "$gh_bin" ]]; then
         log_detail "gh already installed ($("$gh_bin" --version 2>/dev/null | head -1 || echo 'gh'))"
     elif [[ "$ACFS_DISTRO_FAMILY" == "arch" ]]; then
