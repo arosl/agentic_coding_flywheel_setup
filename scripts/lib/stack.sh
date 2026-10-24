@@ -1597,6 +1597,10 @@ UNIT_EOF
 # ACFS_FORCE_AGENT_MAIL_UNIT=1 is set, in which case the local version is
 # backed up first.
 unit_hash_file="$unit_dir/.agent-mail.service.acfs-sha256"
+# Set while a unit ACFS created has never been enabled, so a resume after a
+# failed first enable retries it instead of reading "disabled" as an admin's
+# opt-out (acfs-xojk).
+enable_pending_file="$unit_dir/.agent-mail.service.acfs-enable-pending"
 
 _unit_sha256() {
     if command -v sha256sum >/dev/null 2>&1; then
@@ -1630,6 +1634,7 @@ else
 fi
 
 if [[ "$write_unit" == "true" ]]; then
+    [[ "$unit_preexisting" == "true" ]] || : > "$enable_pending_file"
     printf '%s\n' "$desired_unit" > "$unit_file"
     printf '%s\n' "$desired_hash" > "$unit_hash_file"
 elif [[ "$current_hash" == "$desired_hash" && "$last_acfs_hash" != "$desired_hash" ]]; then
@@ -1895,8 +1900,10 @@ if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/d
             # Only treat "disabled" as an admin decision when the unit predates
             # this run AND the service is stopped: a unit we just created also
             # reports "disabled" until its first enable, and a disabled-but-
-            # running service was clearly not opted out.
-            if [[ "$unit_preexisting" == "true" ]] && ! systemctl --user is-active --quiet agent-mail.service; then
+            # running service was clearly not opted out. Nor is a unit ACFS
+            # created whose first enable failed (acfs-xojk).
+            if [[ "$unit_preexisting" == "true" ]] && [[ ! -e "$enable_pending_file" ]] \
+                && ! systemctl --user is-active --quiet agent-mail.service; then
                 echo "Agent Mail: unit is disabled and stopped; respecting admin disable (run 'systemctl --user enable --now agent-mail.service' to re-enable)" >&2
                 exit 75
             fi
@@ -1914,6 +1921,7 @@ if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/d
     stop_agent_mail_fallback || exit 1
     systemctl --user daemon-reload >/dev/null 2>&1 || true
     systemctl --user enable agent-mail.service >/dev/null 2>&1 || exit 1
+    rm -f "$enable_pending_file"
     if agent_mail_restart_needed; then
         systemctl --user restart agent-mail.service >/dev/null 2>&1 || exit 1
     else
@@ -2006,7 +2014,8 @@ case "$enable_state" in
         fi
         ;;
     disabled)
-        if [[ -e "$unit_file" ]] && ! systemctl --user is-active --quiet agent-mail.service; then
+        if [[ -e "$unit_file" ]] && [[ ! -e "${unit_file%/*}/.agent-mail.service.acfs-enable-pending" ]] \
+            && ! systemctl --user is-active --quiet agent-mail.service; then
             exit 0
         fi
         ;;

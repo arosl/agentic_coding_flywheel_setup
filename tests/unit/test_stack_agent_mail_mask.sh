@@ -199,6 +199,10 @@ case "$cmd" in
             echo "Failed to enable unit: Unit agent-mail.service is masked." >&2
             exit 1
         fi
+        if [[ -f "$state/fail-enable" ]]; then
+            echo "Failed to enable unit: test failure." >&2
+            exit 1
+        fi
         touch "$state/enabled"
         for a in "${args[@]}"; do
             [[ "$a" == "--now" ]] && touch "$state/active"
@@ -575,6 +579,24 @@ printf 'masked\n' > "$FAKE_STATE_DIR/force-enabled-report"
 run_configure
 check "rc is 75" test "$CONFIGURE_RC" -eq 75
 check_not "service was never started" service_active
+
+# ------------------------------------------------------------
+# Test 19: a unit ACFS created but couldn't enable is not an admin
+# disable on the next run (acfs-xojk): the resume enables it.
+# ------------------------------------------------------------
+begin_test "first enable fails, then a resume: enabled, not read as an admin disable"
+ENABLE_PENDING="$FAKE_HOME/.config/systemd/user/.agent-mail.service.acfs-enable-pending"
+touch "$FAKE_STATE_DIR/fail-enable"
+run_configure
+check "first run: rc is 1" test "$CONFIGURE_RC" -eq 1
+check "first run: unit file written" test -f "$UNIT_FILE"
+check "first run: the enable-pending marker stays" test -e "$ENABLE_PENDING"
+rm -f "$FAKE_STATE_DIR/fail-enable"
+run_configure
+check "resume: rc is 0, not 75" test "$CONFIGURE_RC" -eq 0
+check "resume: service is active" service_active
+check_not "resume: the enable-pending marker is gone" test -e "$ENABLE_PENDING"
+check_not "resume: no admin-disable message" grep -q "respecting admin disable" "$CONFIGURE_ERR_FILE"
 
 # ------------------------------------------------------------
 # Summary
