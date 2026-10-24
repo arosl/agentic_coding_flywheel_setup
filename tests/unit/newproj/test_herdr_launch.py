@@ -42,6 +42,25 @@ if mode == "invalid":
     sys.exit(0)
 values = dict(arg[2:].split("=", 1) for arg in args if "=" in arg)
 count = sum(int(values.get("spawn-" + agent, "0")) for agent in ("cc", "cod", "agy"))
+# nhm v0.1.16's admission refusal: nothing is made, and the reasons say why.
+if mode.startswith("refused_"):
+    capacity = ("capacity red: MemAvailable is under one agent's need\x1b[31m (to start anyway: "
+                "--ignore-capacity for this spawn, or capacity = [] under [providers] in "
+                "~/.config/nhm/config.toml for every spawn)")
+    quota = "claude: the 5-hour window is at 93%, over 90%"
+    reasons = {"refused_capacity": [capacity], "refused_always": [capacity],
+               "refused_quota": [quota], "refused_both": [capacity, quota]}[mode]
+    if "--ignore-capacity" in args and mode != "refused_always":
+        reasons = [reason for reason in reasons if not reason.startswith("capacity ")]
+    if reasons:
+        print(json.dumps({
+            "success": False, "session": values["robot-spawn"], "working_dir": values["spawn-dir"],
+            "agents": [], "error": "admission refused: " + "; ".join(reasons),
+            "error_code": "ADMISSION_REFUSED",
+            "admission": {"decision": "refuse", "reason": "; ".join(reasons), "reasons": reasons,
+                          "hint": "nhm quota, nhm doctor and the capacity provider say why"},
+        }))
+        sys.exit(1)
 response = {
     "success": True, "session": values["robot-spawn"],
     "working_dir": values["spawn-dir"], "agents": [{} for _ in range(count)]
@@ -187,6 +206,46 @@ class LaunchTests(unittest.TestCase):
         self.assertIn("existing session or launch failure", result.stderr)
         self.assertEqual(len(self.invocations()), 1)
         self.assertFalse(self.events.exists())
+
+    def spawns(self):
+        return [call["argv"] for call in self.invocations() if call["argv"][0].startswith("--robot-spawn=")]
+
+    def test_capacity_refusal_shows_nhms_reasons_and_retries_only_on_yes(self):
+        for answer in ("", "no\n", "y\n"):
+            with self.subTest(answer=answer):
+                self.calls.unlink(missing_ok=True)
+                result = self.run_bash('newproj_start_nhm "$PROJECT" acfs-my-app 1 1 1', answer,
+                                       FAKE_NHM_MODE="refused_capacity")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("refused these agents, so no workspace was made", result.stderr)
+                self.assertIn("  - capacity red: MemAvailable", result.stderr)
+                self.assertIn("--ignore-capacity for this spawn", result.stderr)
+                self.assertIn("nhm quota, nhm doctor and the capacity provider say why.", result.stderr)
+                self.assertNotIn("\x1b", result.stderr)
+                self.assertNotIn("nhm did not confirm", result.stderr)
+                self.assertEqual(len(self.spawns()), 1)
+                self.assertNotIn("--ignore-capacity", self.spawns()[0])
+
+    def test_consent_retries_once_past_capacity_with_safety_kept(self):
+        result = self.run_bash('open_in_nhm', "\n\n\n\nyes\nyes\n", FAKE_NHM_MODE="refused_capacity")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("HERDR-CLIENT", result.stdout)
+        spawns = self.spawns()
+        self.assertEqual(len(spawns), 2)
+        self.assertEqual(spawns[1], spawns[0] + ["--ignore-capacity"])
+        self.assertIn("--spawn-safety", spawns[1])
+
+    def test_refusal_capacity_cannot_override_is_not_retried_again(self):
+        for mode, expected in (("refused_quota", 1), ("refused_both", 2), ("refused_always", 2)):
+            with self.subTest(mode=mode):
+                self.calls.unlink(missing_ok=True)
+                result = self.run_bash('newproj_start_nhm "$PROJECT" acfs-my-app 1 1 1', "yes\nyes\nyes\n",
+                                       FAKE_NHM_MODE=mode)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("so no workspace was made", result.stderr)
+                if mode != "refused_always":
+                    self.assertIn("  - claude: the 5-hour window is at 93%", result.stderr)
+                self.assertEqual(len(self.spawns()), expected)
 
     def test_unconfirmed_or_partial_receipts_never_authorize_attach(self):
         for mode in ("invalid", "false", "string_success", "wrong_session", "wrong_dir", "partial", "error", "dry_run", "agent_error", "multiple"):

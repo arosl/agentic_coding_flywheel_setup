@@ -280,14 +280,28 @@ newproj_nhm_ready_work() {
     printf '%s\n' "$ready"
 }
 
+# nhm's admission check refuses a spawn before it makes anything, and says why
+# (acfs-jzfc). Since acfs-5px6, install turns nhm's capacity provider on, so a
+# tight host meets this first. Prints the reasons; returns 1 when the answer
+# isn't a refusal.
+newproj_nhm_report_refusal() {
+    local response="$1"
+    jq -e -s 'length == 1 and (.[0] | type == "object" and .error_code == "ADMISSION_REFUSED")' \
+        >/dev/null 2>&1 <<< "$response" || return 1
+    echo "nhm's admission check refused these agents, so no workspace was made:" >&2
+    jq -r '(.admission.reasons // [])[]? | select(type == "string") | "  - " + gsub("\\p{Cc}"; " ")' <<< "$response" >&2
+    jq -r '.admission.hint // empty | select(type == "string") | gsub("\\p{Cc}"; " ") + "."' <<< "$response" >&2
+    return 0
+}
+
 # Returns a validated session name. Ordinary launch never sends a task. Work
 # mode delegates dispatch to nhm, never raw herdr pane input or a shell broadcast.
 newproj_start_nhm() {
     local project_dir="$1" session="$2" cc="$3" cod="$4" agy="$5" work="${6:-false}"
-    local response status=0 total delivered assignments
+    local response status total delivered assignments answer
     newproj_validate_nhm_request "$project_dir" "$session" "$cc" "$cod" "$agy" || return 1
     total=$((cc + cod + agy))
-    local -a work_args=()
+    local -a work_args=() capacity_args=()
     case "$work" in
         true)
             newproj_nhm_ready_work "$project_dir" >/dev/null || return 1
@@ -301,10 +315,27 @@ newproj_start_nhm() {
     # nhm waits until each agent is ready, so --trust-folder answers Claude
     # Code's and Codex's first-run question about the folder the wizard just
     # made, as the consent text says.
-    response=$(newproj_nhm_project_command "$project_dir" nhm "--robot-spawn=$session" \
-        "--spawn-dir=$project_dir" --spawn-safety --robot-format=json \
-        "--spawn-cc=$cc" "--spawn-cod=$cod" "--spawn-agy=$agy" --trust-folder \
-        "--socket=$(newproj_nhm_socket)" "${work_args[@]}") || status=$?
+    while :; do
+        status=0
+        response=$(newproj_nhm_project_command "$project_dir" nhm "--robot-spawn=$session" \
+            "--spawn-dir=$project_dir" --spawn-safety --robot-format=json \
+            "--spawn-cc=$cc" "--spawn-cod=$cod" "--spawn-agy=$agy" --trust-folder \
+            "--socket=$(newproj_nhm_socket)" "${work_args[@]}" "${capacity_args[@]}") || status=$?
+        newproj_nhm_report_refusal "$response" || break
+        # Only the capacity check can be overridden, once, and only on a typed yes.
+        if ((${#capacity_args[@]} > 0)) || ! jq -e \
+            'any(.admission.reasons[]?; type == "string" and test("^capacity (red|unknown):"))' \
+            >/dev/null 2>&1 <<< "$response"; then
+            return 1
+        fi
+        echo "Starting anyway skips only the capacity check, for this workspace." >&2
+        read -r -p "Start anyway? Type yes to continue: " answer || return 1
+        if [[ "$answer" != yes ]]; then
+            echo "Workspace launch cancelled; nothing was started." >&2
+            return 1
+        fi
+        capacity_args=(--ignore-capacity)
+    done
     if ((status != 0)) || ! jq -e -s --arg session "$session" --arg dir "$project_dir" \
         --argjson count "$total" '
         length == 1 and (.[0] |
