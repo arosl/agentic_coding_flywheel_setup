@@ -3660,11 +3660,14 @@ sync_acfs_deployed() {
         bash_bin="$(update_system_binary_path bash 2>/dev/null || true)"
         [[ -n "$bash_bin" ]] || return 1
         update_user_mkdir "$(dirname "$deployed_file")" || return 1
+        # mv -T never moves the file into a target that is a directory or a
+        # link to one: GNU mv replaces such a link, and uutils mv refuses it,
+        # which counts as refused (acfs-guwc).
         update_run_in_target_context "" "$bash_bin" --noprofile --norc -c '
             set -uo pipefail
             tmp="$(mktemp "${1%/*}/.acfs-sync.XXXXXX")" || exit 1
             if { if [[ -n "$3" ]]; then cat -- "$3"; else cat; fi; } > "$tmp" &&
-                chmod "$2" "$tmp" && mv -f -- "$tmp" "$1"; then
+                chmod "$2" "$tmp" && mv -fT -- "$tmp" "$1"; then
                 exit 0
             fi
             rm -f -- "$tmp"
@@ -3743,7 +3746,7 @@ sync_acfs_deployed() {
                 [[ "$user_mode" =~ ^[0-7]{3,4}$ ]] || user_mode=644
             fi
             if ! _acfs_sync_deployed_file_as_user "$deployed_file" "$user_mode" "$user_source" "$streamed_source"; then
-                log_to_file "Refused syncing $source_label -> $deployed_file: $UPDATE_FOR_USER could not write it, or a link is below $UPDATE_FOR_USER_HOME"
+                log_to_file "Refused syncing $source_label -> $deployed_file: $UPDATE_FOR_USER could not read the source or write the file, or a link is below $UPDATE_FOR_USER_HOME"
                 refused=$((refused + 1))
                 if [[ -n "$source_tmp" ]]; then
                     rm -f "$source_tmp" 2>/dev/null || true
@@ -3983,7 +3986,7 @@ sync_acfs_deployed() {
         fi
     fi
     if [[ $refused -gt 0 ]]; then
-        log_item "warn" "ACFS runtime" "$refused file(s) not deployed to $acfs_home: $UPDATE_FOR_USER could not write them, or a link is below $UPDATE_FOR_USER_HOME (see the update log)"
+        log_item "warn" "ACFS runtime" "$refused file(s) not deployed to $acfs_home: $UPDATE_FOR_USER could not read their source or write them, or a link is below $UPDATE_FOR_USER_HOME (see the update log). A directory there that an earlier root run made is still root's: re-run the installer, or chown it to $UPDATE_FOR_USER."
     fi
 
     update_normalize_runtime_modes "$acfs_home"

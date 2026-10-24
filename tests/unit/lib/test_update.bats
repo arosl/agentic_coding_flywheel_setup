@@ -9970,6 +9970,39 @@ stub_sync_as_user() {
     assert_success
 }
 
+@test "sync_acfs_deployed run by root for a user never moves a file into a directory the target links to" {
+    local temp_root repo_root deployed_home userdir
+
+    temp_root="$(create_temp_dir)"
+    repo_root="$temp_root/repo"
+    deployed_home="$temp_root/home/.acfs"
+    userdir="$temp_root/home/elsewhere"
+    mkdir -p "$repo_root/scripts/lib" "$deployed_home/scripts/lib" "$userdir"
+    printf "update-runtime\n" > "$repo_root/scripts/lib/update.sh"
+    # The user swapped a deployed file for a link to a directory.
+    ln -s "$userdir" "$deployed_home/scripts/lib/update.sh"
+
+    ACFS_REPO_ROOT="$repo_root"
+    UPDATE_LOG_FILE="$temp_root/update.log"
+    DRY_RUN=false
+    update_runtime_acfs_home() { printf '%s\n' "$deployed_home"; }
+    stub_sync_as_user "$temp_root/home" "$temp_root/as-user.log"
+
+    run sync_acfs_deployed
+    assert_success
+
+    [[ -z "$(ls -A "$userdir")" ]]
+    [[ -z "$(find "$deployed_home" -name '.acfs-sync.*')" ]]
+    # GNU mv -T replaces the link with the file; uutils mv refuses it.
+    if [[ -L "$deployed_home/scripts/lib/update.sh" ]]; then
+        run grep -F "Refused syncing scripts/lib/update.sh -> $deployed_home/scripts/lib/update.sh" "$temp_root/update.log"
+        assert_success
+    else
+        run cat "$deployed_home/scripts/lib/update.sh"
+        assert_output "update-runtime"
+    fi
+}
+
 @test "sync_acfs_deployed run by root for a user streams a git ref's source to the user" {
     local temp_root repo_root deployed_home
     mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
