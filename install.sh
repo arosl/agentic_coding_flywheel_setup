@@ -6744,9 +6744,45 @@ acfs_chown_tree() {
         return 1
     fi
 
+    # Below the target's home the user owns every directory above PATH, so a
+    # link at PATH or above it may be one the user put there, before this
+    # call or during it: none is resolved, and nothing is handed over through
+    # one (acfs-y57c). The chown then runs from inside PATH's directory, once
+    # its physical path is the expected one, so a link swapped in after these
+    # checks can't send it anywhere else.
+    local home="${TARGET_HOME:-}" chown_dir="" chown_arg="." expected="" walk="" part=""
+    local -a parts=()
+    home="${home%/}"
+    if [[ -n "$home" && "$home" != "/" && "$path" == "$home"/* ]]; then
+        walk="$home"
+        IFS=/ read -r -a parts <<< "${path#"$home"/}"
+        for part in "${parts[@]}"; do
+            [[ -n "$part" ]] || continue
+            walk="$walk/$part"
+            if [[ "$part" == "." || "$part" == ".." ]]; then
+                log_error "acfs_chown_tree: refusing a path with '$part' below $home: $path"
+                return 1
+            fi
+            if [[ -L "$walk" ]]; then
+                log_error "acfs_chown_tree: refusing to hand over through a link below $home: $walk"
+                return 1
+            fi
+        done
+        chown_dir="$path"
+        if [[ -e "$path" && ! -d "$path" ]]; then
+            chown_dir="${path%/*}"
+            chown_arg="./${path##*/}"
+        fi
+        expected="$(cd -P -- "$home" 2>/dev/null && pwd -P)" || {
+            log_error "acfs_chown_tree: unable to resolve the target's home: $home"
+            return 1
+        }
+        expected="$expected${chown_dir#"$home"}"
+    fi
+
     # SECURITY: Prevent recursive chown from dereferencing symlinks under the tree.
-    # For top-level symlinks (e.g., symlinked /data), resolve to the real path so
-    # ownership is applied to the intended directory.
+    # Outside the home, for top-level symlinks (e.g., symlinked /data), resolve to
+    # the real path so ownership is applied to the intended directory.
     local resolved="$path"
     if [[ -L "$path" ]]; then
         if ! command_exists readlink; then
@@ -6780,7 +6816,21 @@ acfs_chown_tree() {
     # Transient files (SSH control sockets, etc.) may vanish during the
     # recursive walk of a live home directory.  Only fail on non-transient errors.
     local _chown_err=""
-    _chown_err=$($SUDO chown -hR "$owner_group" "$resolved" 2>&1) || {
+    if [[ -n "$chown_dir" ]]; then
+        _chown_err=$(
+            exec 2>&1
+            cd -P -- "$chown_dir" || exit 1
+            # cd -P sets PWD from getcwd: where this shell now is. pwd -P
+            # would resolve that string again, and a later swap changes it.
+            if [[ "$PWD" != "$expected" ]]; then
+                echo "acfs_chown_tree: $chown_dir is not $expected"
+                exit 1
+            fi
+            $SUDO chown -hR "$owner_group" "$chown_arg"
+        )
+    else
+        _chown_err=$($SUDO chown -hR "$owner_group" "$resolved" 2>&1)
+    fi || {
         local _real_err
         _real_err=$(printf '%s\n' "$_chown_err" | grep -v "No such file or directory" || true)
         if [[ -n "$_real_err" ]]; then
