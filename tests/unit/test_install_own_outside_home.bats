@@ -51,10 +51,12 @@ setup() {
 }
 
 @test "install.sh: no chown of the target user's follows an install_asset or install_checksums_yaml directly" {
+    # Four lines: the palette's chown sat three below its install_asset,
+    # inside an `if` (CrimsonFern's review).
     run awk '
         /^[[:space:]]*#/ { next }
         /install_asset |install_checksums_yaml / { last = NR }
-        /chown[^_]/ && /TARGET_USER/ && last && NR - last <= 2 { print NR ": " $0 }
+        /chown[^_]/ && /TARGET_USER/ && last && NR - last <= 4 { print NR ": " $0 }
     ' "$PROJECT_ROOT/install.sh"
     [[ "$status" -eq 0 ]]
     [[ -z "$output" ]] || { echo "$output" >&2; return 1; }
