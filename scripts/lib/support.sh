@@ -852,6 +852,124 @@ support_initialize_context() {
     fi
 }
 
+support_running_as_root() {
+    [[ "$EUID" -eq 0 ]]
+}
+
+# Print the account that owns a path, following links; print nothing when
+# root owns it or it is missing. Fails when the owner has no valid account.
+# Usage: support_path_owner_account <path>
+support_path_owner_account() {
+    local path_value="$1"
+    local stat_bin=""
+    local owner=""
+    local owner_uid=""
+    local owner_name=""
+    local passwd_entry=""
+    local passwd_uid=""
+
+    [[ -e "$path_value" ]] || return 0
+    stat_bin="$(support_system_binary_path stat 2>/dev/null || true)"
+    [[ -n "$stat_bin" ]] || return 1
+    owner="$("$stat_bin" -L -c '%u:%U' -- "$path_value" 2>/dev/null \
+        || "$stat_bin" -L -f '%u:%Su' -- "$path_value" 2>/dev/null || true)"
+    owner_uid="${owner%%:*}"
+    owner_name="${owner#*:}"
+    [[ "$owner" == *:* && "$owner_uid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$owner_uid" -ne 0 ]] || return 0
+
+    support_is_valid_username "$owner_name" || return 1
+    passwd_entry="$(support_getent_passwd_entry "$owner_name" 2>/dev/null || true)"
+    IFS=: read -r _ _ passwd_uid _ <<< "$passwd_entry"
+    [[ "$passwd_uid" == "$owner_uid" ]] || return 1
+    printf '%s\n' "$owner_name"
+}
+
+# A root run for a home that another account owns (a by-hand
+# `sudo bash <checkout>/scripts/lib/support.sh`; the acfs wrapper already
+# drops) runs again as that account, before it collects anything. As root it
+# would run the account's ~/.acfs scripts and read its files by path
+# (acfs-wrdc). Returns 0 without a re-exec when root may collect.
+# Usage: support_reexec_as_owner [args...]
+support_reexec_as_owner() {
+    local owner=""
+    local path_owner=""
+    local path_value=""
+    local passwd_entry=""
+    local owner_home=""
+    local owner_shell=""
+    local env_bin=""
+    local bash_bin=""
+    local runner_bin=""
+    local script=""
+    local name=""
+    local -a env_args=()
+    local -a runner=()
+
+    support_running_as_root || return 0
+
+    for path_value in "$SUPPORT_TARGET_HOME" "$_SUPPORT_ACFS_HOME"; do
+        [[ -n "$path_value" ]] || continue
+        if ! path_owner="$(support_path_owner_account "$path_value")"; then
+            log_error "Cannot tell which account owns $path_value; refusing to collect as root"
+            return 1
+        fi
+        [[ -n "$path_owner" ]] || continue
+        if [[ -n "$owner" && "$owner" != "$path_owner" ]]; then
+            log_error "$SUPPORT_TARGET_HOME and $_SUPPORT_ACFS_HOME belong to different accounts; refusing to collect as root"
+            return 1
+        fi
+        owner="$path_owner"
+    done
+    [[ -n "$owner" ]] || return 0
+
+    passwd_entry="$(support_getent_passwd_entry "$owner" 2>/dev/null || true)"
+    owner_home="$(support_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
+    owner_home="${owner_home:-$SUPPORT_TARGET_HOME}"
+    IFS=: read -r _ _ _ _ _ _ owner_shell <<< "$passwd_entry"
+
+    # A clean environment: the account's own HOME, names and shell, its bin
+    # directories before the system ones (nightly_update.sh's order), the
+    # target this run resolved, and the collection settings that are set.
+    env_args=(
+        "HOME=$owner_home"
+        "USER=$owner"
+        "LOGNAME=$owner"
+        "SHELL=${owner_shell:-/bin/sh}"
+        "PATH=$owner_home/.acfs/bin:$owner_home/.local/bin:$owner_home/.cargo/bin:$owner_home/.bun/bin:$owner_home/.atuin/bin:$owner_home/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    )
+    [[ -n "$SUPPORT_TARGET_HOME" ]] && env_args+=("TARGET_HOME=$SUPPORT_TARGET_HOME")
+    [[ -n "$_SUPPORT_ACFS_HOME" ]] && env_args+=("ACFS_HOME=$_SUPPORT_ACFS_HOME")
+    for name in ACFS_SYSTEM_STATE_FILE ACFS_SWARM_INVENTORY_FILE ACFS_TEAM_PROFILE_PATH \
+        ACFS_RESOURCE_PROFILE_HOME ACFS_LOCAL_PROGRESS_FILE ACFS_CHECKPOINT_STALE_SECONDS \
+        ACFS_SUPPORT_NOW_EPOCH SUPPORT_BUNDLE_DOCTOR_TIMEOUT SUPPORT_BUNDLE_SWARM_STATUS_TIMEOUT \
+        SUPPORT_BUNDLE_SWARM_TIMELINE_TIMEOUT SUPPORT_BUNDLE_PROVENANCE_TIMEOUT \
+        SUPPORT_BUNDLE_RESOURCE_PROFILE_TIMEOUT SUPPORT_BUNDLE_CREDENTIAL_STATUS_TIMEOUT \
+        SUPPORT_BUNDLE_SWARM_INVENTORY_TIMEOUT NO_COLOR TERM; do
+        if [[ -n "${!name+x}" ]]; then
+            env_args+=("$name=${!name}")
+        fi
+    done
+
+    runner_bin="$(support_system_binary_path runuser 2>/dev/null || true)"
+    if [[ -n "$runner_bin" ]]; then
+        runner=("$runner_bin" -u "$owner" --)
+    else
+        runner_bin="$(support_system_binary_path sudo 2>/dev/null || true)"
+        [[ -n "$runner_bin" ]] && runner=("$runner_bin" -n -u "$owner" --)
+    fi
+    env_bin="$(support_system_binary_path env 2>/dev/null || true)"
+    bash_bin="$(support_system_binary_path bash 2>/dev/null || true)"
+    script="$_SUPPORT_SCRIPT_DIR/${BASH_SOURCE[0]##*/}"
+    if [[ ${#runner[@]} -eq 0 || -z "$env_bin" || -z "$bash_bin" || ! -f "$script" ]]; then
+        log_error "Need runuser or sudo, env, bash and this script's path to collect as $owner; refusing to collect as root"
+        return 1
+    fi
+
+    log_step "Running as root for $owner's install: collecting as $owner"
+    exec "${runner[@]}" "$env_bin" -i "${env_args[@]}" "$bash_bin" "$script" "$@"
+}
+
 # Record a bundle-relative path in the manifest file list exactly once.
 # Usage: record_bundle_file <relative_path>
 record_bundle_file() {
@@ -3657,6 +3775,7 @@ main() (
     esac
 
     support_initialize_context || return 1
+    support_reexec_as_owner "$@" || return 1
 
     # Allocate rather than probe a predictable name. Keep both collection and
     # archive writes relative to the private working directory: replacing an
