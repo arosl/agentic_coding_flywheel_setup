@@ -249,9 +249,11 @@ def verify_targets(agents, request):
     # nhm has no tmux "=session:N.M" target: each agent is checked by the
     # herdr pane ID nhm's robot spawn reports for it (robot/spawn.go).
     herdr = binary("herdr")
+    # An agent's herdr name is its Agent Mail name lowercased. nhm's "name"
+    # becomes ntm's agent name (claude-alpha, ...) with nhm-2p6.4.2, so it
+    # is only checked as a string (acfs-9hkh.105).
     require(all(isinstance(a.get("agent_mail_name"), str) and re.fullmatch(MAIL_NAME, a["agent_mail_name"])
-                and isinstance(a.get("name"), str) and re.fullmatch(HERDR_NAME, a["name"])
-                and a["name"] == a["agent_mail_name"].lower()
+                and isinstance(a.get("name"), str)
                 and isinstance(a.get("pane_id"), str) and re.fullmatch(HERDR_ID, a["pane_id"]) for a in agents),
             "nhm returned an invalid agent identity.")
     rows = live_agents(herdr, request)
@@ -265,7 +267,7 @@ def verify_targets(agents, request):
         live = observe(herdr, request, matches[0])
         require(live["agent_type"] == assigned["agent_type"], "Agent pane type changed during startup.")
         targets.append({"slot": slot, "agent_name": assigned["agent_name"], "agent_type": assigned["agent_type"],
-                        "agent_mail_name": agent["agent_mail_name"], "herdr_name": agent["name"],
+                        "agent_mail_name": agent["agent_mail_name"], "herdr_name": agent["agent_mail_name"].lower(),
                         "workspace_id": live["workspace_id"], "workspace_label": workspace_label(request),
                         "tab_id": live["tab_id"], "pane_id": live["pane_id"], "terminal_id": live["terminal_id"],
                         "shell_pid": live["shell_pid"], "launched_state": live["state"]})

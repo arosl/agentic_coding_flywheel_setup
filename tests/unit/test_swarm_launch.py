@@ -92,6 +92,11 @@ if name == "nhm":
                 "terminal_id": "term_%d" % n})
             agents.append({"pane": "1.%d" % (i + 1), "pane_id": "w9:p%d" % n, "agent_mail_name": names[i],
                 "name": names[i].lower(), "type": kind, "ready": True})
+        if mode == "ntm-names":
+            # nhm-2p6.4.2: ntm's agent name and pane title, not the herdr name.
+            for i, a in enumerate(agents):
+                a["name"] = a["type"] + "-" + ["alpha", "bravo", "charlie"][i]
+                a["title"] = session + "__" + {"claude": "cc", "codex": "cod"}[a["type"]] + "_1"
         state["workspaces"] = [{"workspace_id": "w9", "label": session}]
         state_path.write_text(json.dumps(state))
         response["agents"] = agents
@@ -220,6 +225,14 @@ class LaunchTests(unittest.TestCase):
              "pane_id": "w9:p2", "terminal_id": "term_2", "shell_pid": 1002, "launched_state": "ready"}])
         for name in ("intent.json", "intent.json.result.json"):
             self.assertEqual(stat.S_IMODE((self.root / name).stat().st_mode), 0o600)
+
+    def test_herdr_names_come_from_agent_mail_names_not_nhm_agent_names(self):
+        # With nhm-2p6.4.2 an agent's "name" is ntm's (claude-alpha); its herdr
+        # name is still its Agent Mail name lowercased (acfs-9hkh.105).
+        code, report = self.invoke(mode="ntm-names", launch=True)
+        self.assertEqual((code, report["status"]), (0, "ready"), report)
+        self.assertEqual([(t["agent_mail_name"], t["herdr_name"]) for t in report["targets"]],
+                         [("AmberFox", "amberfox"), ("GreenCastle", "greencastle")])
 
     def test_repeat_only_verifies_recorded_stable_panes(self):
         self.assertEqual(self.invoke(launch=True)[0], 0)
