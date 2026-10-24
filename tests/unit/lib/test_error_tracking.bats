@@ -197,6 +197,54 @@ teardown() {
     refute_output --partial "Error output"
 }
 
+@test "optional step success replays its nested outcome lines, without colors, and hides the rest (acfs-glwz)" {
+    local out_file err_file
+    out_file="$(create_temp_dir)/stdout"
+    err_file="${out_file%/stdout}/stderr"
+    fallback_installer() {
+        echo "    → Adding the PGDG repository..."
+        printf '\033[0;33m⚠ PostgreSQL 18 via PGDG failed; falling back to Ubuntu-native postgresql\033[0m\n' >&2
+        echo "Setting up postgresql-16 ..."
+        printf '\033[0;32m✓ PostgreSQL installed\033[0m\n' >&2
+        echo "[2026-10-24 00:00:00] WARN:  native package is older than 18"
+    }
+
+    try_step_optional 'Installing or repairing PostgreSQL' fallback_installer >"$out_file" 2>"$err_file"
+
+    [[ ! -s "$out_file" ]]
+    run cat "$err_file"
+    assert_output --partial "⚠ PostgreSQL 18 via PGDG failed; falling back to Ubuntu-native postgresql"
+    assert_output --partial "✓ PostgreSQL installed"
+    assert_output --partial "[2026-10-24 00:00:00] WARN:  native package is older than 18"
+    refute_output --partial "Adding the PGDG repository"
+    refute_output --partial "Setting up postgresql-16"
+    refute_output --partial $'\033['
+}
+
+@test "optional step success doesn't replay a marker in the middle of a line" {
+    local err_file
+    err_file="$(create_temp_dir)/stderr"
+    progress_installer() { echo "download 50% ✓ chunk 3"; echo "status: ⚠ none"; }
+
+    try_step_optional 'Installing zoxide' progress_installer 2>"$err_file"
+
+    run cat "$err_file"
+    refute_output --partial "chunk 3"
+    refute_output --partial "status:"
+}
+
+@test "optional step failure still prints its tail, not a second copy of its outcome lines" {
+    local err_file
+    err_file="$(create_temp_dir)/stderr"
+    failing_installer() { echo "⚠ mirror slow"; echo "fatal: no release"; return 3; }
+
+    run try_step_optional 'Installing zoxide' failing_installer
+    [[ "$status" -eq 3 ]]
+    assert_output --partial "Installing zoxide failed (non-critical)"
+    assert_output --partial "    fatal: no release"
+    [[ "$(grep -c 'mirror slow' <<<"$output")" -eq 1 ]]
+}
+
 @test "optional step in verbose mode streams its output to stderr only" {
     local out_file err_file
     out_file="$(create_temp_dir)/stdout"

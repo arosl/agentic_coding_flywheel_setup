@@ -325,6 +325,15 @@ try_step_eval() {
     try_step "$description" "$bash_bin" -e -o pipefail -c "$command_str"
 }
 
+# The outcome lines in a captured step's output, with ANSI colors removed:
+# success, warning and error lines as install.sh and logging.sh print them
+# ("✓ ", "⚠ ", "✖ ", or a timestamped "WARN:" or "ERROR:").
+_acfs_step_outcome_lines() {
+    local esc=$'\033'
+    sed -E "s/${esc}\[[0-9;]*[A-Za-z]//g" "$1" 2>/dev/null \
+        | grep -E '^[[:space:]]*(✓|⚠|✖) |^\[[0-9: -]+\] +(WARN|ERROR):' || true
+}
+
 # Execute a command that can fail without aborting
 # Usage: try_step_optional "description" command [args...]
 # Returns: Command exit code (but doesn't update error state on failure)
@@ -377,8 +386,16 @@ try_step_optional() {
                 tail -c "$max_len" "$output_file" 2>/dev/null | tail -n 50 | sed 's/^/    /' >&2 || true
             fi
         fi
-    elif type -t state_step_result &>/dev/null; then
-        state_step_result "$CURRENT_PHASE" "$description" success false || true
+    else
+        if type -t state_step_result &>/dev/null; then
+            state_step_result "$CURRENT_PHASE" "$description" success false || true
+        fi
+        # An optional step often wraps a whole installer, whose outcome lines
+        # (a fallback it took, what it installed) the captured output would
+        # drop. Replay those; the detail lines stay hidden (acfs-glwz).
+        if [[ -n "$output_file" && -s "$output_file" ]]; then
+            _acfs_step_outcome_lines "$output_file" >&2
+        fi
     fi
 
     if [[ -n "$output_file" ]]; then
