@@ -10967,7 +10967,39 @@ accepting_sudo() {
     refute_output --partial "re-run the ACFS installer"
     [[ -d "$global_bin/acfs-update" ]] || fail "the name changed"
     [[ ! -e "$global_bin/.acfs-update.acfs-new" ]] || fail "the staged copy was left"
-    run grep -F "Skipped syncing scripts/acfs-update -> $global_bin/acfs-update (failed with root's rights)" "$log_file"
+    run grep -F "Skipped syncing scripts/acfs-update -> $global_bin/acfs-update (failed with root's rights: " "$log_file"
+    assert_success
+}
+
+@test "global commands: a refresh that fails puts the command's own message in the update log, with root's rights or without" {
+    local temp_root repo_root deployed_home global_bin log_file
+    global_commands_fixture
+    printf '#!/bin/sh\necho "install: cannot create regular file: Read-only file system (the cause)" >&2\nexit 1\n' > "$temp_root/install"
+    chmod 755 "$temp_root/install"
+    # install_with SUDO: a failing install, and sudo -n that works (accepting)
+    # or refuses (refusing).
+    install_with() {
+        "${1}_sudo"
+        update_system_binary_path() {
+            case "$1" in
+                sudo) printf '%s\n' "$temp_root/sudo" ;;
+                install) printf '%s\n' "$temp_root/install" ;;
+                *) PATH=/usr/bin:/bin command -v "$1" ;;
+            esac
+        }
+    }
+
+    install_with accepting
+    run sync_acfs_global_commands
+    assert_success
+    assert_output --partial "$global_bin/acfs-update can't be refreshed by this run"
+    run grep -F "(failed with root's rights: install: cannot create regular file: Read-only file system (the cause))" "$log_file"
+    assert_success
+
+    install_with refusing
+    run sync_acfs_global_commands
+    assert_success
+    run grep -F "(needs root: install: cannot create regular file: Read-only file system (the cause))" "$log_file"
     assert_success
 }
 

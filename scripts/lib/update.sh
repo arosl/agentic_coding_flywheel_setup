@@ -4250,7 +4250,9 @@ sync_acfs_global_wrapper() {
         return 0
     fi
 
-    if "${install_cmd[@]}" 2>/dev/null && "${mv_cmd[@]}" 2>/dev/null; then
+    # err keeps the failing command's own message for the log.
+    local err=""
+    if err="$("${install_cmd[@]}" 2>&1 >/dev/null)" && err="$("${mv_cmd[@]}" 2>&1 >/dev/null)"; then
         log_to_file "Synced $source_label -> $deployed_file"
         if [[ -n "$source_tmp" ]]; then
             rm -f "$source_tmp" 2>/dev/null || true
@@ -4265,7 +4267,8 @@ sync_acfs_global_wrapper() {
     sudo_bin="$(update_system_binary_path sudo 2>/dev/null || true)"
     if [[ "$as_root" != true && -n "$sudo_bin" ]] && "$sudo_bin" -n true >/dev/null 2>&1; then
         as_root=true
-        if "$sudo_bin" -n "${install_cmd[@]}" && "$sudo_bin" -n "${mv_cmd[@]}"; then
+        if err="$("$sudo_bin" -n "${install_cmd[@]}" 2>&1 >/dev/null)" \
+            && err="$("$sudo_bin" -n "${mv_cmd[@]}" 2>&1 >/dev/null)"; then
             log_to_file "Synced $source_label -> $deployed_file"
             if [[ -n "$source_tmp" ]]; then
                 rm -f "$source_tmp" 2>/dev/null || true
@@ -4280,13 +4283,15 @@ sync_acfs_global_wrapper() {
             || { [[ -n "$sudo_bin" ]] && "$sudo_bin" -n rm -f -- "$stage_file" 2>/dev/null; } || true
     fi
     # Only a run without root's rights is fixed by the installer as root; a
-    # root run that failed names neither cause nor fix it can't know.
+    # root run that failed points at the log, which holds the command's own
+    # message.
+    err="${err//$'\n'/; }"
     if [[ "$as_root" == true ]]; then
-        log_to_file "Skipped syncing $source_label -> $deployed_file (failed with root's rights)"
+        log_to_file "Skipped syncing $source_label -> $deployed_file (failed with root's rights: ${err:-no message})"
         log_item "warn" "$deployed_file can't be refreshed by this run" \
             "installing $source_label there failed, with root's rights; see the update log"
     else
-        log_to_file "Skipped syncing $source_label -> $deployed_file (needs root)"
+        log_to_file "Skipped syncing $source_label -> $deployed_file (needs root: ${err:-no message})"
         log_item "warn" "$deployed_file can't be refreshed by this run" \
             "replacing it without root's rights failed; re-run the ACFS installer as root"
     fi
