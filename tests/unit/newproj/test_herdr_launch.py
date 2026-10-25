@@ -42,7 +42,12 @@ if mode == "invalid":
     sys.exit(0)
 values = dict(arg[2:].split("=", 1) for arg in args if "=" in arg)
 count = sum(int(values.get("spawn-" + agent, "0")) for agent in ("cc", "cod", "agy"))
-# nhm v0.1.16's admission refusal: nothing is made, and the reasons say why.
+# nhm v0.1.17's admission refusal, ntm's RESOURCE_BUSY: nothing is made, and
+# the reasons say why.
+if mode == "busy_admitted":
+    print(json.dumps({"success": False, "session": values["robot-spawn"], "agents": [],
+                      "error": "busy", "error_code": "RESOURCE_BUSY", "admission": {"decision": "admit"}}))
+    sys.exit(1)
 if mode.startswith("refused_"):
     capacity = ("capacity red: MemAvailable is under one agent's need\x1b[31m (to start anyway: "
                 "--ignore-capacity for this spawn, or capacity = [] under [providers] in "
@@ -53,12 +58,13 @@ if mode.startswith("refused_"):
     if "--ignore-capacity" in args and mode != "refused_always":
         reasons = [reason for reason in reasons if not reason.startswith("capacity ")]
     if reasons:
+        hint = "nhm quota, nhm doctor and the capacity provider say why"
         print(json.dumps({
             "success": False, "session": values["robot-spawn"], "working_dir": values["spawn-dir"],
-            "agents": [], "error": "admission refused: " + "; ".join(reasons),
-            "error_code": "ADMISSION_REFUSED",
+            "agents": [], "error": "spawn admission refuse: " + "; ".join(reasons),
+            "error_code": "RESOURCE_BUSY", "hint": hint,
             "admission": {"decision": "refuse", "reason": "; ".join(reasons), "reasons": reasons,
-                          "hint": "nhm quota, nhm doctor and the capacity provider say why"},
+                          "hint": hint},
         }))
         sys.exit(1)
 response = {
@@ -246,6 +252,13 @@ class LaunchTests(unittest.TestCase):
                 if mode != "refused_always":
                     self.assertIn("  - claude: the 5-hour window is at 93%", result.stderr)
                 self.assertEqual(len(self.spawns()), expected)
+
+    def test_resource_busy_without_a_refused_admission_is_not_a_refusal(self):
+        result = self.run_bash('newproj_start_nhm "$PROJECT" acfs-my-app 1 1 1', "yes\n", FAKE_NHM_MODE="busy_admitted")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("admission check refused", result.stderr)
+        self.assertIn("nhm did not confirm the requested workspace", result.stderr)
+        self.assertEqual(len(self.spawns()), 1)
 
     def test_unconfirmed_or_partial_receipts_never_authorize_attach(self):
         for mode in ("invalid", "false", "string_success", "wrong_session", "wrong_dir", "partial", "error", "dry_run", "agent_error", "multiple"):

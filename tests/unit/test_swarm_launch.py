@@ -61,12 +61,21 @@ if name == "nhm":
     types = ["claude"] * int(flag("--spawn-cc=")) + ["codex"] * int(flag("--spawn-cod="))
     dry = "--dry-run" in args
     if mode == "nhm-refused" or (mode == "nhm-refused-launch" and not dry):
-        # nhm v0.1.16's admission refusal: nothing is made, and the reasons say why.
+        # nhm v0.1.17's admission refusal, ntm's RESOURCE_BUSY: nothing is made,
+        # and the reasons say why. A refused dry run succeeds with the decision
+        # and no hint.
         reason = ("capacity red: MemAvailable is under one agent's need\x1b[31m (to start anyway: "
                   "--ignore-capacity for this spawn, or capacity = [] under [providers] in nhm's config)")
-        print(json.dumps({"success": False, "session": session, "agents": [], "error": "admission refused: " + reason,
-            "error_code": "ADMISSION_REFUSED", "admission": {"decision": "refuse", "reason": reason,
-            "reasons": [reason], "hint": "nhm quota, nhm doctor and the capacity provider say why"}}))
+        refused = {"decision": "refuse", "reason": reason, "reasons": [reason]}
+        if dry:
+            print(json.dumps({"success": True, "session": session, "working_dir": str(root / "repo"),
+                "effective_project_key": str(root / "repo"), "assignments": [], "agents": [], "dry_run": True,
+                "would_create": [{"pane": "1." + str(i), "type": kind, "ready": False} for i, kind in enumerate(types, 1)],
+                "admission": refused}))
+            sys.exit(0)
+        hint = "nhm quota, nhm doctor and the capacity provider say why"
+        print(json.dumps({"success": False, "session": session, "agents": [], "error": "spawn admission refuse: " + reason,
+            "error_code": "RESOURCE_BUSY", "hint": hint, "admission": dict(refused, hint=hint)}))
         sys.exit(1)
     response = {"success": True, "session": session, "working_dir": str(root / "repo"),
         "effective_project_key": str(root / "repo"), "assignments": [],
@@ -325,16 +334,17 @@ class LaunchTests(unittest.TestCase):
                 self.assertEqual(self.count_spawns(), 0)
 
     def test_admission_refusal_names_nhms_reasons_and_starts_nothing(self):
-        # Refused at the preview: no receipt and no spawn.
+        # Refused at the preview, whose dry run succeeds with the decision: no
+        # receipt and no spawn.
         code, report = self.invoke(mode="nhm-refused", launch=True)
         self.assertEqual(code, 2, report)
-        # The reasons come first, then the advice.
+        # The reasons come first, then the advice. A dry run carries no hint.
         self.assertTrue(report["error"].startswith(
             "nhm's admission check refused this launch, so nothing was started: capacity red: MemAvailable is "
             "under one agent's need [31m"), report["error"])
         self.assertIn("--ignore-capacity for this spawn", report["error"])
         self.assertTrue(report["error"].endswith(
-            "nhm quota, nhm doctor and the capacity provider say why. No launch receipt was created."), report["error"])
+            "under [providers] in nhm's config). No launch receipt was created."), report["error"])
         self.assertNotIn("\x1b", report["error"])
         self.assertFalse(self.receipt.exists())
         self.assertEqual(self.count_spawns(), 0)

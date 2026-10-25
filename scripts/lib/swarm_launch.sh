@@ -252,14 +252,17 @@ class AdmissionRefused(LaunchError):
 def refuse_on_admission(data, advice):
     """nhm's admission check refuses before it makes anything, and says why
     (acfs-wpbc): fail with its reasons and hint, control characters replaced,
-    then the advice."""
+    then the advice. As ntm's (nhm-2p6.4.12), a refused spawn is RESOURCE_BUSY,
+    and a refused dry run succeeds with the decision and no hint."""
     try:
         result = parse(data)
     except LaunchError:
         return
-    if not (isinstance(result, dict) and result.get("error_code") == "ADMISSION_REFUSED"):
+    admission = result.get("admission") if isinstance(result, dict) else None
+    if not (isinstance(admission, dict) and admission.get("decision") == "refuse"
+            and (result.get("error_code") == "RESOURCE_BUSY"
+                 or (result.get("dry_run") is True and result.get("success") is True))):
         return
-    admission = result.get("admission") if isinstance(result.get("admission"), dict) else {}
     said = admission.get("reasons") if isinstance(admission.get("reasons"), list) else []
     said = [text for text in [*said, admission.get("hint")] if isinstance(text, str)]
     reasons = "; ".join(re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", text) for text in said)
