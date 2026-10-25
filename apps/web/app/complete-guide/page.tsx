@@ -1889,8 +1889,9 @@ acfs capacity --recommend-nhm
 acfs swarm plan --agents 8 --profile balanced --workload standard
 
 # Start them: each agent gets an Agent Mail name, a herdr pane bound to
-# it, and its marching orders (the command palette's default_new_agent)
-nhm spawn myproject --cc=6 --cod=2
+# it, and, through --prompt, its marching orders (the command palette's
+# default_new_agent)
+nhm spawn myproject --cc=6 --cod=2 --prompt "$(nhm palette --show default_new_agent)"
 
 # Send a prompt to every agent, or to one kind
 nhm send myproject "Your marching orders prompt here"

@@ -5,7 +5,8 @@
 # scripts/sync/sync_ntm_palette.sh takes the palette from the ntm repo
 # but keeps the fork's header and its herdr versions of the prompts that
 # called ntm. This checks that overlay on fixtures (no network), and
-# that the shipped palette sends no prompt that runs ntm.
+# that the shipped palette sends no prompt that runs ntm or that tells
+# the agent to register with Agent Mail.
 #
 # Run with: bash tests/unit/test_sync_ntm_palette.sh
 # ============================================================
@@ -150,6 +151,15 @@ if [[ -z "$ntm_lines" ]]; then
     pass "no palette prompt asks the agent to run ntm"
 else
     fail "no palette prompt asks the agent to run ntm" "$ntm_lines"
+fi
+
+# nhm registers each agent it starts; an agent that registers again gets
+# a new name, which nhm's sends and wake-ups miss (acfs-9hkh.110).
+register_lines="$(grep -n -i -E 'register with (MCP )?Agent Mail|register_agent|create_agent_identity|macro_start_session' "$PALETTE" || true)"
+if [[ -z "$register_lines" ]]; then
+    pass "no palette prompt tells the agent to register with Agent Mail"
+else
+    fail "no palette prompt tells the agent to register with Agent Mail" "$register_lines"
 fi
 
 # The shipped palette is its own fixed point: overlaying it on itself

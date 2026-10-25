@@ -222,8 +222,10 @@ nhm status swarm-25
 In a new repository, a Claude Code or Codex folder-trust dialog stops the
 agent at its first start. Open the repository once in each CLI and choose
 whether to trust it, or add `--trust-folder` to spawn if you explicitly trust
-it. By default, spawn sends the palette's kickoff prompt so each agent picks
-ready Beads; add `--no-kickoff` to start agents without assigning work.
+it. As ntm's spawn does, spawn sends a prompt only from `--prompt` or a
+`[prompts]` default in nhm's config. Add
+`--prompt "$(nhm palette --show default_new_agent)"` so each agent picks ready
+Beads; without a prompt, or with `--no-kickoff`, the agents start with no work.
 The inventory command must not create workspaces or start agents.
 
 ### Agent Mail And Beads

@@ -11,7 +11,8 @@
 #     Without a selector, the prompt goes to every agent of the session but you.
 #   - A prompt from this file by its key: `nhm send <session> -t fresh_review`.
 #     `nhm palette --list` lists the keys.
-#   - New agents: `nhm add <session> --cc=N` sends `default_new_agent` as their first prompt.
+#   - New agents: `nhm add <session> --cc=N --prompt "$(nhm palette --show default_new_agent)"`
+#     sends `default_new_agent` as their first prompt. Without `--prompt`, nhm add sends none.
 #   - Or open this file, copy a prompt and paste it into an agent's pane.
 #
 # Format:
@@ -131,18 +132,18 @@ Do all the GitHub stuff: commit, deploy, create tag, bump version, release, moni
 ## Agent Coordination
 
 ### default_new_agent | Default New Agent
-First read ALL of the AGENTS.md file and README.md file super carefully and understand ALL of both! Then use your code investigation agent mode to fully understand the code, and technical architecture and purpose of the project. Then register with MCP Agent Mail and introduce yourself to the other agents. Be sure to check your agent mail and to promptly respond if needed to any messages; then proceed meticulously with your next assigned beads, working on the tasks systematically and meticulously and tracking your progress via beads and agent mail messages. Don't get stuck in "communication purgatory" where nothing is getting done; be proactive about starting tasks that need to be done, but inform your fellow agents via messages when you do so and mark beads appropriately. When you're not sure what to do next, use the bv tool mentioned in AGENTS.md to prioritize the best beads to work on next; pick the next one that you can usefully work on and get started. Make sure to acknowledge all communication requests from other agents and that you are aware of all active agents and their names. 
+First read ALL of the AGENTS.md file and README.md file super carefully and understand ALL of both! Then use your code investigation agent mode to fully understand the code, and technical architecture and purpose of the project. Then introduce yourself to the other agents through MCP Agent Mail. nhm registered your Agent Mail identity when it started you, so don't register a new one: `nhm resolve --current` shows your name. Be sure to check your agent mail and to promptly respond if needed to any messages; then proceed meticulously with your next assigned beads, working on the tasks systematically and meticulously and tracking your progress via beads and agent mail messages. Don't get stuck in "communication purgatory" where nothing is getting done; be proactive about starting tasks that need to be done, but inform your fellow agents via messages when you do so and mark beads appropriately. When you're not sure what to do next, use the bv tool mentioned in AGENTS.md to prioritize the best beads to work on next; pick the next one that you can usefully work on and get started. Make sure to acknowledge all communication requests from other agents and that you are aware of all active agents and their names. 
 
 ### check_and_respond_to_mail | Check and Respond to Mail
 Be sure to check your agent mail and to promptly respond if needed to any messages, and also acknowledge any contact requests; make sure you know the names of all active agents using the MCP Agent Mail system. 
-Run `nhm mail inbox --agent <your Agent Mail name>` to read every unread message sent to you, oldest first, which also marks each one read; then acknowledge each message it lists as ack pending.
+Run `nhm mail inbox --agent <your Agent Mail name> --mark-read` to read every unread message sent to you, oldest first, which also marks each one read; then acknowledge each message it lists as ack pending.
 
 ### introduce_to_fellow_agents | Introduce to Fellow Agents
-Before doing anything else, read ALL of AGENTS.md, then register with MCP Agent Mail and introduce yourself to the other agents.
+Before doing anything else, read ALL of AGENTS.md, then introduce yourself to the other agents through MCP Agent Mail. nhm registered your Agent Mail identity when it started you, so don't register a new one: `nhm resolve --current` shows your name.
 
 ### check_project_inbox | Check Project Inbox
 Check the project inbox for any new messages from other agents or the human overseer.
-Use Agent Mail's fetch_inbox tool, or run `am mail inbox --project <project key> --agent <your Agent Mail name>`, to see the full list of messages.
+Run 'nhm mail inbox' to see the full list of messages.
 
 ### start_out_with_agent_mail | Start Out With Agent Mail
 Be sure to check your agent mail and to promptly respond if needed to any messages; then proceed meticulously with your next assigned beads, working on the tasks systematically and meticulously and tracking your progress via beads and agent mail messages. Don't get stuck in "communication purgatory" where nothing is getting done; be proactive about starting tasks that need to be done, but inform your fellow agents via messages when you do so and mark beads appropriately. When you're really not sure what to do, pick the next bead that you can usefully work on and get started. Make sure to acknowledge all communication requests from other agents and that you are aware of all active agents and their names. Use /effort max.

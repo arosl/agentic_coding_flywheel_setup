@@ -4,8 +4,10 @@
 #
 # The fork runs its agents in herdr, not ntm, so it keeps its own
 # version of the palette's header and of the prompts that called ntm
-# (acfs-x6b). A sync takes everything else from the ntm repo and keeps
-# those fork-owned blocks; --check reports drift outside them only.
+# (acfs-x6b), or that told an agent nhm started to register with Agent
+# Mail (acfs-9hkh.110). A sync takes everything else from the ntm repo
+# and keeps those fork-owned blocks; --check reports drift outside them
+# only.
 # ============================================================
 set -euo pipefail
 
@@ -17,7 +19,7 @@ DEST_FILE="$PROJECT_ROOT/acfs/onboard/docs/ntm/command_palette.md"
 
 # The palette's header (everything before the first "## " category) and
 # these command_keys are the fork's herdr ports; a sync keeps them.
-PALETTE_FORK_KEYS="ensemble_list ensemble_run ensemble_status ensemble_synthesize ensemble_modes_core ensemble_modes_advanced check_project_inbox check_and_respond_to_mail"
+PALETTE_FORK_KEYS="ensemble_list ensemble_run ensemble_status ensemble_synthesize ensemble_modes_core ensemble_modes_advanced check_project_inbox check_and_respond_to_mail default_new_agent introduce_to_fellow_agents"
 
 # Colors
 GREEN='\033[0;32m'

@@ -1772,7 +1772,7 @@ Think of it like **RaptorQ fountain codes**: beads are "blobs" in a stream, any 
 1. Bead remains marked `in_progress`
 2. Any other agent can resume it (or mark it `blocked`)
 3. No dependency on the specific dead agent
-4. Replacement: `nhm add PROJECT --cc=1`, which gives it the standard init prompt, and continue
+4. Replacement: `nhm add PROJECT --cc=1`, give the standard init prompt, and continue
 
 ### 5. Shared Workspace Over Worktrees
 

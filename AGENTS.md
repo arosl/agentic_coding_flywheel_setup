@@ -105,8 +105,8 @@ The fork tracks upstream ACFS and changes its toolset: herdr instead of ntm, wez
 
 What the fork adds to upstream's sections below. `scripts/lib/policy_lint.sh` requires this file to mention Agent Mail and file reservations.
 
-- **Names:** Agent Mail first. It accepts only its own adjective+noun names, so register there first (`create_agent_identity` for a new agent) and take the name it gives back. The agent's herdr name is that name, lowercased: `IcyKnoll` in Agent Mail is `icyknoll` in herdr, which takes only lowercase names. That shared name is the only link other agents use between the two. nhm keeps it as a binding; an agent looks up its own with `nhm resolve --current`.
-- **nhm drives the agents:** since the takeover (2026-10-12), nhm owns this herdr server, and `acfs agents` refuses to change agents. Start one from the repo root with `nhm add agentic_coding_flywheel_setup --cc=1` (or `--cod=1`, `--agy=1`): it makes the Agent Mail identity, a tab of that workspace labelled with the name, starts the agent and sends the palette's `default_new_agent` prompt. `--dry-run` shows the plan and the admission; `nhm status agentic_coding_flywheel_setup` lists the agents.
+- **Names:** Agent Mail first. It accepts only its own adjective+noun names. nhm registers each agent it starts (`create_agent_identity`) and keeps the name Agent Mail gives back. Such an agent never registers again: a new identity gets a new name, which nhm's sends and wake-ups miss. It looks up its name with `nhm resolve --current`. Only an agent started by hand registers itself, the same way. The agent's herdr name is that name, lowercased: `IcyKnoll` in Agent Mail is `icyknoll` in herdr, which takes only lowercase names. That shared name is the only link other agents use between the two, and nhm keeps it as a binding.
+- **nhm drives the agents:** since the takeover (2026-10-12), nhm owns this herdr server, and `acfs agents` refuses to change agents. Start one from the repo root with `nhm add agentic_coding_flywheel_setup --cc=1 --prompt "$(nhm palette --file acfs/onboard/docs/ntm/command_palette.md --show default_new_agent)"` (or `--cod=1`, `--agy=1`): it makes the Agent Mail identity, a tab of that workspace labelled with the name, starts the agent and sends it the palette's `default_new_agent` prompt. Without `--prompt`, nhm add sends no prompt. `--file` reads the repo's palette: without it, nhm reads the copy installed under `~/.acfs`, which can be older. `--dry-run` shows the plan and the admission; `nhm status agentic_coding_flywheel_setup` lists the agents.
 - **Waking an agent:** after you mail it, `nhm send agentic_coding_flywheel_setup "Check your Agent Mail inbox." --name <MailName>`. `nhm maintain` also wakes an idle agent when new mail arrives.
 - **Quota:** before you dispatch a round or spawn, run `nhm quota`. It shows each plan's 5-hour and weekly windows, their resets (UTC) and the live agents per kind. `nhm add` refuses a kind at 90% of its 5-hour window, or one with a limit reached (`--force` overrides the quota only). Claude's windows reach it only through its statusLine (`nhm quota record-claude`).
 - **Agent Mail project key:** the repo's absolute path, `git rev-parse --show-toplevel`.
@@ -158,7 +158,7 @@ A mail-like layer that lets coding agents coordinate asynchronously via MCP tool
 
 ### Same Repository Workflow
 
-1. **Register identity:**
+1. **Register identity** (the fork: only an agent started by hand registers; one that nhm started is registered already, and `nhm resolve --current` shows its name):
    ```
    ensure_project(project_key=<abs-path>)
    register_agent(project_key, program, model)
