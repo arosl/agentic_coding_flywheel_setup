@@ -611,7 +611,7 @@ declare -gA KNOWN_INSTALLERS=(
     [atuin]="https://github.com/atuinsh/atuin/releases/latest/download/atuin-installer.sh"
     [herdr]="https://herdr.dev/install.sh"
     # nhm: the release tag pins the installer; acfs.manifest.yaml names the same version.
-    [nhm]="https://raw.githubusercontent.com/arosl/nhm/v0.1.16/install.sh"
+    [nhm]="https://raw.githubusercontent.com/arosl/nhm/v0.1.17/install.sh"
     # mcp_agent_mail: the herdr fork (acfs-7mu.4). A fork commit pins the
     # installer, and that installer pins its release's SHA256SUMS, so this
     # checksum covers the binaries too. Move it on purpose, with a review.
@@ -666,8 +666,8 @@ declare -gA KNOWN_INSTALLERS=(
 # only a cosign signature, and Ubuntu 24.04 packages no cosign, so caam's
 # archive pins stand in for it there (acfs-7mu.3).
 declare -gA KNOWN_RELEASE_ARCHIVES=(
-    [nhm_archive_linux_amd64]="https://github.com/arosl/nhm/releases/download/v0.1.16/nhm-0.1.16-linux-amd64.tar.zst"
-    [nhm_archive_linux_arm64]="https://github.com/arosl/nhm/releases/download/v0.1.16/nhm-0.1.16-linux-arm64.tar.zst"
+    [nhm_archive_linux_amd64]="https://github.com/arosl/nhm/releases/download/v0.1.17/nhm-0.1.17-linux-amd64.tar.zst"
+    [nhm_archive_linux_arm64]="https://github.com/arosl/nhm/releases/download/v0.1.17/nhm-0.1.17-linux-arm64.tar.zst"
     [caam_archive_linux_amd64]="https://github.com/arosl/coding_agent_account_manager/releases/download/v0.1.23-herdr.3/caam_0.1.23-herdr.3_linux_amd64.tar.gz"
     [caam_archive_linux_arm64]="https://github.com/arosl/coding_agent_account_manager/releases/download/v0.1.23-herdr.3/caam_0.1.23-herdr.3_linux_arm64.tar.gz"
 )

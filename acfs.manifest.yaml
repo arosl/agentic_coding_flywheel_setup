@@ -2504,11 +2504,11 @@ modules:
     # matching SHA256SUMS (acfs-9hkh.42, acfs-9hkh.47).
     installed_check:
       run_as: target_user
-      command: '"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" version --json 2>/dev/null | grep -q ''"version": "0.1.16"'''
+      command: '"${NHM_BIN_DIR:-$HOME/.local/bin}/nhm" version --json 2>/dev/null | grep -q ''"version": "0.1.17"'''
     verified_installer:
       tool: nhm
       runner: bash
-      args: ["--", "--version", "0.1.16"]
+      args: ["--", "--version", "0.1.17"]
       checksum_args:
         - { flag: "--archive-sha256", prefix: "linux-amd64=", checksum: nhm_archive_linux_amd64 }
         - { flag: "--archive-sha256", prefix: "linux-arm64=", checksum: nhm_archive_linux_arm64 }
