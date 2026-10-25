@@ -312,14 +312,18 @@ newproj_start_nhm() {
     esac
     # --spawn-safety delegates the create-only check to nhm. Never retry without
     # it: an existing session may belong to another project or contain live work.
-    # nhm waits until each agent is ready, so --trust-folder answers Claude
-    # Code's and Codex's first-run question about the folder the wizard just
-    # made, as the consent text says.
+    # --spawn-wait makes nhm wait until each agent is ready (ntm's rule: without
+    # it or a prompt, nhm answers once the agents are started). Only during that
+    # wait does --trust-folder answer Claude Code's and Codex's first-run
+    # question about the folder the wizard just made, as the consent text says,
+    # and only then can --spawn-assign-work's prompts reach ready agents.
+    # --timeout is each agent's wait; nhm's default is ntm's 30 s.
     while :; do
         status=0
         response=$(newproj_nhm_project_command "$project_dir" nhm "--robot-spawn=$session" \
             "--spawn-dir=$project_dir" --spawn-safety --robot-format=json \
             "--spawn-cc=$cc" "--spawn-cod=$cod" "--spawn-agy=$agy" --trust-folder \
+            --spawn-wait --timeout=60s \
             "--socket=$(newproj_nhm_socket)" "${work_args[@]}" "${capacity_args[@]}") || status=$?
         newproj_nhm_report_refusal "$response" || break
         # Only the capacity check can be overridden, once, and only on a typed

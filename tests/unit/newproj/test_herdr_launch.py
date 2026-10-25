@@ -196,7 +196,7 @@ class LaunchTests(unittest.TestCase):
             "cwd": str(self.project),
             "argv": ["--robot-spawn=acfs-my-app", "--spawn-dir=" + str(self.project),
                      "--spawn-safety", "--robot-format=json", "--spawn-cc=1", "--spawn-cod=1", "--spawn-agy=1",
-                     "--trust-folder", "--socket=" + str(self.socket)],
+                     "--trust-folder", "--spawn-wait", "--timeout=60s", "--socket=" + str(self.socket)],
         }])
         self.assertFalse(self.events.exists())
 
