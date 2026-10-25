@@ -137,8 +137,8 @@ step_E13() {
     # as planned, with no pane.
     check "E13: at 92 % a spawn is refused (exit 1, RESOURCE_BUSY) and starts nothing" \
         bash -c '[[ "$2" == refuse && "$(cat "${1%.json}.rc")" == 1 ]] &&
-            jq -e ".error_code == \"RESOURCE_BUSY\" and
-                ([._nhm.result.agents[]? | select((.pane_id // \"\") != \"\" or .status != \"planned\")] | length == 0)" \
+            jq -e ".error_code == \"RESOURCE_BUSY\" and (._nhm.result.agents | type == \"array\" and length > 0
+                and all(.[]; (.pane_id // \"\") == \"\" and .status == \"planned\"))" \
                 "$1" >/dev/null' \
             _ "$(e13_file refuse-92)" "$(e13_decision "$(e13_file refuse-92)")"
     e13_quota 10
