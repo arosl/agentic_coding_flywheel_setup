@@ -1151,7 +1151,7 @@ What Agent Mail gives:
 Core patterns:
 
 1. **Same repo**
-   - Register identity:
+   - Register identity (only an agent started by hand; one that nhm started is registered already, and `nhm resolve --current` shows its name):
      - `ensure_project` then `register_agent` with the repo's absolute path as `project_key`.
    - Reserve files before editing:
      - `file_reservation_paths(project_key, agent_name, ["src/**"], ttl_seconds=3600, exclusive=true)`.

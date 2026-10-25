@@ -148,7 +148,7 @@ A mail-like layer that lets coding agents coordinate asynchronously via MCP tool
 
 ### Same Repository Workflow
 
-1. **Register identity:**
+1. **Register identity** (only an agent started by hand registers; one that nhm started is registered already, and `nhm resolve --current` shows its name):
    ```
    ensure_project(project_key=<abs-path>)
    register_agent(project_key, program, model)
