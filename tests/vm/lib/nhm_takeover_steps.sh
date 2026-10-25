@@ -21,12 +21,10 @@
 #                            changes nothing (the Bash still owns it)
 #   takeover_run             nhm admin takeover --yes: nhm owns the
 #                            server, and a Bash mutator now refuses
-#   handback_dry_run         nhm admin handback --dry-run: passes, and
-#                            nhm still owns the server
 #
-# takeover_all runs the four and returns 1 when any failed. The real
-# handback (--yes) is not a step: the rehearsal ends with nhm the owner,
-# as the takeover on the swarm host will (acfs-9hkh.32).
+# takeover_all runs the three and returns 1 when any failed. The
+# rehearsal ends with nhm the owner, as the takeover on the swarm host
+# will (acfs-9hkh.32); nhm has no handback since v0.1.17 (nhm-te0).
 # ============================================================
 
 # takeover_bash_agent DIR: the precondition, an agent the Bash spawned.
@@ -147,27 +145,10 @@ takeover_run() {
     fi
 }
 
-handback_dry_run() {
-    local rc=0 owner dry
-    takeover_nhm handback-dry-run admin handback --dry-run || rc=$?
-    owner="$(takeover_owner)"
-    dry="$(jq -r '.result.dry_run // empty' "$SANDBOX_EVIDENCE/handback-dry-run.json" 2>/dev/null)"
-    if ((rc != 0)); then
-        takeover_report FAIL handback-dry-run "exited $rc: $(jq -r '.error.message // .error // empty' "$SANDBOX_EVIDENCE/handback-dry-run.json" 2>/dev/null)"
-    elif [[ "$dry" != true ]]; then
-        takeover_report FAIL handback-dry-run "the report does not say dry_run"
-    elif [[ "$owner" != nhm ]]; then
-        takeover_report FAIL handback-dry-run "a dry run changed the owner to '$owner'"
-    else
-        takeover_report ok handback-dry-run "it would pass, and nhm still owns the server"
-    fi
-}
-
 takeover_all() {
     local failed=0
     takeover_enroll || failed=1
     takeover_dry_run || failed=1
     takeover_run || failed=1
-    handback_dry_run || failed=1
     return "$failed"
 }

@@ -11743,13 +11743,13 @@ acfs_install_nhm_capacity_provider() {
 }
 
 # nhm owns the herdr server on every install (acfs-9hkh.93): nhm_hooks.sh
-# owner take runs nhm's takeover, a dry run first. nhm reads ACFS's Bash
-# state with the acfs command, so this runs once finalize has installed
-# it. On a fresh install no herdr server runs and the Bash keeps nothing,
-# so only the owner changes; on a re-run the takeover imports what the
-# Bash keeps, or refuses and changes nothing. Without stack.nhm, ACFS's
-# Bash stays the owner. Never fails the install: acfs update tries again,
-# and acfs doctor (stack.nhm.owner) names the fix.
+# owner take runs nhm's takeover, a dry run first. nhm reads what ACFS's
+# Bash kept under $ACFS_HOME/state itself (nhm-te0). On a fresh install no
+# herdr server runs and the Bash keeps nothing, so only the owner
+# changes; on a re-run the takeover imports what the Bash keeps, or
+# refuses and changes nothing. Without stack.nhm, ACFS's Bash stays the
+# owner. Never fails the install: acfs update tries again, and acfs
+# doctor (stack.nhm.owner) names the fix.
 acfs_install_nhm_owner() {
     local nhm_hooks="$ACFS_HOME/scripts/lib/nhm_hooks.sh" out="" rc=0
     if [[ ! -f "$nhm_hooks" ]] || ! acfs_legacy_module_selected "stack.nhm"; then
@@ -12171,8 +12171,7 @@ finalize() {
     try_step "Setting acfs permissions" acfs_chmod_as_target 755 "$ACFS_HOME/bin/acfs" || return 1
     try_step "Setting acfs ownership" acfs_own_outside_home "$ACFS_HOME/bin/acfs" || return 1
     try_step "Linking acfs command" acfs_link_primary_bin_command "$ACFS_HOME/bin/acfs" "acfs" || return 1
-    # nhm's takeover reads the Bash's state with the acfs command just
-    # installed, and nhm's keys need nhm as the owner (acfs-9hkh.93).
+    # nhm's keys need nhm as the owner (acfs-9hkh.93).
     acfs_install_nhm_owner
     acfs_install_herdr_keys
 

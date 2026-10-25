@@ -117,8 +117,8 @@ sandbox_init() {
         "$SANDBOX_HOME/.cache" "$SANDBOX_HOME/.claude" "$SANDBOX_HOME/.codex" \
         "$root/tmp" "$root/run" "$SANDBOX_BIN" "$SANDBOX_EVIDENCE" "$root/dl" || return 1
     chmod 700 "$root/run" || return 1
-    # `acfs agents ...` runs this checkout's own Bash (nhm's takeover calls
-    # it as ACFS_BIN); no other acfs verb exists in the sandbox.
+    # `acfs agents ...` runs this checkout's own Bash, for the steps that
+    # drive it; no other acfs verb exists in the sandbox.
     printf '%s\n' '#!/usr/bin/env bash' \
         'case "${1:-}" in' \
         "    agents) shift; exec bash '$checkout/scripts/lib/herdr_agents.sh' \"\$@\" ;;" \

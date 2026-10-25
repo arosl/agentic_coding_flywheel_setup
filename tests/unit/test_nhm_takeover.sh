@@ -49,16 +49,16 @@ BASEPATH="/usr/bin:/bin"
 
 # fixture [nhm: yes|no]: a fresh home with ACFS's copy of nhm_hooks.sh and
 # the fake nhm. The fake's takeover follows ~/nhm-takeover-mode, as nhm
-# v0.1.10 answers with --json:
+# v0.1.17 answers with --json:
 #   fresh     the dry run passes; --yes makes nhm the owner (~/nhm-owner)
 #   refuse    exit 2: the Bash keeps tokens and herdr is not running
-#   error     exit 1: the Bash's state cannot be exported
+#   error     exit 1: the Bash's state cannot be read
 #   garbage   exit 1 with no JSON
 #   yes-race  the dry run passes; --yes finds nhm the owner already
 #   yes-refuse the dry run passes; --yes refuses (the import changed)
 #   refuse-two exit 2 with two reasons on two lines, as nhm joins them
 # With ~/nhm-owner, every dry run exits 2: nhm owns it already. It records
-# each call, and the ACFS_BIN it got, in ~/nhm-calls.
+# each call in ~/nhm-calls.
 fixture() {
     HOMEDIR="$(mktemp -d -p "$ROOT")"
     STATE="$HOMEDIR/.local/state/nhm"
@@ -67,7 +67,7 @@ fixture() {
     if [[ "${1:-yes}" == yes ]]; then
         cat >"$HOMEDIR/.local/bin/nhm" <<'EOF'
 #!/usr/bin/env bash
-printf '%s ACFS_BIN=%s\n' "$*" "${ACFS_BIN-unset}" >>"$HOME/nhm-calls"
+printf '%s\n' "$*" >>"$HOME/nhm-calls"
 [[ "$1 $2" == "admin takeover" ]] || exit 1
 reply() { # reply <exit> <owner> <generation> <error or "">
     jq -n --arg o "$2" --argjson g "$3" --arg e "$4" \
@@ -85,7 +85,7 @@ case "$(cat "$HOME/nhm-takeover-mode" 2>/dev/null)" in
         : >"$HOME/nhm-owner"
         reply 0 nhm 1 "" ;;
     refuse) reply 2 acfs-bash 0 "refused: herdr is not running, and the Bash keeps 2 tokens and 0 wake entries: start herdr, so the takeover can import its agents" ;;
-    error) reply 1 "" 0 "the Bash's state cannot be exported: acfs agents export: exec: \"acfs\": executable file not found in \$PATH" ;;
+    error) reply 1 "" 0 "the Bash's state cannot be read: open $HOME/.acfs/state/tokens: permission denied" ;;
     garbage) echo "panic: boom" >&2; exit 1 ;;
     yes-race)
         [[ "$3" == --yes ]] || reply 0 acfs-bash 0 ""
@@ -104,10 +104,9 @@ EOF
 
 helper() { # helper <args...>: ACFS's copy of the helper in the fixture home; sets OUT and RC
     RC=0
-    OUT="$(env -u ACFS_BIN -u ACFS_HOME PATH="$BASEPATH" HOME="$HOMEDIR" XDG_CONFIG_HOME="" XDG_DATA_HOME="" \
-        "${HELPER_ENV[@]}" bash "$HOMEDIR/.acfs/scripts/lib/nhm_hooks.sh" "$@" 2>&1)" || RC=$?
+    OUT="$(env -u ACFS_HOME PATH="$BASEPATH" HOME="$HOMEDIR" XDG_CONFIG_HOME="" XDG_DATA_HOME="" \
+        bash "$HOMEDIR/.acfs/scripts/lib/nhm_hooks.sh" "$@" 2>&1)" || RC=$?
 }
-HELPER_ENV=()
 calls() { cat "$HOMEDIR/nhm-calls" 2>/dev/null; }
 mode() { echo "$1" >"$HOMEDIR/nhm-takeover-mode"; }
 SOCK_ARGS() { printf -- '--socket %s/.config/herdr/herdr.sock --json' "$HOMEDIR"; }
@@ -123,9 +122,7 @@ helper owner take
 check "a fresh install: exit 0, nhm owns the server now" \
     bash -c '[[ "$1" -eq 0 && "$2" == "nhm_hooks: nhm owns the default herdr server now (generation 1; agents imported: 0)" ]]' _ "$RC" "$OUT"
 check "the dry run first, then --yes, both for the default server's socket" \
-    test "$(calls | cut -d' ' -f1-6)" = "$(printf 'admin takeover --dry-run %s\nadmin takeover --yes %s' "$(SOCK_ARGS)" "$(SOCK_ARGS)")"
-check "with no acfs command of ACFS's own, nhm finds acfs on PATH" \
-    bash -c '[[ "$(head -n 1 <<<"$1")" == *" ACFS_BIN=" ]]' _ "$(calls)"
+    test "$(calls)" = "$(printf 'admin takeover --dry-run %s\nadmin takeover --yes %s' "$(SOCK_ARGS)" "$(SOCK_ARGS)")"
 : >"$HOMEDIR/nhm-calls"
 helper owner take
 check "run again: exit 0, nhm owns it already" \
@@ -133,23 +130,10 @@ check "run again: exit 0, nhm owns it already" \
 check "and no --yes" bash -c '[[ "$1" != *"--yes"* ]]' _ "$(calls)"
 
 fixture
-mkdir -p "$HOMEDIR/.acfs/bin"
-printf '#!/usr/bin/env bash\n' >"$HOMEDIR/.acfs/bin/acfs"
-chmod +x "$HOMEDIR/.acfs/bin/acfs"
-helper owner take
-check "ACFS's acfs command: nhm exports the Bash's state with it" \
-    bash -c '[[ "$(head -n 1 <<<"$1")" == *" ACFS_BIN=$2/.acfs/bin/acfs" ]]' _ "$(calls)" "$HOMEDIR"
-fixture
-HELPER_ENV=(ACFS_BIN=/opt/acfs/bin/acfs)
-helper owner take
-check "ACFS_BIN set: kept" bash -c '[[ "$(head -n 1 <<<"$1")" == *" ACFS_BIN=/opt/acfs/bin/acfs" ]]' _ "$(calls)"
-HELPER_ENV=()
-
-fixture
 mode refuse
 helper owner take
 check "a refusal: exit 5, nhm's reason, and the dry run to see it all" \
-    bash -c '[[ "$1" -eq 5 && "$2" == "nhm_hooks: nhm'"'"'s takeover refused, so ACFS'"'"'s Bash keeps the default herdr server: refused: herdr is not running, and the Bash keeps 2 tokens"*"; see: $3/.local/bin/nhm admin takeover --dry-run --socket $3/.config/herdr/herdr.sock" ]]' \
+    bash -c '[[ "$1" -eq 5 && "$2" == "nhm_hooks: nhm'"'"'s takeover refused, so the default herdr server'"'"'s owner stays as it was: refused: herdr is not running, and the Bash keeps 2 tokens"*"; see: $3/.local/bin/nhm admin takeover --dry-run --socket $3/.config/herdr/herdr.sock" ]]' \
     _ "$RC" "$OUT" "$HOMEDIR"
 check "and no --yes" bash -c '[[ "$1" != *"--yes"* ]]' _ "$(calls)"
 
@@ -157,7 +141,7 @@ fixture
 mode error
 helper owner take
 check "a failed dry run: exit 1 with nhm's error, no --yes" \
-    bash -c '[[ "$1" -eq 1 && "$2" == *"takeover failed, so ACFS'"'"'s Bash keeps"*"cannot be exported"* && "$3" != *"--yes"* ]]' \
+    bash -c '[[ "$1" -eq 1 && "$2" == *"takeover failed, so the default herdr server'"'"'s owner stays as it was: the Bash'"'"'s state cannot be read: "* && "$3" != *"--yes"* ]]' \
     _ "$RC" "$OUT" "$(calls)"
 mode garbage
 helper owner take
@@ -173,12 +157,12 @@ fixture
 mode yes-refuse
 helper owner take
 check "--yes refuses after the dry run passed: exit 5 with its reason" \
-    bash -c '[[ "$1" -eq 5 && "$2" == *"refused, so ACFS'"'"'s Bash keeps"*"the import changed"* ]]' _ "$RC" "$OUT"
+    bash -c '[[ "$1" -eq 5 && "$2" == *"refused, so the default herdr server'"'"'s owner stays as it was: "*"the import changed"* ]]' _ "$RC" "$OUT"
 fixture
 mode refuse-two
 helper owner take
 check "a refusal with two reasons: one note line that names both" \
-    bash -c '[[ "$1" -eq 5 && "$2" != *$'"'"'\n'"'"'* && "$2" == *"refused, so ACFS'"'"'s Bash keeps"*"AlphaFox is not imported; refused: the token of BetaOwl"* ]]' _ "$RC" "$OUT"
+    bash -c '[[ "$1" -eq 5 && "$2" != *$'"'"'\n'"'"'* && "$2" == *"refused, so the default herdr server'"'"'s owner stays as it was: "*"AlphaFox is not imported; refused: the token of BetaOwl"* ]]' _ "$RC" "$OUT"
 
 fixture
 helper owner
@@ -194,7 +178,7 @@ echo "update.sh: update_nhm_owner"
 run_update() {
     OUT="$(
         export HOME="$HOMEDIR" PATH="$BASEPATH"
-        unset XDG_CONFIG_HOME XDG_DATA_HOME ACFS_BIN ACFS_HOME
+        unset XDG_CONFIG_HOME XDG_DATA_HOME ACFS_HOME
         # shellcheck source=/dev/null
         source "$REPO_ROOT/scripts/lib/update.sh" >/dev/null 2>&1
         NHM_INSTALLED="${1:-yes}"
@@ -223,7 +207,7 @@ fixture
 mode refuse
 run_update
 check "a refusal warns with nhm's reason and the dry run, and never fails the update" \
-    bash -c '[[ "$1" == *"ITEM warn|herdr server owner|nhm'"'"'s takeover refused, so ACFS'"'"'s Bash keeps"*"; see: "*"admin takeover --dry-run --socket "*"RC 0"* ]]' _ "$OUT"
+    bash -c '[[ "$1" == *"ITEM warn|herdr server owner|nhm'"'"'s takeover refused, so the default herdr server'"'"'s owner stays as it was: "*"; see: "*"admin takeover --dry-run --socket "*"RC 0"* ]]' _ "$OUT"
 mode refuse-two
 run_update
 check "a refusal with two reasons: the update's warning keeps both" \
@@ -244,7 +228,7 @@ echo "install.sh: acfs_install_nhm_owner"
 run_install() {
     OUT="$(
         export HOME="$HOMEDIR" PATH="$BASEPATH" ACFS_HOME="$HOMEDIR/.acfs"
-        unset XDG_CONFIG_HOME XDG_DATA_HOME ACFS_BIN
+        unset XDG_CONFIG_HOME XDG_DATA_HOME
         SELECTED="$1"
         run_as_target() { "$@"; }
         acfs_legacy_module_selected() { [[ "$1" == stack.nhm && "$SELECTED" == yes ]]; }
@@ -272,15 +256,12 @@ fixture
 run_install no
 check "stack.nhm not selected: no takeover, the Bash stays the owner" \
     bash -c '[[ "$1" == "RC 0" && ! -e "$2/nhm-calls" ]]' _ "$OUT" "$HOMEDIR"
-# The takeover needs the acfs command (finalize installs it), and nhm's
-# keys need nhm as the owner.
+# nhm's keys need nhm as the owner.
 FINALIZE="$(sed -n '/^finalize() {$/,/^}$/p' "$REPO_ROOT/install.sh")"
-CLI_LINE="$(grep -n 'Linking acfs command' <<<"$FINALIZE" | head -n 1 | cut -d: -f1)"
 OWNER_LINE="$(grep -n '^    acfs_install_nhm_owner$' <<<"$FINALIZE" | cut -d: -f1)"
 KEYS_LINE="$(grep -n '^    acfs_install_herdr_keys$' <<<"$FINALIZE" | cut -d: -f1)"
-check "finalize: the takeover runs once, after the acfs command is linked and before the keys" \
-    bash -c '[[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[0-9]+$ && "$3" =~ ^[0-9]+$ && "$2" -gt "$1" && "$3" -gt "$2" ]]' \
-    _ "$CLI_LINE" "$OWNER_LINE" "$KEYS_LINE"
+check "finalize: the takeover runs once, before the keys" \
+    bash -c '[[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[0-9]+$ && "$2" -gt "$1" ]]' _ "$OWNER_LINE" "$KEYS_LINE"
 
 echo
 echo "doctor: stack.nhm.owner"
@@ -323,7 +304,7 @@ check "no owner.toml: the Bash owns it, warn with the takeover and the socket" \
     _ "$OUT" "$HOMEDIR/.config/herdr/herdr.sock"
 printf 'owner = "acfs-bash"\ngeneration = 2\nupdated_at = 2026-10-13T20:00:00Z\n' >"$INST/owner.toml"
 OUT="$(run_doctor)"
-check "owner acfs-bash (after a handback): warn" has "stack.nhm.owner|warn|ACFS's Bash tools drive agents"
+check "owner acfs-bash (enrolled, no takeover yet): warn" has "stack.nhm.owner|warn|ACFS's Bash tools drive agents"
 printf 'owner = "nhm"\ngeneration = 1\nupdated_at = 2026-10-13T20:00:00Z\n' >"$INST/owner.toml"
 OUT="$(run_doctor)"
 check "owner nhm: pass" has "stack.nhm.owner|pass|nhm drives agents on the default herdr server"
