@@ -14,7 +14,8 @@
 # - every command the puppet ran exited 0, but the refusal below;
 # - every operation in the puppet's results is in nhm's ledger, finished,
 #   and so are maintain's in phase b;
-# - no silent grant: an unguarded Codex is refused (exit 3) until the
+# - no silent grant: an unguarded Codex is refused (ntm's exit 1 and
+#   RESOURCE_BUSY, nhm-2p6.4.5 and nhm-2p6.4.12; plan-v8's exit 3) until the
 #   puppet passes --allow-unguarded, and its operation records the grant;
 # - no human keystroke: each prompt in the puppet's transcript came
 #   through an nhm operation (its kickoff and the step's sends);
@@ -201,8 +202,8 @@ step_E17() {
 
     # The puppet master: the one agent the step starts, and its only voice.
     (cd "$dir" && nhm spawn e17 --cc=1 --prompt "say hi" --json) >"$SANDBOX_EVIDENCE/e17-puppet.json" 2>&1
-    puppet="$(jq -r '.result.agents[0].mail_name // empty' "$SANDBOX_EVIDENCE/e17-puppet.json")"
-    pp="$(jq -r '.result.agents[0].pane_id // empty' "$SANDBOX_EVIDENCE/e17-puppet.json")"
+    puppet="$(jq -r '._nhm.result.agents[0].mail_name // empty' "$SANDBOX_EVIDENCE/e17-puppet.json")"
+    pp="$(jq -r '._nhm.result.agents[0].pane_id // empty' "$SANDBOX_EVIDENCE/e17-puppet.json")"
     check "E17: the puppet master starts" test -n "$puppet" -a -n "$pp"
     [[ -n "$puppet" && -n "$oper" ]] || return
     settle "$pp"
@@ -211,8 +212,8 @@ step_E17() {
     e17_do caps "nhm capabilities --json"
     e17_do robot-caps "nhm --robot-capabilities"
     e17_do spawn "nhm spawn e17w --cc=2 --prompt 'say hi' --json"
-    w1="$(jq -r '.result.agents[0].mail_name // empty' "$SANDBOX_EVIDENCE/e17-spawn.json")"
-    w2="$(jq -r '.result.agents[1].mail_name // empty' "$SANDBOX_EVIDENCE/e17-spawn.json")"
+    w1="$(jq -r '._nhm.result.agents[0].mail_name // empty' "$SANDBOX_EVIDENCE/e17-spawn.json")"
+    w2="$(jq -r '._nhm.result.agents[1].mail_name // empty' "$SANDBOX_EVIDENCE/e17-spawn.json")"
     check "E17: the puppet spawns two Claudes" test -n "$w1" -a -n "$w2"
     [[ -n "$w1" && -n "$w2" ]] || return
     # The robot form's idle is ntm's: idle or done.
@@ -268,10 +269,12 @@ step_E17() {
         bash -c '[[ "$(cat "$1")" == grant-no ]]' _ "$SANDBOX_EVIDENCE/e17-nonzero.txt"
     echo "### the ledger"
     check "E17: every operation in the results is in nhm's ledger, finished" e17_ledger
-    check "E17: no silent grant: without --allow-unguarded the Codex is refused (exit 3)" \
-        test "$(cat "$SANDBOX_EVIDENCE/e17-grant-no.rc")" = 3
+    check "E17: no silent grant: without --allow-unguarded the Codex is refused (exit 1, a guard reason)" \
+        bash -c '[[ "$(cat "$1.rc")" == 1 ]] && jq -e ".error_code == \"RESOURCE_BUSY\" and
+            ([.admission.reasons[]? | select(test(\" guard \"))] | length > 0)" "$1.json" >/dev/null' \
+            _ "$SANDBOX_EVIDENCE/e17-grant-no"
     check "E17: and the grant is in its operation's request" \
-        bash -c 'op="$(jq -r ".operation_id // empty" "$1")" && [[ -n "$op" ]] &&
+        bash -c 'op="$(jq -r "._nhm.operation_id // empty" "$1")" && [[ -n "$op" ]] &&
             python3 -I -c "import json, sqlite3, sys
 db = sqlite3.connect(\"file:\" + sys.argv[1] + \"?mode=ro\", uri=True)
 row = db.execute(\"SELECT request_json FROM operations WHERE operation_id = ?\", (sys.argv[2],)).fetchone()

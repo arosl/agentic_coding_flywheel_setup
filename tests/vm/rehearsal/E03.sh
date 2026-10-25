@@ -64,10 +64,10 @@ step_E03() {
     for round in 1 2; do
         e03_json "spawn-$round" nhm spawn "e03r$round" --cc=1 --cod=1 --allow-unguarded --prompt "say hi" --json
         check "E03: round $round's two reviewers start, a Claude and a Codex, each ready" \
-            jq -e '[.result.agents[] | select(.ready) | .kind] | sort == ["claude", "codex"]' "$(e03_file "spawn-$round")"
-        mapfile -t names < <(jq -r '.result.agents[].mail_name' "$(e03_file "spawn-$round")")
-        mapfile -t kinds < <(jq -r '.result.agents[].kind' "$(e03_file "spawn-$round")")
-        mapfile -t panes < <(jq -r '.result.agents[].pane_id' "$(e03_file "spawn-$round")")
+            jq -e '[._nhm.result.agents[] | select(.ready) | .kind] | sort == ["claude", "codex"]' "$(e03_file "spawn-$round")"
+        mapfile -t names < <(jq -r '._nhm.result.agents[].mail_name' "$(e03_file "spawn-$round")")
+        mapfile -t kinds < <(jq -r '._nhm.result.agents[].kind' "$(e03_file "spawn-$round")")
+        mapfile -t panes < <(jq -r '._nhm.result.agents[].pane_id' "$(e03_file "spawn-$round")")
         ((${#names[@]} == 2)) || { echo "FAIL E03: round $round has no two reviewers"; return; }
         for i in 0 1; do
             settle "${panes[i]}"

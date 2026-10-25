@@ -146,8 +146,8 @@ step_E18() {
     # --- a: the palette, invoked as typed in a server pane -----------------
     (cd "$da" && nhm spawn e18a --cc=2 --prompt "say hi" --json) >"$(e18_file spawn-a)" 2>&1
     (cd "$db" && nhm spawn e18b --cc=1 --prompt "say hi" --json) >"$(e18_file spawn-b)" 2>&1
-    pa="$(jq -r '.result.agents[0].pane_id // empty' "$(e18_file spawn-a)")"
-    pb="$(jq -r '.result.agents[0].pane_id // empty' "$(e18_file spawn-b)")"
+    pa="$(jq -r '._nhm.result.agents[0].pane_id // empty' "$(e18_file spawn-a)")"
+    pb="$(jq -r '._nhm.result.agents[0].pane_id // empty' "$(e18_file spawn-b)")"
     check "E18 a: two projects open (e18a with two Claudes, e18b with one)" test -n "$pa" -a -n "$pb"
     [[ -n "$pa" && -n "$pb" ]] || return
     settle "$pa"
@@ -156,8 +156,8 @@ step_E18() {
     # trust question, which nhm looks for on one line.
     (cd "$dc" && nhm spawn e18c --cc=1 --trust-folder --prompt "say hi" --json) >"$(e18_file spawn-c)" 2>&1
     check "E18: nhm spawn --trust-folder answers Claude's trust dialog in a narrow pane (nhm-za8)" \
-        jq -e '.error == null and .result.agents[0].ready == true' "$(e18_file spawn-c)"
-    e18_screen "$(jq -r '.result.agents[0].pane_id // "none"' "$(e18_file spawn-c)")" e18c-screen
+        jq -e '.error == null and ._nhm.result.agents[0].ready == true' "$(e18_file spawn-c)"
+    e18_screen "$(jq -r '._nhm.result.agents[0].pane_id // "none"' "$(e18_file spawn-c)")" e18c-screen
     ctx="$(herdr pane get "$pa" 2>/dev/null | jq -c '.result.pane // {}')"
     echo "### the invoking pane: $ctx"
     e18_json panes-before herdr pane list
@@ -188,7 +188,7 @@ step_E18() {
     # entrypoint as a tab of e18a, with the context the action hands it
     # (the invoking pane's directory too: the palette's send job runs
     # there), and drives it by its screen: fresh_review, then target 2.
-    ctx="$(jq -cn --arg s "$HERDR_SOCKET_PATH" --arg i "$(jq -r '.scope.instance_id // empty' "$(e18_file spawn-a)")" \
+    ctx="$(jq -cn --arg s "$HERDR_SOCKET_PATH" --arg i "$(jq -r '._nhm.scope.instance_id // empty' "$(e18_file spawn-a)")" \
         --arg w "${pa%%:*}" --arg p "$pa" --arg c "$da" \
         '{version: 1, instance_id: $i, socket_path: $s, workspace_id: $w, workspace_label: "e18a", pane_id: $p,
           agent: "claude", invocation_source: "cli", cwd: $c}')"
@@ -214,7 +214,7 @@ step_E18() {
     diff "$SANDBOX_EVIDENCE/e18-sends-before.txt" "$SANDBOX_EVIDENCE/e18-sends-after.txt"
     check "E18 a: target 2 sends fresh_review once, to e18a's two Claudes only" \
         bash -c 'new="$(comm -13 <(sort "$1") <(sort "$2"))"
-            want="$(jq -r "[.result.agents[].binding_id] | sort | join(\",\")" "$3")"
+            want="$(jq -r "[._nhm.result.agents[].binding_id] | sort | join(\",\")" "$3")"
             [[ "$(wc -l <<<"$new")" == 1 && "${new#* }" == "$want" ]]' \
             _ "$SANDBOX_EVIDENCE/e18-sends-before.txt" "$SANDBOX_EVIDENCE/e18-sends-after.txt" "$(e18_file spawn-a)"
     herdr pane send-keys "$pal" esc >/dev/null 2>&1
@@ -252,7 +252,7 @@ step_E18() {
     e18_sends >"$SANDBOX_EVIDENCE/e18-sends-cross-after.txt"
     check "E18 a: opened in e18b's workspace with e18a's context, the palette sends to e18a's Claudes" \
         bash -c 'new="$(comm -13 <(sort "$1") <(sort "$2"))"
-            want="$(jq -r "[.result.agents[].binding_id] | sort | join(\",\")" "$3")"
+            want="$(jq -r "[._nhm.result.agents[].binding_id] | sort | join(\",\")" "$3")"
             [[ "$(wc -l <<<"$new")" == 1 && "${new#* }" == "$want" ]]' \
             _ "$SANDBOX_EVIDENCE/e18-sends-cross-before.txt" "$SANDBOX_EVIDENCE/e18-sends-cross-after.txt" "$(e18_file spawn-a)"
     # A context without a workspace: the palette asks for one first (ntm's

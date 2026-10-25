@@ -13,9 +13,12 @@
 # the sandbox Agent Mail, as an operator's roster would.
 
 #
-# A spawn without --prompt sends ACFS's default_new_agent kickoff, which
-# nhm reads from ACFS's palette catalog; the step installs the catalog
-# where ACFS's install puts it.
+# The cockpit's spawn passes no --prompt, so since nhm v0.1.17 it sends no
+# kickoff and does not wait for the agent to be ready, as ntm's spawn
+# (nhm-2p6.4.6, nhm-2p6.4.10). The kickoff is the cockpit's Agent Mail
+# message and its nhm send --all, which meets an agent that may still be
+# starting. The step installs ACFS's palette catalog where ACFS's install
+# puts it, as on a user's machine.
 
 # e21_asked TEXT: the mock was asked a prompt that holds TEXT (it logs
 # each prompt whole).

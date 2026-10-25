@@ -58,10 +58,10 @@ step_E02() {
 
     e02_json spawn nhm spawn e02 --cc=1 --cod=1 --allow-unguarded --prompt "say hi" --json
     check "E02: two planners start, a Claude and a Codex, each ready" \
-        jq -e '[.result.agents[] | select(.ready) | .kind] | sort == ["claude", "codex"]' "$(e02_file spawn)"
-    mapfile -t names < <(jq -r '.result.agents[].mail_name' "$(e02_file spawn)")
-    mapfile -t kinds < <(jq -r '.result.agents[].kind' "$(e02_file spawn)")
-    mapfile -t panes < <(jq -r '.result.agents[].pane_id' "$(e02_file spawn)")
+        jq -e '[._nhm.result.agents[] | select(.ready) | .kind] | sort == ["claude", "codex"]' "$(e02_file spawn)"
+    mapfile -t names < <(jq -r '._nhm.result.agents[].mail_name' "$(e02_file spawn)")
+    mapfile -t kinds < <(jq -r '._nhm.result.agents[].kind' "$(e02_file spawn)")
+    mapfile -t panes < <(jq -r '._nhm.result.agents[].pane_id' "$(e02_file spawn)")
     ((${#names[@]} == 2)) || { echo "FAIL E02: no two planners"; return; }
     for i in 0 1; do settle "${panes[i]}"; done
 
@@ -86,8 +86,8 @@ step_E02() {
 
     # The synthesis: a fresh Claude, its prompt naming both plans.
     e02_json synth nhm add e02 --cc=1 --prompt "say hi" --json
-    sname="$(jq -r '.result.agents[0].mail_name // empty' "$(e02_file synth)")"
-    spane="$(jq -r '.result.agents[0].pane_id // empty' "$(e02_file synth)")"
+    sname="$(jq -r '._nhm.result.agents[0].mail_name // empty' "$(e02_file synth)")"
+    spane="$(jq -r '._nhm.result.agents[0].pane_id // empty' "$(e02_file synth)")"
     check "E02: the synthesis agent starts" test -n "$sname" -a -n "$spane"
     settle "$spane"
     synth="Synthesize the two plans ${paths[0]} and ${paths[1]} into synthesis.md."$'\n'"$(jq -rn \

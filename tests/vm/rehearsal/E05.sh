@@ -67,8 +67,8 @@ step_E05() {
 
     out="$(cd "$dir" && nhm spawn e05 --cc=1 --prompt "say hi" --json 2>&1)"
     printf '%s\n' "$out" >"$SANDBOX_EVIDENCE/e05-spawn.json"
-    a="$(jq -r '.result.agents[0].mail_name // empty' <<<"$out")"
-    pa="$(jq -r '.result.agents[0].pane_id // empty' <<<"$out")"
+    a="$(jq -r '._nhm.result.agents[0].mail_name // empty' <<<"$out")"
+    pa="$(jq -r '._nhm.result.agents[0].pane_id // empty' <<<"$out")"
     check "E05: nhm spawned the Claude" test -n "$a" -a -n "$pa"
     [[ -n "$a" ]] || return
     settle "$pa"
@@ -122,10 +122,10 @@ step_E05() {
     # Pass 4: a Codex.
     out="$(cd "$dir" && nhm add e05 --cod=1 --allow-unguarded --prompt "say hi" --json 2>&1)"
     printf '%s\n' "$out" >"$SANDBOX_EVIDENCE/e05-add-codex.json"
-    cod="$(jq -r '.result.agents[0].mail_name // empty' <<<"$out")"
-    pcod="$(jq -r '.result.agents[0].pane_id // empty' <<<"$out")"
+    cod="$(jq -r '._nhm.result.agents[0].mail_name // empty' <<<"$out")"
+    pcod="$(jq -r '._nhm.result.agents[0].pane_id // empty' <<<"$out")"
     check "E05: a Codex joins" test -n "$cod" -a -n "$pcod"
-    check "E05: the Codex is ready (herdr reads its state)" jq -e '.result.agents[0].ready == true' <<<"$out"
+    check "E05: the Codex is ready (herdr reads its state)" jq -e '._nhm.result.agents[0].ready == true' <<<"$out"
     settle "$pcod"
     e05_send pass4 --cod --bead "$bead"
     check "E05: pass 4's only target is the Codex" \

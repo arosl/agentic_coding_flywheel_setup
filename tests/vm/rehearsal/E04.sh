@@ -64,9 +64,9 @@ step_E04() {
     nhm_owner || { echo "FAIL E04: nhm could not take the server over"; return; }
 
     e04_json spawn nhm spawn e04 --cc=1 --prompt "say hi" --json
-    name="$(jq -r '.result.agents[0].mail_name // empty' "$(e04_file spawn)")"
-    pane="$(jq -r '.result.agents[0].pane_id // empty' "$(e04_file spawn)")"
-    alias="$(jq -r '.result.agents[0].herdr_name // empty' "$(e04_file spawn)")"
+    name="$(jq -r '._nhm.result.agents[0].mail_name // empty' "$(e04_file spawn)")"
+    pane="$(jq -r '._nhm.result.agents[0].pane_id // empty' "$(e04_file spawn)")"
+    alias="$(jq -r '._nhm.result.agents[0].herdr_name // empty' "$(e04_file spawn)")"
     check "E04: the converter starts" test -n "$name" -a -n "$pane" -a -n "$alias"
     [[ -n "$name" ]] || return
     settle "$pane"

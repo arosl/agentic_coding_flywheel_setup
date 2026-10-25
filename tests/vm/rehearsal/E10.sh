@@ -32,21 +32,21 @@ step_E10() {
     printf '%s\n' "$claudes" >"$SANDBOX_EVIDENCE/e10-spawn-claude.json"
     codex="$(e10_nhm add --cod=1 --allow-unguarded)"
     printf '%s\n' "$codex" >"$SANDBOX_EVIDENCE/e10-add-codex.json"
-    pa="$(jq -r '.result.agents[0].pane_id // empty' <<<"$claudes" 2>/dev/null)"
-    pb="$(jq -r '.result.agents[1].pane_id // empty' <<<"$claudes" 2>/dev/null)"
-    pc="$(jq -r '.result.agents[2].pane_id // empty' <<<"$claudes" 2>/dev/null)"
+    pa="$(jq -r '._nhm.result.agents[0].pane_id // empty' <<<"$claudes" 2>/dev/null)"
+    pb="$(jq -r '._nhm.result.agents[1].pane_id // empty' <<<"$claudes" 2>/dev/null)"
+    pc="$(jq -r '._nhm.result.agents[2].pane_id // empty' <<<"$claudes" 2>/dev/null)"
     check "E10: three Claudes started" test -n "$pa" -a -n "$pb" -a -n "$pc"
     check "E10: a Codex started, and is ready (herdr reads its state)" \
-        jq -e '.result.agents[0].pane_id and .result.agents[0].ready == true' <<<"$codex"
+        jq -e '._nhm.result.agents[0].pane_id and ._nhm.result.agents[0].ready == true' <<<"$codex"
     for p in "$pa" "$pb" "$pc"; do settle "$p"; done
     # C works; A and B are between turns.
     herdr agent prompt "$pc" "keep working slow" >/dev/null 2>&1 || true
     until_state "$pc" '^working$' 10
     local na nb nc ncod a
-    na="$(jq -r '.result.agents[0].mail_name' <<<"$claudes")"
-    nb="$(jq -r '.result.agents[1].mail_name' <<<"$claudes")"
-    nc="$(jq -r '.result.agents[2].mail_name' <<<"$claudes")"
-    ncod="$(jq -r '.result.agents[0].mail_name // empty' <<<"$codex")"
+    na="$(jq -r '._nhm.result.agents[0].mail_name' <<<"$claudes")"
+    nb="$(jq -r '._nhm.result.agents[1].mail_name' <<<"$claudes")"
+    nc="$(jq -r '._nhm.result.agents[2].mail_name' <<<"$claudes")"
+    ncod="$(jq -r '._nhm.result.agents[0].mail_name // empty' <<<"$codex")"
     check "E10: the third Claude is working when the review goes out" test "$(state "$pc")" = working
     out="$(nhm send e10 "review the other's work slow" --cc --state "done" --state idle --json 2>&1)"
     echo "### nhm send e10 --cc --state done --state idle"

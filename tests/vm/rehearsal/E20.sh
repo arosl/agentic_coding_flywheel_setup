@@ -107,10 +107,10 @@ step_E20() {
     check "E20: cm has a rule from before today ($r0)" test -n "$r0"
 
     e20_json spawn bash -c "cd '$dir' && nhm spawn e20 --cc=2 --prompt 'say hi' --json" || true
-    a="$(jq -r '.result.agents[0].mail_name // empty' "$(e20_file spawn)")"
-    b="$(jq -r '.result.agents[1].mail_name // empty' "$(e20_file spawn)")"
-    pa="$(jq -r '.result.agents[0].pane_id // empty' "$(e20_file spawn)")"
-    pb="$(jq -r '.result.agents[1].pane_id // empty' "$(e20_file spawn)")"
+    a="$(jq -r '._nhm.result.agents[0].mail_name // empty' "$(e20_file spawn)")"
+    b="$(jq -r '._nhm.result.agents[1].mail_name // empty' "$(e20_file spawn)")"
+    pa="$(jq -r '._nhm.result.agents[0].pane_id // empty' "$(e20_file spawn)")"
+    pb="$(jq -r '._nhm.result.agents[1].pane_id // empty' "$(e20_file spawn)")"
     check "E20: nhm spawned two agents" test -n "$a" -a -n "$b"
     [[ -n "$a" && -n "$b" ]] || return
     settle "$pa"
@@ -174,7 +174,7 @@ step_E20() {
 
     # The next kickoff carries it.
     e20_json kickoff bash -c "cd '$dir' && nhm spawn e20next --cc=1 --with-memory --prompt 'Close the bead before you retire, then push' --json" || true
-    op="$(jq -r '.result.agents[0].kickoff_operation // empty' "$(e20_file kickoff)")"
+    op="$(jq -r '._nhm.result.agents[0].kickoff_operation // empty' "$(e20_file kickoff)")"
     e20_json kickoff-receipt nhm feedback list --op "$op" --json || true
     check "E20: the next kickoff carries the rule learned today" \
         jq -e --arg r "$r1" '[.result[]?.rules[]? | select(.id == $r)] | length >= 1' "$(e20_file kickoff-receipt)"

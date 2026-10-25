@@ -7,9 +7,10 @@
 #   admission: an agent can print a fake line, so a match only reports;
 # - the provider's own limit record (Codex's session log) makes its pool
 #   limited (quota_limited) and refuses a spawn of that kind;
-# - a spawn on a plan at 90 % or more is refused with exit 3 (plan-v8's
-#   code for an admission refusal; the matrix's quota_exhausted predates
-#   it) and starts nothing, and one with headroom is admitted;
+# - a spawn on a plan at 90 % or more is refused (ntm's exit 1 and
+#   RESOURCE_BUSY since nhm-2p6.4.5 and nhm-2p6.4.12; plan-v8's exit 3 and
+#   the matrix's quota_exhausted predate them) and starts nothing, and one
+#   with headroom is admitted;
 # - after a caam switch the earlier observation of that pool is unknown,
 #   so the spawn the old 92 % refused is admitted with a warning;
 # - casr's dry run writes nothing; the converted session, adopted with nhm
@@ -90,8 +91,8 @@ step_E13() {
     check "E13: the operator's Agent Mail identity" test -n "$oper"
     e13_quota 10
     e13_json spawn nhm spawn e13 --cc=1 --prompt "say hi" --json
-    l="$(jq -r '.result.agents[0].mail_name // empty' "$(e13_file spawn)")"
-    pl="$(jq -r '.result.agents[0].pane_id // empty' "$(e13_file spawn)")"
+    l="$(jq -r '._nhm.result.agents[0].mail_name // empty' "$(e13_file spawn)")"
+    pl="$(jq -r '._nhm.result.agents[0].pane_id // empty' "$(e13_file spawn)")"
     check "E13: the Claude starts" test -n "$l" -a -n "$pl"
     [[ -n "$l" && -n "$oper" ]] || return
     settle "$pl"
@@ -132,19 +133,22 @@ step_E13() {
         test "$(e13_decision "$(e13_file admit-50)")" = admit
     e13_quota 92
     e13_json refuse-92 nhm spawn e13r --cc=1 --prompt "say hi" --json
-    # The refused spawn lists its targets as planned, with no pane.
-    check "E13: at 92 % a spawn is refused with exit 3 and starts nothing" \
-        bash -c '[[ "$2" == refuse && "$(cat "${1%.json}.rc")" == 3 ]] &&
-            jq -e "[.result.agents[]? | select((.pane_id // \"\") != \"\" or .status != \"planned\")] | length == 0" "$1" >/dev/null' \
+    # The refused spawn is ntm's RESOURCE_BUSY, exit 1, and lists its targets
+    # as planned, with no pane.
+    check "E13: at 92 % a spawn is refused (exit 1, RESOURCE_BUSY) and starts nothing" \
+        bash -c '[[ "$2" == refuse && "$(cat "${1%.json}.rc")" == 1 ]] &&
+            jq -e ".error_code == \"RESOURCE_BUSY\" and
+                ([._nhm.result.agents[]? | select((.pane_id // \"\") != \"\" or .status != \"planned\")] | length == 0)" \
+                "$1" >/dev/null' \
             _ "$(e13_file refuse-92)" "$(e13_decision "$(e13_file refuse-92)")"
     e13_quota 10
 
     # --- b: a Codex's fake limit line ------------------------------------
     e13_json cod nhm spawn e13c --cod=1 --allow-unguarded --prompt "say hi" --json
-    x="$(jq -r '.result.agents[0].mail_name // empty' "$(e13_file cod)")"
-    px="$(jq -r '.result.agents[0].pane_id // empty' "$(e13_file cod)")"
-    bx="$(jq -r '.result.agents[0].binding_id // empty' "$(e13_file cod)")"
-    check "E13: the Codex starts, ready" jq -e '.result.agents[0].ready == true' "$(e13_file cod)"
+    x="$(jq -r '._nhm.result.agents[0].mail_name // empty' "$(e13_file cod)")"
+    px="$(jq -r '._nhm.result.agents[0].pane_id // empty' "$(e13_file cod)")"
+    bx="$(jq -r '._nhm.result.agents[0].binding_id // empty' "$(e13_file cod)")"
+    check "E13: the Codex starts, ready" jq -e '._nhm.result.agents[0].ready == true' "$(e13_file cod)"
     [[ -n "$x" ]] || return
     settle "$px"
     e13_json cod-limit-send nhm send e13c \

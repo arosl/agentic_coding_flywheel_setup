@@ -95,7 +95,7 @@ step_E06() {
 
     # Before the launch: a Claude turn for CASS to find.
     e06_json pre nhm spawn e06pre --cc=1 --prompt "$(e06_kickoff)" --json
-    p="$(jq -r '.result.agents[0].pane_id // empty' "$(e06_file pre)")"
+    p="$(jq -r '._nhm.result.agents[0].pane_id // empty' "$(e06_file pre)")"
     settle "$p"
     cass index --full --json >"$SANDBOX_EVIDENCE/e06-cass-index.json" 2>&1 || true
 
@@ -103,22 +103,32 @@ step_E06() {
     e06_json spawn nhm spawn e06 --cc=2 --cod=2 --allow-unguarded --stagger-mode fixed --stagger-delay 1s \
         --with-memory --with-cass --prompt "$(e06_kickoff)" --json
     check "E06: four agents start, two Claudes and two Codexes, each ready" \
-        jq -e '[.result.agents[] | select(.ready) | .kind] | sort == ["claude", "claude", "codex", "codex"]' "$(e06_file spawn)"
+        jq -e '[._nhm.result.agents[] | select(.ready) | .kind] | sort == ["claude", "claude", "codex", "codex"]' "$(e06_file spawn)"
     manual "E06: agy and pi in the same launch (neither is in the sandbox)"
     manual "E06: no two agents claim one bead in ten minutes (the mock agents claim nothing)"
     check "E06: each identity was made before its kickoff" \
-        jq -e '[.result.agents[] | select((.identity_provenance // "") != "" and (.kickoff_operation // "") != "")] | length == 4' \
+        jq -e '[._nhm.result.agents[] | select((.identity_provenance // "") != "" and (.kickoff_operation // "") != "")] | length == 4' \
             "$(e06_file spawn)"
-    names="$(jq -c '[.result.agents[].mail_name]' "$(e06_file spawn)")"
+    names="$(jq -c '[._nhm.result.agents[].mail_name]' "$(e06_file spawn)")"
     e06_json list nhm list --json
     check "E06: every pane carries its agent's name" \
         jq -e --argjson n "$names" '[.result.agents[]? | select(.binding.mail_name as $m | $n | index($m)) | .binding.name_matches] | length == 4 and all' \
             "$(e06_file list)"
     check "E06: the launch is staggered" \
-        jq -e '.result.stagger_mode == "fixed" and ([.result.agents[].delay_ms] | . == sort and .[-1] > .[0])' "$(e06_file spawn)"
-    e06_json robot nhm --robot-spawn=e06r --spawn-dir="$dir" --spawn-cc=2 --spawn-cod=2 --dry-run
+        jq -e '._nhm.result.stagger_mode == "fixed" and ([._nhm.result.agents[].delay_ms] | . == sort and .[-1] > .[0])' \
+            "$(e06_file spawn)"
+    # As ntm's, the robot answer has the stagger schedule only when the spawn
+    # sends prompts (nhm-2p6.4.10): the dry run names one and sends nothing.
+    # Claudes only: --robot-spawn has no --allow-unguarded, the sandbox's
+    # Codexes lack rch's and Agent Mail's guards, and a refused dry run
+    # carries no schedule. A robot call also needs a quota observation,
+    # which E01 records; E06 records its own, as Claude's statusLine does.
+    printf '{"model":{"display_name":"Opus"},"rate_limits":{"five_hour":{"used_percentage":12,"resets_at":%d}}}' \
+        "$(($(date +%s) + 3600))" | nhm quota record-claude >/dev/null 2>&1
+    e06_json robot nhm --robot-spawn=e06r --spawn-dir="$dir" --spawn-cc=4 \
+        --spawn-prompt="$(e06_kickoff)" --dry-run
     check "E06: the robot result has the stagger schedule" jq -e '(.stagger.schedule | length) == 4' "$(e06_file robot)"
-    mapfile -t ops < <(jq -r '.result.agents[].kickoff_operation // empty' "$(e06_file spawn)")
+    mapfile -t ops < <(jq -r '._nhm.result.agents[].kickoff_operation // empty' "$(e06_file spawn)")
     for op in "${ops[@]}"; do
         e06_json "receipt-$op" nhm feedback list --op "$op" --json
         e06_recorded "$op"
@@ -139,14 +149,14 @@ step_E06() {
     PATH="$slow:$PATH" e06_json locked nhm add e06 --cc=1 --with-memory --with-cass --prompt "$(e06_kickoff)" --json
     t1=$SECONDS
     echo "### the launch with CASS hanging took $((t1 - t0)) s"
-    op="$(jq -r '.result.agents[0].kickoff_operation // empty' "$(e06_file locked)")"
+    op="$(jq -r '._nhm.result.agents[0].kickoff_operation // empty' "$(e06_file locked)")"
     check "E06: with CASS hanging the kickoff still goes" \
-        jq -e '.result.agents[0].kickoff_submission | test("submitted")' "$(e06_file locked)"
+        jq -e '._nhm.result.agents[0].kickoff_submission | test("submitted")' "$(e06_file locked)"
     e06_recorded "$op"
     check "E06: and records why CASS was left out" \
         jq -e '(.cass | length) == 0 and ((.cass_error + .cass_skipped) != "")' "$(e06_file "recorded-$op")"
     check "E06: and CM still went in" jq -e '(.cm | length) >= 1' "$(e06_file "recorded-$op")"
     # The 5 s budget is the enrichment's; the agent's own start is apart.
     check "E06: the enrichment waited at most 5 s for CASS" \
-        jq -e '.result.agents[0].startup_ms as $s | (.result.total_startup_ms - $s) <= 8000' "$(e06_file locked)"
+        jq -e '._nhm.result.agents[0].startup_ms as $s | (._nhm.result.total_startup_ms - $s) <= 8000' "$(e06_file locked)"
 }

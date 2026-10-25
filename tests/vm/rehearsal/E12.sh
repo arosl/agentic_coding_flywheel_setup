@@ -36,7 +36,7 @@ step_E12() {
     claude_guards
     nhm_owner || { echo "FAIL E12: nhm could not take the server over"; return; }
     out="$(cd "$dir" && nhm spawn e12 --cc=1 --prompt "say hi" --json 2>&1)"
-    pane="$(jq -r '.result.agents[0].pane_id // empty' <<<"$out")"
+    pane="$(jq -r '._nhm.result.agents[0].pane_id // empty' <<<"$out")"
     ws="${pane%%:*}"
     check "E12: nhm started the agent" test -n "$pane"
     settle "$pane"

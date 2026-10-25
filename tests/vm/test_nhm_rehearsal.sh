@@ -200,16 +200,20 @@ manual() { echo "MANUAL $1"; }
 # against its SHA256SUMS (sandbox_nhm_release), nhm version, and `nhm
 # doctor --json` with no failing check and herdr on nhm's protocol (nhm's
 # doctor has no --mode active). The install.sh, pin and machine-verify
-# parts are out of scope.
+# parts are out of scope. The doctor's answer is ntm's DoctorReport
+# (nhm-2p6.6.8): nhm's own checks are its dependencies (herdr) and
+# configuration items. Its tools and .errors also count ntm's required bv,
+# which the sandbox does not mount (sandbox_bin), so E00 reads only nhm's.
 step_E00() {
     local doc
     check "E00: nhm version --json answers" show "nhm version" nhm version --json
     doc="$(nhm doctor --json --no-mail 2>/dev/null || true)"
     echo "### nhm doctor --json --no-mail"
     echo "$doc"
-    check "E00: no doctor check fails" jq -e '[.result.checks[]? | select(.result == "fail")] | length == 0' <<<"$doc"
-    check "E00: herdr answers on nhm's protocol" jq -e '.result.checks[]? | select(.name == "herdr" and .result == "ok")' <<<"$doc"
-    check "E00: this herdr server is enrolled" jq -e '.result.checks[]? | select(.name == "enrollment" and .result == "ok")' <<<"$doc"
+    check "E00: no doctor check fails" \
+        jq -e '[.dependencies[], .configuration[] | select(.status == "error")] | length == 0' <<<"$doc"
+    check "E00: herdr answers on nhm's protocol" jq -e '.dependencies[] | select(.name == "herdr" and .status == "ok")' <<<"$doc"
+    check "E00: this herdr server is enrolled" jq -e '.configuration[] | select(.name == "enrollment" and .status == "ok")' <<<"$doc"
     manual "E00: attach from the Mac client and run nhm bind --print-client"
 }
 
@@ -246,15 +250,15 @@ step_E01() {
     fi
     doc="$(nhm doctor --json --no-mail 2>/dev/null || true)"
     echo "### the guard checks of nhm doctor --json"
-    jq -c '.result.checks[]? | select(.name | startswith("guard "))' <<<"$doc"
+    jq -c '.configuration[] | select(.name | startswith("guard "))' <<<"$doc"
     for kind in claude codex; do
         check "E01: dcg is active for $kind" \
-            jq -e --arg k "$kind" '.result.checks[]? | select(.name == ("guard " + $k + " dcg"))
-                | select(.detail | startswith("configured") or startswith("verified_for_launch"))' <<<"$doc"
+            jq -e --arg k "$kind" '.configuration[] | select(.name == ("guard " + $k + " dcg"))
+                | select(.message | startswith("configured") or startswith("verified_for_launch"))' <<<"$doc"
     done
     for kind in agy pi; do
         check "E01: the doctor reports $kind's guard state" \
-            jq -e --arg k "$kind" '.result.checks[]? | select(.name | startswith("guard " + $k + " "))' <<<"$doc"
+            jq -e --arg k "$kind" '.configuration[] | select(.name | startswith("guard " + $k + " "))' <<<"$doc"
     done
 }
 
@@ -390,10 +394,10 @@ step_E09() {
     out="$(cd "$dir" && nhm spawn e09 --cc=2 --prompt "say hi" --json 2>&1)"
     echo "### nhm spawn e09 --cc=2"
     echo "$out"
-    a="$(jq -r '.result.agents[0].mail_name // empty' <<<"$out")"
-    b="$(jq -r '.result.agents[1].mail_name // empty' <<<"$out")"
-    pa="$(jq -r '.result.agents[0].pane_id // empty' <<<"$out")"
-    pb="$(jq -r '.result.agents[1].pane_id // empty' <<<"$out")"
+    a="$(jq -r '._nhm.result.agents[0].mail_name // empty' <<<"$out")"
+    b="$(jq -r '._nhm.result.agents[1].mail_name // empty' <<<"$out")"
+    pa="$(jq -r '._nhm.result.agents[0].pane_id // empty' <<<"$out")"
+    pb="$(jq -r '._nhm.result.agents[1].pane_id // empty' <<<"$out")"
     check "E09: nhm spawned two agents" test -n "$a" -a -n "$b"
     until_state "$pa" '^(idle|done)$' 60 && until_state "$pb" '^(idle|done)$' 60
     am agents register --project "$dir" --program rehearsal --model none --name GrayHeron --json \
@@ -448,7 +452,7 @@ e11_agent() {
     nhm_owner || return 1
     out="$(cd "$dir" && nhm spawn e11 --cc=1 --prompt "say hi" --json 2>&1)"
     printf '%s\n' "$out" >"$SANDBOX_EVIDENCE/e11-spawn.json"
-    pane="$(jq -r '.result.agents[0].pane_id // empty' <<<"$out")"
+    pane="$(jq -r '._nhm.result.agents[0].pane_id // empty' <<<"$out")"
     [[ -n "$pane" ]] || return 1
     until_state "$pane" '^(idle|done)$' 60
     printf '%s\n' "$pane"
@@ -530,7 +534,7 @@ step_E11() {
     check "E11: and the prompt reached the model" grep -qF 'hello robot fast' "$SANDBOX_EVIDENCE/mock-requests.jsonl"
     settle "$pane"
     # A replaced occupant: recycle, then the earlier operation's ack.
-    robot recycle recycle "$(jq -r '.result.agents[0].mail_name' "$SANDBOX_EVIDENCE/e11-spawn.json")" --prompt "go on" --json
+    robot recycle recycle "$(jq -r '._nhm.result.agents[0].mail_name' "$SANDBOX_EVIDENCE/e11-spawn.json")" --prompt "go on" --json
     robot ack-after-recycle --robot-ack=e11 --op-id=e11-a --timeout=5s
     check "E11: after a recycle the earlier send reads replaced" \
         jq -e '(.success | not) and (.failed[0].reason | startswith("replaced"))' "$SANDBOX_EVIDENCE/e11-ack-after-recycle.json"

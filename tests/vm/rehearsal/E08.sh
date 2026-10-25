@@ -69,10 +69,10 @@ step_E08() {
     check "E08: the bead exists" test -n "$bead"
 
     e08_json spawn nhm spawn e08 --cc=2 --prompt "say hi" --json
-    w="$(jq -r '.result.agents[0].mail_name // empty' "$(e08_file spawn)")"
-    pw="$(jq -r '.result.agents[0].pane_id // empty' "$(e08_file spawn)")"
-    b="$(jq -r '.result.agents[1].mail_name // empty' "$(e08_file spawn)")"
-    pb="$(jq -r '.result.agents[1].pane_id // empty' "$(e08_file spawn)")"
+    w="$(jq -r '._nhm.result.agents[0].mail_name // empty' "$(e08_file spawn)")"
+    pw="$(jq -r '._nhm.result.agents[0].pane_id // empty' "$(e08_file spawn)")"
+    b="$(jq -r '._nhm.result.agents[1].mail_name // empty' "$(e08_file spawn)")"
+    pb="$(jq -r '._nhm.result.agents[1].pane_id // empty' "$(e08_file spawn)")"
     check "E08: the worker and a second agent start" test -n "$w" -a -n "$b"
     [[ -n "$w" && -n "$b" && -n "$bead" ]] || return
     settle "$pw"
