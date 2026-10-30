@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-10-25T00:19:37+00:00
+# checksums.yaml - Auto-generated 2026-10-30T22:10:58+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -16,7 +16,7 @@ installers:
 
   atuin:
     url: "https://github.com/atuinsh/atuin/releases/latest/download/atuin-installer.sh"
-    sha256: "682117ada10ef0886fa4974f1afcf5fb396ce466c45acaffbf075eeb06f6dc25"
+    sha256: "4e32fb752978e433fe512bffc83b2d1d1257b72c968180e1c305f4ae5a064c67"
 
   br:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh"
@@ -60,7 +60,7 @@ installers:
 
   cm:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/cass_memory_system/main/install.sh"
-    sha256: "1825765482b3f6cdd239f86e1f67dafdcb5877326997e9a0cffc56ca2e5f20d8"
+    sha256: "6d3b6e85301919cd5eb9f8b0d50f5db7a766bc2cb66ce5149aa7fe13b2d8ef55"
 
   csctf:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/chat_shared_conversation_to_file/main/install.sh"
@@ -96,7 +96,7 @@ installers:
 
   grok:
     url: "https://x.ai/cli/install.sh"
-    sha256: "7fd6fdc75d9418b2e58356726fcbf1ae849416f773925da07d0ccc7a60d3e791"
+    sha256: "dcc19d498e14f96ab93828251b2848fde94cc2ab0bd6f9cad9baffbf7a229182"
 
   herdr:
     url: "https://herdr.dev/install.sh"
@@ -140,7 +140,7 @@ installers:
 
   omp:
     url: "https://omp.sh/install.sh"
-    sha256: "cd2ea5553e9ad8f89fe5e04f771ec13db6f33a773f7ba8f85c84b63cdbeb9065"
+    sha256: "cd8f77920da58c6f56b5851c841b61d5e30b4ba8f4cab683afba1f8274b56a06"
 
   opencode:
     url: "https://opencode.ai/install"
@@ -180,7 +180,7 @@ installers:
 
   s2p:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/source_to_prompt_tui/main/install.sh"
-    sha256: "03dccaa9ba5c633136aa1e467ffd82ae63f1f35f0a3fd5946d2450e59df9e0cb"
+    sha256: "72f75e165256a7aaf901e2f6a71556fd088ac012c6652a390012d76f08ab0a05"
 
   sbh:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/storage_ballast_helper/main/scripts/install.sh"
@@ -204,7 +204,7 @@ installers:
 
   uv:
     url: "https://astral.sh/uv/install.sh"
-    sha256: "1c6e7f025499664633ac2dce43a210800510e9ef0625c52e034a8afdf8bf177a"
+    sha256: "f7a56e7afaec49a3bcbc3ac3cdbe917e7c6ce30e0d815308a12e531aa5ef23b7"
 
   xf:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/xf/main/install.sh"
