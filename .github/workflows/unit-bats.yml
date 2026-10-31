@@ -49,7 +49,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # test_srps_integration.bats type-checks apps/web.
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:

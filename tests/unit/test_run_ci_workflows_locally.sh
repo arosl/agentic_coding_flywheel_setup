@@ -187,18 +187,6 @@ jobs:
         run: touch ran-narrow
 YAML
 
-cat >"$REPO/.github/workflows/production-smoke.yml" <<'YAML'
-name: production smoke
-on:
-  push:
-    branches: [main]
-jobs:
-  smoke:
-    runs-on: ubuntu-latest
-    steps:
-      - run: touch ran-production
-YAML
-
 git -C "$REPO" init -q -b main
 git -C "$REPO" add -A
 git -C "$REPO" -c user.name=test -c user.email=test@example.invalid commit -q -m fixture
@@ -214,7 +202,6 @@ check "--list runs nothing" no_marker always
 check "--list plans good.yml's steps" out_has "RUN   good.yml › first › Sees what an earlier step wrote to GITHUB_ENV"
 check "a uses: step is skipped" out_has "SKIP  good.yml › first › actions/checkout@v4: uses: actions/checkout@v4"
 check "a workflow that never runs on a push to main is left out" out_lacks "scheduled.yml"
-check "production smoke is skipped with its reason" out_has "SKIP  production-smoke.yml: tests the deployed site"
 
 echo "danger"
 run_runner --workflow danger.yml

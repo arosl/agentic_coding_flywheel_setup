@@ -13,8 +13,6 @@
 #
 # It never runs what doesn't belong on a development host, and says
 # so for each step it skips:
-#   - workflows that test the deployed site, or apps/web, which the
-#     gate runs on its own under the browser lock;
 #   - jobs in a container: or with a job-level if:;
 #   - steps that need root or a package manager (sudo, apt-get, pip
 #     install, or a script known to run sudo itself, such as the
@@ -120,11 +118,7 @@ changed = None
 if changed_file:
     changed = [l for l in Path(changed_file).read_text().splitlines() if l]
 
-EXCLUDED = {
-    "production-smoke.yml": "tests the deployed site",
-    "playwright.yml": "apps/web: the gate runs it under the browser lock",
-    "website.yml": "apps/web: the gate runs it under the browser lock",
-}
+EXCLUDED = {}
 STEP_DENY = [
     (re.compile(r"\bsudo\b|\bapt(-get)?\s|\bpip3?\s+install\b"), "needs root or a package manager"),
     # Scripts whose step text shows no sudo but that run it themselves.

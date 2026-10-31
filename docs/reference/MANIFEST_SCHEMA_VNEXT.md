@@ -641,10 +641,9 @@ git commit -m "feat(manifest): add web metadata for <tool-name>"
 
 ### CI Integration
 
-The GitHub Actions workflows (`playwright.yml`, `website.yml`) include a `verify-generated` job that runs `bun run generate:diff` before building. This ensures:
+The CI workflows run `bun run generate:diff` (`installer.yml`, `internal-checksum-guard.yml`), and the local gate runs `bun run generate --diff`, before anything else. This ensures:
 - Generated files match the manifest
 - No manual edits to generated files sneak through
-- Website builds use current manifest data
 
 ## Maintainer Workflows
 

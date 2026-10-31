@@ -43,8 +43,6 @@ on:
       - 'tests/unit/test_temp_sweep.sh'
       - 'scripts/tests/run_gate.sh'
       - 'tests/unit/test_run_gate.sh'
-      - 'scripts/tests/ensure_playwright_browsers.sh'
-      - 'tests/unit/test_ensure_playwright_browsers.sh'
       - 'tests/unit/test_doctor_container.sh'
       - 'scripts/hooks/check_generated.sh'
       - 'tests/unit/test_check_generated.sh'
@@ -77,8 +75,6 @@ on:
       - 'tests/unit/test_temp_sweep.sh'
       - 'scripts/tests/run_gate.sh'
       - 'tests/unit/test_run_gate.sh'
-      - 'scripts/tests/ensure_playwright_browsers.sh'
-      - 'tests/unit/test_ensure_playwright_browsers.sh'
       - 'tests/unit/test_doctor_container.sh'
       - 'scripts/hooks/check_generated.sh'
       - 'tests/unit/test_check_generated.sh'
@@ -131,8 +127,6 @@ jobs:
         run: HOME="$(mktemp -d)" bash tests/unit/test_temp_sweep.sh
       - name: Gate runner against a stub checkout
         run: HOME="$(mktemp -d)" bash tests/unit/test_run_gate.sh
-      - name: Gate's Playwright browsers from a zip mirror, against a fake CLI
-        run: HOME="$(mktemp -d)" bash tests/unit/test_ensure_playwright_browsers.sh
       - name: Doctor's container section against stub systemd, incus and state layer
         run: HOME="$(mktemp -d)" bash tests/unit/test_doctor_container.sh
 

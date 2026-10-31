@@ -162,59 +162,6 @@ check "ACFS_GATE_ALLOW_SUDO=1: no gate sudo on PATH" bash -c '[[ "$1" != "$2"/* 
 check "ACFS_GATE_ALLOW_SUDO=1: no_new_privs as the caller has it" test "$sudo_nnp" = "$own_nnp"
 check "ACFS_GATE_ALLOW_SUDO=1: the run says so" grep -q "ACFS_GATE_ALLOW_SUDO=1: the commands may use this host's sudo" "$WORK/out"
 
-echo "run_gate: Playwright (acfs-l3r7)"
-pw_env() { # pw_env [VAR=VALUE...]: the gate's Playwright settings, for a caller whose HOME is $WORK/realhome
-    (cd "$WORK" && env -u PLAYWRIGHT_SKIP_BROWSER_GC -u ACFS_PLAYWRIGHT_MIRROR -u PLAYWRIGHT_HOST_PLATFORM_OVERRIDE \
-        -u XDG_CACHE_HOME HOME="$WORK/realhome" "$@" bash "$GATE" --tmp-parent "$PARENT" -- \
-        bash -c 'printf "%s|%s|%s\n" "${PLAYWRIGHT_SKIP_BROWSER_GC:-}" "${ACFS_PLAYWRIGHT_MIRROR:-}" "${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-}" >"$1"' \
-        _ "$WORK/pwenv") >/dev/null 2>&1
-    IFS='|' read -r pw_gc pw_mirror pw_platform <"$WORK/pwenv"
-}
-pw_env
-check "skips Playwright's browser GC" test "$pw_gc" = 1
-check "the zip mirror stays in the caller's cache" test "$pw_mirror" = "$WORK/realhome/.cache/acfs/playwright-mirror"
-if grep -qx 'ID=ubuntu' /etc/os-release 2>/dev/null && grep -qx 'VERSION_ID="26.04"' /etc/os-release 2>/dev/null; then
-    check "Ubuntu 26.04: Playwright's 24.04 builds" bash -c '[[ "$1" == ubuntu24.04-* ]]' _ "$pw_platform"
-else
-    check "not Ubuntu 26.04: no platform override" test -z "$pw_platform"
-fi
-pw_env ACFS_PLAYWRIGHT_MIRROR="$WORK/mirror" PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=mine
-check "a caller's own mirror and platform are kept" \
-    bash -c '[[ "$1" == "$2/mirror" && "$3" == mine ]]' _ "$pw_mirror" "$WORK" "$pw_platform"
-
-# The web step against stubs: bun records its arguments, and the browser
-# helper records what it is asked for.
-mkdir -p "$FIXTURE/apps/web" "$WORK/bin"
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$GATE_TEST_LOG.bun"\n' >"$WORK/bin/bun"
-chmod +x "$WORK/bin/bun"
-cat >"$FIXTURE/scripts/tests/ensure_playwright_browsers.sh" <<'STUB'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"$GATE_TEST_LOG"
-STUB
-web_browsers() { # web_browsers [--browser-project NAME...]: the helper's arguments
-    : >"$LOG"
-    : >"$LOG.bun"
-    PATH="$WORK/bin:$PATH" ACFS_BROWSER_GATE_LOCK="$WORK/browser.lock" \
-        bash "$GATE" --root "$FIXTURE" --tmp-parent "$PARENT" --step web --bun-memory-max none "$@" >"$WORK/out" 2>&1 || true
-    cat "$LOG"
-}
-# The projects of the last web step's Playwright run, comma-separated.
-web_projects() {
-    sed -n 's/^run test -- //p' "$LOG.bun" | sed 's/ --project=/,/g; s/^--project=//'
-}
-check "web: CI's matrix by default, so chromium and firefox (acfs-5wv6)" \
-    test "$(web_browsers)" = "--web $FIXTURE/apps/web chromium firefox"
-check "web: the default runs chromium, firefox and Mobile Chrome" \
-    test "$(web_projects)" = "chromium,firefox,Mobile Chrome"
-# website.yml's line: project: [chromium, firefox, 'Mobile Chrome']
-check "web: the default is website.yml's matrix" \
-    test "$(web_projects)" = "$(sed -n "s/^ *project: \[\(.*\)\]$/\1/p" "$ROOT/.github/workflows/website.yml" | tr -d "'\"" | sed 's/, */,/g')"
-check "web: Mobile Chrome needs only chromium" \
-    test "$(web_browsers --browser-project 'Mobile Chrome')" = "--web $FIXTURE/apps/web chromium"
-check "web: firefox and Mobile Safari add theirs" \
-    test "$(web_browsers --browser-project firefox --browser-project 'Mobile Safari')" = "--web $FIXTURE/apps/web chromium firefox webkit"
-check "removes the gate root after the web step" parent_empty
-
 echo "run_gate: the bun memory cap (acfs-dpvr)"
 # Stubs: bun records its arguments; systemctl answers the user manager's
 # state from GATE_TEST_SYSTEMD_STATE; systemd-run records its options and

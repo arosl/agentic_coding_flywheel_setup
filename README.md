@@ -2873,19 +2873,9 @@ acfs agent-readiness --home /home/ubuntu --path "$PATH"
 
 Treat failures as launch blockers. Warnings usually mean the CLI is installed but needs a user sign-in or CAAM default profile selection.
 
-### Website Deployment (`website.yml`)
+### Website CI
 
-```yaml
-# Builds and deploys the Next.js wizard
-jobs:
-  build:
-    - Type-check TypeScript
-    - Run ESLint
-    - Build production bundle
-
-  deploy:
-    - Deploy to Vercel (production)
-```
+The fork deploys no website, so it carries no website CI. `website.yml` (build and deploy), `playwright.yml` (E2E) and `production-smoke.yml` (against the deployed site) are upstream's and are not in the fork's tree. `apps/web` remains in the tree as source, but no gate step or CI job builds or tests it.
 
 ### Automated Checksum + Drift Repair (`scripts/checksum-monitor-local.sh`)
 
@@ -2914,20 +2904,6 @@ is an internal consistency boundary, not an independent signature or archive
 provenance claim.
 
 First-party changes can publish automatically after these checks. External changes require review **before publication**, rather than a post-publication alert. Repeated failures are logged and escalated through deduplicated GitHub issues and optional `ACFS_NTFY_TOPIC` notifications. Check the deployed timer's logs for its current health; the existence of workflow or timer files does not prove that monitoring is running.
-
-### Production Smoke Tests (`production-smoke.yml`)
-
-Validates deployments on real environments:
-
-```yaml
-# Runs after deployment
-jobs:
-  smoke:
-    - Fetches install.sh from production URL
-    - Verifies checksum matches repository
-    - Validates shell syntax
-    - Confirms no uncommitted drift
-```
 
 ### Installer Canary (Docker) (`installer-canary.yml`)
 
@@ -3000,28 +2976,6 @@ Runs the same factory-host harness inside a real local VM instead of a Docker co
 ```bash
 sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils openssh-client
 ./tests/vm/test_factory_install_qemu.sh --ubuntu 24.04 --expect-final-ubuntu 24.04
-```
-
-Use this when Docker passes but you need local proof for systemd, sshd, cloud-init, kernel, filesystem, and login behavior before spending time on a disposable provider VPS.
-
-### Playwright E2E Tests (`playwright.yml`)
-
-Full browser testing of the wizard website:
-
-```yaml
-# Runs on PR to main
-browsers:
-  - Chromium
-  - Firefox
-  - WebKit
-  - Mobile Chrome
-  - Mobile Safari
-
-tests:
-  - Wizard flow completion
-  - Step navigation
-  - Copy button functionality
-  - Responsive design
 ```
 
 ---
@@ -3172,8 +3126,7 @@ agentic_coding_flywheel_setup/
 │
 ├── .github/
 │   └── workflows/
-│       ├── installer.yml         # ShellCheck + Ubuntu matrix tests
-│       └── website.yml           # Next.js build + deploy
+│       └── installer.yml         # ShellCheck + Ubuntu matrix tests
 │
 └── tests/
     └── vm/

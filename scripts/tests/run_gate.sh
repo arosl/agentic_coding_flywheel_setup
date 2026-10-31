@@ -19,16 +19,13 @@
 #               every tracked *.bats as unit-bats.yml does, then CI's
 #               installer.yml jobs (the scripts its ShellCheck job runs)
 #   ci          run_ci_workflows_locally.sh (--since REF when given)
-#   web         apps/web type-check, lint, build, then Playwright
-#               under the host-wide browser lock, after a missing
-#               browser is installed from the zip mirror
-#               (ensure_playwright_browsers.sh)
+#
+# The fork deploys no website, so the gate runs no apps/web checks.
 #
 # rch offloads Rust builds, not bun's. So where a systemd user manager
-# runs, the manifest and web steps run each bun command, Playwright
-# aside, in a user scope with a memory cap (--bun-memory-max); one that
-# reaches it is killed and named (acfs-dpvr). Without a user manager,
-# they run without a cap.
+# runs, the manifest step runs each bun command in a user scope with a
+# memory cap (--bun-memory-max); one that reaches it is killed and named
+# (acfs-dpvr). Without a user manager, it runs without a cap.
 #
 # Run it in the gate worktree at the commit you push, after
 # 'bun install --frozen-lockfile': the CI steps write into the tree.
@@ -38,7 +35,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-ALL_STEPS=(manifest policy shellcheck ci web)
+ALL_STEPS=(manifest policy shellcheck ci)
 
 usage() {
     cat <<'USAGE'
@@ -53,24 +50,16 @@ Options:
   --root DIR              Checkout to gate (default: this one)
   --since REF             Pass --since REF to the CI workflow step
   --step NAME             Run only this step (repeatable): manifest,
-                          policy, shellcheck, ci, web
-  --browser-project NAME  Playwright project to run (repeatable;
-                          default: CI's matrix in website.yml, chromium,
-                          firefox and Mobile Chrome)
+                          policy, shellcheck, ci
   --tmp-parent DIR        Where the temp root goes (default: /tmp, as
                           in CI; it must be traversable by other users)
   --bun-memory-max SIZE   The memory cap of each bun command of the
-                          manifest and web steps, Playwright aside, in
-                          systemd's units (default: 4G), or none
+                          manifest step, in systemd's units (default:
+                          4G), or none
   --keep                  Keep the temp root, for debugging a failure
   -h, --help              Show this help
 
 Environment:
-  ACFS_BROWSER_GATE_LOCK  The host-wide Playwright lock file (default:
-                          /data/tmp/acfs-browser-gate.lock when /data/tmp
-                          exists, else /tmp/acfs-browser-gate.lock)
-  ACFS_PLAYWRIGHT_MIRROR  The browser zip mirror, kept across runs
-                          (default: ~/.cache/acfs/playwright-mirror)
   ACFS_GATE_ALLOW_SUDO    1 lets the commands use this host's sudo, for a
                           test that needs root. Otherwise they run with
                           no_new_privs, and a sudo first on PATH refuses
@@ -83,18 +72,12 @@ USAGE
 ROOT="$REPO_ROOT"
 SINCE=""
 STEPS=()
-BROWSER_PROJECTS=()
-# The projects CI runs (website.yml's matrix, acfs-wg62), the web step's
-# default; test_run_gate.sh keeps the two equal. webkit and Mobile Safari
-# stay in the config for --browser-project (acfs-5wv6).
-DEFAULT_BROWSER_PROJECTS=(chromium firefox "Mobile Chrome")
 TMP_PARENT="/tmp"
 KEEP=false
 COMMAND=()
-# Peaks measured on 2026-10-23, each command alone in a scope (cgroup
-# memory.peak): manifest bun test 0.3 GiB, web type-check 1.1, lint 1.2,
-# build 1.0 to 2.2. The cap leaves room above them and stops a runaway.
-# Playwright isn't capped: its browsers, not bun, hold its memory.
+# Peak measured on 2026-10-23, each command alone in a scope (cgroup
+# memory.peak): manifest bun test 0.3 GiB. The cap leaves room above it
+# and stops a runaway.
 BUN_MEMORY_MAX="4G"
 
 while [[ $# -gt 0 ]]; do
@@ -108,7 +91,6 @@ while [[ $# -gt 0 ]]; do
                 *) echo "run_gate: unknown step: $2 (one of: ${ALL_STEPS[*]})" >&2; exit 2 ;;
             esac
             shift 2 ;;
-        --browser-project) [[ $# -ge 2 ]] || { echo "run_gate: --browser-project needs a name" >&2; exit 2; }; BROWSER_PROJECTS+=("$2"); shift 2 ;;
         --tmp-parent) [[ $# -ge 2 ]] || { echo "run_gate: --tmp-parent needs a directory" >&2; exit 2; }; TMP_PARENT="$2"; shift 2 ;;
         --bun-memory-max)
             [[ $# -ge 2 && "$2" =~ ^([1-9][0-9]*[KMGT]|none)$ ]] \
@@ -128,35 +110,12 @@ fi
 ROOT="$(cd "$ROOT" && pwd)"
 [[ -d "$TMP_PARENT" ]] || { echo "run_gate: --tmp-parent is not a directory: $TMP_PARENT" >&2; exit 2; }
 
-if [[ -z "${ACFS_BROWSER_GATE_LOCK:-}" ]]; then
-    if [[ -d /data/tmp ]]; then
-        ACFS_BROWSER_GATE_LOCK=/data/tmp/acfs-browser-gate.lock
-    else
-        ACFS_BROWSER_GATE_LOCK=/tmp/acfs-browser-gate.lock
-    fi
-fi
-
-# Caches and browsers stay where the caller keeps them: the fresh HOMEs
-# below would otherwise refetch every package and find no browser.
+# Caches stay where the caller keeps them: the fresh HOMEs below would
+# otherwise refetch every package.
 REAL_HOME="$HOME"
 export BUN_INSTALL_CACHE_DIR="${BUN_INSTALL_CACHE_DIR:-$REAL_HOME/.bun/install/cache}"
-export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-${XDG_CACHE_HOME:-$REAL_HOME/.cache}/ms-playwright}"
-export ACFS_PLAYWRIGHT_MIRROR="${ACFS_PLAYWRIGHT_MIRROR:-${XDG_CACHE_HOME:-$REAL_HOME/.cache}/acfs/playwright-mirror}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$REAL_HOME/.cache}/uv}"
 unset XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME
-# Playwright's browser GC deletes a browser whose .links entries name
-# projects that are gone, and gate worktrees come and go: an install
-# deleted chromium-1208 and a fresh Firefox that way (acfs-l3r7).
-export PLAYWRIGHT_SKIP_BROWSER_GC=1
-# Playwright 1.58 has no builds for Ubuntu 26.04; its 24.04 builds run there.
-if [[ -z "${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-}" ]] \
-    && grep -qx 'ID=ubuntu' /etc/os-release 2>/dev/null \
-    && grep -qx 'VERSION_ID="26.04"' /etc/os-release 2>/dev/null; then
-    case "$(uname -m)" in
-        x86_64) export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64 ;;
-        aarch64) export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-arm64 ;;
-    esac
-fi
 
 # CI's umask. Group-writable temp dirs fail upstream's ownership checks.
 umask 022
@@ -288,7 +247,7 @@ bun_scope_decide() {
         echo "run_gate: no systemd user manager (${state:-none}); the bun commands run without a memory cap" >&2
         return 0
     fi
-    echo "run_gate: each bun command but Playwright runs in a user scope capped at $BUN_MEMORY_MAX" >&2
+    echo "run_gate: each bun command runs in a user scope capped at $BUN_MEMORY_MAX" >&2
     # --expand-environment=no: systemd-run would expand ${...} and $$ in
     # the runner itself. OOMPolicy=continue: a scope's default
     # (DefaultOOMPolicy=stop) has systemd terminate the whole scope after
@@ -349,35 +308,6 @@ step_ci() {
     local args=(--log-dir "$GATE_ROOT/logs/ci")
     [[ -z "$SINCE" ]] || args+=(--since "$SINCE")
     run_cmd "ci: workflows${SINCE:+ since $SINCE}" "$ROOT" bash scripts/tests/run_ci_workflows_locally.sh "${args[@]}" || true
-}
-
-free_port() {
-    python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
-}
-
-step_web() {
-    local dir="$ROOT/apps/web" port project
-    run_bun "web: type-check" "$dir" bun run type-check || true
-    run_bun "web: lint" "$dir" bun run lint || true
-    run_bun "web: build" "$dir" bun run build || true
-    local pw_args=() browsers=(chromium) projects=("${BROWSER_PROJECTS[@]}")
-    [[ ${#projects[@]} -gt 0 ]] || projects=("${DEFAULT_BROWSER_PROJECTS[@]}")
-    # The browsers the run needs: chromium always (Mobile Chrome too),
-    # firefox and webkit when a project uses them. A missing one comes
-    # from the zip mirror.
-    for project in "${projects[@]}"; do
-        pw_args+=("--project=$project")
-        case "$project" in
-            firefox) browsers+=(firefox) ;;
-            webkit|"Mobile Safari") browsers+=(webkit) ;;
-        esac
-    done
-    run_cmd "web: browsers" "$dir" flock "$ACFS_BROWSER_GATE_LOCK" \
-        bash "$ROOT/scripts/tests/ensure_playwright_browsers.sh" --web "$dir" "${browsers[@]}" || true
-    port="$(free_port)"
-    # One Playwright run at a time on the host: concurrent runs time out.
-    run_cmd "web: playwright" "$dir" env PW_PORT="$port" \
-        flock "$ACFS_BROWSER_GATE_LOCK" bun run test -- "${pw_args[@]}" || true
 }
 
 echo "run_gate: temp root $GATE_ROOT (TMPDIR and every HOME)" >&2
