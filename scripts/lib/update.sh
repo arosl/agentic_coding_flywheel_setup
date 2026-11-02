@@ -9431,6 +9431,52 @@ update_report_service_binary_drift() {
     return 0
 }
 
+# The same for the services' systemd units (acfs-eyvw): a unit this update
+# gave new settings keeps the old ones until it restarts, as a cass indexer
+# without its quiet log level does, and a unit systemd gave up on stays down.
+# Report each one with its fix; restart nothing, for the same reason.
+update_report_service_unit_health() {
+    local services_script=""
+    local health_output=""
+    local service="" state="" detail="" fix=""
+    local timeout_bin=""
+    local -a health_cmd=()
+    local reported=false
+
+    [[ "$DRY_RUN" == "true" ]] && return 0
+
+    services_script="$(update_runtime_acfs_home 2>/dev/null || true)/scripts/lib/acfs-services.sh"
+    [[ -r "$services_script" ]] || return 0
+
+    health_cmd=(bash "$services_script" health --robot)
+    timeout_bin="$(update_system_binary_path timeout 2>/dev/null || true)"
+    if [[ -n "$timeout_bin" ]]; then
+        health_cmd=("$timeout_bin" 30 "${health_cmd[@]}")
+    fi
+
+    health_output="$("${health_cmd[@]}" 2>/dev/null || true)"
+    [[ -n "$health_output" ]] || return 0
+
+    while IFS='|' read -r service state detail; do
+        [[ "$service" =~ ^[a-z-]+$ ]] || continue
+        case "$state" in
+            outdated)       fix="acfs services restart $service" ;;
+            failed|stopped) fix="acfs services repair $service" ;;
+            restarting)     fix="systemd retries it by itself; see why: acfs services logs $service" ;;
+            *)              continue ;;
+        esac
+        if [[ "$reported" != "true" ]]; then
+            reported=true
+            echo ""
+            printf "${YELLOW}${BOLD}! ACFS service units need attention${NC}\n"
+        fi
+        printf "${YELLOW}  %s: %s${NC}\n" "$service" "$detail"
+        printf "${DIM}    Fix: %s${NC}\n" "$fix"
+        log_to_file "SERVICE UNIT: $service: $state: $detail"
+    done <<< "$health_output"
+    return 0
+}
+
 print_summary() {
     # Pin failures are infrastructure blockers, not background noise among
     # ordinary tool failures. Keep the existing aggregate/exit-code contract,
@@ -10378,6 +10424,8 @@ main() {
 
     # Report managed services still running a replaced binary (#381)
     update_report_service_binary_drift
+    # ...and service units that are down or on older settings (acfs-eyvw)
+    update_report_service_unit_health
 
     update_procwatch_stop
 

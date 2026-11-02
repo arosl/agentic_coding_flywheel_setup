@@ -17603,6 +17603,84 @@ STUBS
     refute_output --partial "SHOULD_NOT_BE_CALLED"
 }
 
+@test "acfs update reports service units that are down or on older settings (acfs-eyvw)" {
+    local fake_home="$BATS_TEST_TMPDIR/acfs-home"
+
+    mkdir -p "$fake_home/scripts/lib"
+    printf '#!/usr/bin/env bash\n[[ "$1 $2" == "health --robot" ]] || exit 2\nprintf "agent-mail|disabled|acfs-agent-mail.service is not enabled\\n"\nprintf "cm|ok|acfs-cm.service is running\\n"\nprintf "cass|outdated|acfs-cass-index.service runs on older settings\\n"\nexit 1\n' \
+        > "$fake_home/scripts/lib/acfs-services.sh"
+    chmod +x "$fake_home/scripts/lib/acfs-services.sh"
+
+    run bash -c '
+        source "$1"
+        set +e
+        fake_home="$2"
+        update_runtime_acfs_home() { printf "%s\n" "$fake_home"; }
+        DRY_RUN=false
+        update_report_service_unit_health
+        echo "RC=$?"
+    ' _ "$PROJECT_ROOT/scripts/lib/update.sh" "$fake_home"
+
+    assert_output --partial "ACFS service units need attention"
+    assert_output --partial "cass: acfs-cass-index.service runs on older settings"
+    assert_output --partial "Fix: acfs services restart cass"
+    assert_output --partial "RC=0"
+    refute_output --partial "cm: "
+    refute_output --partial "agent-mail: "
+}
+
+@test "acfs update names the repair for a failed service unit, and says nothing when all are fine (acfs-eyvw)" {
+    local fake_home="$BATS_TEST_TMPDIR/acfs-home"
+    local services="$fake_home/scripts/lib/acfs-services.sh"
+
+    mkdir -p "$fake_home/scripts/lib"
+    printf '#!/usr/bin/env bash\nprintf "cass|failed|acfs-cass-index.service has failed\\n"\n' > "$services"
+    chmod +x "$services"
+
+    run bash -c '
+        source "$1"
+        set +e
+        fake_home="$2"
+        update_runtime_acfs_home() { printf "%s\n" "$fake_home"; }
+        DRY_RUN=false
+        update_report_service_unit_health
+    ' _ "$PROJECT_ROOT/scripts/lib/update.sh" "$fake_home"
+
+    assert_output --partial "cass: acfs-cass-index.service has failed"
+    assert_output --partial "Fix: acfs services repair cass"
+
+    printf '#!/usr/bin/env bash\nprintf "cm|ok|acfs-cm.service is running\\n"\nprintf "cass|not-set-up|no acfs-cass-index.service\\n"\n' > "$services"
+
+    run bash -c '
+        source "$1"
+        set +e
+        fake_home="$2"
+        update_runtime_acfs_home() { printf "%s\n" "$fake_home"; }
+        DRY_RUN=false
+        update_report_service_unit_health
+        echo "RC=$?"
+    ' _ "$PROJECT_ROOT/scripts/lib/update.sh" "$fake_home"
+
+    assert_output "RC=0"
+}
+
+@test "acfs update skips the unit report during a dry run, and runs it after the drift report (acfs-eyvw)" {
+    run bash -c '
+        source "$1"
+        set +e
+        update_runtime_acfs_home() { echo "SHOULD_NOT_BE_CALLED" >&2; printf "/nonexistent\n"; }
+        DRY_RUN=true
+        update_report_service_unit_health
+        echo "RC=$?"
+    ' _ "$PROJECT_ROOT/scripts/lib/update.sh"
+
+    assert_output --partial "RC=0"
+    refute_output --partial "SHOULD_NOT_BE_CALLED"
+
+    run grep -A2 -x '    update_report_service_binary_drift' "$PROJECT_ROOT/scripts/lib/update.sh"
+    assert_output --partial "update_report_service_unit_health"
+}
+
 @test "update.sh: nightly UBS install never wires agent hooks (#400)" {
     # --easy-mode auto-accepts the UBS installer's hook prompts. Run from $HOME
     # by the nightly, that reinstalled the legacy git_safety_guard the update

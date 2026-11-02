@@ -4303,6 +4303,62 @@ check_service_binary_drift() {
     return 0
 }
 
+# The ACFS units of cm, the cass indexer and Agent Mail's fallback
+# (acfs-eyvw): a unit systemd gave up on fails; one waiting to restart, one
+# enabled but not running, and one on older unit settings than 'acfs
+# services start' writes warn. acfs-services.sh's `health` reads systemd. A
+# host where 'acfs services start' never ran has no unit and no finding.
+check_service_units() {
+    local service_manager=""
+    local health_output=""
+    local service="" state="" detail=""
+    local timeout_bin=""
+    local -a health_cmd=()
+
+    service_manager="$(_acfs_doctor_find_lib_script "acfs-services.sh" 2>/dev/null || true)"
+    if [[ -z "$service_manager" || ! -r "$service_manager" ]]; then
+        return 0
+    fi
+
+    health_cmd=(bash "$service_manager" health --robot)
+    timeout_bin="$(_acfs_doctor_system_binary_path timeout 2>/dev/null || true)"
+    if [[ -n "$timeout_bin" ]]; then
+        health_cmd=("$timeout_bin" 30 "${health_cmd[@]}")
+    fi
+
+    health_output="$("${health_cmd[@]}" 2>/dev/null || true)"
+    [[ -n "$health_output" ]] || return 0
+
+    while IFS='|' read -r service state detail; do
+        [[ "$service" =~ ^[a-z-]+$ ]] || continue
+        case "$state" in
+            failed)
+                check "services.unit.$service" \
+                    "Managed service '$service' has failed and stays down" \
+                    "fail" "$detail" "acfs services repair $service"
+                ;;
+            restarting)
+                check "services.unit.$service" \
+                    "Managed service '$service' keeps failing" \
+                    "warn" "$detail" \
+                    "systemd retries it by itself; see why: acfs services logs $service"
+                ;;
+            stopped)
+                check "services.unit.$service" \
+                    "Managed service '$service' is enabled but not running" \
+                    "warn" "$detail" "acfs services repair $service"
+                ;;
+            outdated)
+                check "services.unit.$service" \
+                    "Managed service '$service' runs on older unit settings" \
+                    "warn" "$detail" "acfs services restart $service"
+                ;;
+        esac
+    done <<< "$health_output"
+
+    return 0
+}
+
 # Incus next to podman and Docker (acfs-ioo3.16): firewall backend, subnet
 # overlap, subordinate id ranges and Docker's FORWARD policy, all read-only,
 # from coexistence.sh. Its traffic tests start probes inside instances, so
@@ -7335,6 +7391,7 @@ $(gum style --foreground "$ACFS_MUTED" "OS:") $(gum style --foreground "$ACFS_TE
     check_cloud
     check_stack
     check_service_binary_drift
+    check_service_units
     check_utilities
     check_incus
     check_coexistence

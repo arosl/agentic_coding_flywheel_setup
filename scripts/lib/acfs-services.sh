@@ -12,6 +12,7 @@
 #   acfs services restart [svc...]  Restart everything, or just named services
 #   acfs services repair      Restart only the services that are not running
 #   acfs services drift       Report services running a replaced binary
+#   acfs services health      Report units that are down or on older settings
 #   acfs services logs [svc]  Follow a service's journal
 #
 # Services and their units (in ~/.config/systemd/user):
@@ -258,27 +259,53 @@ _require_systemd_user() {
     return 1
 }
 
+# A unit's text changes only when its settings do: `start` restarts a running
+# unit whose text changed, and `health` reports one whose file is older. So
+# ACFS_SVC_VERSION in the header is bumped only with a change to every unit.
 _unit_text() {
     local service="$1"
-    local exec_line="" desc=""
+    local exec_line="" desc="" limit_lines="" restart_lines=""
 
     exec_line="$(_service_cmd "$service")" || return 1
     desc="$(_service_desc "$service")" || return 1
+    if [[ "$service" == "cass" ]]; then
+        # acfs-eyvw: cass logged ~9M INFO lines a day, which filled a disk
+        # through rsyslog. On the full disk it refused to start (low disk
+        # headroom, exit 14), hit the start limit and stayed failed for a day
+        # after the space was free again.
+        limit_lines="# No start limit: the backoff in [Service] is the only governor. cass
+# refuses to start while disk headroom is low, and must come back by itself
+# once there is space, not stay failed until 'acfs services repair'.
+StartLimitIntervalSec=0"
+        restart_lines="Restart=on-failure
+# Exponential backoff (systemd >= 254): 5s, widening to a 5 min ceiling, so a
+# cass that cannot start tries about 12 times an hour, not 720.
+RestartSec=5
+RestartSteps=6
+RestartMaxDelaySec=300
+# cass's INFO tracing runs to millions of lines a day. Its warnings and
+# errors (a headroom refusal, a stall) stay. To debug, raise it in a
+# drop-in: systemctl --user edit acfs-cass-index.service
+Environment=RUST_LOG=warn"
+    else
+        limit_lines="# Give up after 5 failed starts in 2 minutes (e.g. a port held by another
+# process) instead of crash-looping; 'acfs services repair' clears it.
+StartLimitIntervalSec=120
+StartLimitBurst=5"
+        restart_lines="Restart=on-failure
+RestartSec=5"
+    fi
     cat <<EOF
 # Written by 'acfs services start' (acfs-services.sh $ACFS_SVC_VERSION). Rewritten on
 # every start; edit ACFS_* settings instead, then run 'acfs services start'.
 [Unit]
 Description=ACFS $desc
-# Give up after 5 failed starts in 2 minutes (e.g. a port held by another
-# process) instead of crash-looping; 'acfs services repair' clears it.
-StartLimitIntervalSec=120
-StartLimitBurst=5
+$limit_lines
 
 [Service]
 Type=simple
 ExecStart=$exec_line
-Restart=on-failure
-RestartSec=5
+$restart_lines
 Environment=PATH=%h/.acfs/bin:%h/.local/bin:%h/.cargo/bin:%h/.bun/bin:%h/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=HOME=%h
 
@@ -1096,6 +1123,178 @@ cmd_drift() {
     return $rc
 }
 
+# --- Unit health (acfs-eyvw) ---
+#
+# A unit can be down with nothing to bring it back: systemd gave up on it
+# (its start limit), or it is enabled but not running. A unit can also run
+# on older settings than 'acfs services start' writes now, as a cass
+# indexer started before its quiet log level did. `health` names each case.
+
+# Does the unit file hold other settings than 'acfs services start' writes
+# now? ExecStart is left out: it names the binary this caller resolves, which
+# a run with another PATH can resolve elsewhere, and `start` rewrites a moved
+# binary anyway. Returns 1 when they match or cannot be compared.
+_unit_settings_outdated() {
+    local service="$1"
+    local unit="" path="" text="" current="" desired=""
+
+    unit="$(_unit_name "$service")" || return 1
+    path="$(_unit_dir)/$unit"
+    [[ -f "$path" ]] || return 1
+    text="$(_unit_text "$service" 2>/dev/null)" || return 1
+    current="$(grep -v '^ExecStart=' "$path" 2>/dev/null || true)"
+    desired="$(printf '%s\n' "$text" | grep -v '^ExecStart=' || true)"
+    [[ "$current" != "$desired" ]]
+}
+
+# Emits "<service>|<state>|<detail>" for one service's ACFS unit.
+#   ok          active, on the settings `start` writes now
+#   outdated    active, but its unit file has older settings
+#   failed      systemd gave up on it; nothing starts it again
+#   restarting  it failed and waits for its next automatic restart
+#   stopped     enabled, but not running
+#   changing    starting or stopping right now
+#   disabled    not enabled ('acfs services stop', or a retired
+#               acfs-agent-mail.service next to the native unit)
+#   not-set-up  no unit file ('acfs services start' never ran)
+#   unknown     no systemd user manager is reachable
+_service_unit_health() {
+    local service="$1"
+    local unit="" line="" key="" value=""
+    local active="" sub="" file_state="" result="" restarts="" status="" last=""
+
+    unit="$(_unit_name "$service")" || return 1
+    if ! _unit_file_exists "$service"; then
+        printf '%s|%s|%s\n' "$service" "not-set-up" "no $unit; 'acfs services start' writes it"
+        return 0
+    fi
+    if ! _systemd_user_available; then
+        printf '%s|%s|%s\n' "$service" "unknown" "no systemd user manager is reachable"
+        return 0
+    fi
+
+    while IFS= read -r line; do
+        key="${line%%=*}"
+        value="${line#*=}"
+        value="${value//|/}"
+        case "$key" in
+            ActiveState)    active="$value" ;;
+            SubState)       sub="$value" ;;
+            UnitFileState)  file_state="$value" ;;
+            Result)         result="$value" ;;
+            NRestarts)      restarts="$value" ;;
+            ExecMainStatus) status="$value" ;;
+        esac
+    done < <(_systemctl_user show "$unit" -p ActiveState -p SubState -p UnitFileState \
+        -p Result -p NRestarts -p ExecMainStatus 2>/dev/null || true)
+
+    last="result ${result:-unknown}, last exit status ${status:-unknown}, ${restarts:-0} automatic restarts"
+    case "$active" in
+        failed)
+            printf '%s|%s|%s\n' "$service" "failed" \
+                "$unit has failed ($last); systemd will not start it again by itself"
+            ;;
+        activating)
+            if [[ "$sub" == auto-restart* ]]; then
+                printf '%s|%s|%s\n' "$service" "restarting" \
+                    "$unit exited ($last) and waits for its next automatic restart"
+            else
+                printf '%s|%s|%s\n' "$service" "changing" "$unit is starting"
+            fi
+            ;;
+        deactivating)
+            printf '%s|%s|%s\n' "$service" "changing" "$unit is stopping"
+            ;;
+        active|reloading|refreshing)
+            if _unit_settings_outdated "$service"; then
+                printf '%s|%s|%s\n' "$service" "outdated" \
+                    "$unit runs on older settings than 'acfs services start' writes now"
+            else
+                printf '%s|%s|%s\n' "$service" "ok" "$unit is running"
+            fi
+            ;;
+        *)
+            if [[ "$file_state" == enabled* ]]; then
+                printf '%s|%s|%s\n' "$service" "stopped" \
+                    "$unit is enabled but not running ($last)"
+            else
+                printf '%s|%s|%s\n' "$service" "disabled" "$unit is not enabled"
+            fi
+            ;;
+    esac
+}
+
+# The command that fixes a unit in this state, or nothing.
+_unit_health_fix() {
+    local service="$1" state="$2"
+    case "$state" in
+        failed|stopped) printf '%s\n' "acfs services repair $service" ;;
+        restarting)     printf '%s\n' "systemd retries it by itself; see why: acfs services logs $service" ;;
+        outdated)       printf '%s\n' "acfs services restart $service" ;;
+        *)              return 1 ;;
+    esac
+}
+
+# Warn about every unit that is down or on older settings. Returns 0 when
+# there is none, 1 otherwise.
+_report_unit_health() {
+    local service="" line="" state="" detail="" fix=""
+    local found=false
+
+    for service in "${ACFS_SERVICE_NAMES[@]}"; do
+        line="$(_service_unit_health "$service")"
+        state="${line#*|}"
+        detail="${state#*|}"
+        state="${state%%|*}"
+        fix="$(_unit_health_fix "$service" "$state")" || continue
+        if ! $found; then
+            printf '\n' >&2
+            found=true
+        fi
+        _warn "$service: $detail"
+        _warn "  Fix: $fix"
+    done
+    $found && return 1
+    return 0
+}
+
+cmd_health() {
+    local robot=false
+    local service="" line="" state=""
+    local rc=0
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --robot|--porcelain) robot=true; shift ;;
+            "") shift ;;
+            *)
+                _err "Unknown option for 'health': '$1'"
+                _info "Usage: acfs services health [--robot]"
+                return 1
+                ;;
+        esac
+    done
+
+    _initialize_bins
+
+    if $robot; then
+        for service in "${ACFS_SERVICE_NAMES[@]}"; do
+            line="$(_service_unit_health "$service")"
+            printf '%s\n' "$line"
+            state="${line#*|}"
+            _unit_health_fix "$service" "${state%%|*}" >/dev/null && rc=1
+        done
+        return $rc
+    fi
+
+    if _report_unit_health; then
+        _ok "No ACFS service unit is down or on older settings."
+    else
+        rc=1
+    fi
+    return $rc
+}
+
 # --- Starting units ---
 
 # Write, enable and start the given services' ACFS units. A unit whose text
@@ -1407,6 +1606,8 @@ cmd_status() {
     # update replaced days ago (#381). Say so; do not let readiness read green
     # while the shipped fix is not actually live.
     _report_binary_drift || true
+    # And a unit can be down for good, or run on older unit settings.
+    _report_unit_health || true
     return $rc
 }
 
@@ -1581,6 +1782,8 @@ Commands:
   repair              Start only the services that are not running
   drift [--robot]     Report managed services still executing a binary that
                       has since been replaced on disk
+  health [--robot]    Report units that failed, wait to restart, are enabled
+                      but not running, or run on older unit settings
   logs [service]      Follow the services' journal (optionally one service)
 
 Services managed:
@@ -1606,6 +1809,7 @@ Examples:
   acfs services restart            # Restart everything
   acfs services restart cass       # Restart only CASS; Agent Mail stays up
   acfs services drift              # Are the live services on the installed binaries?
+  acfs services health             # Is a unit down, or on older settings?
   acfs services stop               # Stop everything until the next start
 
 The services are systemd user units in ~/.config/systemd/user. Once started
@@ -1644,6 +1848,7 @@ main() {
         restart) cmd_restart "${args[@]+"${args[@]}"}" ;;
         repair)  cmd_repair "${args[@]+"${args[@]}"}" ;;
         drift)   cmd_drift "${args[@]+"${args[@]}"}" ;;
+        health)  cmd_health "${args[@]+"${args[@]}"}" ;;
         logs|log|attach)
             cmd_logs "${args[0]:-}" ;;
         help|-h|--help|"")

@@ -60,11 +60,33 @@ case "$cmd" in
         [[ -e "$STUB_STATE/no-systemd" ]] && exit 1
         echo "HOME=$HOME" ;;
     show)
-        unit="$1"; prop="${3:-}"
-        case "$prop" in
-            LoadState) [[ -e "$STUB_STATE/loaded-$unit" ]] && echo loaded || echo not-found ;;
-            MainPID)   echo 0 ;;
-        esac ;;
+        unit="$1"; shift
+        if [[ " $* " == *" --value "* ]]; then
+            case "${2:-}" in
+                LoadState) [[ -e "$STUB_STATE/loaded-$unit" ]] && echo loaded || echo not-found ;;
+                MainPID)   echo 0 ;;
+            esac
+            exit 0
+        fi
+        # "show <unit> -p A -p B": Key=Value lines. A file
+        # $STUB_STATE/prop/<unit>.<Key> overrides the value.
+        while [[ $# -gt 0 ]]; do
+            [[ "$1" == "-p" ]] || { shift; continue; }
+            prop="$2"; shift 2
+            if [[ -f "$STUB_STATE/prop/$unit.$prop" ]]; then
+                value="$(cat "$STUB_STATE/prop/$unit.$prop")"
+            else
+                case "$prop" in
+                    ActiveState)    [[ -e "$STUB_STATE/active/$unit" ]] && value=active || value=inactive ;;
+                    SubState)       [[ -e "$STUB_STATE/active/$unit" ]] && value=running || value=dead ;;
+                    UnitFileState)  [[ -e "$STUB_STATE/enabled/$unit" ]] && value=enabled || value=disabled ;;
+                    Result)         value=success ;;
+                    NRestarts|ExecMainStatus) value=0 ;;
+                    *)              value="" ;;
+                esac
+            fi
+            printf '%s=%s\n' "$prop" "$value"
+        done ;;
     is-active)
         [[ "${1:-}" == "--quiet" ]] && shift
         [[ -e "$STUB_STATE/active/$1" ]] ;;
@@ -384,6 +406,178 @@ if [[ "$RC" -eq 0 && "$OUT" == *"journalctl --user -u acfs-cm.service -f"* ]]; t
 else
     fail "logs cm follows acfs-cm.service's journal" "rc=$RC $OUT"
 fi
+
+# ------------------------------------------------------------
+# The cass unit's log level and restart policy (acfs-eyvw)
+# ------------------------------------------------------------
+CASS_UNIT="$UNIT_DIR/acfs-cass-index.service"
+CM_UNIT="$UNIT_DIR/acfs-cm.service"
+set_prop() { mkdir -p "$STATE/prop"; printf '%s\n' "$3" > "$STATE/prop/$1.$2"; }
+
+reset_state
+svc start
+if grep -qx 'Environment=RUST_LOG=warn' "$CASS_UNIT" && grep -qx 'StartLimitIntervalSec=0' "$CASS_UNIT" \
+    && ! grep -q '^StartLimitBurst=' "$CASS_UNIT" && grep -qx 'Restart=on-failure' "$CASS_UNIT" \
+    && grep -qx 'RestartSec=5' "$CASS_UNIT" && grep -qx 'RestartSteps=6' "$CASS_UNIT" \
+    && grep -qx 'RestartMaxDelaySec=300' "$CASS_UNIT"; then
+    pass "the cass unit logs warnings and errors only, and backs off to 5 min with no start limit"
+else
+    fail "the cass unit logs warnings and errors only, and backs off to 5 min with no start limit" "$(cat "$CASS_UNIT")"
+fi
+
+if grep -qx 'StartLimitIntervalSec=120' "$CM_UNIT" && grep -qx 'StartLimitBurst=5' "$CM_UNIT" \
+    && ! grep -q -e 'RUST_LOG' -e '^RestartSteps=' "$CM_UNIT"; then
+    pass "cm keeps its start limit, and gets no log level or backoff"
+else
+    fail "cm keeps its start limit, and gets no log level or backoff" "$(cat "$CM_UNIT")"
+fi
+
+# ------------------------------------------------------------
+# health: units that are down, or on older settings (acfs-eyvw)
+# ------------------------------------------------------------
+svc health --robot
+if [[ "$RC" -eq 0 && "$OUT" == *"agent-mail|ok|"* && "$OUT" == *"cm|ok|"* && "$OUT" == *"cass|ok|"* ]]; then
+    pass "health --robot reports every running unit ok and exits 0"
+else
+    fail "health --robot reports every running unit ok and exits 0" "rc=$RC $OUT"
+fi
+
+# systemd gave up on cass, as it did on the full disk.
+rm -f "$STATE/active/acfs-cass-index.service"
+set_prop acfs-cass-index.service ActiveState failed
+set_prop acfs-cass-index.service Result exit-code
+set_prop acfs-cass-index.service ExecMainStatus 14
+set_prop acfs-cass-index.service NRestarts 5
+svc health --robot
+if [[ "$RC" -eq 1 && "$OUT" == *"cass|failed|acfs-cass-index.service has failed (result exit-code, last exit status 14, 5 automatic restarts)"* \
+    && "$OUT" == *"cm|ok|"* ]]; then
+    pass "health --robot reports a failed cass unit with its last exit status, and exits 1"
+else
+    fail "health --robot reports a failed cass unit with its last exit status, and exits 1" "rc=$RC $OUT"
+fi
+
+svc status
+if [[ "$RC" -ne 0 && "$OUT" == *"cass: acfs-cass-index.service has failed"* \
+    && "$OUT" == *"Fix: acfs services repair cass"* ]]; then
+    pass "status names a failed unit and its repair"
+else
+    fail "status names a failed unit and its repair" "rc=$RC $OUT"
+fi
+
+set_prop acfs-cass-index.service ActiveState activating
+set_prop acfs-cass-index.service SubState auto-restart
+svc health --robot
+if [[ "$RC" -eq 1 && "$OUT" == *"cass|restarting|acfs-cass-index.service exited (result exit-code, last exit status 14, 5 automatic restarts) and waits for its next automatic restart"* ]]; then
+    pass "health --robot reports a unit waiting for its next automatic restart"
+else
+    fail "health --robot reports a unit waiting for its next automatic restart" "rc=$RC $OUT"
+fi
+
+find "$STATE/prop" -type f -exec rm -f {} +
+svc health --robot
+if [[ "$RC" -eq 1 && "$OUT" == *"cass|stopped|acfs-cass-index.service is enabled but not running"* ]]; then
+    pass "health --robot reports an enabled unit that is not running"
+else
+    fail "health --robot reports an enabled unit that is not running" "rc=$RC $OUT"
+fi
+
+svc stop
+svc health --robot
+if [[ "$RC" -eq 0 && "$OUT" == *"cm|disabled|"* && "$OUT" == *"cass|disabled|"* ]]; then
+    pass "after stop, health --robot reports the units disabled, not as faults"
+else
+    fail "after stop, health --robot reports the units disabled, not as faults" "rc=$RC $OUT"
+fi
+
+reset_state
+svc health --robot
+if [[ "$RC" -eq 0 && "$OUT" == *"cm|not-set-up|"* && "$OUT" == *"cass|not-set-up|"* && "$OUT" == *"agent-mail|not-set-up|"* ]]; then
+    pass "before the first start, health --robot reports no unit set up, not as a fault"
+else
+    fail "before the first start, health --robot reports no unit set up, not as a fault" "rc=$RC $OUT"
+fi
+
+svc health --bogus
+if [[ "$RC" -ne 0 && "$OUT" == *"Unknown option for 'health'"* ]]; then
+    pass "health refuses an unknown option"
+else
+    fail "health refuses an unknown option" "rc=$RC $OUT"
+fi
+
+# A cass unit that ACFS wrote before acfs-eyvw: no log level, a start limit.
+reset_state
+svc start
+cat > "$CASS_UNIT" <<EOF
+# Written by 'acfs services start' (acfs-services.sh 2.0.0). Rewritten on
+# every start; edit ACFS_* settings instead, then run 'acfs services start'.
+[Unit]
+Description=ACFS CASS indexer (watch mode)
+# Give up after 5 failed starts in 2 minutes (e.g. a port held by another
+# process) instead of crash-looping; 'acfs services repair' clears it.
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=$HOMEDIR/.local/bin/cass index --watch
+Restart=on-failure
+RestartSec=5
+Environment=PATH=%h/.acfs/bin:%h/.local/bin:%h/.cargo/bin:%h/.bun/bin:%h/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOME=%h
+
+[Install]
+WantedBy=default.target
+EOF
+svc health --robot
+if [[ "$RC" -eq 1 && "$OUT" == *"cass|outdated|acfs-cass-index.service runs on older settings"* \
+    && "$OUT" == *"cm|ok|"* && "$OUT" == *"agent-mail|ok|"* ]]; then
+    pass "health --robot reports a running cass unit with older settings as outdated"
+else
+    fail "health --robot reports a running cass unit with older settings as outdated" "rc=$RC $OUT"
+fi
+
+svc health
+if [[ "$RC" -eq 1 && "$OUT" == *"Fix: acfs services restart cass"* ]]; then
+    pass "health names the restart that applies the new settings"
+else
+    fail "health names the restart that applies the new settings" "rc=$RC $OUT"
+fi
+
+: > "$STATE/calls"
+svc start
+if [[ "$RC" -eq 0 ]] && grep -qx 'Environment=RUST_LOG=warn' "$CASS_UNIT" \
+    && calls | grep -q '^systemctl --user restart acfs-cass-index.service$' \
+    && ! calls | grep -q -e 'restart acfs-cm.service' -e 'restart acfs-agent-mail.service'; then
+    pass "start rewrites an outdated cass unit and restarts cass only"
+else
+    fail "start rewrites an outdated cass unit and restarts cass only" "rc=$RC $(calls)"
+fi
+
+svc health --robot
+if [[ "$RC" -eq 0 && "$OUT" == *"cass|ok|"* ]]; then
+    pass "after the rewrite, health --robot reports cass ok"
+else
+    fail "after the rewrite, health --robot reports cass ok" "rc=$RC $OUT"
+fi
+
+# A different binary path alone is not older settings: a run with another
+# PATH resolves cass elsewhere, and start rewrites a moved binary anyway.
+sed -i 's|^ExecStart=.*|ExecStart=/opt/other/cass index --watch|' "$CASS_UNIT"
+svc health --robot
+if [[ "$RC" -eq 0 && "$OUT" == *"cass|ok|"* ]]; then
+    pass "health --robot ignores ExecStart when it compares unit settings"
+else
+    fail "health --robot ignores ExecStart when it compares unit settings" "rc=$RC $OUT"
+fi
+
+touch "$STATE/no-systemd"
+svc health --robot
+if [[ "$RC" -eq 0 && "$OUT" == *"cass|unknown|no systemd user manager is reachable"* ]]; then
+    pass "without a systemd user manager, health --robot reports unknown, not a fault"
+else
+    fail "without a systemd user manager, health --robot reports unknown, not a fault" "rc=$RC $OUT"
+fi
+rm -f "$STATE/no-systemd"
 
 # ------------------------------------------------------------
 # A binary path systemd would need quoting for is refused

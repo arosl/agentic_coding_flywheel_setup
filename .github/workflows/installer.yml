@@ -140,6 +140,12 @@ jobs:
       - name: Run doctor login shell check tests
         run: bash tests/unit/test_doctor_login_shell.sh
 
+      - name: Run acfs services systemd unit tests (against stubs)
+        run: bash tests/unit/test_acfs_services_systemd.sh
+
+      - name: Run doctor service unit check tests
+        run: bash tests/unit/test_doctor_service_units.sh
+
       # It fails when a manifest check the doctor skips as bespoke-covered
       # has no bespoke check, as cli.modern's jq had since the upstream sync
       # (acfs-n3uo). It reads files only; test_doctor_generated.sh runs the

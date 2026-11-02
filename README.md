@@ -1299,6 +1299,7 @@ acfs services status
 acfs services logs agent-mail
 acfs services restart cass     # restart one service; the others keep running
 acfs services drift            # is the live process on the installed binary?
+acfs services health           # is a unit down, or on older unit settings?
 acfs services stop
 ```
 
@@ -1319,6 +1320,16 @@ units' journal.
   (with a start limit, so a held port does not crash-loop), and the units start
   again after a reboot, because the installer enables linger. `acfs services
   stop` stops and disables them until the next `start`.
+- The CASS indexer has no start limit (acfs-eyvw). It refuses to start while
+  disk headroom is low, so its unit backs off from 5 seconds to one try every
+  5 minutes and comes back by itself once there is space. It logs warnings and
+  errors only (`RUST_LOG=warn`): its INFO tracing ran to millions of lines a
+  day, which rsyslog copied into `/var/log/syslog`.
+- `acfs services health`, `acfs doctor` and `acfs update` report a unit that
+  failed, waits to restart, is enabled but not running, or runs on older unit
+  settings than `start` writes now. They restart nothing: `acfs services
+  restart <service>` applies new settings, and `acfs services repair` starts
+  what is down.
 - `acfs services` needs a systemd user manager (`systemctl --user`). Without one,
   for example on WSL without systemd, `start` refuses and says how to run the
   daemons yourself.
