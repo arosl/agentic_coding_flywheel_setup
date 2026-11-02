@@ -37,7 +37,7 @@ SYSBIN="$ROOT/sysbin"
 STATE="$ROOT/state"
 cleanup() {
     # Only files this test created under its own mktemp directory.
-    find "$ROOT" -depth -mindepth 1 \( -type f -o -type l \) -exec rm -f {} + 2>/dev/null
+    find "$ROOT" -depth -mindepth 1 \( -type f -o -type l -o -type s \) -exec rm -f {} + 2>/dev/null
     find "$ROOT" -depth -mindepth 1 -type d -exec rmdir {} + 2>/dev/null
     rmdir "$ROOT" 2>/dev/null
 }
@@ -52,6 +52,13 @@ cat > "$SYSBIN/systemctl" <<'EOF'
 #!/usr/bin/env bash
 # Stub systemctl --user: unit state lives in $STUB_STATE.
 printf 'systemctl %s\n' "$*" >> "$STUB_STATE/calls"
+# With $STUB_STATE/runtime-dir, act like systemd: --user reaches the manager
+# only through that XDG_RUNTIME_DIR (acfs-gssu).
+printf '%s|%s\n' "${XDG_RUNTIME_DIR:-}" "${DBUS_SESSION_BUS_ADDRESS:-}" > "$STUB_STATE/env"
+if [[ -f "$STUB_STATE/runtime-dir" && "${XDG_RUNTIME_DIR:-}" != "$(cat "$STUB_STATE/runtime-dir")" ]]; then
+    echo 'Failed to connect to bus: $DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined' >&2
+    exit 1
+fi
 [[ "${1:-}" == "--user" ]] && shift
 cmd="${1:-}"; shift || true
 mkdir -p "$STUB_STATE/active" "$STUB_STATE/enabled"
@@ -625,6 +632,72 @@ else
     fail "without a systemd user manager, health --robot reports unknown, not a fault" "rc=$RC $OUT"
 fi
 rm -f "$STATE/no-systemd"
+
+# ------------------------------------------------------------
+# The owner's runtime dir, after acfs-update's sudo or runuser hop (acfs-gssu)
+# ------------------------------------------------------------
+# svc_rt VAR=value...: health --robot with the given environment, the
+# sandbox's /run/user and nothing else.
+RUNBASE="$ROOT/run-user"
+RUNDIR="$RUNBASE/$EUID"
+svc_rt() {
+    OUT="$(env -i HOME="$HOMEDIR" PATH="$HOMEDIR/.local/bin:/usr/bin:/bin" TERM=dumb \
+        ACFS_SERVICES_SYSTEM_BIN_PREFIX="$SYSBIN" STUB_STATE="$STATE" ACFS_SVC_SMOKE_TIMEOUT=5 \
+        ACFS_SERVICES_RUNTIME_DIR_BASE="$RUNBASE" "$@" \
+        bash "$SERVICES_SH" health --robot 2>&1)"
+    RC=$?
+}
+stub_env() { cat "$STATE/env" 2>/dev/null; }
+
+reset_state
+svc start
+mkdir -p "$RUNDIR"
+chmod 755 "$RUNBASE"
+chmod 700 "$RUNDIR"
+printf '%s' "$RUNDIR" > "$STATE/runtime-dir"
+
+svc_rt
+if [[ "$RC" -eq 0 && "$OUT" == *"cass|ok|"* && "$OUT" != *"unknown"* && "$(stub_env)" == "$RUNDIR|" ]]; then
+    pass "with no XDG_RUNTIME_DIR (sudo -u), health --robot finds the user manager through /run/user/<uid>"
+else
+    fail "with no XDG_RUNTIME_DIR (sudo -u), health --robot finds the user manager through /run/user/<uid>" "rc=$RC env=$(stub_env) $OUT"
+fi
+
+if [[ "$EUID" -ne 0 ]]; then
+    # runuser -u keeps root's environment; / stands in for /run/user/0.
+    python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$RUNDIR/bus" 2>/dev/null
+    if [[ -S "$RUNDIR/bus" ]]; then
+        svc_rt XDG_RUNTIME_DIR=/ DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/0/bus
+        if [[ "$RC" -eq 0 && "$OUT" == *"cass|ok|"* && "$(stub_env)" == "$RUNDIR|unix:path=$RUNDIR/bus" ]]; then
+            pass "root's XDG_RUNTIME_DIR (runuser -u) is replaced by the user's, and so is its bus address"
+        else
+            fail "root's XDG_RUNTIME_DIR (runuser -u) is replaced by the user's, and so is its bus address" "rc=$RC env=$(stub_env) $OUT"
+        fi
+        rm -f "$RUNDIR/bus"
+    else
+        fail "the test can make a unix socket for the user bus (python3)"
+    fi
+fi
+
+chmod 770 "$RUNDIR"
+svc_rt
+if [[ "$OUT" == *"cass|unknown|no systemd user manager is reachable"* && "$(stub_env)" == "|" ]]; then
+    pass "a /run/user/<uid> that group or others can write is not used"
+else
+    fail "a /run/user/<uid> that group or others can write is not used" "rc=$RC env=$(stub_env) $OUT"
+fi
+chmod 700 "$RUNDIR"
+
+OWN_RT="$ROOT/own-runtime"
+mkdir -p "$OWN_RT"
+printf '%s' "$OWN_RT" > "$STATE/runtime-dir"
+svc_rt XDG_RUNTIME_DIR="$OWN_RT"
+if [[ "$RC" -eq 0 && "$OUT" == *"cass|ok|"* && "$(stub_env)" == "$OWN_RT|" ]]; then
+    pass "an XDG_RUNTIME_DIR the user owns is kept"
+else
+    fail "an XDG_RUNTIME_DIR the user owns is kept" "rc=$RC env=$(stub_env) $OUT"
+fi
+rm -f "$STATE/runtime-dir"
 
 # ------------------------------------------------------------
 # A binary path systemd would need quoting for is refused

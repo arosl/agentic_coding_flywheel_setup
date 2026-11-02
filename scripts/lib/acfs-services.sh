@@ -83,14 +83,10 @@ _ok()    { printf '%s[acfs-services]%s %s%s%s\n' "$_C_CYAN" "$_C_RESET" "$_C_GRE
 _warn()  { printf '%s[acfs-services]%s %s%s%s\n' "$_C_CYAN" "$_C_RESET" "$_C_YELLOW" "$*" "$_C_RESET" >&2; }
 _err()   { printf '%s[acfs-services]%s %s%s%s\n' "$_C_CYAN" "$_C_RESET" "$_C_RED" "$*" "$_C_RESET" >&2; }
 
-# System tools are resolved from fixed directories, never from PATH.
-# ACFS_SERVICES_SYSTEM_BIN_PREFIX (tests only) names one directory searched
-# first, so a test can put stub systemctl/curl/lsof in front of the real ones
-# and never reach the host's user service manager. It is honoured only for an
-# absolute directory owned by this user that neither group nor others can
-# write; anything else is ignored.
-_system_bin_prefix_trusted() {
-    local dir="${ACFS_SERVICES_SYSTEM_BIN_PREFIX:-}"
+# An absolute directory owned by this user that neither group nor others
+# can write.
+_dir_private_to_caller() {
+    local dir="${1:-}"
     local perms=""
 
     [[ -n "$dir" && "$dir" == /* && -d "$dir" && -O "$dir" ]] || return 1
@@ -98,6 +94,37 @@ _system_bin_prefix_trusted() {
     perms="$(/usr/bin/stat -c '%a' "$dir" 2>/dev/null || true)"
     [[ "$perms" =~ ^[0-7]{3,4}$ ]] || return 1
     (( (8#$perms & 8#022) == 0 ))
+}
+
+# System tools are resolved from fixed directories, never from PATH.
+# ACFS_SERVICES_SYSTEM_BIN_PREFIX (tests only) names one directory searched
+# first, so a test can put stub systemctl/curl/lsof in front of the real ones
+# and never reach the host's user service manager. It is honoured only for a
+# directory private to this user; anything else is ignored.
+_system_bin_prefix_trusted() {
+    _dir_private_to_caller "${ACFS_SERVICES_SYSTEM_BIN_PREFIX:-}"
+}
+
+# systemctl --user finds the user manager through XDG_RUNTIME_DIR. A root
+# call that acfs-update runs again as the owner arrives without the owner's
+# (acfs-gssu): sudo -u resets the environment, so it is unset, and runuser -u
+# keeps root's, so it can name /run/user/0. systemctl --user then fails, and
+# health and drift report 'unknown'. When XDG_RUNTIME_DIR is not a directory
+# this user owns, use /run/user/<uid> if it is private to this user (a linger
+# or login session made it); otherwise leave the environment alone.
+# ACFS_SERVICES_RUNTIME_DIR_BASE (tests only) replaces /run/user.
+_adopt_user_runtime_dir() {
+    local dir=""
+
+    if [[ -n "${XDG_RUNTIME_DIR:-}" && -d "$XDG_RUNTIME_DIR" && -O "$XDG_RUNTIME_DIR" ]]; then
+        return 0
+    fi
+    dir="${ACFS_SERVICES_RUNTIME_DIR_BASE:-/run/user}/$EUID"
+    _dir_private_to_caller "$dir" || return 0
+    export XDG_RUNTIME_DIR="$dir"
+    if [[ -S "$dir/bus" ]]; then
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=$dir/bus"
+    fi
 }
 
 _system_binary_path() {
@@ -167,6 +194,7 @@ _initialize_bins() {
     _SS_BIN="$(_system_binary_path ss 2>/dev/null || true)"
     _LSOF_BIN="$(_system_binary_path lsof 2>/dev/null || true)"
     _SYSTEMCTL_BIN="$(_system_binary_path systemctl 2>/dev/null || true)"
+    _adopt_user_runtime_dir
     _JOURNALCTL_BIN="$(_system_binary_path journalctl 2>/dev/null || true)"
     _AM_BIN="$(_user_binary_path am 2>/dev/null || true)"
     _CM_BIN="$(_user_binary_path cm 2>/dev/null || true)"
