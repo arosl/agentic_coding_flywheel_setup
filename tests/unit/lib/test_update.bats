@@ -17603,82 +17603,117 @@ STUBS
     refute_output --partial "SHOULD_NOT_BE_CALLED"
 }
 
-@test "acfs update reports service units that are down or on older settings (acfs-eyvw)" {
-    local fake_home="$BATS_TEST_TMPDIR/acfs-home"
+# A stand-in acfs-services.sh: `health --robot` prints health.out; any other
+# command drains its stdin (so a caller that lets it read the health lines
+# loses them), is recorded in calls and exits with action.rc (default 0).
+write_fake_services_script() {
+    local dir="$1/scripts/lib"
+    mkdir -p "$dir"
+    cat > "$dir/acfs-services.sh" <<'EOF'
+#!/usr/bin/env bash
+here="$(dirname "$0")"
+if [[ "$1 ${2:-}" == "health --robot" ]]; then
+    cat "$here/health.out"
+    exit 1
+fi
+cat >/dev/null
+printf '%s\n' "$*" >> "$here/calls"
+exit "$(cat "$here/action.rc" 2>/dev/null || echo 0)"
+EOF
+    chmod +x "$dir/acfs-services.sh"
+}
 
-    mkdir -p "$fake_home/scripts/lib"
-    printf '#!/usr/bin/env bash\n[[ "$1 $2" == "health --robot" ]] || exit 2\nprintf "agent-mail|disabled|acfs-agent-mail.service is not enabled\\n"\nprintf "cm|ok|acfs-cm.service is running\\n"\nprintf "cass|outdated|acfs-cass-index.service runs on older settings\\n"\nexit 1\n' \
-        > "$fake_home/scripts/lib/acfs-services.sh"
-    chmod +x "$fake_home/scripts/lib/acfs-services.sh"
-
+run_update_service_units() {
     run bash -c '
         source "$1"
         set +e
         fake_home="$2"
         update_runtime_acfs_home() { printf "%s\n" "$fake_home"; }
         DRY_RUN=false
-        update_report_service_unit_health
+        update_service_units
         echo "RC=$?"
-    ' _ "$PROJECT_ROOT/scripts/lib/update.sh" "$fake_home"
+    ' _ "$PROJECT_ROOT/scripts/lib/update.sh" "$1"
+}
+
+@test "acfs update restarts an outdated cass unit, and only reports the other units (acfs-eyvw)" {
+    local fake_home="$BATS_TEST_TMPDIR/acfs-home"
+    local lib="$fake_home/scripts/lib"
+
+    write_fake_services_script "$fake_home"
+    printf '%s\n' "agent-mail|disabled|acfs-agent-mail.service is not enabled" \
+        "cass|outdated|acfs-cass-index.service runs on older settings" \
+        "cm|outdated|acfs-cm.service runs on older settings" > "$lib/health.out"
+
+    run_update_service_units "$fake_home"
 
     assert_output --partial "ACFS service units need attention"
     assert_output --partial "cass: acfs-cass-index.service runs on older settings"
-    assert_output --partial "Fix: acfs services restart cass"
-    assert_output --partial "RC=0"
-    refute_output --partial "cm: "
+    assert_output --partial "Applied: acfs services restart cass"
+    assert_output --partial "cm: acfs-cm.service runs on older settings"
+    assert_output --partial "Fix: acfs services restart cm"
     refute_output --partial "agent-mail: "
+    assert_output --partial "RC=0"
+    run cat "$lib/calls"
+    assert_output "restart cass"
 }
 
-@test "acfs update names the repair for a failed service unit, and says nothing when all are fine (acfs-eyvw)" {
+@test "acfs update repairs a failed cass unit, and names the fix when it fails (acfs-eyvw)" {
     local fake_home="$BATS_TEST_TMPDIR/acfs-home"
-    local services="$fake_home/scripts/lib/acfs-services.sh"
+    local lib="$fake_home/scripts/lib"
 
-    mkdir -p "$fake_home/scripts/lib"
-    printf '#!/usr/bin/env bash\nprintf "cass|failed|acfs-cass-index.service has failed\\n"\n' > "$services"
-    chmod +x "$services"
+    write_fake_services_script "$fake_home"
+    printf '%s\n' "cass|failed|acfs-cass-index.service has failed" > "$lib/health.out"
 
-    run bash -c '
-        source "$1"
-        set +e
-        fake_home="$2"
-        update_runtime_acfs_home() { printf "%s\n" "$fake_home"; }
-        DRY_RUN=false
-        update_report_service_unit_health
-    ' _ "$PROJECT_ROOT/scripts/lib/update.sh" "$fake_home"
-
+    run_update_service_units "$fake_home"
     assert_output --partial "cass: acfs-cass-index.service has failed"
+    assert_output --partial "Applied: acfs services repair cass"
+    run cat "$lib/calls"
+    assert_output "repair cass"
+
+    printf '1\n' > "$lib/action.rc"
+    run_update_service_units "$fake_home"
     assert_output --partial "Fix: acfs services repair cass"
-
-    printf '#!/usr/bin/env bash\nprintf "cm|ok|acfs-cm.service is running\\n"\nprintf "cass|not-set-up|no acfs-cass-index.service\\n"\n' > "$services"
-
-    run bash -c '
-        source "$1"
-        set +e
-        fake_home="$2"
-        update_runtime_acfs_home() { printf "%s\n" "$fake_home"; }
-        DRY_RUN=false
-        update_report_service_unit_health
-        echo "RC=$?"
-    ' _ "$PROJECT_ROOT/scripts/lib/update.sh" "$fake_home"
-
-    assert_output "RC=0"
+    refute_output --partial "Applied:"
+    assert_output --partial "RC=0"
 }
 
-@test "acfs update skips the unit report during a dry run, and runs it after the drift report (acfs-eyvw)" {
+@test "acfs update never restarts Agent Mail or cm, and says nothing when every unit is fine (acfs-eyvw)" {
+    local fake_home="$BATS_TEST_TMPDIR/acfs-home"
+    local lib="$fake_home/scripts/lib"
+
+    write_fake_services_script "$fake_home"
+    printf '%s\n' "agent-mail|failed|acfs-agent-mail.service has failed" \
+        "cm|stopped|acfs-cm.service is enabled but not running" \
+        "cass|restarting|acfs-cass-index.service waits for its next automatic restart" > "$lib/health.out"
+
+    run_update_service_units "$fake_home"
+    assert_output --partial "Fix: acfs services repair agent-mail"
+    assert_output --partial "Fix: acfs services repair cm"
+    assert_output --partial "systemd retries it by itself; see why: acfs services logs cass"
+    refute_output --partial "Applied:"
+    [[ ! -e "$lib/calls" ]]
+
+    printf '%s\n' "cm|ok|acfs-cm.service is running" "cass|not-set-up|no acfs-cass-index.service" > "$lib/health.out"
+    run_update_service_units "$fake_home"
+    assert_output "RC=0"
+    [[ ! -e "$lib/calls" ]]
+}
+
+@test "acfs update skips the unit step during a dry run, and runs it after the drift report (acfs-eyvw)" {
     run bash -c '
         source "$1"
         set +e
         update_runtime_acfs_home() { echo "SHOULD_NOT_BE_CALLED" >&2; printf "/nonexistent\n"; }
         DRY_RUN=true
-        update_report_service_unit_health
+        update_service_units
         echo "RC=$?"
     ' _ "$PROJECT_ROOT/scripts/lib/update.sh"
 
     assert_output --partial "RC=0"
     refute_output --partial "SHOULD_NOT_BE_CALLED"
 
-    run grep -A2 -x '    update_report_service_binary_drift' "$PROJECT_ROOT/scripts/lib/update.sh"
-    assert_output --partial "update_report_service_unit_health"
+    run grep -A3 -x '    update_report_service_binary_drift' "$PROJECT_ROOT/scripts/lib/update.sh"
+    assert_output --partial "update_service_units"
 }
 
 @test "update.sh: nightly UBS install never wires agent hooks (#400)" {

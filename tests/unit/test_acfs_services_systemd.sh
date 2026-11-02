@@ -92,7 +92,15 @@ case "$cmd" in
         [[ -e "$STUB_STATE/active/$1" ]] ;;
     is-enabled)
         if [[ -e "$STUB_STATE/enabled/$1" ]]; then echo enabled; else echo disabled; exit 1; fi ;;
-    daemon-reload|reset-failed) ;;
+    daemon-reload) ;;
+    reset-failed)
+        # systemd keeps a unit "failed" through stop and disable; only
+        # reset-failed clears it. Failed state lives in prop files here.
+        for u in "$@"; do
+            if grep -qx failed "$STUB_STATE/prop/$u.ActiveState" 2>/dev/null; then
+                rm -f "$STUB_STATE/prop/$u".*
+            fi
+        done ;;
     enable)
         [[ "${1:-}" == "--now" ]] && shift
         [[ -e "$STUB_STATE/fail-start" ]] && exit 1
@@ -288,6 +296,14 @@ if [[ "$RC" -eq 0 && ! -e "$STATE/active/acfs-agent-mail.service" && ! -e "$STAT
 else
     fail "once a native agent-mail.service exists, start disables acfs-agent-mail.service and uses the native one" "rc=$RC $(calls)"
 fi
+# It may have crash-looped on the native unit's port: retiring it also
+# clears its failed state, so health never reports it failed.
+if calls | grep -A1 -x 'systemctl --user disable --now acfs-agent-mail.service' \
+        | grep -qx 'systemctl --user reset-failed acfs-agent-mail.service'; then
+    pass "retiring acfs-agent-mail.service clears its failed state"
+else
+    fail "retiring acfs-agent-mail.service clears its failed state" "$(calls)"
+fi
 
 # acfs-agent-mail.service serving a healthy Agent Mail, but its unit is stale
 # (written for another am path): start rewrites it and restarts that unit.
@@ -480,6 +496,37 @@ if [[ "$RC" -eq 1 && "$OUT" == *"cass|stopped|acfs-cass-index.service is enabled
 else
     fail "health --robot reports an enabled unit that is not running" "rc=$RC $OUT"
 fi
+
+# cass failed, then 'acfs services stop': systemd keeps it failed through
+# disable --now, so stop clears it, and health calls it disabled.
+set_prop acfs-cass-index.service ActiveState failed
+: > "$STATE/calls"
+svc stop
+if [[ "$RC" -eq 0 ]] && calls | grep -A1 -x 'systemctl --user disable --now acfs-cass-index.service' \
+        | grep -qx 'systemctl --user reset-failed acfs-cass-index.service'; then
+    pass "stop clears a failed unit's failed state after disabling it"
+else
+    fail "stop clears a failed unit's failed state after disabling it" "rc=$RC $(calls)"
+fi
+svc health --robot
+if [[ "$RC" -eq 0 && "$OUT" == *"cass|disabled|"* ]]; then
+    pass "after stop, a unit that had failed is disabled, not failed"
+else
+    fail "after stop, a unit that had failed is disabled, not failed" "rc=$RC $OUT"
+fi
+
+# A unit still failed but no longer enabled (stopped by an older ACFS,
+# which did not reset it) is not a fault either.
+set_prop acfs-cass-index.service ActiveState failed
+svc health --robot
+if [[ "$RC" -eq 0 && "$OUT" == *"cass|disabled|acfs-cass-index.service is not enabled (it had failed before it was stopped)"* ]]; then
+    pass "health --robot reports a failed unit that is not enabled as disabled"
+else
+    fail "health --robot reports a failed unit that is not enabled as disabled" "rc=$RC $OUT"
+fi
+find "$STATE/prop" -type f -exec rm -f {} +
+svc start
+rm -f "$STATE/active/acfs-cass-index.service"
 
 svc stop
 svc health --robot

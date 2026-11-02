@@ -9432,15 +9432,18 @@ update_report_service_binary_drift() {
 }
 
 # The same for the services' systemd units (acfs-eyvw): a unit this update
-# gave new settings keeps the old ones until it restarts, as a cass indexer
-# without its quiet log level does, and a unit systemd gave up on stays down.
-# Report each one with its fix; restart nothing, for the same reason.
-update_report_service_unit_health() {
+# gave new settings keeps the old ones until it restarts, and a unit systemd
+# gave up on stays down. Each one is reported with its fix. Only the cass
+# indexer gets its fix applied here: no agent works through it (agents read
+# its index with `cass search`), and a cass unit from before its quiet log
+# level writes millions of lines a day into syslog until it restarts.
+# Agent Mail and cm are never restarted here, for #381's reason.
+update_service_units() {
     local services_script=""
     local health_output=""
-    local service="" state="" detail="" fix=""
+    local service="" state="" detail="" fix="" action="" attempted="" applied=""
     local timeout_bin=""
-    local -a health_cmd=()
+    local -a health_cmd=() action_cmd=()
     local reported=false
 
     [[ "$DRY_RUN" == "true" ]] && return 0
@@ -9448,8 +9451,8 @@ update_report_service_unit_health() {
     services_script="$(update_runtime_acfs_home 2>/dev/null || true)/scripts/lib/acfs-services.sh"
     [[ -r "$services_script" ]] || return 0
 
-    health_cmd=(bash "$services_script" health --robot)
     timeout_bin="$(update_system_binary_path timeout 2>/dev/null || true)"
+    health_cmd=(bash "$services_script" health --robot)
     if [[ -n "$timeout_bin" ]]; then
         health_cmd=("$timeout_bin" 30 "${health_cmd[@]}")
     fi
@@ -9459,9 +9462,10 @@ update_report_service_unit_health() {
 
     while IFS='|' read -r service state detail; do
         [[ "$service" =~ ^[a-z-]+$ ]] || continue
+        action=""
         case "$state" in
-            outdated)       fix="acfs services restart $service" ;;
-            failed|stopped) fix="acfs services repair $service" ;;
+            outdated)       action="restart"; fix="acfs services restart $service" ;;
+            failed|stopped) action="repair"; fix="acfs services repair $service" ;;
             restarting)     fix="systemd retries it by itself; see why: acfs services logs $service" ;;
             *)              continue ;;
         esac
@@ -9471,8 +9475,30 @@ update_report_service_unit_health() {
             printf "${YELLOW}${BOLD}! ACFS service units need attention${NC}\n"
         fi
         printf "${YELLOW}  %s: %s${NC}\n" "$service" "$detail"
-        printf "${DIM}    Fix: %s${NC}\n" "$fix"
         log_to_file "SERVICE UNIT: $service: $state: $detail"
+
+        attempted=false
+        applied=false
+        if [[ "$service" == "cass" && ( "$state" == "outdated" || "$state" == "failed" ) ]]; then
+            attempted=true
+            action_cmd=(bash "$services_script" "$action" cass)
+            if [[ -n "$timeout_bin" ]]; then
+                action_cmd=("$timeout_bin" 120 "${action_cmd[@]}")
+            fi
+            # </dev/null: the loop reads health's lines from stdin.
+            if "${action_cmd[@]}" </dev/null >/dev/null 2>&1; then
+                applied=true
+            fi
+        fi
+        if [[ "$applied" == "true" ]]; then
+            printf "${GREEN}    Applied: %s${NC}\n" "$fix"
+            log_to_file "SERVICE UNIT: $service: applied: $fix"
+        else
+            if [[ "$attempted" == "true" ]]; then
+                log_to_file "SERVICE UNIT: $service: '$fix' failed"
+            fi
+            printf "${DIM}    Fix: %s${NC}\n" "$fix"
+        fi
     done <<< "$health_output"
     return 0
 }
@@ -10424,8 +10450,9 @@ main() {
 
     # Report managed services still running a replaced binary (#381)
     update_report_service_binary_drift
-    # ...and service units that are down or on older settings (acfs-eyvw)
-    update_report_service_unit_health
+    # ...and service units that are down or on older settings; the cass
+    # indexer's fix is applied (acfs-eyvw)
+    update_service_units
 
     update_procwatch_stop
 

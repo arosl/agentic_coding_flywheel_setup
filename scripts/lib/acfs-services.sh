@@ -479,6 +479,8 @@ _retire_acfs_agent_mail_unit() {
         _err "Failed to disable $unit. Disable it yourself: systemctl --user disable --now $unit"
         return 1
     fi
+    # A unit that crash-looped on the native unit's port stays "failed".
+    _systemctl_user reset-failed "$unit" >/dev/null 2>&1 || true
     return 0
 }
 
@@ -1155,7 +1157,8 @@ _unit_settings_outdated() {
 #   stopped     enabled, but not running
 #   changing    starting or stopping right now
 #   disabled    not enabled ('acfs services stop', or a retired
-#               acfs-agent-mail.service next to the native unit)
+#               acfs-agent-mail.service next to the native unit), also
+#               when it had failed before it was stopped
 #   not-set-up  no unit file ('acfs services start' never ran)
 #   unknown     no systemd user manager is reachable
 _service_unit_health() {
@@ -1191,8 +1194,15 @@ _service_unit_health() {
     last="result ${result:-unknown}, last exit status ${status:-unknown}, ${restarts:-0} automatic restarts"
     case "$active" in
         failed)
-            printf '%s|%s|%s\n' "$service" "failed" \
-                "$unit has failed ($last); systemd will not start it again by itself"
+            # systemd keeps a unit failed after `disable --now` until
+            # reset-failed: a stopped unit that once failed is not a fault.
+            if [[ "$file_state" == enabled* ]]; then
+                printf '%s|%s|%s\n' "$service" "failed" \
+                    "$unit has failed ($last); systemd will not start it again by itself"
+            else
+                printf '%s|%s|%s\n' "$service" "disabled" \
+                    "$unit is not enabled (it had failed before it was stopped)"
+            fi
             ;;
         activating)
             if [[ "$sub" == auto-restart* ]]; then
@@ -1519,10 +1529,12 @@ cmd_stop() {
             _unit_file_exists "$service" || continue
             _unit_is_active "$unit" && stopped_any=true
             # disable --now: stopped, and it stays stopped across a reboot.
+            # reset-failed: a unit that had failed would stay "failed".
             if ! _systemctl_user disable --now "$unit" >/dev/null 2>&1; then
                 _err "Failed to stop $unit."
                 rc=1
             fi
+            _systemctl_user reset-failed "$unit" >/dev/null 2>&1 || true
         done
     fi
 

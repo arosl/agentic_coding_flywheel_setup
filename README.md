@@ -1327,9 +1327,11 @@ units' journal.
   day, which rsyslog copied into `/var/log/syslog`.
 - `acfs services health`, `acfs doctor` and `acfs update` report a unit that
   failed, waits to restart, is enabled but not running, or runs on older unit
-  settings than `start` writes now. They restart nothing: `acfs services
-  restart <service>` applies new settings, and `acfs services repair` starts
-  what is down.
+  settings than `start` writes now. `acfs services restart <service>` applies
+  new settings, and `acfs services repair` starts what is down. `acfs update`
+  does that itself for the CASS indexer only, since no agent works through it:
+  it restarts a cass unit on older settings and repairs a failed one. It never
+  restarts Agent Mail or CM.
 - `acfs services` needs a systemd user manager (`systemctl --user`). Without one,
   for example on WSL without systemd, `start` refuses and says how to run the
   daemons yourself.
