@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-10-30T22:10:58+00:00
+# checksums.yaml - Auto-generated 2026-11-02T01:46:31+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -20,7 +20,7 @@ installers:
 
   br:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh"
-    sha256: "0859fb58e2dd618722a2210fbb765f8e8f202d812f185c5d2b4b22fc8031c933"
+    sha256: "0d0e0b696c20d669fcfe7e1c55de404201d9a60bc5c73673974c849340daefc5"
 
   brenner_bot:
     url: "https://raw.githubusercontent.com/arosl/brenner_bot/v0.4.1-nhm.1/install.sh"
@@ -116,7 +116,7 @@ installers:
 
   ms:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/meta_skill/main/scripts/install.sh"
-    sha256: "5b31fc2d1bb03c2f0d4b805639f07ee5525e71bc6562bc59cc601ea87893c405"
+    sha256: "b45bd7d38f5c470459c07345e6610c390233610296f5402926204a7e92233460"
 
   nhm:
     url: "https://raw.githubusercontent.com/arosl/nhm/v0.1.17/install.sh"
