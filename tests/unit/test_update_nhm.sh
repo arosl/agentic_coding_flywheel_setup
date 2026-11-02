@@ -340,40 +340,51 @@ check "learning: read-only mode writes nothing" has "ITEM skip|nhm learning prof
 check "learning: and no config appears" test ! -e "$FIX_HOME/.config/nhm/config.toml"
 
 # ------------------------------------------------------------
-# update_nhm_capacity_provider: nhm's [providers] capacity (acfs-hd37),
-# on by default (acfs-5px6)
+# update_remove_nhm_capacity_provider: the [providers] capacity line that
+# ACFS wrote (acfs-hd37, acfs-5px6) goes, since spawn admission is nhm's
+# own (acfs-0oc2, nhm-a421)
 # ------------------------------------------------------------
 capacity_in() { python3 -I -c 'import json, sys, tomllib; print(json.dumps(tomllib.load(open(sys.argv[1], "rb")).get("providers", {}).get("capacity"), separators=(",", ":")))' "$FIX_HOME/.config/nhm/config.toml"; }
-run_update update_nhm_capacity_provider nhm
-check "capacity: acfs update sets acfs capacity --guard --json --for-spawn in nhm's config" \
-    test "$(capacity_in)" = '["acfs","capacity","--guard","--json","--for-spawn"]'
-check "capacity: reports it on, naming the per-spawn override" has "ITEM ok|nhm capacity provider|on (nhm spawn refuses while one more agent doesn't fit; --ignore-capacity admits one spawn)"
+ACFS_CAPACITY_LINE='capacity = ["acfs", "capacity", "--guard", "--json", "--for-spawn"]   # ACFS: nhm spawn refuses'
+NHM_CONFIG=$'[learning]\nimplicit_outcome = "closed-assigned"\n\n[providers]\n'"$ACFS_CAPACITY_LINE" \
+    run_update update_remove_nhm_capacity_provider nhm
+check "capacity: acfs update removes ACFS's line from nhm's config" test "$(capacity_in)" = null
+check "capacity: the learning profile stays" test "$(learning_in)" = closed-assigned
+check "capacity: reports no provider from ACFS" has "ITEM ok|nhm capacity provider|none from ACFS (nhm checks capacity itself)"
 
-NHM_CONFIG=$'[learning]\nimplicit_outcome = "closed-assigned"' run_update update_nhm_capacity_provider nhm
-check "capacity: a config without the key gets it, the learning profile kept" \
-    test "$(capacity_in) $(learning_in)" = '["acfs","capacity","--guard","--json","--for-spawn"] closed-assigned'
+# Without the stack too (--no-stack, --agents-only, ...): the self-update
+# deploys capacity.sh without --guard in every run.
+NHM_CONFIG=$'[providers]\n'"$ACFS_CAPACITY_LINE" STACK=false run_update update_remove_nhm_capacity_provider nhm
+check "capacity: a stack-less update removes ACFS's line as well" test "$(capacity_in)" = null
+NHM_CONFIG=$'[providers]\ncapacity = ["acfs", "capacity", "--guard", "--json"]' run_update update_remove_nhm_capacity_provider nhm
+check "capacity: ACFS's older host-sized line (acfs-hd37) goes too" test "$(capacity_in)" = null
 
-NHM_CONFIG=$'[learning]\nimplicit_outcome = "closed-assigned"\n\n[providers]\ncapacity = []' \
-    run_update update_nhm_capacity_provider nhm
+run_update update_remove_nhm_capacity_provider nhm
+check "capacity: with no nhm config, nothing to remove and no config appears" \
+    bash -c '[[ ! -e "$1" ]] && grep -qF "ITEM ok|nhm capacity provider|none from ACFS" <<<"$2"' _ "$FIX_HOME/.config/nhm/config.toml" "$OUT"
+
+NHM_CONFIG=$'[providers]\ncapacity = []' run_update update_remove_nhm_capacity_provider nhm
 check "capacity: the user's capacity = [] stays" test "$(capacity_in)" = '[]'
-check "capacity: and is reported off, as theirs" has "ITEM ok|nhm capacity provider|off, as your config sets it"
+check "capacity: and is reported as theirs" has "ITEM ok|nhm capacity provider|left as your config sets it"
 
-NHM_CONFIG=$'[providers]\ncapacity = ["my-guard", "--json"]' run_update update_nhm_capacity_provider nhm
+NHM_CONFIG=$'[providers]\ncapacity = ["my-guard", "--json"]' run_update update_remove_nhm_capacity_provider nhm
 check "capacity: the user's own argv stays" test "$(capacity_in)" = '["my-guard","--json"]'
 check "capacity: and is reported as theirs" has "ITEM ok|nhm capacity provider|left as your config sets it"
 
-NHM_CONFIG='[providers' run_update update_nhm_capacity_provider nhm
-check "capacity: a config nhm can't read only warns" has "ITEM warn|nhm capacity provider|could not set it"
+NHM_CONFIG='[providers' run_update update_remove_nhm_capacity_provider nhm
+check "capacity: a config nhm can't read only warns" has "ITEM warn|nhm capacity provider|could not remove"
 check "capacity: and stays as it is" test "$(cat "$FIX_HOME/.config/nhm/config.toml")" = '[providers'
 
-run_update update_nhm_capacity_provider
+NHM_CONFIG=$'[providers]\n'"$ACFS_CAPACITY_LINE" run_update update_remove_nhm_capacity_provider
 check "capacity: no nhm does nothing" lacks "nhm capacity provider"
-SAME_USER=0 run_update update_nhm_capacity_provider nhm
+NHM_CONFIG=$'[providers]\n'"$ACFS_CAPACITY_LINE" SAME_USER=0 run_update update_remove_nhm_capacity_provider nhm
 check "capacity: another user only warns with the command" has "ITEM warn|nhm capacity provider|run as ubuntu: bash"
-check "capacity: naming capacity-provider set" has "capacity-provider set"
-READ_ONLY=1 run_update update_nhm_capacity_provider nhm
-check "capacity: read-only mode writes nothing" has "ITEM skip|nhm capacity provider|dry-run: would set [providers] capacity"
-check "capacity: and no config appears" test ! -e "$FIX_HOME/.config/nhm/config.toml"
+check "capacity: naming capacity-provider remove" has "capacity-provider remove"
+check "capacity: and the line stays" test "$(capacity_in)" = '["acfs","capacity","--guard","--json","--for-spawn"]'
+NHM_CONFIG=$'[providers]\n'"$ACFS_CAPACITY_LINE" READ_ONLY=1 run_update update_remove_nhm_capacity_provider nhm
+check "capacity: read-only mode writes nothing" has "ITEM skip|nhm capacity provider|dry-run: would remove ACFS's [providers] capacity line"
+check "capacity: and the line stays" test "$(capacity_in)" = '["acfs","capacity","--guard","--json","--for-spawn"]'
+unset ACFS_CAPACITY_LINE
 
 echo
 echo "Tests passed: $TESTS_PASSED"

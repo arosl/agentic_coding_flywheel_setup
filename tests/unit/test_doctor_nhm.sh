@@ -74,13 +74,10 @@ fixture() {
     case "$2" in
         codex|both) HOME="$WORK/home" bash "$ROOT/scripts/lib/nhm_hooks.sh" register codex 2>/dev/null ;;
     esac
-    # nhm's learning profile and capacity provider, as install sets them
-    # (acfs-9hkh.88, acfs-hd37, acfs-5px6); NO_LEARNING and NO_CAPACITY
-    # leave one out.
+    # nhm's learning profile, as install sets it (acfs-9hkh.88);
+    # NO_LEARNING leaves it out.
     [[ -n "${NO_LEARNING:-}" ]] || HOME="$WORK/home" XDG_CONFIG_HOME="" \
         bash "$ROOT/scripts/lib/nhm_hooks.sh" learning-profile set 2>/dev/null
-    [[ -n "${NO_CAPACITY:-}" ]] || HOME="$WORK/home" XDG_CONFIG_HOME="" \
-        bash "$ROOT/scripts/lib/nhm_hooks.sh" capacity-provider set 2>/dev/null
 }
 
 echo "stack.nhm.setup"
@@ -95,7 +92,7 @@ PATH="$FAKEBIN:$PATH" HOME="$WORK/home" CODEX_HOME="$WORK/home/.codex" \
     bash "$ROOT/scripts/lib/nhm_hooks.sh" trust codex "$WORK/home/.codex/hooks.json" 2>/dev/null
 out="$(run_check both)"
 check_case "enrolled, registered for both and trusted by Codex passes" \
-    bash -c '[[ "$1" == stack.nhm.setup\|pass\|enrolled*"Claude Code"*"Codex (trusted)"*"learning profile on; capacity provider on (--ignore-capacity"*"turns it off)"\| ]]' _ "$out"
+    bash -c '[[ "$1" == stack.nhm.setup\|pass\|enrolled*"Claude Code"*"Codex (trusted)"*"learning profile on"\| ]]' _ "$out"
 
 # dcg's Bash guard (acfs-9hkh.81) counts among ACFS's lines: untrusted, it
 # warns with the same count and fix; trusted, the check passes.
@@ -181,7 +178,7 @@ check_case "Claude Code only, registered: passes without asking about Codex" \
 
 fixture yes none
 out="$(run_check none)"
-check_case "enrolled, no agent CLI: passes" bash -c '[[ "$1" == stack.nhm.setup\|pass\|"enrolled; learning profile on; capacity provider on (--ignore-capacity"*"turns it off)"\| ]]' _ "$out"
+check_case "enrolled, no agent CLI: passes" bash -c '[[ "$1" == "stack.nhm.setup|pass|enrolled; learning profile on|" ]]' _ "$out"
 
 # nhm's learning profile (acfs-9hkh.88): not set warns with the fix; the
 # user's own value is noted and passes.
@@ -190,34 +187,22 @@ out="$(run_check none)"
 check_case "no learning profile warns with the set command" \
     bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"learning profile is not set"*\|*"learning-profile set (or acfs update)" ]]' _ "$out"
 mkdir -p "$WORK/home/.config/nhm"
-printf '[learning]\nimplicit_outcome = "off"\n\n[providers]\ncapacity = ["acfs", "capacity", "--guard", "--json", "--for-spawn"]\n' \
-    >"$WORK/home/.config/nhm/config.toml"
+printf '[learning]\nimplicit_outcome = "off"\n' >"$WORK/home/.config/nhm/config.toml"
 out="$(run_check none)"
 check_case "the user's own learning value passes, noted as theirs" \
     bash -c '[[ "$1" == stack.nhm.setup\|pass\|*"learning profile set by your nhm config"* ]]' _ "$out"
 
-# nhm's capacity provider (acfs-hd37), on by default (acfs-5px6): set, the
-# check passes and notes nhm's per-spawn override and how to turn it off;
-# not set, it warns with the fix; capacity = [] is the user's opt-out, a
-# note; another argv of the user's is noted as theirs.
-fixture yes none
-out="$(run_check none)"
-check_case "the capacity provider set passes, noting nhm's per-spawn override and how to turn it off" \
-    bash -c '[[ "$1" == stack.nhm.setup\|pass\|*"capacity provider on (--ignore-capacity on nhm spawn or add admits that spawn while the guard is red; [providers] capacity = [] in nhm"*"s config turns it off)"* ]]' _ "$out"
-NO_CAPACITY=1 fixture yes none
-out="$(run_check none)"
-check_case "no capacity provider warns with the set command" \
-    bash -c '[[ "$1" == stack.nhm.setup\|warn\|*"capacity provider is not set, so nhm spawn starts agents while one more doesn"*"t fit"*\|*"capacity-provider set (or acfs update)" ]]' _ "$out"
-NO_CAPACITY=1 fixture yes none
-printf '\n[providers]\ncapacity = []\n' >>"$WORK/home/.config/nhm/config.toml"
-out="$(run_check none)"
-check_case "the user's capacity = [] passes, noted as off by their config" \
-    bash -c '[[ "$1" == stack.nhm.setup\|pass\|*"capacity provider off by your nhm config ([providers] capacity = [])"* ]]' _ "$out"
-NO_CAPACITY=1 fixture yes none
-printf '\n[providers]\ncapacity = ["my-guard", "--json"]\n' >>"$WORK/home/.config/nhm/config.toml"
-out="$(run_check none)"
-check_case "the user's own capacity argv passes, noted as theirs" \
-    bash -c '[[ "$1" == stack.nhm.setup\|pass\|*"capacity provider set by your nhm config"* ]]' _ "$out"
+# Spawn admission is nhm's own (acfs-0oc2, nhm-a421): doctor reads no
+# [providers] capacity, set or not, the user's own or ACFS's old line.
+for provider in '' 'capacity = []' 'capacity = ["my-guard", "--json"]' \
+        'capacity = ["acfs", "capacity", "--guard", "--json", "--for-spawn"]'; do
+    fixture yes none
+    [[ -z "$provider" ]] || printf '\n[providers]\n%s\n' "$provider" >>"$WORK/home/.config/nhm/config.toml"
+    out="$(run_check none)"
+    check_case "a capacity provider (${provider:-none}) neither warns nor shows" \
+        bash -c '[[ "$1" == "stack.nhm.setup|pass|enrolled; learning profile on|" ]]' _ "$out"
+done
+unset provider
 
 fixture no none
 out="$(run_check both false)"

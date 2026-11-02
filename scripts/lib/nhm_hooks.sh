@@ -59,17 +59,16 @@ Usage:
                                              (default $XDG_CONFIG_HOME/nhm/
                                              config.toml); check: 0 on, 3 the
                                              user's other value, 1 not set
-  nhm_hooks.sh capacity-provider check|set [FILE]
-                                             nhm's [providers] capacity =
-                                             ["acfs", "capacity", "--guard",
-                                             "--json", "--for-spawn"], so nhm
-                                             spawn refuses while one more
-                                             agent doesn't fit, unless it
-                                             passes --ignore-capacity; same
-                                             FILE and exits as
-                                             learning-profile, and check: 4
-                                             the user turned it off
-                                             (capacity = [])
+  nhm_hooks.sh capacity-provider remove [FILE]
+                                             removes the [providers] capacity
+                                             line that ACFS wrote into nhm's
+                                             config, only when it holds a
+                                             value ACFS wrote (nhm decides
+                                             spawn admission itself now); 0 no
+                                             line of ACFS's is left, 3 the
+                                             user's own value (left as it
+                                             is), 1 FILE cannot be read or
+                                             edited
   nhm_hooks.sh plugin link|bind [--no-reload]|status
                                              nhm's herdr plugin (link) and its
                                              keys (bind: nhm bind for the
@@ -786,54 +785,56 @@ nhm_hooks_trust() {
 
 # ---- ACFS's settings in nhm's config ----
 #
-# Two settings in nhm's config ($XDG_CONFIG_HOME/nhm/config.toml) whose nhm
-# defaults are off, and which install and acfs update set:
+# A setting in nhm's config ($XDG_CONFIG_HOME/nhm/config.toml) whose nhm
+# default is off, and which install and acfs update set: the learning
+# profile (acfs-9hkh.88; plan-v8 2.13), [learning] implicit_outcome =
+# "closed-assigned". `nhm feedback outcomes` then records a cm outcome for
+# each bead that closed while assigned to an agent, the flywheel's OUTCOME
+# step.
 #
-# - the learning profile (acfs-9hkh.88; plan-v8 2.13): [learning]
-#   implicit_outcome = "closed-assigned". `nhm feedback outcomes` then
-#   records a cm outcome for each bead that closed while assigned to an
-#   agent, the flywheel's OUTCOME step.
-# - the capacity provider (acfs-hd37, on by default since acfs-5px6):
-#   [providers] capacity = ["acfs", "capacity", "--guard", "--json",
-#   "--for-spawn"]. nhm's spawn admission then refuses to start an agent
-#   while ACFS's capacity guard is red (acfs-gmbo), unless that spawn
-#   passes --ignore-capacity (nhm v0.1.16; --force covers only the
-#   quota). --for-spawn makes it red on memory only when one more agent
-#   doesn't fit, not under the host line of 4 GiB, so a small host still
-#   starts agents (acfs-w1f0). capacity = [] turns it off: nhm reads it
-#   as no provider, and set leaves it, as it leaves any value the user
-#   set.
+# And one that install and acfs update remove: the capacity provider that
+# ACFS wrote earlier, [providers] capacity = ["acfs", "capacity",
+# "--guard", "--json", "--for-spawn"] (acfs-w1f0, acfs-5px6), or
+# ["acfs", "capacity", "--guard", "--json"] before it (acfs-hd37). Spawn
+# admission is nhm's own now, as it is ntm's upstream (nhm-a421), and ACFS
+# has no capacity guard any more (acfs-0oc2). Only those exact values go;
+# a provider the user set, capacity = [] among them, stays.
 #
 # nhm reads the whole file at each spawn, and a file it cannot read fails
 # the spawn, so each edit is parsed before it is written.
 #
-#   learning-profile|capacity-provider check [FILE]
-#                                  0: ACFS's value; 3: the user set another
-#                                  value (theirs, left as is); 4 (capacity
-#                                  only): the user turned it off with
-#                                  capacity = []; 1: not set, or FILE
-#                                  cannot be read as TOML
-#   learning-profile|capacity-provider set [FILE]
-#                                  adds the setting when it is not set:
+#   learning-profile check [FILE]  0: ACFS's value; 3: the user set another
+#                                  value (theirs, left as is); 1: not set,
+#                                  or FILE cannot be read as TOML
+#   learning-profile set [FILE]    adds the setting when it is not set:
 #                                  under an existing table, or as a new
 #                                  table at the end. A file that is not
 #                                  valid TOML, and a value the user chose,
 #                                  stay as they are.
+#   capacity-provider remove [FILE]
+#                                  removes the line when it holds one of
+#                                  ACFS's values, and only when the file then
+#                                  parses to the same settings less that
+#                                  one; 0: no ACFS line is left; 3: the
+#                                  user's own value, left as is; 1: FILE
+#                                  cannot be read or edited.
 
 nhm_hooks_config_file() {
     printf '%s/nhm/config.toml' "${XDG_CONFIG_HOME:-$HOME/.config}"
 }
 
 # The checker and editor, in Python for its TOML parser (tomllib). argv:
-# check|set FILE TABLE KEY WANT_JSON VALUE_TOML COMMENT OFF_JSON: the
-# setting is TABLE.KEY, ACFS's value is WANT_JSON as JSON and VALUE_TOML
-# as TOML, COMMENT follows the line set writes, and OFF_JSON, when not
-# empty, is the value with which the user turns the setting off. set
-# writes FILE itself and prints "changed" or "unchanged"; check exits 0,
+# check|set|remove FILE TABLE KEY WANT_JSON VALUE_TOML COMMENT OFF_JSON:
+# the setting is TABLE.KEY, ACFS's value is WANT_JSON as JSON (for remove,
+# a JSON list of every value ACFS wrote) and VALUE_TOML as TOML, COMMENT
+# follows the line set writes, and OFF_JSON, when not empty, is the value
+# with which the user turns the setting off.
+# set and remove write FILE themselves and print "changed" or
+# "unchanged" (remove: "kept" for the user's own value); check exits 0,
 # 3, 4 or 1 as above.
 nhm_hooks_config_driver() {
     cat <<'PY'
-import json, os, re, sys, tempfile
+import copy, json, os, re, sys, tempfile
 try:
     import tomllib
 except ImportError:
@@ -859,12 +860,62 @@ if section is not None and not isinstance(section, dict):
     print(f"nhm_hooks: {path}: {table} is not a table; left as it is", file=sys.stderr)
     sys.exit(1)
 value = (section or {}).get(key)
+
+
+def write(new):
+    # Write it here, through a temp file beside it, keeping its mode (0600
+    # for a new file): the text, trailing blank lines included, goes
+    # through no shell substitution.
+    d = os.path.dirname(path) or "."
+    os.makedirs(d, exist_ok=True)
+    mode_bits = os.stat(path).st_mode & 0o7777 if os.path.exists(path) else 0o600
+    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".tmp.", dir=d)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            f.write(new)
+        os.chmod(tmp, mode_bits)
+        os.replace(tmp, path)
+    except OSError as e:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        print(f"nhm_hooks: could not write {path} ({e}); left as it is", file=sys.stderr)
+        sys.exit(1)
+    print("changed")
+    sys.exit(0)
+
+
 if mode == "check":
     if value == WANT:
         sys.exit(0)
     if off_json and value == json.loads(off_json):
         sys.exit(4)
     sys.exit(3 if value is not None else 1)
+if mode == "remove":
+    if value is None or value not in WANT:
+        # Not set, or the user's own value: left as it is.
+        print("unchanged" if value is None else "kept")
+        sys.exit(0)
+    rest = copy.deepcopy(data)
+    del rest[table][key]
+    expected = [rest]
+    if rest[table] == {}:
+        # A TABLE.KEY line was the table's only key, so the table goes too.
+        expected.append({k: v for k, v in rest.items() if k != table})
+    # ACFS wrote one line, KEY = VALUE under [TABLE] or TABLE.KEY = VALUE
+    # at the top. Each line that sets the key is tried in turn, and the
+    # first whose removal leaves exactly the other settings is taken.
+    key_line = r'^[ \t]*(?:' + re.escape(table) + r'[ \t]*\.[ \t]*)?' + re.escape(key) + r'[ \t]*=[^\n]*(?:\n|\Z)'
+    for m in re.finditer(key_line, text, re.M):
+        c = text[:m.start()] + text[m.end():]
+        try:
+            if tomllib.loads(c) in expected:
+                write(c)
+        except tomllib.TOMLDecodeError:
+            pass
+    print(f"nhm_hooks: could not remove [{table}] {key} from {path}; left as it is", file=sys.stderr)
+    sys.exit(1)
 if value is not None:
     print("unchanged")
     sys.exit(0)
@@ -900,26 +951,7 @@ for c in candidates():
 if new is None:
     print(f"nhm_hooks: could not add [{table}] {key} to {path}; left as it is", file=sys.stderr)
     sys.exit(1)
-# Write it here, through a temp file beside it, keeping its mode (0600 for
-# a new file): the text, trailing blank lines included, goes through no
-# shell substitution.
-d = os.path.dirname(path) or "."
-os.makedirs(d, exist_ok=True)
-mode_bits = os.stat(path).st_mode & 0o7777 if os.path.exists(path) else 0o600
-fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".tmp.", dir=d)
-try:
-    with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
-        f.write(new)
-    os.chmod(tmp, mode_bits)
-    os.replace(tmp, path)
-except OSError as e:
-    try:
-        os.unlink(tmp)
-    except OSError:
-        pass
-    print(f"nhm_hooks: could not write {path} ({e}); left as it is", file=sys.stderr)
-    sys.exit(1)
-print("changed")
+write(new)
 PY
 }
 
@@ -955,6 +987,15 @@ nhm_hooks_config_setting() {
                 nhm_hooks_note "$file already sets [$table] $key"
             fi
             ;;
+        remove)
+            result="$(python3 -I -c "$(nhm_hooks_config_driver)" remove "$target" \
+                "$table" "$key" "$want_json" "$value_toml" "$comment" "$off_json" </dev/null)" || return 1
+            case "$result" in
+                changed) nhm_hooks_note "removed ACFS's [$table] $key from $file" ;;
+                kept) nhm_hooks_note "$file sets its own [$table] $key; left as it is"; return 3 ;;
+                *) nhm_hooks_note "$file has no [$table] $key from ACFS" ;;
+            esac
+            ;;
         *) nhm_hooks_usage >&2; return 2 ;;
     esac
 }
@@ -964,10 +1005,13 @@ nhm_hooks_learning_profile() {
         'ACFS: record cm outcomes for closed beads (plan-v8 2.13)' '' "$@"
 }
 
+# Only remove: ACFS no longer sets a capacity provider (acfs-0oc2). It
+# wrote two values: the host-sized one (acfs-hd37, pushed as 7234152b),
+# then the spawn-sized one (acfs-w1f0).
 nhm_hooks_capacity_provider() {
+    [[ "${1:-}" == remove ]] || { nhm_hooks_usage >&2; return 2; }
     nhm_hooks_config_setting providers capacity \
-        '["acfs", "capacity", "--guard", "--json", "--for-spawn"]' '["acfs", "capacity", "--guard", "--json", "--for-spawn"]' \
-        "ACFS: nhm spawn refuses while one more agent doesn't fit (acfs-hd37, acfs-w1f0); capacity = [] turns it off" '[]' "$@"
+        '[["acfs", "capacity", "--guard", "--json", "--for-spawn"], ["acfs", "capacity", "--guard", "--json"]]' '' '' '' "$@"
 }
 
 # --- nhm's herdr plugin and keys (stack.nhm, acfs-9hkh.50) -------------------

@@ -281,9 +281,9 @@ newproj_nhm_ready_work() {
 }
 
 # nhm's admission check refuses a spawn before it makes anything, and says why
-# (acfs-jzfc). Since acfs-5px6, install turns nhm's capacity provider on, so a
-# tight host meets this first. The refusal is ntm's RESOURCE_BUSY with the
-# admission's decision (nhm-2p6.4.12). Prints the reasons; returns 1 when the
+# (acfs-jzfc). A tight host meets nhm's capacity check first (nhm-a421). The
+# refusal is ntm's RESOURCE_BUSY with the admission's decision
+# (nhm-2p6.4.12). Prints the reasons; returns 1 when the
 # answer isn't a refusal.
 newproj_nhm_report_refusal() {
     local response="$1"

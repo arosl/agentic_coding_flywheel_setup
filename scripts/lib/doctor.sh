@@ -2392,73 +2392,6 @@ check_workspace() {
     blank_line
 }
 
-# The guard's JSON report, kept by check_host_capacity for check_container.
-_ACFS_DOCTOR_GUARD_JSON=""
-
-# Host headroom for an agent swarm (acfs-gmbo), from 'acfs capacity --guard':
-# warns on a host with no swap, an rch with no workers, and a tmpfs /tmp more
-# than half full. Read-only; the guard's red line is for spawn, not doctor.
-check_host_capacity() {
-    local helper="" guard="" swap_total="" posture="" workers="" healthy="" tmp_line=""
-    helper="$(_acfs_doctor_find_lib_script "capacity.sh" 2>/dev/null || true)"
-    [[ -n "$helper" ]] || return 0
-    command -v jq >/dev/null 2>&1 || return 0
-    # doctor reads no live-agent count, so the guard doesn't wait on herdr.
-    guard="$(ACFS_CAPACITY_HERDR_AVAILABLE=false _acfs_doctor_exec_bash_script "$helper" --guard --json 2>/dev/null)" || guard=""
-    _ACFS_DOCTOR_GUARD_JSON="$guard"
-
-    section "Host capacity"
-
-    if ! jq -e '.schema_version == 1' >/dev/null 2>&1 <<<"$guard"; then
-        check "host.capacity" "Host capacity guard" "skip" "acfs capacity --guard gave no report"
-        blank_line
-        return 0
-    fi
-
-    swap_total="$(jq -r '.memory.swap_total_mib // ""' <<<"$guard")"
-    case "$swap_total" in
-        "") check "host.swap" "Swap" "skip" "unknown" ;;
-        0)
-            check "host.swap" "Swap" "warn" "none: a memory spike under a swarm goes straight to the OOM killer" \
-                "Add a swap file sized to the swarm (e.g. 8 GiB) and keep vm.swappiness low"
-            ;;
-        *) check "host.swap" "Swap" "pass" "${swap_total} MiB" ;;
-    esac
-
-    posture="$(jq -r '.rch.posture // ""' <<<"$guard")"
-    workers="$(jq -r '.rch.workers_total // ""' <<<"$guard")"
-    healthy="$(jq -r '.rch.workers_healthy // ""' <<<"$guard")"
-    case "$posture" in
-        ""|not_installed) ;;
-        unknown) check "host.rch_workers" "rch workers" "skip" "rch status --json gave no posture" ;;
-        *)
-            if [[ "$posture" == local_only || "$workers" == 0 || "$healthy" == 0 ]]; then
-                check "host.rch_workers" "rch workers" "warn" "${healthy:-0} of ${workers:-0} healthy (posture $posture): every build runs locally" \
-                    "Run: rch doctor; rch workers probe --all"
-            elif [[ -n "$healthy" ]]; then
-                check "host.rch_workers" "rch workers" "pass" "$healthy of ${workers:-?} healthy ($posture)"
-            else
-                check "host.rch_workers" "rch workers" "skip" "worker count unknown (posture $posture)"
-            fi
-            ;;
-    esac
-
-    tmp_line="$(jq -r 'first(.filesystems[] | select(.mount == "/tmp")) | "\(.fstype) \(100 - .free_percent)"' <<<"$guard" 2>/dev/null || true)"
-    [[ "$tmp_line" =~ ^[A-Za-z0-9_.-]+\ [0-9]+$ ]] || tmp_line=""
-    case "$tmp_line" in
-        tmpfs\ *)
-            if (( ${tmp_line#tmpfs } > 50 )); then
-                check "host.tmp_tmpfs" "/tmp (tmpfs)" "warn" "${tmp_line#tmpfs }% full: what it holds is RAM agents can't use" \
-                    "Find what fills it: du -xsh /tmp/* 2>/dev/null | sort -h | tail"
-            else
-                check "host.tmp_tmpfs" "/tmp (tmpfs)" "pass" "${tmp_line#tmpfs }% full"
-            fi
-            ;;
-    esac
-
-    blank_line
-}
-
 # What systemd-detect-virt -c says ("lxc" in an Incus system container), or
 # "none".
 _acfs_doctor_container_virt() {
@@ -2477,50 +2410,17 @@ _acfs_doctor_fstype() {
 }
 
 # Inside an Incus system container (acfs-ioo3.6; plan 3.1 to 3.3, 4.2 item
-# 7): the container's memory against its limit, /tmp on disk, linger and the
-# state layer. Read-only, and silent outside a container.
+# 7): /tmp on disk, linger and the state layer. Read-only, and silent
+# outside a container.
 check_container() {
     [[ "$(_acfs_doctor_container_virt)" == lxc ]] || return 0
 
     section "Container"
     check "container.virt" "Container" "pass" "lxc (an Incus system container)"
-    _acfs_doctor_container_memory
     _acfs_doctor_container_tmp
     _acfs_doctor_container_linger
     _acfs_doctor_container_state
     blank_line
-}
-
-# The working set (memory.current less inactive_file) against memory.high
-# (or memory.max), from the guard's report, so doctor and spawn's 80%
-# admission line agree.
-_acfs_doctor_container_memory() {
-    local guard="$_ACFS_DOCTOR_GUARD_JSON" current="" limit="" file="" used="" max="" over=""
-    if ! command -v jq >/dev/null 2>&1 || ! jq -e '.schema_version == 1 and .container.virt == "lxc"' >/dev/null 2>&1 <<<"$guard"; then
-        check "container.memory" "Container memory" "skip" "acfs capacity --guard gave no container report"
-        return 0
-    fi
-    current="$(jq -r '.container.memory_working_set_mib // ""' <<<"$guard")"
-    limit="$(jq -r '.container.memory_limit_mib // ""' <<<"$guard")"
-    file="$(jq -r '.container.memory_limit_file // ""' <<<"$guard")"
-    used="$(jq -r '.container.memory_used_percent // ""' <<<"$guard")"
-    max="$(jq -r '.thresholds.max_container_memory_percent // 80' <<<"$guard")"
-    over="$(jq -r '[.reasons[]? | select(test("working set"))] | length' <<<"$guard")"
-
-    if [[ -z "$current" ]]; then
-        check "container.memory" "Container memory" "skip" "the container's memory.current can't be read"
-    elif [[ -z "$limit" ]]; then
-        check "container.memory" "Container memory" "warn" \
-            "no limit (memory.high and memory.max are max): the swarm can take the host's RAM" \
-            "On the host: incus config set <name> limits.memory=<size> limits.memory.enforce=soft"
-    elif [[ "$over" != 0 ]]; then
-        check "container.memory" "Container memory" "warn" \
-            "working set ${current} MiB is ${used}% of ${file} (${limit} MiB): over ${max}%, so acfs agents spawn refuses" \
-            "Retire idle agents (acfs agents reap), or raise limits.memory on the host"
-    else
-        check "container.memory" "Container memory" "pass" \
-            "working set ${current} MiB, ${used}% of ${file} (${limit} MiB); spawn refuses over ${max}%"
-    fi
 }
 
 # /tmp on disk: in a container a tmpfs /tmp is charged to the container's
@@ -3353,21 +3253,6 @@ check_nhm() {
             3) notes+=("learning profile set by your nhm config") ;;
             *) missing+=("nhm's learning profile is not set, so closed beads record no cm outcome")
                fixes+=("bash $helper learning-profile set (or acfs update)") ;;
-        esac
-        # nhm's capacity provider (acfs-hd37, on by default since acfs-5px6):
-        # without it, nhm spawn starts agents while one more doesn't fit. Its
-        # guard is spawn-sized (--for-spawn, acfs-w1f0), and --ignore-capacity
-        # admits one spawn (nhm v0.1.16). Off by the user's choice
-        # (capacity = []) is a note, not a warning.
-        rc=0
-        HOME="$home" bash "$helper" capacity-provider check "${XDG_CONFIG_HOME:-$home/.config}/nhm/config.toml" \
-            </dev/null >/dev/null 2>&1 || rc=$?
-        case "$rc" in
-            0) notes+=("capacity provider on (--ignore-capacity on nhm spawn or add admits that spawn while the guard is red; [providers] capacity = [] in nhm's config turns it off)") ;;
-            3) notes+=("capacity provider set by your nhm config") ;;
-            4) notes+=("capacity provider off by your nhm config ([providers] capacity = [])") ;;
-            *) missing+=("nhm's capacity provider is not set, so nhm spawn starts agents while one more doesn't fit")
-               fixes+=("bash $helper capacity-provider set (or acfs update)") ;;
         esac
     fi
 
@@ -7382,7 +7267,6 @@ $(gum style --foreground "$ACFS_MUTED" "OS:") $(gum style --foreground "$ACFS_TE
     check_identity
     check_ubuntu_archive_suites
     check_workspace
-    check_host_capacity
     check_container
     check_shell
     check_core_tools

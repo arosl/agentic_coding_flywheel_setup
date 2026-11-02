@@ -37,17 +37,6 @@ printf 'herdr %s\n' "$*" >>"$STUB_DIR/herdr_calls"
 printf '{"result":{"agents":[{"agent":"claude","name":"a"},{"agent":"claude","name":"b"},{"agent":"codex","name":"c"}]}}\n'
 STUB
 chmod +x "$WORK/bin/herdr"
-# A stub capacity.sh, so quota's host section never reads this host.
-cat >"$WORK/capacity.sh" <<'STUB'
-#!/usr/bin/env bash
-[[ "$1" == --guard ]] || exit 2
-if [[ "${2:-}" == --json ]]; then
-    printf '{"status":"red","reasons":["MemAvailable is 2048 MiB, under 4096 MiB"],"agents":{"suggested_max":3}}\n'
-else
-    printf 'Host capacity guard: red\n  RED: MemAvailable is 2048 MiB, under 4096 MiB\n'
-fi
-STUB
-export ACFS_AGENTS_CAPACITY_SCRIPT="$WORK/capacity.sh"
 
 NOW="$(date -u +%s)"
 iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%S.123Z; }
@@ -212,23 +201,13 @@ done
 run_helper check
 check "check needs a kind" test "$RC" -eq 2
 
-echo "host capacity"
+echo "no host capacity (acfs-0oc2: spawn admission is nhm's)"
 new_case host
 run_helper --json
-check "--json carries the capacity guard under host" \
-    jq_out '.host.status == "red" and .host.agents.suggested_max == 3 and (.plans | length) == 3'
+check "--json has the plans and no host key" jq_out '(.plans | length) == 3 and (has("host") | not)'
 run_helper
-check "the table is followed by the guard's report" \
-    bash -c '[[ "$1" -eq 0 ]] && grep -q "^Host capacity guard: red" <<<"$2" && grep -q "RED: MemAvailable is 2048 MiB" <<<"$2"' _ "$RC" "$OUT"
-printf '#!/usr/bin/env bash\nprintf "Host capacity guard: red\\n  MemAvailable:\\n"\nexit 1\n' >"$WORK/capacity-partial.sh"
-ACFS_AGENTS_CAPACITY_SCRIPT="$WORK/capacity-partial.sh" run_helper
-check "a guard that fails part way shows as unavailable, with none of its partial report" \
-    bash -c '[[ "$1" -eq 0 ]] && grep -q "^Host capacity guard: unavailable" <<<"$2" && ! grep -q "MemAvailable:" <<<"$2"' _ "$RC" "$OUT"
-ACFS_AGENTS_CAPACITY_SCRIPT="$WORK/missing.sh" run_helper --json
-check "without capacity.sh, host is null and quota still answers" \
-    bash -c '[[ "$1" -eq 0 ]] && jq -e ".host == null and (.plans | length) == 3" >/dev/null <<<"$2"' _ "$RC" "$OUT"
-run_helper check claude
-check "check reads no host capacity (spawn asks the guard itself)" test "$RC" -eq 0
+check "the table has no capacity report under it" \
+    bash -c '[[ "$1" -eq 0 ]] && ! grep -qi "capacity" <<<"$2"' _ "$RC" "$OUT"
 
 echo
 echo "passed: $PASS, failed: $FAIL"

@@ -358,17 +358,6 @@ STUB
 chmod +x "$WORK/bin/herdr" "$WORK/bin/am" "$WORK/bin/codex" "$WORK/bin/curl" "$WORK/bin/br" "$WORK/bin/bv"
 
 # A fresh stub state per case.
-# A stub capacity.sh, so spawn's guard never reads this host: it logs its
-# arguments and work directory to $STUB_DIR/capacity_calls, and exits $STUB_DIR/guard_rc (default 0),
-# with a reason on stderr when that is 1.
-cat >"$WORK/capacity.sh" <<'STUB'
-#!/usr/bin/env bash
-printf 'capacity %s work=%s\n' "$*" "${ACFS_CAPACITY_WORK_DIR:-}" >>"$STUB_DIR/capacity_calls"
-rc="$(cat "$STUB_DIR/guard_rc" 2>/dev/null || echo 0)"
-[[ "$rc" != 1 ]] || echo "capacity guard: MemAvailable is 1024 MiB, under 4096 MiB" >&2
-exit "$rc"
-STUB
-
 reset_stub() {
     STUB_DIR="$WORK/stub.$1"
     mkdir -p "$STUB_DIR/proc" "$STUB_DIR/codex-home"
@@ -412,7 +401,6 @@ run_helper() {
     PATH="$WORK/bin:$PATH" HOME="$WORK/home" ACFS_HOME="$WORK/acfs-home" \
         XDG_STATE_HOME="$WORK/home/.local/state" \
         CODEX_HOME="$STUB_DIR/codex-home" HERDR_AGENTS_PROC_ROOT="$STUB_DIR/proc" \
-        ACFS_AGENTS_CAPACITY_SCRIPT="${ACFS_AGENTS_CAPACITY_SCRIPT:-$WORK/capacity.sh}" \
         HERDR_AGENTS_DAEMON_WAIT_TRIES=3 HERDR_AGENTS_DAEMON_WAIT_INTERVAL=0 \
         HERDR_ENV=1 HERDR_PANE_ID=w9:p9 HERDR_TAB_ID=w9:t9 HERDR_SOCKET_PATH=/stub.sock HERDR_BIN_PATH=/stub/herdr \
         "${RUN_WRAPPER[@]}" bash "$HELPER" "$@" >"$STUB_DIR/out" 2>"$STUB_DIR/err" || RC=$?
@@ -982,46 +970,6 @@ fake_daemon clean
 codex_usage 40.0
 run_helper spawn --codex 1 --cwd "$WORK/repo" --no-prompt
 check "a plan under the limit spawns as usual" test "$RC/$(count_calls '^herdr agent start')" = "0/1"
-
-# acfs-2xtg, acfs-gmbo: spawn refuses when the host's capacity guard is red.
-reset_stub guardred
-echo 1 >"$STUB_DIR/guard_rc"
-run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt
-check "a red capacity guard stops spawn before any identity or tab" \
-    test "$RC/$(count_calls '^am')/$(count_calls '^herdr')" = "1/0/0"
-check "the guard is asked with --check, about the filesystem of --cwd" \
-    grep -qx "capacity --guard --check work=$(cd "$WORK/repo" && pwd -P)" "$STUB_DIR/capacity_calls"
-check "it shows the guard's reasons and how to override" \
-    bash -c 'grep -q "capacity guard: MemAvailable is 1024 MiB" <<<"$1" && grep -q "spawn refused: the host.s capacity guard is red" <<<"$1" && grep -q -- "--force spawns anyway" <<<"$1"' _ "$ERR"
-
-reset_stub guarddry
-echo 1 >"$STUB_DIR/guard_rc"
-run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt --dry-run
-check "--dry-run with a red guard exits 0, notes 'would refuse' and creates nothing" \
-    bash -c '[[ "$1" -eq 0 ]] && grep -q "would refuse: the host.s capacity guard is red" <<<"$2" && [[ "$3" == 0/0 ]]' \
-    _ "$RC" "$ERR" "$(count_calls '^am')/$(count_calls '^herdr agent start')"
-
-reset_stub guardforce
-echo 1 >"$STUB_DIR/guard_rc"
-run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt --force
-check "--force spawns without asking the guard" \
-    bash -c '[[ "$1" == 0/1 && ! -e "$2" ]]' _ "$RC/$(count_calls '^herdr agent start')" "$STUB_DIR/capacity_calls"
-
-reset_stub guardgreen
-run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt
-check "a guard that isn't red spawns, and says nothing about capacity" \
-    bash -c '[[ "$1" -eq 0 ]] && ! grep -q capacity <<<"$2"' _ "$RC" "$ERR"
-
-reset_stub guardunknown
-echo 2 >"$STUB_DIR/guard_rc"
-run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt
-check "a guard that can't read the host spawns anyway, and says so" \
-    bash -c '[[ "$1" -eq 0 ]] && grep -q "could not check the host.s capacity (capacity.sh exited 2)" <<<"$2"' _ "$RC" "$ERR"
-
-reset_stub guardmissing
-ACFS_AGENTS_CAPACITY_SCRIPT="$WORK/missing.sh" run_helper spawn --claude 1 --cwd "$WORK/repo" --no-prompt
-check "without capacity.sh, spawn goes ahead and says so" \
-    bash -c '[[ "$1" -eq 0 ]] && grep -q "missing.sh not found" <<<"$2"' _ "$RC" "$ERR"
 
 # acfs-9hkh.49: quota and quota check moved to nhm (nhm's TestQuotaVerb,
 # TestQuotaCheck and TestQuotaAndLimitsDispatch carry their vectors;

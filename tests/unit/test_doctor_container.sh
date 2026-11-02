@@ -4,8 +4,8 @@
 # against stubs
 #
 # In an Incus system container (systemd-detect-virt -c says lxc) doctor
-# checks the working set against memory.high from the capacity guard, /tmp on
-# disk, linger, the state layer's own report, and that incus has a remote.
+# checks /tmp on disk, linger, the state layer's own report, and that incus
+# has a remote. It has no memory check: spawn admission is nhm's (acfs-0oc2).
 # systemd-detect-virt, stat, loginctl, systemctl and incus are stubs on PATH;
 # no real Incus or systemd is asked anything. doctor.sh ends in
 # `main "$@"`, so its functions are loaded with that line stripped.
@@ -78,20 +78,6 @@ printf '%s\n' "${FAKE_STATE_REPORT:-}"
 STUB
 chmod +x "$WORK/bin/"* "$WORK/lib/state_layer.sh"
 
-# A guard report as capacity.sh --guard --json gives it in a container:
-# $1 working set MiB, $2 limit MiB ("" for none), $3 used percent,
-# $4 reasons (a JSON array).
-guard_json() {
-    jq -n -c --arg current "$1" --arg limit "$2" --arg used "$3" --argjson reasons "${4:-[]}" '
-        def num: if . == "" then null else tonumber end;
-        {schema_version: 1, status: "green", reasons: $reasons,
-         container: {virt: "lxc", memory_current_mib: (($current | num) + 5000) , memory_working_set_mib: ($current | num),
-                     memory_limit_mib: ($limit | num),
-                     memory_limit_file: (if $limit == "" then null else "memory.high" end),
-                     memory_used_percent: ($used | num)},
-         thresholds: {max_container_memory_percent: 80}}'
-}
-
 # Runs one doctor function with the stubs first on PATH; prints one
 # "id|status|details|fix" line per check.
 run_doctor() {
@@ -103,7 +89,6 @@ run_doctor() {
         # shellcheck disable=SC1090
         source <(sed "\$d" "$1") >/dev/null 2>&1
         TARGET_USER=swarm
-        _ACFS_DOCTOR_GUARD_JSON="${GUARD:-}"
         doctor_runtime_home() { printf "%s\n" "$FAKE_HOME"; }
         _acfs_doctor_find_lib_script() { [[ -e "$STUB_LIB_DIR/$1" ]] && printf "%s\n" "$STUB_LIB_DIR/$1"; }
         _acfs_doctor_exec_bash_script() { local s="$1"; shift; bash "$s" "$@"; }
@@ -122,8 +107,6 @@ mkdir -p "$FAKE_HOME"
 # layer's own checks.
 healthy() {
     export FAKE_VIRT=lxc FAKE_LINGER=yes FAKE_TMP_FSTYPE=ext2/ext3 TMPDIR=/data/tmp
-    export GUARD
-    GUARD="$(guard_json 40960 98304 41)"
     export FAKE_STATE_REPORT='[{"id":"state.layer","label":"State layer","status":"pass","details":"acfs-state-devbox","fix":""},
                                {"id":"state.lease","label":"Lease","status":"warn","details":"","fix":"acfs state lease --repair"}]'
 }
@@ -136,14 +119,11 @@ check_case "outside a container the section prints nothing" test -z "$out"
 out="$(healthy; run_doctor check_container)"
 check_case "a healthy container passes every check, in order" \
     test "$(cut -d'|' -f1,2 <<<"$out")" = "container.virt|pass
-container.memory|pass
 container.tmp|pass
 container.tmpdir|pass
 container.linger|pass
 state.layer|pass
 state.lease|warn"
-check_case "memory reports the working set against memory.high and the 80% line" \
-    has_line "^container.memory|pass|working set 40960 MiB, 41% of memory.high (98304 MiB); spawn refuses over 80%|$" "$out"
 check_case "nothing asks systemd about slices, MemoryLow or oomd (service protection is dropped)" \
     lacks_line "^systemctl" "$(cat "$WORK/calls")"
 check_case "the state layer's empty details keep their place (the fix stays the fix)" \
@@ -152,19 +132,6 @@ check_case "the state layer is asked for its doctor report as JSON" \
     has_line "^state_layer doctor --json$" "$(cat "$WORK/calls")"
 check_case "linger is read for the target user" \
     has_line "^loginctl show-user swarm --property=Linger --value$" "$(cat "$WORK/calls")"
-
-out="$(healthy; GUARD="$(guard_json 13200 16384 80 '["the container'"'"'s working set (memory.current less inactive_file) is 13200 MiB, 80% of memory.high (16384 MiB), over 80%"]')" \
-    run_doctor _acfs_doctor_container_memory)"
-check_case "over the 80% line (the guard's own reason) warns, even at a floor of 80%" \
-    has_line "^container.memory|warn|working set 13200 MiB is 80% of memory.high (16384 MiB): over 80%, so acfs agents spawn refuses|Retire idle agents" "$out"
-
-out="$(healthy; GUARD="$(guard_json 1024 "" "")" run_doctor _acfs_doctor_container_memory)"
-check_case "no memory limit warns" \
-    has_line "^container.memory|warn|no limit (memory.high and memory.max are max)" "$out"
-
-out="$(healthy; GUARD="not json" run_doctor _acfs_doctor_container_memory)"
-check_case "no guard report skips" \
-    test "$out" = "container.memory|skip|acfs capacity --guard gave no container report|"
 
 out="$(healthy; FAKE_TMP_FSTYPE=tmpfs run_doctor _acfs_doctor_container_tmp)"
 check_case "a tmpfs /tmp warns, with the mask as the fix" \

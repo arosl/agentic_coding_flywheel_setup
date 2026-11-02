@@ -26,8 +26,6 @@ set -euo pipefail
 AGENT_QUOTA_LIMIT_DEFAULT="${ACFS_AGENTS_QUOTA_LIMIT:-90}"
 # Codex session logs older than the weekly window can't hold its state.
 AGENT_QUOTA_CODEX_MAX_AGE_MIN=10080
-# capacity.sh, installed beside this script, reports the host's headroom.
-AGENT_QUOTA_CAPACITY_SCRIPT="${ACFS_AGENTS_CAPACITY_SCRIPT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/capacity.sh}"
 
 agent_quota_usage() {
     cat <<'EOF'
@@ -40,10 +38,7 @@ quota  Show, per plan, how full its 5-hour and weekly usage windows are, when
        each resets (UTC), when that was observed, and how many live agents of
        that kind herdr lists. Codex's state comes from its newest session log
        record; Claude's from the last record-claude run; agy exposes none. A
-       window whose reset time has passed is shown as reset. Below the plans
-       it shows the host's capacity guard ('acfs capacity --guard'): memory,
-       swap, disk, PSI, rch's workers and a suggested maximum agent count
-       (the "host" key with --json).
+       window whose reset time has passed is shown as reset.
 check  Exit 1 when the kind's 5-hour window is at least --limit percent used
        (default 90, or $ACFS_AGENTS_QUOTA_LIMIT), or its plan reports a limit
        reached; exit 0 otherwise, also when its usage is unknown. The reason
@@ -164,12 +159,10 @@ agent_quota_show() {
         esac
     done
     command -v jq >/dev/null 2>&1 || agent_quota_die "jq not found in PATH"
-    local doc host=""
+    local doc
     doc="$(agent_quota_collect counts)"
     if [[ "$json" == true ]]; then
-        [[ -r "$AGENT_QUOTA_CAPACITY_SCRIPT" ]] \
-            && host="$(bash "$AGENT_QUOTA_CAPACITY_SCRIPT" --guard --json 2>/dev/null | jq -c . 2>/dev/null)" || true
-        jq --argjson host "${host:-null}" '. + {host: $host}' <<<"$doc"
+        jq . <<<"$doc"
         return 0
     fi
     jq -r '
@@ -193,16 +186,6 @@ agent_quota_show() {
            (if $p.limit_reached then "  \($p.kind): limit reached: \($p.limit_reached.type) (as of \($p.limit_reached.observed_at | short)\(if $p.limit_reached.stale then ", may have cleared since" else "" end))" else empty end),
            (if $p.note then "  \($p.kind): \($p.note)" else empty end))
     ' <<<"$doc"
-    if [[ -r "$AGENT_QUOTA_CAPACITY_SCRIPT" ]]; then
-        # A guard that fails part way prints nothing of its report.
-        local report=""
-        printf '\n'
-        if report="$(bash "$AGENT_QUOTA_CAPACITY_SCRIPT" --guard 2>/dev/null)"; then
-            printf '%s\n' "$report"
-        else
-            printf 'Host capacity guard: unavailable\n'
-        fi
-    fi
 }
 
 agent_quota_check() {

@@ -566,75 +566,88 @@ check "learning-profile: the default file is XDG_CONFIG_HOME's" \
     bash -c 'XDG_CONFIG_HOME="$2/xdg" bash "$1" learning-profile set 2>/dev/null && [[ -f "$2/xdg/nhm/config.toml" ]]' _ "$HOOKS" "$LP"
 unset -f lp toml_value all_crlf
 
+printf '[learning]\nimplicit_outcome = []\n' >"$LP/learning_list.toml"
+check "learning-profile check: it has no off value, so [] is the user's other value (3)" \
+    bash -c 'bash "$1" learning-profile check "$2"; [[ $? -eq 3 ]]' _ "$HOOKS" "$LP/learning_list.toml"
+
 # ------------------------------------------------------------
-# capacity-provider: nhm's [providers] capacity (acfs-hd37), the same
-# driver as learning-profile
+# capacity-provider remove: the [providers] capacity line that ACFS wrote
+# earlier (acfs-hd37) goes, since spawn admission is nhm's own
+# (acfs-0oc2, nhm-a421); the same driver as learning-profile
 # ------------------------------------------------------------
 CP="$WORK/capacity"
 mkdir -p "$CP"
-cp_() { bash "$HOOKS" capacity-provider "$@"; }
-# [providers] capacity of FILE as compact JSON; "none" when unset
-cap_value() { python3 -I -c 'import json, sys, tomllib; v = tomllib.load(open(sys.argv[1], "rb")).get("providers", {}).get("capacity"); print("none" if v is None else json.dumps(v, separators=(",", ":")))' "$1"; }
-CAP_WANT='["acfs","capacity","--guard","--json","--for-spawn"]'
+# The exact line set wrote, comment and all.
+CAP_LINE='capacity = ["acfs", "capacity", "--guard", "--json", "--for-spawn"]   # ACFS: nhm spawn refuses while one more agent doesn'"'"'t fit (acfs-hd37, acfs-w1f0); capacity = [] turns it off'
+# FILE parsed, as compact JSON (exported for the bash -c checks)
+toml_json() { python3 -I -c 'import json, sys, tomllib; print(json.dumps(tomllib.load(open(sys.argv[1], "rb")), sort_keys=True, separators=(",", ":")))' "$1"; }
+export -f toml_json
+# remove FILE, printing its exit code
+cp_rc() { local rc=0; bash "$HOOKS" capacity-provider remove "$1" 2>/dev/null || rc=$?; printf '%s' "$rc"; }
 
-check "capacity-provider check: no file is not set (1)" bash -c 'bash "$1" capacity-provider check "$2"; [[ $? -eq 1 ]]' _ "$HOOKS" "$CP/none/config.toml"
-cp_ set "$CP/new/config.toml" 2>/dev/null
-check "capacity-provider set: a new config holds acfs capacity --guard --json --for-spawn" test "$(cap_value "$CP/new/config.toml")" = "$CAP_WANT"
-check "capacity-provider check: then 0" cp_ check "$CP/new/config.toml"
-check "capacity-provider set: a new file is 0600" test "$(stat -c %a "$CP/new/config.toml")" = 600
+for verb in set check; do
+    check "capacity-provider $verb is gone (2): ACFS sets no provider" \
+        bash -c 'bash "$1" capacity-provider "$2" "$3" >/dev/null 2>&1; [[ $? -eq 2 && ! -e "$3" ]]' _ "$HOOKS" "$verb" "$CP/verb.toml"
+done
+check "remove: no file is nothing to remove (0), and makes no file" \
+    bash -c '[[ "$1" == 0 && ! -e "$2" ]]' _ "$(cp_rc "$CP/none/config.toml")" "$CP/none/config.toml"
 
-printf '[reap]\nkeep = ["GreenCastle"]\n' >"$CP/other.toml"
-cp_ set "$CP/other.toml" 2>/dev/null
-check "capacity-provider set: a config without [providers] gets the table, its other settings kept" \
-    bash -c '[[ "$(python3 -I -c "import sys, tomllib; d = tomllib.load(open(sys.argv[1], \"rb\")); print(d[\"reap\"][\"keep\"][0], \" \".join(d[\"providers\"][\"capacity\"]))" "$1")" == "GreenCastle acfs capacity --guard --json --for-spawn" ]]' _ "$CP/other.toml"
-
-printf '[providers]  # mine\nother = ["x"]\n\n[quota]\nadmit_unknown = ["agy"]\n' >"$CP/table.toml"
-cp_ set "$CP/table.toml" 2>/dev/null
-check "capacity-provider set: an existing [providers] table gets the key, the user's key stays" \
-    bash -c '[[ "$(sed -n 1,3p "$1")" == "[providers]  # mine"$'"'"'\n'"'"'"capacity = [\"acfs\", \"capacity\", \"--guard\", \"--json\", \"--for-spawn\"]"*$'"'"'\n'"'"'"other = [\"x\"]" ]] && [[ $(grep -c "^\[providers\]" "$1") -eq 1 ]]' _ "$CP/table.toml"
-check "capacity-provider set: the result is valid TOML with the value" test "$(cap_value "$CP/table.toml")" = "$CAP_WANT"
+printf '[learning]\nimplicit_outcome = "closed-assigned"\n\n[providers]  # mine\n%s\nother = ["x"]\n\n[quota]\nadmit_unknown = ["agy"]\n' "$CAP_LINE" >"$CP/table.toml"
+chmod 640 "$CP/table.toml"
+check "remove: ACFS's line under [providers] goes (0)" test "$(cp_rc "$CP/table.toml")" = 0
+check "remove: every other setting stays, and the table header with its comment" \
+    bash -c '[[ "$(toml_json "$1")" == "{\"learning\":{\"implicit_outcome\":\"closed-assigned\"},\"providers\":{\"other\":[\"x\"]},\"quota\":{\"admit_unknown\":[\"agy\"]}}" ]] && grep -qx "\[providers\]  # mine" "$1"' _ "$CP/table.toml"
+check "remove: the file keeps its mode" test "$(stat -c %a "$CP/table.toml")" = 640
 cp "$CP/table.toml" "$CP/table.before"
-cp_ set "$CP/table.toml" 2>/dev/null
-check "capacity-provider set again: nothing changes" cmp -s "$CP/table.toml" "$CP/table.before"
+check "remove again: nothing to remove (0), nothing changes" \
+    bash -c '[[ "$1" == 0 ]] && cmp -s "$2" "$3"' _ "$(cp_rc "$CP/table.toml")" "$CP/table.toml" "$CP/table.before"
 
-# The host-sized argv, from before --for-spawn (acfs-w1f0), is a valid
-# provider too, so it counts as the user's choice and set keeps it.
-# capacity = [] is the user's opt-out (acfs-5px6): check says 4, and set
-# keeps it too.
-for own in '[]' '["my-guard", "--json"]' '["acfs", "capacity", "--guard", "--json"]'; do
+printf '[reap]\nkeep = []\n\n[providers]\n%s\n' "$CAP_LINE" >"$CP/only.toml"
+check "remove: the table's only key goes, and the file stays valid TOML" \
+    bash -c '[[ "$1" == 0 && "$(toml_json "$2")" == "{\"providers\":{},\"reap\":{\"keep\":[]}}" ]]' _ "$(cp_rc "$CP/only.toml")" "$CP/only.toml"
+
+printf 'providers.%s\n\n[reap]\nkeep = []\n' "$CAP_LINE" >"$CP/dotted.toml"
+check "remove: a dotted providers.capacity line goes, with its then-empty table" \
+    bash -c '[[ "$1" == 0 && "$(toml_json "$2")" == "{\"reap\":{\"keep\":[]}}" ]]' _ "$(cp_rc "$CP/dotted.toml")" "$CP/dotted.toml"
+
+printf '[providers]\r\n%s\r\nother = 1\r\n' "$CAP_LINE" >"$CP/crlf.toml"
+check "remove: a CRLF file loses the line and stays CRLF" \
+    bash -c '[[ "$1" == 0 ]] && [[ "$(od -An -c "$2" | tr -d " \n")" == "[providers]\\r\\nother=1\\r\\n" ]]' _ "$(cp_rc "$CP/crlf.toml")" "$CP/crlf.toml"
+
+printf 'motd = """\n%s\n"""\n\n[providers]\n%s\n' "$CAP_LINE" "$CAP_LINE" >"$CP/string.toml"
+check "remove: a look-alike line inside a string stays; the real one goes" \
+    bash -c '[[ "$1" == 0 ]] && python3 -I -c "import sys, tomllib; d = tomllib.load(open(sys.argv[1], \"rb\")); sys.exit(0 if d[\"providers\"] == {} and \"--for-spawn\" in d[\"motd\"] else 1)" "$2"' _ "$(cp_rc "$CP/string.toml")" "$CP/string.toml"
+
+# The host-sized argv from before --for-spawn is ACFS's too: acfs-hd37's
+# capacity-provider set wrote it (7234152b, pushed), so it goes.
+printf '[providers]\ncapacity = ["acfs", "capacity", "--guard", "--json"]\nother = 1\n' >"$CP/hd37.toml"
+check "remove: ACFS's older host-sized value goes too (0)" \
+    bash -c '[[ "$1" == 0 && "$(toml_json "$2")" == "{\"providers\":{\"other\":1}}" ]]' _ "$(cp_rc "$CP/hd37.toml")" "$CP/hd37.toml"
+
+# The user's own provider stays (3): capacity = [] (the opt-out, acfs-5px6),
+# another command, and another argv of acfs capacity.
+for own in '[]' '["my-guard", "--json"]' '["acfs", "capacity", "--guard", "--json", "--check"]'; do
     printf '[providers]\ncapacity = %s\n' "$own" >"$CP/own.toml"
     cp "$CP/own.toml" "$CP/own.before"
-    want_rc=3
-    [[ "$own" != '[]' ]] || want_rc=4
-    check "capacity-provider check: the user's own value ($own) is $want_rc" bash -c 'bash "$1" capacity-provider check "$2"; [[ $? -eq $3 ]]' _ "$HOOKS" "$CP/own.toml" "$want_rc"
-    cp_ set "$CP/own.toml" 2>/dev/null
-    check "capacity-provider set: the user's own value ($own) stays" cmp -s "$CP/own.toml" "$CP/own.before"
+    check "remove: the user's own value ($own) stays (3)" \
+        bash -c '[[ "$1" == 3 ]] && cmp -s "$2" "$3"' _ "$(cp_rc "$CP/own.toml")" "$CP/own.toml" "$CP/own.before"
 done
-unset want_rc
-printf '[learning]\nimplicit_outcome = []\n' >"$CP/learning_list.toml"
-check "learning-profile check: it has no off value, so [] is the user's other value (3)" \
-    bash -c 'bash "$1" learning-profile check "$2"; [[ $? -eq 3 ]]' _ "$HOOKS" "$CP/learning_list.toml"
 
+printf '[providers]\ncapacity = [\n  "acfs", "capacity", "--guard", "--json", "--for-spawn",\n]\n' >"$CP/multi.toml"
+cp "$CP/multi.toml" "$CP/multi.before"
+check "remove: ACFS's value over several lines, which ACFS never wrote, fails (1) and stays" \
+    bash -c '[[ "$1" == 1 ]] && cmp -s "$2" "$3"' _ "$(cp_rc "$CP/multi.toml")" "$CP/multi.toml" "$CP/multi.before"
 printf '[providers\ncapacity = \n' >"$CP/bad.toml"
 cp "$CP/bad.toml" "$CP/bad.before"
-check "capacity-provider set: a file that is not TOML fails and stays as it is" \
-    bash -c '! bash "$1" capacity-provider set "$2" 2>/dev/null && cmp -s "$2" "$3"' _ "$HOOKS" "$CP/bad.toml" "$CP/bad.before"
-check "capacity-provider check: and is not set (1)" bash -c 'bash "$1" capacity-provider check "$2" 2>/dev/null; [[ $? -eq 1 ]]' _ "$HOOKS" "$CP/bad.toml"
-# An inline table is closed: no edit of it is valid TOML, so nothing is written.
-printf 'providers = { other = ["x"] }\n' >"$CP/inline.toml"
-cp "$CP/inline.toml" "$CP/inline.before"
-check "capacity-provider set: an inline [providers] table fails and stays as it is" \
-    bash -c '! bash "$1" capacity-provider set "$2" 2>/dev/null && cmp -s "$2" "$3"' _ "$HOOKS" "$CP/inline.toml" "$CP/inline.before"
+check "remove: a file that is not TOML fails (1) and stays as it is" \
+    bash -c '[[ "$1" == 1 ]] && cmp -s "$2" "$3"' _ "$(cp_rc "$CP/bad.toml")" "$CP/bad.toml" "$CP/bad.before"
 
-printf '[reap]\nkeep = []\n' >"$CP/both.toml"
-bash "$HOOKS" learning-profile set "$CP/both.toml" 2>/dev/null
-cp_ set "$CP/both.toml" 2>/dev/null
-check "capacity-provider and learning-profile: both settings in one valid file" \
-    bash -c '[[ "$(python3 -I -c "import sys, tomllib; d = tomllib.load(open(sys.argv[1], \"rb\")); print(d[\"learning\"][\"implicit_outcome\"], d[\"providers\"][\"capacity\"][2], d[\"reap\"][\"keep\"])" "$1")" == "closed-assigned --guard []" ]]' _ "$CP/both.toml"
-
-check "capacity-provider: the default file is XDG_CONFIG_HOME's" \
-    bash -c 'XDG_CONFIG_HOME="$2/xdg" bash "$1" capacity-provider set 2>/dev/null && [[ -f "$2/xdg/nhm/config.toml" ]]' _ "$HOOKS" "$CP"
-unset -f cp_ cap_value
+mkdir -p "$CP/xdg/nhm"
+printf '[providers]\n%s\n' "$CAP_LINE" >"$CP/xdg/nhm/config.toml"
+check "remove: the default file is XDG_CONFIG_HOME's" \
+    bash -c 'XDG_CONFIG_HOME="$2/xdg" bash "$1" capacity-provider remove 2>/dev/null && ! grep -q capacity "$2/xdg/nhm/config.toml"' _ "$HOOKS" "$CP"
+unset -f toml_json cp_rc
+unset CAP_LINE
 
 # ------------------------------------------------------------
 # statusline claude (acfs-5917): Claude Code's statusLine runs

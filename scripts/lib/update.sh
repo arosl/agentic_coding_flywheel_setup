@@ -8487,8 +8487,8 @@ update_nhm_hooks() {
     return 0
 }
 
-# One of ACFS's settings in nhm's config (nhm_hooks.sh learning-profile or
-# capacity-provider): set it as the target user, then report it.
+# One of ACFS's settings in nhm's config (nhm_hooks.sh learning-profile):
+# set it as the target user, then report it.
 # Idempotent; a value the user set stays. Args: the nhm_hooks.sh
 # subcommand, the item's name, the setting and what "on" means.
 update_nhm_config_setting() {
@@ -8540,14 +8540,48 @@ update_nhm_learning_profile() {
         "on ([learning] implicit_outcome = \"closed-assigned\")"
 }
 
-# nhm's capacity provider (acfs-hd37, on by default since acfs-5px6):
+# nhm decides spawn admission itself (nhm-a421), and ACFS has no capacity
+# guard any more (acfs-0oc2). An earlier install or update wrote
 # [providers] capacity = ["acfs", "capacity", "--guard", "--json",
-# "--for-spawn"], so nhm spawn refuses to start an agent while one more
-# doesn't fit (acfs-gmbo, acfs-w1f0), unless it passes --ignore-capacity.
-# capacity = [] (off) stays, as any value the user set does.
-update_nhm_capacity_provider() {
-    update_nhm_config_setting capacity-provider "nhm capacity provider" "[providers] capacity" \
-        "on (nhm spawn refuses while one more agent doesn't fit; --ignore-capacity admits one spawn)"
+# "--for-spawn"] into nhm's config (acfs-hd37, acfs-5px6): remove that
+# exact line as the target user (nhm_hooks.sh capacity-provider remove).
+# A provider the user set stays, capacity = [] (off) among them. It runs
+# without the stack too (--no-stack, --agents-only, ...): the self-update
+# deploys the capacity.sh without --guard in every run, and nhm v0.1.17
+# refuses robot spawns while its provider fails.
+update_remove_nhm_capacity_provider() {
+    local desc="nhm capacity provider"
+    local helper="" target_user="" current_user="" target_home="" rc=0
+
+    update_binary_exists nhm || return 0
+    helper="$(update_runtime_acfs_home 2>/dev/null || true)/scripts/lib/nhm_hooks.sh"
+    if [[ ! -r "$helper" ]]; then
+        log_item "skip" "$desc" "nhm_hooks.sh is not installed"
+        return 0
+    fi
+    if update_is_read_only_mode; then
+        log_item "skip" "$desc" "dry-run: would remove ACFS's [providers] capacity line from nhm's config"
+        return 0
+    fi
+    target_user="$(update_target_user 2>/dev/null || true)"
+    current_user="$(update_current_user 2>/dev/null || true)"
+    if [[ -z "$target_user" || "$current_user" != "$target_user" ]]; then
+        log_item "warn" "$desc" "run as ${target_user:-the target user}: bash $helper capacity-provider remove"
+        return 0
+    fi
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    if [[ -z "$target_home" ]]; then
+        log_item "warn" "$desc" "no home for $target_user"
+        return 0
+    fi
+    # The target's own config dir: XDG_CONFIG_HOME when it is theirs.
+    HOME="$target_home" bash "$helper" capacity-provider remove </dev/null >>"${UPDATE_LOG_FILE:-/dev/null}" 2>&1 || rc=$?
+    case "$rc" in
+        0) log_item "ok" "$desc" "none from ACFS (nhm checks capacity itself)" ;;
+        3) log_item "ok" "$desc" "left as your config sets it" ;;
+        *) log_item "warn" "$desc" "could not remove ACFS's [providers] capacity line; see the update log" ;;
+    esac
+    return 0
 }
 
 # dcg's Bash guard for Codex (stack.dcg; nhm_hooks.sh codex-dcg,
@@ -10442,7 +10476,7 @@ main() {
     update_agent_mail_stop_hook
     update_nhm_hooks
     update_nhm_learning_profile
-    update_nhm_capacity_provider
+    update_remove_nhm_capacity_provider
     update_codex_dcg_hook
     update_nhm_maintain_timer
     update_root_tool_ownership
