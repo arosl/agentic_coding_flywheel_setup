@@ -547,7 +547,9 @@ if url.endswith('/hang'): time.sleep(60)
 pathlib.Path(args[args.index('-o')+1]).write_bytes(pathlib.Path(mapping[url]).read_bytes())
 ''')
         timeout = None
-        for name in ('timeout', 'gtimeout'):
+        # gtimeout is Homebrew's. On Ubuntu 26.04 timeout is uutils' and
+        # GNU's is gnutimeout, from gnu-coreutils (Priority: required).
+        for name in ('timeout', 'gtimeout', 'gnutimeout'):
             candidate = shutil.which(name)
             if candidate:
                 version = subprocess.run([candidate, '--version'], capture_output=True,
