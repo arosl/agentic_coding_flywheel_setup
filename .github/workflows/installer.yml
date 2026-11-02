@@ -70,7 +70,11 @@ jobs:
 
   shellcheck:
     name: ShellCheck
-    runs-on: ubuntu-latest
+    # Pinned (acfs-wu1u): on ubuntu-26.04, ubuntu-latest since 2026-11-02,
+    # timeout is uutils', and test_claude_code_web_setup.py found no GNU
+    # timeout. It now also takes gnutimeout; acfs-q2yy moves the job back
+    # once a 26.04 run shows that it passes there.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
