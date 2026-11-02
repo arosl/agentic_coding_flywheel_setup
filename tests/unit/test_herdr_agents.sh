@@ -1263,15 +1263,15 @@ check "an agent whose workspace has no label is skipped for {{session}}" \
     bash -c '[[ "$1" -ne 0 && ! -e "$2/prompt_w2:p1" ]] && grep -q "skipped w2:p1: its workspace w2 has no label" <<<"$3"' _ "$RC" "$STUB_DIR" "$ERR"
 
 # acfs-9hkh.25: list moved to nhm. Its vectors live in nhm's suite:
-# TestListVerb (every bound agent, as JSON) and TestStatusVerb (one
-# workspace by label or id; an unknown one refused). The --kind filter has
-# no nhm form; nhm's rows show each agent's kind.
+# TestStatusVerb (one workspace by label or id; an unknown one refused);
+# since nhm v0.1.19, nhm list is ntm's session list (nhm-2p6.3.1). The
+# --kind filter has no nhm form; nhm's rows show each agent's kind.
 reset_stub list
 write_list
 for verb in list ls; do
     run_helper "$verb" --workspace w9 --json
-    check "acfs agents $verb is gone: it names nhm list and nhm status, and asks herdr nothing" \
-        bash -c '[[ "$1" -ne 0 && -z "$2" ]] && grep -qF "run '"'"'nhm list'"'"'" <<<"$3" && grep -qF "nhm status [workspace]" <<<"$3" \
+    check "acfs agents $verb is gone: it names nhm status and nhm list, and asks herdr nothing" \
+        bash -c '[[ "$1" -ne 0 && -z "$2" ]] && grep -qF "run '"'"'nhm status [workspace]'"'"'" <<<"$3" && grep -qF "'"'"'nhm list'"'"' (every herdr session)" <<<"$3" \
             && ! grep -q "^herdr" "$4"' _ "$RC" "$OUT" "$ERR" "$STUB_DIR/calls"
 done
 

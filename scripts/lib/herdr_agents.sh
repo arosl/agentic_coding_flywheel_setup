@@ -130,8 +130,8 @@ send   Prompt every matching agent, and wait until each is seen working, which
        (default 5), the prompt goes as it is, with a note saying why.
        spawn takes both too and puts the context after the identity line;
        --no-prompt refuses them.
-list   Moved to nhm (acfs-9hkh.25): 'nhm list' shows every bound agent,
-       'nhm status [workspace]' one row per agent with its state and mail.
+list   Moved to nhm (acfs-9hkh.25): 'nhm status [workspace]' shows one row
+       per agent with its state and mail, 'nhm list' every herdr session.
        nhm imports the agents spawn starts (at enroll and from their
        hooks); 'herdr agent list' shows every agent herdr runs.
 inbox  Print every unread Agent Mail message sent to the agent (To or bcc,
@@ -3176,7 +3176,7 @@ herdr_agents_main() {
         send) herdr_agents_send "$@" ;;
         list|ls)
             # Moved to nhm (acfs-9hkh.25); the Bash verb is gone.
-            herdr_agents_die "list moved to nhm: run 'nhm list' (every bound agent) or 'nhm status [workspace]' (one row per agent); 'herdr agent list' shows every agent herdr runs" ;;
+            herdr_agents_die "list moved to nhm: run 'nhm status [workspace]' (one row per agent) or 'nhm list' (every herdr session); 'herdr agent list' shows every agent herdr runs" ;;
         inbox) herdr_agents_inbox "$@" ;;
         wake) herdr_agents_wake "$@" ;;
         limits) herdr_agents_limits "$@" ;;
