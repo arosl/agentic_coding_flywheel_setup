@@ -1,0 +1,637 @@
+schema_version: 2
+name: playbook
+description: Auto-generated from cass-memory reflections
+metadata:
+  createdAt: 2026-11-11T16:59:31.395Z
+  totalReflections: 0
+  totalSessionsProcessed: 0
+deprecatedPatterns: []
+bullets:
+  - id: b-mwcd6dhg-gt25f7
+    content: "When auditing a tool for tmux/ntm assumptions, also grep ntm's source
+      for that tool: ntm often wrapped the tool (e.g. cm/cass injection on
+      send), so the work to rebuild is in the herdr layer, not the tool."
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-oqkmzs
+    content: "Before classifying a stack tool as needing a herdr rewrite, check its
+      config/extension points (pt: user signatures + policy protected_patterns)
+      and probe the installed binary; most multiplexer hits are terminal
+      detection, comments or sample data."
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-ef35nw
+    content: Main-flow installer tests stub functions like ensure_ubuntu; when
+      changing one, load the real definition into the integrated test class and
+      set install.sh's load-time globals so set -u doesn't fail. Root-only
+      Python suites can run under 'unshare -r' locally.
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-m74f4i
+    content: After an upstream ACFS sync, grep new scripts/swarm-fleet-*.py for
+      'st_mode & 0o022' and port the fork's private-group writable_by_others;
+      each fleet script carries its own copy because remote receivers run the
+      file alone. Prove it with an unpatched 0775 dir chain, not just a mocked
+      private_group.
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-q7j626
+    content: "Adding a runtime file under ~/.acfs: update install.sh install_asset +
+      its ledger required_paths, update.sh file_pairs, generate.ts
+      INTERNAL_SCRIPTS_TO_CHECKSUM + generate.test.ts list and its hardcoded
+      ledger count, and check-manifest-drift.sh; then regenerate the ledger in a
+      clean worktree"
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-hrih9z
+    content: In ACFS update.sh, guard each opt-in tool's update with
+      update_binary_exists <tool> || FORCE_MODE, matching its opt-in install;
+      unguarded updates install it everywhere.
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-fo9ny0
+    content: "acfs update re-runs only a stack tool's verified installer, never the
+      manifest's install steps: mirror any manifest post-step in update.sh after
+      the installer call (SRPS's installer wipes /etc/ananicy.d, including
+      10-local)."
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-ipec4m
+    content: doctor.sh's 'acfs agents' router names each herdr_agents.sh subcommand;
+      a new subcommand works from the repo but not on an install until it's
+      added there (test_doctor_agents_route.sh checks).
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-rtymtq
+    content: When a CI tool-check step goes red on 'command not found', compare its
+      list with the manifest's enabled_by_default modules, not upstream's
+      workflow (upstream still checks the retired gemini); an earlier failure in
+      the same step can hide the next, so rerun the step to its end before
+      calling it green.
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-sj7uh7
+    content: "install.sh's internal-integrity ledger hashes install.sh itself and
+      scripts/lib/*.sh: any installer edit needs internal_checksums.sh
+      regenerated (clean worktree at HEAD) before the push; 'bun run generate
+      --diff' in packages/manifest shows it early."
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-oclig2
+    content: "Plan rounds here use .agents/skills/plan-round: plan_round.sh start N
+      renders apr's bundle and adds ChatGPT Pro only if ORACLE_REMOTE_HOST
+      /health answers; reviewers write round_N.<reviewer>.md; collect N builds
+      round_N.md for apr robot integrate N."
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-gemjb6
+    content: To check checksums.yaml for drift, read security.sh --verify --json
+      (one JSON report, about 20 s) instead of diffing an --update-checksums
+      candidate; upstream's checksum-monitor-local.sh pushes to upstream, so it
+      is unusable in the fork.
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-aah2wx
+    content: "To trace a stray process back to the test that started it, read
+      /proc/<pid>/environ: the fixture's HOME and *_ROOT variables and the
+      (deleted) cwd name it. Any ACFS test that reaches acfs agents spawn for
+      codex must fake the app-server daemon (CODEX_HOME pid file +
+      HERDR_AGENTS_PROC_ROOT) and stub codex, or it leaks a real daemon."
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-ylnbpn
+    content: "A commit that edits acfs.manifest.yaml, checksums.yaml or a ledgered
+      script (install.sh, scripts/lib/*.sh) isn't done until scripts/generated
+      (and apps/web/lib/generated for manifest edits) is regenerated in the same
+      commit, from HEAD plus your files: scripts/hooks/check_generated.sh
+      --regenerate -- <your paths>."
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-kmfml5
+    content: To share installer logic between install.sh and a scripts/lib file,
+      call the lib function through try_step (it runs functions in the current
+      shell); a 'bash -c' step body can't see lib functions.
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-76v0i6
+    content: On Arch, ACFS installs every category through install.sh's legacy path,
+      so a new opt-in module also needs a should_run_module-gated block there,
+      not just a generated category installer.
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-demj1b
+    content: bats isn't on devbox and CI runs no .bats file; run bats-core 1.11 with
+      bats-support 0.3.0 and bats-assert 2.1.0 from a scratch clone (symlinked
+      into a throwaway HOME as ~/.bats-support and ~/.bats-assert) and GNU
+      parallel for --jobs, which cuts test_update.bats from over an hour to
+      minutes.
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-bk6wjg
+    content: Only the designated pusher (AGENTS.md, Coordination) pushes local main;
+      everyone else commits with a pathspec and goes on to the next bead. The
+      pusher mails every holder of a reservation on files in the unpushed
+      commits as soon as the gate starts, since the pre-push guard checks all of
+      them.
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-uv3xkt
+    content: "As the designated pusher, run
+      scripts/tests/run_ci_workflows_locally.sh in the gate worktree before
+      pushing: it runs each push-triggered workflow's own run: steps (catching
+      per-workflow lint configs the shared gate misses) and names every step it
+      must skip (sudo, containers, tool installs, install.sh)."
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-g0vhys
+    content: Every curl call in ACFS's security.sh starts with -q (so curl ignores
+      ~/.curlrc, which is root's during an install) and passes --proto '=https'
+      --proto-redir '=https'; a new call copies ACFS_CURL_BASE_ARGS' hardening.
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-a0ddlr
+    content: "After 'check_generated.sh --regenerate', commit the regenerated files
+      at once: left uncommitted in the shared tree, they block every other
+      agent's regeneration, because the helper refuses to overwrite uncommitted
+      generated files."
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-hid6o9
+    content: "Porting a tool's name through upstream docs: sort each page first.
+      Port guidance and reference (commands, schema examples, file lists) to the
+      fork's real facts, checked against the code; leave records, plans and
+      quotations as written, with one note at the top."
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-z3j0bz
+    content: "To commit a file holding another agent's uncommitted lines, use a
+      temporary index: GIT_INDEX_FILE=$t git read-tree HEAD; update-index
+      --cacheinfo with your hash-object -w blob; GIT_INDEX_FILE=$t bash
+      scripts/hooks/check_generated.sh --regenerate (since f3d99ea6 it stages
+      into $t); GIT_INDEX_FILE=$t git commit; then git restore --staged your
+      paths so the shared index matches HEAD."
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
+  - id: b-mwcd6dhg-8tliqs
+    content: "Restoring an upstream module that downloads a release binary: check
+      the URL's asset name against the release's checksums.txt, not just the
+      hash. uname -m says aarch64 where releases say arm64, and root's tar needs
+      --no-same-owner."
+    category: general
+    kind: workflow_rule
+    type: rule
+    isNegative: false
+    scope: workspace
+    source: learned
+    tags: []
+    state: draft
+    maturity: candidate
+    createdAt: 2026-11-11T16:59:31.396Z
+    updatedAt: 2026-11-11T16:59:31.396Z
+    sourceSessions:
+      - manual-cli
+    sourceAgents:
+      - unknown
+    helpfulCount: 0
+    harmfulCount: 0
+    feedbackEvents: []
+    deprecated: false
+    pinned: false
+    confidenceDecayHalfLifeDays: 90
