@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-11-09T23:30:56+00:00
+# checksums.yaml - Auto-generated 2026-11-25T16:22:37+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -12,11 +12,11 @@ installers:
 
   asb:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/agent_settings_backup_script/main/install.sh"
-    sha256: "9069cd335b79bab7047271bbabb2ba018423a3a4fb95916c4ee9d5f11582bd94"
+    sha256: "9d0dd065785413be72c591a07ab5854b9330f77016d22787a06cdd779b4556d1"
 
   atuin:
     url: "https://github.com/atuinsh/atuin/releases/latest/download/atuin-installer.sh"
-    sha256: "85742e9f87ab0d8d9c0ea53482c6e178d52599ef2b0fba4f4a336bf168934bce"
+    sha256: "6dd0e64254caf4e6d841a13a1e7c2b2dd9b61315fcf8f6e96777fcd376824d1f"
 
   br:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh"
@@ -32,7 +32,7 @@ installers:
 
   bv:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh"
-    sha256: "13a80ec48ef72b3f50f2f9ce49453175dc5e80afcf11f996ec2ed97356544f0c"
+    sha256: "6621d67f5cc78255b43965bf3381f0a93ff55ceab55cbf39336b1681a0861f49"
 
   caam:
     url: "https://raw.githubusercontent.com/arosl/coding_agent_account_manager/v0.1.23-herdr.3/install.sh"
@@ -48,7 +48,7 @@ installers:
 
   casr:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/cross_agent_session_resumer/main/install.sh"
-    sha256: "ffa8f56326d4886f6470fb54b8c3fe3d5c0d890f0cbbbeed116f41f6a086c963"
+    sha256: "c00f4d7da4738c9b9e4614ff2f214a4a30bda7dc8f666474b77f829386e251c9"
 
   cass:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_session_search/main/install.sh"
@@ -56,7 +56,7 @@ installers:
 
   claude:
     url: "https://claude.ai/install.sh"
-    sha256: "3a68d3406cf674e17bed1733a4dcf37805e2e47d87417700007d7e1aa766a944"
+    sha256: "2c5506d110560bf618bbe88f678f2c2a0047c86a9c6585fc84976120b1de0b44"
 
   cm:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/cass_memory_system/main/install.sh"
@@ -72,7 +72,7 @@ installers:
 
   dsr:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/doodlestein_self_releaser/main/install.sh"
-    sha256: "2680dc30f76382cade53c40f26f804ed4e641b0c520eb8be279954ba2f529462"
+    sha256: "047272f8b19e33102f8ee539de72eb9525f67cb9d715756123bea944719d9932"
 
   ee:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/eidetic_engine_cli/main/install.sh"
@@ -84,7 +84,7 @@ installers:
 
   fsfs:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/frankensearch/refs/heads/main/install.sh"
-    sha256: "75832d4bd6297c4ccd39d2abae58c76c0a506e655b77255dd9ccbbc7fc704a7c"
+    sha256: "449f40792b91c8afe1dd12a1c1aa617714d11c9b28bf390bf27ccae3f8039728"
 
   gemini_patch:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/misc_coding_agent_tips_and_scripts/main/fix-gemini-cli-ebadf-crash.sh"
@@ -116,7 +116,7 @@ installers:
 
   ms:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/meta_skill/main/scripts/install.sh"
-    sha256: "b45bd7d38f5c470459c07345e6610c390233610296f5402926204a7e92233460"
+    sha256: "525dbf148ac030b97426ea2e901b4bc1f67bcfe5160a489f03d40c4b9dd412c2"
 
   nhm:
     url: "https://raw.githubusercontent.com/arosl/nhm/v0.1.20/install.sh"
@@ -140,7 +140,7 @@ installers:
 
   omp:
     url: "https://omp.sh/install.sh"
-    sha256: "cd8f77920da58c6f56b5851c841b61d5e30b4ba8f4cab683afba1f8274b56a06"
+    sha256: "9d8aea7105ab30b46f048c3ba9216ae9f92375491b883e510059069dbf968a5f"
 
   opencode:
     url: "https://opencode.ai/install"
@@ -156,7 +156,7 @@ installers:
 
   pi:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/pi_agent_rust/main/install.sh"
-    sha256: "467001baec1f304511e82e8e9485e292c78f2023645ee367889b6b06fabed8a3"
+    sha256: "25d1be121e5aef16c0eb7bedddfc287f8a62d4591ae3152edb6a0cc6968c5ee9"
 
   pt:
     url: "https://raw.githubusercontent.com/arosl/process_triage/main/install.sh"
@@ -168,7 +168,7 @@ installers:
 
   rch:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/remote_compilation_helper/main/install.sh"
-    sha256: "0c811c50aea03ca9e25cac5379f6c5d4fe3eea7414e9fa537a4c8f5d73cbf0c1"
+    sha256: "dc7245364ad0867954b61ca7dd98fc5c4e37e2035d93bb28c44444786b0c909f"
 
   ru:
     url: "https://raw.githubusercontent.com/arosl/repo_updater/v1.5.0-nhm.2/install.sh"
@@ -188,11 +188,11 @@ installers:
 
   slb:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/simultaneous_launch_button/main/scripts/install.sh"
-    sha256: "5ae8ab030d372a8bd22460fabd647427a5903d076ad93da198465d2b280acc1d"
+    sha256: "eba090a2c69cdf5d366277ee787a74de2316d18e209085df528a22a5552da56c"
 
   srps:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/system_resource_protection_script/main/install.sh"
-    sha256: "dd6014c07c7146bbc89d1e25a9ed5b093db2ebdd7a6066e5f47a8f325d4393d9"
+    sha256: "59d20f0affafbc3da172d28eccea1535e9c4071188678ab92ddf01b28cd072cb"
 
   tru:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/toon_rust/main/install.sh"
@@ -204,11 +204,11 @@ installers:
 
   uv:
     url: "https://astral.sh/uv/install.sh"
-    sha256: "d263ee68314cf5bea36b08e6bd9e2c4563240d7adb73756cf33af5c199b92db4"
+    sha256: "51781aafe6950cc659f79873e1bdca55fbb9da6e0ef650bf98093a0f0aaaf453"
 
   xf:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/xf/main/install.sh"
-    sha256: "36aa9c217b341f64379f08a084c3a45c8419565a0292b0780b05c280f01bcd22"
+    sha256: "039f9433ef5861efe4e9b07289d99f404cbf68a79f33d75afd50e41033598183"
 
   zoxide:
     url: "https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh"
