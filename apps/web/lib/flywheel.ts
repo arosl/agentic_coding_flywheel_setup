@@ -543,7 +543,7 @@ const _flywheelTools: FlywheelTool[] = [
       "ubs --beads-jsonl findings.jsonl .",
     ],
     installCommand:
-      "curl --proto '=https' --proto-redir '=https' -fsSL \"https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/main/install.sh\" | bash -s -- --easy-mode",
+      "curl --proto '=https' --proto-redir '=https' -fsSL \"https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/v5.5.26/install.sh\" | bash -s -- --easy-mode --skip-version-check",
     language: "Shell",
   },
   {

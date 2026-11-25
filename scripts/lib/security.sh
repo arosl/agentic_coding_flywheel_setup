@@ -616,7 +616,11 @@ declare -gA KNOWN_INSTALLERS=(
     # installer, and that installer pins its release's SHA256SUMS, so this
     # checksum covers the binaries too. Move it on purpose, with a review.
     [mcp_agent_mail]="https://raw.githubusercontent.com/arosl/mcp_agent_mail_rust/e12608a177ac50f001358f30f17de911b38ee6f6/install.sh"
-    [ubs]="https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/main/install.sh"
+    # ubs: the tag of its newest release pins the installer. main's installer
+    # refuses the runner of every release so far, v5.5.26's included (acfs-ose5,
+    # upstream issue 202). Back to main once a release declares
+    # UBS_RELEASE_GENERATIONS=1.
+    [ubs]="https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/v5.5.26/install.sh"
     [bv]="https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh"
     [cass]="https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_session_search/main/install.sh"
     [cm]="https://raw.githubusercontent.com/Dicklesworthstone/cass_memory_system/main/install.sh"

@@ -11205,7 +11205,9 @@ UNIT_EOF
         # so the UBS installer must not edit ~/.claude/settings.json (#400).
         # --skip-ast-grep: tools.ast_grep provides it; UBS's own fetch could
         # install the sg launcher as ~/.local/bin/ast-grep (acfs-9ij4).
-        acfs_try_module_step "stack.ultimate_bug_scanner" "Installing UBS" acfs_run_verified_upstream_script_as_target "ubs" "bash" --easy-mode --skip-hooks --skip-ast-grep || acfs_optional_module_install_failed "ubs" "UBS"
+        # --skip-version-check: it can run main's installer without a checksum
+        # (acfs-ose5).
+        acfs_try_module_step "stack.ultimate_bug_scanner" "Installing UBS" acfs_run_verified_upstream_script_as_target "ubs" "bash" --easy-mode --skip-hooks --skip-ast-grep --skip-version-check ||acfs_optional_module_install_failed "ubs" "UBS"
     fi
 
     # Beads Rust

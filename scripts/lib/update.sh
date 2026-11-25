@@ -8869,7 +8869,9 @@ update_stack() {
     # itself; per-project UBS hooks are a choice made inside a repo.
     # --skip-ast-grep: tools.ast_grep provides it; UBS's own fetch could install
     # the sg launcher as ~/.local/bin/ast-grep, which execs itself (acfs-9ij4).
-    run_cmd "Ultimate Bug Scanner" update_run_verified_installer ubs --easy-mode --skip-hooks --skip-ast-grep
+    # --skip-version-check: it can run main's installer without a checksum
+    # (acfs-ose5).
+    run_cmd "Ultimate Bug Scanner" update_run_verified_installer ubs --easy-mode --skip-hooks --skip-ast-grep --skip-version-check
 
     # Beads Viewer - always install/update
     run_cmd "Beads Viewer" update_run_verified_installer bv

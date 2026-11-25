@@ -2751,7 +2751,10 @@ modules:
       # --skip-ast-grep: tools.ast_grep installs it. Without ~/.cargo/bin on
       # its PATH, UBS fetched its own and could install ast-grep's sg launcher
       # as ~/.local/bin/ast-grep, which then execs itself (acfs-9ij4).
-      args: ["--easy-mode", "--skip-hooks", "--skip-ast-grep"]
+      # --skip-version-check: when v5.5.26's installer (security.sh pins its
+      # tag) can't resolve the latest release, its version check runs main's
+      # installer without a checksum (acfs-ose5).
+      args: ["--easy-mode", "--skip-hooks", "--skip-ast-grep", "--skip-version-check"]
     install: []
     verify:
       - ubs --help

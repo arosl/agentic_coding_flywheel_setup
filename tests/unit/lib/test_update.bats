@@ -17746,11 +17746,36 @@ run_update_service_units() {
     run grep -F 'fix_verified_install "$check_id" "ubs" "ubs" --easy-mode --skip-hooks --skip-ast-grep' \
         "$PROJECT_ROOT/scripts/lib/doctor_fix.sh"
     assert_success
-    run grep -F 'args: ["--easy-mode", "--skip-hooks", "--skip-ast-grep"]' \
+    run grep -F 'args: ["--easy-mode", "--skip-hooks", "--skip-ast-grep", ' \
         "$PROJECT_ROOT/acfs.manifest.yaml"
     assert_success
     run grep -F "'--easy-mode' '--skip-hooks' '--skip-ast-grep'" \
         "$PROJECT_ROOT/scripts/generated/install_stack.sh"
+    assert_success
+}
+
+@test "UBS installs use a release tag's installer and never its version check (acfs-ose5)" {
+    # main's installer refuses the runner of every published release, so every
+    # fresh install failed at UBS from 2026-11-03. v5.5.26's own installer takes
+    # it. When that one can't resolve the latest release, its version check
+    # runs main's installer from the network, past ACFS's checksum.
+    run grep -F '[ubs]="https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/v5.5.26/install.sh"' \
+        "$PROJECT_ROOT/scripts/lib/security.sh"
+    assert_success
+    run grep -F 'url: "https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/v5.5.26/install.sh"' \
+        "$PROJECT_ROOT/checksums.yaml"
+    assert_success
+    run grep -E 'update_run_verified_installer ubs .*--skip-version-check' "$PROJECT_ROOT/scripts/lib/update.sh"
+    assert_success
+    run grep -E 'acfs_run_verified_upstream_script_as_target "ubs" .*--skip-version-check' "$PROJECT_ROOT/install.sh"
+    assert_success
+    run grep -E 'fix_verified_install "\$check_id" "ubs" .*--skip-version-check' "$PROJECT_ROOT/scripts/lib/doctor_fix.sh"
+    assert_success
+    run grep -E 'local -a args=\(--easy-mode --skip-hooks --skip-ast-grep --skip-version-check\)' "$PROJECT_ROOT/scripts/lib/stack.sh"
+    assert_success
+    run grep -F '"--skip-ast-grep", "--skip-version-check"]' "$PROJECT_ROOT/acfs.manifest.yaml"
+    assert_success
+    run grep -F "'--skip-ast-grep' '--skip-version-check'" "$PROJECT_ROOT/scripts/generated/install_stack.sh"
     assert_success
 }
 

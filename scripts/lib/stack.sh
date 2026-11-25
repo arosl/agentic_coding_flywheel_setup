@@ -2174,7 +2174,9 @@ install_ubs() {
     # --skip-hooks and --skip-ast-grep match stack.ubs in the manifest:
     # tools.ast_grep provides ast-grep, and UBS's own fetch could install the
     # sg launcher as ~/.local/bin/ast-grep, which execs itself (acfs-zbrk).
-    local -a args=(--easy-mode --skip-hooks --skip-ast-grep)
+    # --skip-version-check: it can run main's installer without a checksum
+    # (acfs-ose5).
+    local -a args=(--easy-mode --skip-hooks --skip-ast-grep --skip-version-check)
     if ! _stack_is_interactive; then
         args+=(--yes)
     fi
