@@ -397,6 +397,8 @@ acfs_generated_install_all() {
     acfs_generated_install_lang_nvm
     log_section "Category: tools"
     acfs_generated_install_tools_atuin
+    acfs_generated_install_tools_mcfly
+    acfs_generated_install_tools_mcfly_fzf
     acfs_generated_install_tools_zoxide
     acfs_generated_install_tools_ast_grep
     log_section "Category: agents"

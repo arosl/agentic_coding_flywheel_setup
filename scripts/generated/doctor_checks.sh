@@ -395,6 +395,8 @@ declare -a MANIFEST_CHECKS=(
     "lang.go	Go toolchain	go version	required	root"
     "lang.nvm	nvm + latest Node.js	export NVM_DIR=\"\$HOME/.nvm\"\\n[ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"\\nnode --version	required	target_user"
     "tools.atuin	Atuin CLI with guarded agent-safe shim	~/.atuin/bin/atuin --version	required	target_user"
+    "tools.mcfly	mcfly shell history (pinned release)	\"\$HOME/.local/bin/mcfly\" --version	required	target_user"
+    "tools.mcfly_fzf	mcfly-fzf, fzf search of mcfly history on Ctrl-R (pinned release)	\"\$HOME/.local/bin/mcfly-fzf\" --version	required	target_user"
     "tools.zoxide	Zoxide (better cd)	command -v zoxide	required	target_user"
     "tools.ast_grep	ast-grep (used by UBS for syntax-aware scanning)	sg --version	required	target_user"
     "agents.claude	Claude Code	target_bin=\"\${ACFS_BIN_DIR:-\$HOME/.local/bin}\"\\n\"\$target_bin/claude\" --version || \"\$target_bin/claude\" --help	required	target_user"

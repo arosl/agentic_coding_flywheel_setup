@@ -41,7 +41,7 @@ export interface ManifestProvenanceMetadata {
 
 export const manifestProvenance = {
   acfsVersion: "0.10.0",
-  manifestSha256: "b10c2a19cccc74ed0ba9e6f925a695bf7125b054aca0231a4e1ecd701df2a88f",
+  manifestSha256: "32fd9355a18bf4bd719b2d7b8e4206dc2638cf2a7f5f0423e537c86f2fae43a7",
   checksumsYamlSha256: "3685e2a8c867ab40da558b20601b414feae3cdd1fa3b0cd4bbff2d9fb16289b7",
 } as const satisfies ManifestProvenanceMetadata;
 
@@ -328,6 +328,39 @@ export const manifestModules: ManifestModuleMetadata[] = [
     phase: 6,
     dependencies: [
       "base.system",
+      "users.ubuntu",
+    ],
+    tags: [
+      "recommended",
+      "shell-ux",
+    ],
+    enabledByDefault: true,
+    optional: false,
+  },
+  {
+    id: "tools.mcfly",
+    description: "mcfly shell history (pinned release)",
+    category: "tools",
+    phase: 6,
+    dependencies: [
+      "base.system",
+      "users.ubuntu",
+    ],
+    tags: [
+      "recommended",
+      "shell-ux",
+    ],
+    enabledByDefault: true,
+    optional: false,
+  },
+  {
+    id: "tools.mcfly_fzf",
+    description: "mcfly-fzf, fzf search of mcfly history on Ctrl-R (pinned release)",
+    category: "tools",
+    phase: 6,
+    dependencies: [
+      "tools.mcfly",
+      "cli.modern",
       "users.ubuntu",
     ],
     tags: [

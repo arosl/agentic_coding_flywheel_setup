@@ -350,7 +350,7 @@ acfs_security_init() {
 }
 
 # Category: tools
-# Generated modules: 19
+# Generated modules: 21
 
 # Lazygit (apt or binary fallback)
 acfs_generated_install_tools_lazygit() {
@@ -1019,6 +1019,129 @@ INSTALL_TOOLS_ATUIN
     fi
 
     log_success "tools.atuin installed"
+}
+
+# mcfly shell history (pinned release)
+acfs_generated_install_tools_mcfly() {
+    local module_id="tools.mcfly"
+    acfs_require_contract "module:${module_id}" || return 1
+    acfs_generated_ensure_selection || return 1
+    if ! should_run_module "${module_id}"; then
+        log_info "Skipping tools.mcfly (not selected)"
+        return 0
+    fi
+    log_step "Installing tools.mcfly"
+
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: install: install mcfly 0.9.4 into ~/.local/bin (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_TOOLS_MCFLY'
+# acfs-summary: install mcfly 0.9.4 into ~/.local/bin
+MCFLY_VER="0.9.4"
+case "$(uname -m)" in
+  x86_64)
+    MCFLY_TRIPLE="x86_64-unknown-linux-musl"
+    MCFLY_SHA="72d2c6fdaa111ac96c2cf725fc40e313e2856643482be58608911a09440313f1"
+    ;;
+  aarch64|arm64)
+    MCFLY_TRIPLE="aarch64-unknown-linux-musl"
+    MCFLY_SHA="57eb23c3c40b3a7675dc1fe3b785501a6a41598b9b3cbe35d80f8d65267cf1cd"
+    ;;
+  *) echo "mcfly: no release build for $(uname -m)" >&2; exit 1 ;;
+esac
+MCFLY_URL="https://github.com/cantino/mcfly/releases/download/v${MCFLY_VER}/mcfly-v${MCFLY_VER}-${MCFLY_TRIPLE}.tar.gz"
+TMP_TGZ="$(mktemp "${TMPDIR:-/tmp}/acfs-mcfly.XXXXXX")"
+TMP_BIN="$(mktemp "${TMPDIR:-/tmp}/acfs-mcfly-bin.XXXXXX")"
+trap 'rm -f "$TMP_TGZ" "$TMP_BIN"' EXIT
+curl -q -fsSL --proto '=https' --proto-redir '=https' --retry 3 "$MCFLY_URL" -o "$TMP_TGZ"
+echo "$MCFLY_SHA  $TMP_TGZ" | sha256sum -c - >/dev/null || { echo "mcfly: checksum mismatch for $MCFLY_URL" >&2; exit 1; }
+tar -xzOf "$TMP_TGZ" mcfly > "$TMP_BIN"
+mkdir -p "$HOME/.local/bin"
+install -m 0755 "$TMP_BIN" "$HOME/.local/bin/mcfly"
+INSTALL_TOOLS_MCFLY
+        then
+            log_error "tools.mcfly: install command failed: install mcfly 0.9.4 into ~/.local/bin"
+            return 1
+        fi
+    fi
+
+    # Verify
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: \"\$HOME/.local/bin/mcfly\" --version (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_TOOLS_MCFLY'
+"$HOME/.local/bin/mcfly" --version
+INSTALL_TOOLS_MCFLY
+        then
+            log_error "tools.mcfly: verify failed: \"\$HOME/.local/bin/mcfly\" --version"
+            return 1
+        fi
+    fi
+
+    log_success "tools.mcfly installed"
+}
+
+# mcfly-fzf, fzf search of mcfly history on Ctrl-R (pinned release)
+acfs_generated_install_tools_mcfly_fzf() {
+    local module_id="tools.mcfly_fzf"
+    acfs_require_contract "module:${module_id}" || return 1
+    acfs_generated_ensure_selection || return 1
+    if ! should_run_module "${module_id}"; then
+        log_info "Skipping tools.mcfly_fzf (not selected)"
+        return 0
+    fi
+    log_step "Installing tools.mcfly_fzf"
+
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: install: install mcfly-fzf 1.0.4 into ~/.local/bin (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_TOOLS_MCFLY_FZF'
+# acfs-summary: install mcfly-fzf 1.0.4 into ~/.local/bin
+# Release 1.0.4 builds the crate at version 0.1.3, so --version
+# prints 0.1.3. Its tarball also holds an older mcfly (0.8.5);
+# only mcfly-fzf is taken from it.
+MCFLY_FZF_VER="1.0.4"
+case "$(uname -m)" in
+  x86_64)
+    MCFLY_FZF_TRIPLE="x86_64-unknown-linux-musl"
+    MCFLY_FZF_SHA="ac9c78008f071732c78d3181712d41274b12d4c1cf6b89da7258ab6e6aeb58c4"
+    ;;
+  aarch64|arm64)
+    MCFLY_FZF_TRIPLE="aarch64-unknown-linux-musl"
+    MCFLY_FZF_SHA="a950b0db73c2a92d150ba2fd7fbba92dfcea229f97fbb1392330428037dd2106"
+    ;;
+  *) echo "mcfly-fzf: no release build for $(uname -m)" >&2; exit 1 ;;
+esac
+MCFLY_FZF_URL="https://github.com/bnprks/mcfly-fzf/releases/download/${MCFLY_FZF_VER}/mcfly-fzf-${MCFLY_FZF_VER}-${MCFLY_FZF_TRIPLE}.tar.gz"
+TMP_TGZ="$(mktemp "${TMPDIR:-/tmp}/acfs-mcfly-fzf.XXXXXX")"
+TMP_BIN="$(mktemp "${TMPDIR:-/tmp}/acfs-mcfly-fzf-bin.XXXXXX")"
+trap 'rm -f "$TMP_TGZ" "$TMP_BIN"' EXIT
+curl -q -fsSL --proto '=https' --proto-redir '=https' --retry 3 "$MCFLY_FZF_URL" -o "$TMP_TGZ"
+echo "$MCFLY_FZF_SHA  $TMP_TGZ" | sha256sum -c - >/dev/null || { echo "mcfly-fzf: checksum mismatch for $MCFLY_FZF_URL" >&2; exit 1; }
+tar -xzOf "$TMP_TGZ" mcfly-fzf > "$TMP_BIN"
+mkdir -p "$HOME/.local/bin"
+install -m 0755 "$TMP_BIN" "$HOME/.local/bin/mcfly-fzf"
+INSTALL_TOOLS_MCFLY_FZF
+        then
+            log_error "tools.mcfly_fzf: install command failed: install mcfly-fzf 1.0.4 into ~/.local/bin"
+            return 1
+        fi
+    fi
+
+    # Verify
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: \"\$HOME/.local/bin/mcfly-fzf\" --version (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_TOOLS_MCFLY_FZF'
+"$HOME/.local/bin/mcfly-fzf" --version
+INSTALL_TOOLS_MCFLY_FZF
+        then
+            log_error "tools.mcfly_fzf: verify failed: \"\$HOME/.local/bin/mcfly-fzf\" --version"
+            return 1
+        fi
+    fi
+
+    log_success "tools.mcfly_fzf installed"
 }
 
 # Zoxide (better cd)

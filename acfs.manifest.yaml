@@ -1108,6 +1108,104 @@ modules:
     verify:
       - ~/.atuin/bin/atuin --version
 
+  # Shell history: mcfly records it, mcfly-fzf searches it with fzf on
+  # Ctrl-R (the operator's ruling, 2026-11-27, acfs-wyzm). Neither project
+  # publishes checksums or a pinnable installer, so each module pins its
+  # release and the SHA-256 of each Linux tarball, as tools.lazygit does.
+  # update.sh's UPDATE_MCFLY_PINS carries the same pins for acfs update;
+  # tests/unit/test_mcfly_pins.sh fails when the two disagree. Both are
+  # static musl builds, so the same tarballs serve Ubuntu and Arch, and they
+  # go to ~/.local/bin, which acfs.zshrc puts on PATH.
+  - id: tools.mcfly
+    description: mcfly shell history (pinned release)
+    category: tools
+    phase: 6
+    run_as: target_user
+    optional: false
+    enabled_by_default: true
+    tags: [recommended, shell-ux]
+    dependencies:
+      - base.system
+    installed_check:
+      run_as: target_user
+      command: '"$HOME/.local/bin/mcfly" --version 2>/dev/null | grep -qx "mcfly 0.9.4"'
+    install:
+      - |
+        # acfs-summary: install mcfly 0.9.4 into ~/.local/bin
+        MCFLY_VER="0.9.4"
+        case "$(uname -m)" in
+          x86_64)
+            MCFLY_TRIPLE="x86_64-unknown-linux-musl"
+            MCFLY_SHA="72d2c6fdaa111ac96c2cf725fc40e313e2856643482be58608911a09440313f1"
+            ;;
+          aarch64|arm64)
+            MCFLY_TRIPLE="aarch64-unknown-linux-musl"
+            MCFLY_SHA="57eb23c3c40b3a7675dc1fe3b785501a6a41598b9b3cbe35d80f8d65267cf1cd"
+            ;;
+          *) echo "mcfly: no release build for $(uname -m)" >&2; exit 1 ;;
+        esac
+        MCFLY_URL="https://github.com/cantino/mcfly/releases/download/v${MCFLY_VER}/mcfly-v${MCFLY_VER}-${MCFLY_TRIPLE}.tar.gz"
+        TMP_TGZ="$(mktemp "${TMPDIR:-/tmp}/acfs-mcfly.XXXXXX")"
+        TMP_BIN="$(mktemp "${TMPDIR:-/tmp}/acfs-mcfly-bin.XXXXXX")"
+        trap 'rm -f "$TMP_TGZ" "$TMP_BIN"' EXIT
+        curl -q -fsSL --proto '=https' --proto-redir '=https' --retry 3 "$MCFLY_URL" -o "$TMP_TGZ"
+        echo "$MCFLY_SHA  $TMP_TGZ" | sha256sum -c - >/dev/null || { echo "mcfly: checksum mismatch for $MCFLY_URL" >&2; exit 1; }
+        tar -xzOf "$TMP_TGZ" mcfly > "$TMP_BIN"
+        mkdir -p "$HOME/.local/bin"
+        install -m 0755 "$TMP_BIN" "$HOME/.local/bin/mcfly"
+    verify:
+      - '"$HOME/.local/bin/mcfly" --version'
+    notes:
+      - "acfs.zshrc runs `mcfly init zsh` in interactive zsh only; ACFS_NO_MCFLY_INIT=1 skips it"
+      - "History lives in ~/.local/share/mcfly/history.db; ~/.zsh_history stays as it is"
+
+  - id: tools.mcfly_fzf
+    description: mcfly-fzf, fzf search of mcfly history on Ctrl-R (pinned release)
+    category: tools
+    phase: 6
+    run_as: target_user
+    optional: false
+    enabled_by_default: true
+    tags: [recommended, shell-ux]
+    dependencies:
+      - tools.mcfly
+      - cli.modern
+    installed_check:
+      run_as: target_user
+      command: '"$HOME/.local/bin/mcfly-fzf" --version 2>/dev/null | grep -qx "mcfly-fzf 0.1.3"'
+    install:
+      - |
+        # acfs-summary: install mcfly-fzf 1.0.4 into ~/.local/bin
+        # Release 1.0.4 builds the crate at version 0.1.3, so --version
+        # prints 0.1.3. Its tarball also holds an older mcfly (0.8.5);
+        # only mcfly-fzf is taken from it.
+        MCFLY_FZF_VER="1.0.4"
+        case "$(uname -m)" in
+          x86_64)
+            MCFLY_FZF_TRIPLE="x86_64-unknown-linux-musl"
+            MCFLY_FZF_SHA="ac9c78008f071732c78d3181712d41274b12d4c1cf6b89da7258ab6e6aeb58c4"
+            ;;
+          aarch64|arm64)
+            MCFLY_FZF_TRIPLE="aarch64-unknown-linux-musl"
+            MCFLY_FZF_SHA="a950b0db73c2a92d150ba2fd7fbba92dfcea229f97fbb1392330428037dd2106"
+            ;;
+          *) echo "mcfly-fzf: no release build for $(uname -m)" >&2; exit 1 ;;
+        esac
+        MCFLY_FZF_URL="https://github.com/bnprks/mcfly-fzf/releases/download/${MCFLY_FZF_VER}/mcfly-fzf-${MCFLY_FZF_VER}-${MCFLY_FZF_TRIPLE}.tar.gz"
+        TMP_TGZ="$(mktemp "${TMPDIR:-/tmp}/acfs-mcfly-fzf.XXXXXX")"
+        TMP_BIN="$(mktemp "${TMPDIR:-/tmp}/acfs-mcfly-fzf-bin.XXXXXX")"
+        trap 'rm -f "$TMP_TGZ" "$TMP_BIN"' EXIT
+        curl -q -fsSL --proto '=https' --proto-redir '=https' --retry 3 "$MCFLY_FZF_URL" -o "$TMP_TGZ"
+        echo "$MCFLY_FZF_SHA  $TMP_TGZ" | sha256sum -c - >/dev/null || { echo "mcfly-fzf: checksum mismatch for $MCFLY_FZF_URL" >&2; exit 1; }
+        tar -xzOf "$TMP_TGZ" mcfly-fzf > "$TMP_BIN"
+        mkdir -p "$HOME/.local/bin"
+        install -m 0755 "$TMP_BIN" "$HOME/.local/bin/mcfly-fzf"
+    verify:
+      - '"$HOME/.local/bin/mcfly-fzf" --version'
+    notes:
+      - "acfs.zshrc runs `mcfly-fzf init zsh` after mcfly's and binds Ctrl-R to it in the emacs and viins keymaps"
+      - "In the fzf list: Ctrl-R toggles strict ordering; F1 sort, F2 this directory only, F3 exit status (upstream's keys)"
+
   - id: tools.zoxide
     description: Zoxide (better cd)
     category: tools

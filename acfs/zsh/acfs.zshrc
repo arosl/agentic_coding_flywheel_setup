@@ -70,9 +70,6 @@ if [[ -r "$HOME/.config/environment.d/60-acfs-tmpdir.conf" ]]; then
   unset _acfs_env_line
 fi
 
-# Atuin remains available through the guarded shim in ~/.local/bin. Do not
-# source Atuin's env file here; it can put the real binary ahead of the shim.
-
 # --- Oh My Zsh ---
 export ZSH="$HOME/.oh-my-zsh"
 
@@ -362,20 +359,35 @@ command -v direnv &>/dev/null && eval "$(direnv hook zsh)"
 export DISABLE_FZF_KEY_BINDINGS=1
 [[ -f "$HOME/.fzf.zsh" ]] && source "$HOME/.fzf.zsh"
 
-# Atuin (shell history)
+# mcfly + mcfly-fzf (shell history)
 #
-# Managed here -- not in ~/.zshrc -- so ACFS controls its hook ordering
-# (after compinit and fzf, so atuin's ctrl-r wins) and can repair the
-# configuration on update (#359). The upstream installer's unmanaged
-# `eval "$(atuin init zsh)"` line in ~/.zshrc is commented out by
-# acfs-update; this block is the one that counts.
+# mcfly records each command, with its directory and exit status, in
+# ~/.local/share/mcfly/history.db; mcfly-fzf searches that history with fzf
+# on Ctrl-R. The Up arrow stays zsh's own history. mcfly adds a command from
+# its precmd hook, which zsh runs only before it draws a prompt, so the
+# commands agents run through `zsh -c` never reach its history
+# (tests/unit/test_acfs_zshrc_mcfly.sh).
 #
-# User overrides: set ACFS_NO_ATUIN_INIT=1 before this file is sourced to
-# keep atuin uninitialized (e.g. to run your own `atuin init` with custom
-# flags), or set ACFS_ATUIN_INIT_FLAGS to pass extra flags here.
-if [[ -z "${ACFS_NO_ATUIN_INIT:-}" ]] && command -v atuin &>/dev/null; then
-  # ${=...} word-splits deliberately so multiple flags work.
-  eval "$(atuin init zsh ${=ACFS_ATUIN_INIT_FLAGS:-})"
+# User override: set ACFS_NO_MCFLY_INIT=1 before this file is sourced to
+# keep both uninitialized (e.g. to run your own init with other settings).
+if [[ -z "${ACFS_NO_MCFLY_INIT:-}" && -o interactive ]] && command -v mcfly &>/dev/null; then
+  # mcfly refuses to start when the history file does not exist yet, as in
+  # the first shell of a new account.
+  [[ -e "${HISTFILE:-$HOME/.zsh_history}" ]] || (umask 077; : >> "${HISTFILE:-$HOME/.zsh_history}") 2>/dev/null
+  eval "$(mcfly init zsh)"
+  if [[ -n "${MCFLY_SESSION_ID:-}" ]] && command -v mcfly-fzf &>/dev/null && command -v fzf &>/dev/null; then
+    eval "$(mcfly-fzf init zsh)"
+  fi
+  # Both bind Ctrl-R in the main keymap only. A shell that starts with
+  # EDITOR=nvim in its environment has viins as main until `bindkey -e`
+  # below makes emacs main, which would leave Ctrl-R at zsh's default.
+  if (( $+functions[mcfly-fzf-history-widget] )); then
+    bindkey -M emacs '^R' mcfly-fzf-history-widget
+    bindkey -M viins '^R' mcfly-fzf-history-widget
+  elif (( $+functions[mcfly-history-widget] )); then
+    bindkey -M emacs '^R' mcfly-history-widget
+    bindkey -M viins '^R' mcfly-history-widget
+  fi
 fi
 
 # --- Prompt config ---
