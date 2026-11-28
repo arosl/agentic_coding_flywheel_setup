@@ -632,7 +632,8 @@ declare -gA KNOWN_INSTALLERS=(
     [ru]="https://raw.githubusercontent.com/arosl/repo_updater/v1.7.1-nhm.1/install.sh"
     [apr]="https://raw.githubusercontent.com/Dicklesworthstone/automated_plan_reviser_pro/main/install.sh"
     [ms]="https://raw.githubusercontent.com/Dicklesworthstone/meta_skill/main/scripts/install.sh"
-    [pt]="https://raw.githubusercontent.com/arosl/process_triage/main/install.sh"
+    # pt: the fork's release tag pins the installer, as dcg's (acfs-0l5a).
+    [pt]="https://raw.githubusercontent.com/arosl/process_triage/v2.4.2-herdr.2/install.sh"
     [srps]="https://raw.githubusercontent.com/Dicklesworthstone/system_resource_protection_script/main/install.sh"
     [xf]="https://raw.githubusercontent.com/Dicklesworthstone/xf/main/install.sh"
     [giil]="https://raw.githubusercontent.com/Dicklesworthstone/giil/main/install.sh"

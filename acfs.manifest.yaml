@@ -2694,7 +2694,9 @@ modules:
     verified_installer:
       tool: pt
       runner: bash
-      url: "https://raw.githubusercontent.com/arosl/process_triage/main/install.sh"
+      # The fork's release tag pins the installer, so a push to the fork's
+      # main can't break verification (as dcg's, acfs-0l5a).
+      url: "https://raw.githubusercontent.com/arosl/process_triage/v2.4.2-herdr.2/install.sh"
     install: []
     verify:
       - pt --help
