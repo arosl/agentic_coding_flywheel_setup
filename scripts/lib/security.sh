@@ -624,13 +624,13 @@ declare -gA KNOWN_INSTALLERS=(
     [bv]="https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh"
     [cass]="https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_session_search/main/install.sh"
     [cm]="https://raw.githubusercontent.com/Dicklesworthstone/cass_memory_system/main/install.sh"
-    [caam]="https://raw.githubusercontent.com/arosl/coding_agent_account_manager/v0.1.23-herdr.3/install.sh"
+    [caam]="https://raw.githubusercontent.com/arosl/coding_agent_account_manager/v0.1.27-herdr.1/install.sh"
     [slb]="https://raw.githubusercontent.com/Dicklesworthstone/simultaneous_launch_button/main/scripts/install.sh"
     # dcg: a fork commit pins the installer, so a push to the fork's main can't
     # break verification; move it on purpose, with a review (acfs-0l5a). The
     # v0.15.4 tag's installer predates fixes this one has.
     [dcg]="https://raw.githubusercontent.com/arosl/destructive_command_guard/4275b028f53d197128ca9d4e879dba6cf3a32c70/install.sh"
-    [ru]="https://raw.githubusercontent.com/arosl/repo_updater/v1.5.0-nhm.2/install.sh"
+    [ru]="https://raw.githubusercontent.com/arosl/repo_updater/v1.7.1-nhm.1/install.sh"
     [apr]="https://raw.githubusercontent.com/Dicklesworthstone/automated_plan_reviser_pro/main/install.sh"
     [ms]="https://raw.githubusercontent.com/Dicklesworthstone/meta_skill/main/scripts/install.sh"
     [pt]="https://raw.githubusercontent.com/arosl/process_triage/main/install.sh"
@@ -640,7 +640,7 @@ declare -gA KNOWN_INSTALLERS=(
     [csctf]="https://raw.githubusercontent.com/Dicklesworthstone/chat_shared_conversation_to_file/main/install.sh"
     [jfp]="https://jeffreysprompts.com/install-cli.sh"
     [br]="https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh"
-    [brenner_bot]="https://raw.githubusercontent.com/arosl/brenner_bot/v0.4.1-nhm.1/install.sh"
+    [brenner_bot]="https://raw.githubusercontent.com/arosl/brenner_bot/v0.5.0-nhm.1/install.sh"
     [rch]="https://raw.githubusercontent.com/Dicklesworthstone/remote_compilation_helper/main/install.sh"
     [tru]="https://raw.githubusercontent.com/Dicklesworthstone/toon_rust/main/install.sh"
     [rano]="https://raw.githubusercontent.com/Dicklesworthstone/rano/main/install.sh"
@@ -672,8 +672,8 @@ declare -gA KNOWN_INSTALLERS=(
 declare -gA KNOWN_RELEASE_ARCHIVES=(
     [nhm_archive_linux_amd64]="https://github.com/arosl/nhm/releases/download/v0.1.20/nhm-0.1.20-linux-amd64.tar.zst"
     [nhm_archive_linux_arm64]="https://github.com/arosl/nhm/releases/download/v0.1.20/nhm-0.1.20-linux-arm64.tar.zst"
-    [caam_archive_linux_amd64]="https://github.com/arosl/coding_agent_account_manager/releases/download/v0.1.23-herdr.3/caam_0.1.23-herdr.3_linux_amd64.tar.gz"
-    [caam_archive_linux_arm64]="https://github.com/arosl/coding_agent_account_manager/releases/download/v0.1.23-herdr.3/caam_0.1.23-herdr.3_linux_arm64.tar.gz"
+    [caam_archive_linux_amd64]="https://github.com/arosl/coding_agent_account_manager/releases/download/v0.1.27-herdr.1/caam_0.1.27-herdr.1_linux_amd64.tar.gz"
+    [caam_archive_linux_arm64]="https://github.com/arosl/coding_agent_account_manager/releases/download/v0.1.27-herdr.1/caam_0.1.27-herdr.1_linux_arm64.tar.gz"
 )
 declare -g ACFS_RELEASE_ARCHIVE_MAX_BYTES=67108864
 declare -g ACFS_RELEASE_ARCHIVE_SUMS_MAX_BYTES=1048576

@@ -179,7 +179,7 @@ sandbox_nhm_release() {
 
 # sandbox_brenner_release TAG: the arosl brenner fork's release binary for
 # E21 (acfs-sag), checked against the release's own .sha256, as the fork's
-# install.sh checks it. TAG is the one ACFS pins (v0.4.1-nhm.1).
+# install.sh checks it. TAG is the one ACFS pins (v0.5.0-nhm.1).
 sandbox_brenner_release() {
     local tag="${1:-}" arch asset base want got
     [[ -n "${SANDBOX_ROOT:-}" ]] || { sandbox_die "sandbox_brenner_release: run sandbox_init first"; return 1; }

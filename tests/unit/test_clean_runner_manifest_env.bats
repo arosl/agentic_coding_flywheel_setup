@@ -81,7 +81,7 @@ load_install_helpers_validator() {
 
 @test "the generated stack.ru call carries its pin and self-refresh opt-out" {
     run generated_runner_calls
-    [[ "$output" == *"'RU_VERSION=1.5.0-nhm.2' 'RU_INSTALLER_NO_SELF_REFRESH=1'"* ]]
+    [[ "$output" == *"'RU_VERSION=1.7.1-nhm.1' 'RU_INSTALLER_NO_SELF_REFRESH=1'"* ]]
 }
 
 @test "RU_VERSION takes a release name only, and RU_INSTALLER_NO_SELF_REFRESH only 1" {

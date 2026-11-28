@@ -2337,7 +2337,7 @@ acfs_generated_install_stack_caam() {
                         elif ! "$verified_installer_chmod_bin" 0444 "$verified_installer_file"; then
                             log_error "stack.caam: failed to make verified installer staging file read-only"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
-                        elif run_as_target_runner 'bash' "$verified_installer_file" '--version=v0.1.23-herdr.3' "${verified_installer_checksum_args[@]}"; then
+                        elif run_as_target_runner 'bash' "$verified_installer_file" '--version=v0.1.27-herdr.1' "${verified_installer_checksum_args[@]}"; then
                             install_success=true
                         else
                             log_error "stack.caam: verified installer execution failed"
@@ -2769,7 +2769,7 @@ acfs_generated_install_stack_ru() {
                         elif ! "$verified_installer_chmod_bin" 0444 "$verified_installer_file"; then
                             log_error "stack.ru: failed to make verified installer staging file read-only"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
-                        elif run_as_target_runner 'env' 'RU_NON_INTERACTIVE=1' 'RU_VERSION=1.5.0-nhm.2' 'RU_INSTALLER_NO_SELF_REFRESH=1' 'bash' "$verified_installer_file"; then
+                        elif run_as_target_runner 'env' 'RU_NON_INTERACTIVE=1' 'RU_VERSION=1.7.1-nhm.1' 'RU_INSTALLER_NO_SELF_REFRESH=1' 'bash' "$verified_installer_file"; then
                             install_success=true
                         else
                             log_error "stack.ru: verified installer execution failed"
@@ -2883,7 +2883,7 @@ acfs_generated_install_stack_brenner_bot() {
                         elif ! "$verified_installer_chmod_bin" 0444 "$verified_installer_file"; then
                             log_error "stack.brenner_bot: failed to make verified installer staging file read-only"
                             ACFS_LAST_MODULE_FAILURE_REASON="environment setup"
-                        elif run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.4.1-nhm.1' '--skip-ntm' '--skip-cass' '--skip-cm'; then
+                        elif run_as_target_runner 'bash' "$verified_installer_file" '--version' '0.5.0-nhm.1' '--skip-ntm' '--skip-cass' '--skip-cm'; then
                             install_success=true
                         else
                             log_error "stack.brenner_bot: verified installer execution failed"

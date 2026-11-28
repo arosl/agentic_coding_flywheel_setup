@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="12e123634004275ad0337fec904436d56b909aa93f3399793147ecbd7923eb79"
+ACFS_MANIFEST_SHA256="520f2fdf02773e0fdc7f42213f81f444f2158c7df7c7796d3d9192a19fae3d94"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -812,7 +812,7 @@ done
   ['stack.beads_viewer']='command -v bv'
   ['stack.cass']='command -v cass'
   ['stack.cm']='command -v cm'
-  ['stack.caam']='caam --version 2>/dev/null | grep -qF '\''caam 0.1.23-herdr.3 '\'''
+  ['stack.caam']='caam --version 2>/dev/null | grep -qF '\''caam 0.1.27-herdr.1 '\'''
   ['stack.slb']='command -v slb'
   ['stack.dcg']='command -v dcg'
   ['stack.ru']='command -v ru'

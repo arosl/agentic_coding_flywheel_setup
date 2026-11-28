@@ -2968,11 +2968,11 @@ modules:
     # installer checks the archive against ACFS's pin first, as nhm's does.
     installed_check:
       run_as: target_user
-      command: "caam --version 2>/dev/null | grep -qF 'caam 0.1.23-herdr.3 '"
+      command: "caam --version 2>/dev/null | grep -qF 'caam 0.1.27-herdr.1 '"
     verified_installer:
       tool: caam
       runner: bash
-      args: ["--", "--version=v0.1.23-herdr.3"]
+      args: ["--", "--version=v0.1.27-herdr.1"]
       checksum_args:
         - { flag: "--archive-sha256", prefix: "linux-amd64=", checksum: caam_archive_linux_amd64 }
         - { flag: "--archive-sha256", prefix: "linux-arm64=", checksum: caam_archive_linux_arm64 }
@@ -3150,12 +3150,12 @@ modules:
     verified_installer:
       tool: ru
       runner: bash
-      url: "https://raw.githubusercontent.com/arosl/repo_updater/v1.5.0-nhm.2/install.sh"
+      url: "https://raw.githubusercontent.com/arosl/repo_updater/v1.7.1-nhm.1/install.sh"
       # The fork's tagged installer (acfs-9hkh.64) installs the fork's ru,
       # whose ntm driver runs nhm. RU_VERSION names the tag's release, so
       # "latest" never picks the binary; a self-refresh would fetch main's
       # installer in place of the pinned one.
-      env: ["RU_NON_INTERACTIVE=1", "RU_VERSION=1.5.0-nhm.2", "RU_INSTALLER_NO_SELF_REFRESH=1"]
+      env: ["RU_NON_INTERACTIVE=1", "RU_VERSION=1.7.1-nhm.1", "RU_INSTALLER_NO_SELF_REFRESH=1"]
     install: []
     verify:
       - ru --version
@@ -3198,13 +3198,13 @@ modules:
     verified_installer:
       tool: brenner_bot
       runner: bash
-      url: "https://raw.githubusercontent.com/arosl/brenner_bot/v0.4.1-nhm.1/install.sh"
+      url: "https://raw.githubusercontent.com/arosl/brenner_bot/v0.5.0-nhm.1/install.sh"
       # Skip brenner's own pinned toolchain: ACFS installs and updates cass
       # and cm through their own modules, and uses herdr, not ntm (same flags
       # as acfs update, GH #210). The fork's tagged installer (acfs-9hkh.54)
       # installs the fork's binary, whose cockpit drives nhm; --version names
       # the tag's release, so "latest" never picks the binary.
-      args: ["--", "--version", "0.4.1-nhm.1", "--skip-ntm", "--skip-cass", "--skip-cm"]
+      args: ["--", "--version", "0.5.0-nhm.1", "--skip-ntm", "--skip-cass", "--skip-cm"]
     install: []
     verify:
       - brenner --version || brenner --help

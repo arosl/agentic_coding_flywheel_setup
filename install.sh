@@ -11553,7 +11553,7 @@ UNIT_EOF
         # pinned copies would overwrite them in the same bin dir (same flags as
         # acfs update, GH #210).
         # --version is the tag KNOWN_INSTALLERS[brenner_bot] pins (acfs-9hkh.54).
-        acfs_try_module_step "stack.brenner_bot" "Installing Brenner Bot" acfs_run_verified_upstream_script_as_target "brenner_bot" "bash" --version 0.4.1-nhm.1 --skip-ntm --skip-cass --skip-cm || acfs_optional_module_install_failed "brenner_bot" "Brenner Bot"
+        acfs_try_module_step "stack.brenner_bot" "Installing Brenner Bot" acfs_run_verified_upstream_script_as_target "brenner_bot" "bash" --version 0.5.0-nhm.1 --skip-ntm --skip-cass --skip-cm || acfs_optional_module_install_failed "brenner_bot" "Brenner Bot"
     fi
 
     # Required modules that acfs_optional_module_install_failed recorded above

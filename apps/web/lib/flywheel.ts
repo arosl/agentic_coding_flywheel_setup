@@ -739,7 +739,7 @@ const _flywheelTools: FlywheelTool[] = [
       "caam exec codex work -- 'x'   # Isolated session",
     ],
     installCommand:
-      "curl --proto '=https' --proto-redir '=https' -fsSL \"https://raw.githubusercontent.com/arosl/coding_agent_account_manager/v0.1.23-herdr.3/install.sh\" | bash  # needs cosign; acfs update installs it with pinned archives",
+      "curl --proto '=https' --proto-redir '=https' -fsSL \"https://raw.githubusercontent.com/arosl/coding_agent_account_manager/v0.1.27-herdr.1/install.sh\" | bash  # needs cosign; acfs update installs it with pinned archives",
     language: "Go",
   },
   {
@@ -893,7 +893,7 @@ conflict type (dirty tree, diverged branches, auth failures).
       "ru prune                   # Remove orphan repos",
     ],
     installCommand:
-      'curl -fsSL "https://raw.githubusercontent.com/arosl/repo_updater/v1.5.0-nhm.2/install.sh" | bash',
+      'curl -fsSL "https://raw.githubusercontent.com/arosl/repo_updater/v1.7.1-nhm.1/install.sh" | bash',
     language: "Bash",
   },
   {
@@ -1060,7 +1060,7 @@ sections with §n anchors), multi-model syntheses (Opus, GPT, Gemini), and full 
       "brenner doctor --json # Verify installation with JSON output",
     ],
     installCommand:
-      "curl --proto '=https' --proto-redir '=https' -fsSL \"https://raw.githubusercontent.com/arosl/brenner_bot/v0.4.1-nhm.1/install.sh\" | bash",
+      "curl --proto '=https' --proto-redir '=https' -fsSL \"https://raw.githubusercontent.com/arosl/brenner_bot/v0.5.0-nhm.1/install.sh\" | bash",
     language: "TypeScript",
   },
   {

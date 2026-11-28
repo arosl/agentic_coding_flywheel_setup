@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-11-25T16:58:01+00:00
+# checksums.yaml - Auto-generated 2026-11-28T01:02:50+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -23,8 +23,8 @@ installers:
     sha256: "0d0e0b696c20d669fcfe7e1c55de404201d9a60bc5c73673974c849340daefc5"
 
   brenner_bot:
-    url: "https://raw.githubusercontent.com/arosl/brenner_bot/v0.4.1-nhm.1/install.sh"
-    sha256: "cd11899afe168ce6857762f86aa57f4b3e7ea9c8632c6ee151522de7d5d67585"
+    url: "https://raw.githubusercontent.com/arosl/brenner_bot/v0.5.0-nhm.1/install.sh"
+    sha256: "bbb164ee39e54db6843232d715fead8e77874da3cc4e314a10551b82bc9364df"
 
   bun:
     url: "https://bun.sh/install"
@@ -35,16 +35,16 @@ installers:
     sha256: "6621d67f5cc78255b43965bf3381f0a93ff55ceab55cbf39336b1681a0861f49"
 
   caam:
-    url: "https://raw.githubusercontent.com/arosl/coding_agent_account_manager/v0.1.23-herdr.3/install.sh"
-    sha256: "477866e47dcd0798549ced855766cca46133b30a1be799047ed10a1587dcc95c"
+    url: "https://raw.githubusercontent.com/arosl/coding_agent_account_manager/v0.1.27-herdr.1/install.sh"
+    sha256: "8efd39362d4388fc9767537a6874d3c86b4cf2b4525cdb23dcc1a64a3a0dd740"
 
   caam_archive_linux_amd64:
-    url: "https://github.com/arosl/coding_agent_account_manager/releases/download/v0.1.23-herdr.3/caam_0.1.23-herdr.3_linux_amd64.tar.gz"
-    sha256: "4ea3730438b1e6568d0de81929e2b2ca55edbef32cf5383e891f94c32f5c8fd7"
+    url: "https://github.com/arosl/coding_agent_account_manager/releases/download/v0.1.27-herdr.1/caam_0.1.27-herdr.1_linux_amd64.tar.gz"
+    sha256: "dc3ebe2036eb6bc362765e7f046001a903a3ea36b0f6493d02067adfd8d5a462"
 
   caam_archive_linux_arm64:
-    url: "https://github.com/arosl/coding_agent_account_manager/releases/download/v0.1.23-herdr.3/caam_0.1.23-herdr.3_linux_arm64.tar.gz"
-    sha256: "fd09bf8b0aa29e0bb5d32e450a8bd5f74e41355f18c4b53ff8a0f96190c4f770"
+    url: "https://github.com/arosl/coding_agent_account_manager/releases/download/v0.1.27-herdr.1/caam_0.1.27-herdr.1_linux_arm64.tar.gz"
+    sha256: "dde9502a3bdc1daec1a2002c5d3a856139d31d9bc19d1a7e4c41db19e46f362a"
 
   casr:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/cross_agent_session_resumer/main/install.sh"
@@ -84,7 +84,7 @@ installers:
 
   fsfs:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/frankensearch/refs/heads/main/install.sh"
-    sha256: "449f40792b91c8afe1dd12a1c1aa617714d11c9b28bf390bf27ccae3f8039728"
+    sha256: "b532a88cd52a622bd822be16f3047b952408950e307058f322544138a0c1c5a5"
 
   gemini_patch:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/misc_coding_agent_tips_and_scripts/main/fix-gemini-cli-ebadf-crash.sh"
@@ -168,11 +168,11 @@ installers:
 
   rch:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/remote_compilation_helper/main/install.sh"
-    sha256: "dc7245364ad0867954b61ca7dd98fc5c4e37e2035d93bb28c44444786b0c909f"
+    sha256: "98cad2dd55e32c6aafbb008eb9864070ec630e2ad53635e29aeba60c2b9e42a4"
 
   ru:
-    url: "https://raw.githubusercontent.com/arosl/repo_updater/v1.5.0-nhm.2/install.sh"
-    sha256: "417bfe2237edf2a0cb1b9b83b06a70309cbb553ff1e64193da2e6045caec4924"
+    url: "https://raw.githubusercontent.com/arosl/repo_updater/v1.7.1-nhm.1/install.sh"
+    sha256: "eabcf0c22582b97bab62d2cb2081e5692f0f3c4da68d41f3a2c36f1099fe70ff"
 
   rust:
     url: "https://sh.rustup.rs"
@@ -208,7 +208,7 @@ installers:
 
   xf:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/xf/main/install.sh"
-    sha256: "039f9433ef5861efe4e9b07289d99f404cbf68a79f33d75afd50e41033598183"
+    sha256: "43bda44b4fb9533a613601d24d2395f1d5bf1524a587af5b65bdccae5f32c0ab"
 
   zoxide:
     url: "https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh"
