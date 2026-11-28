@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-11-28T03:45:43+00:00
+# checksums.yaml - Auto-generated 2026-11-28T04:28:36+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -52,7 +52,7 @@ installers:
 
   cass:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_session_search/main/install.sh"
-    sha256: "6c161faf5c3ad3aec807495a34bb9aef8e6563e584668a916dd0b11697763c1e"
+    sha256: "f8db1fd8ca06cf50c2913ebe926b71d2f060610c65cee3541ece6c98954f97e3"
 
   claude:
     url: "https://claude.ai/install.sh"
@@ -72,7 +72,7 @@ installers:
 
   dsr:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/doodlestein_self_releaser/main/install.sh"
-    sha256: "047272f8b19e33102f8ee539de72eb9525f67cb9d715756123bea944719d9932"
+    sha256: "6835ee3173fb03b70d08429782a2028153bfbb76f5fc4e3e6c9255d337bf1913"
 
   ee:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/eidetic_engine_cli/main/install.sh"
@@ -96,7 +96,7 @@ installers:
 
   grok:
     url: "https://x.ai/cli/install.sh"
-    sha256: "bdd23859b10bd0c1492ffc3443e8413b73a9b09966d48d4d3fa32121043956fc"
+    sha256: "a7916e6d5cc606564dd589037043b4c6cbb58f3b54c3b9865af9e0aed2a5bc77"
 
   herdr:
     url: "https://herdr.dev/install.sh"
@@ -112,7 +112,7 @@ installers:
 
   mdwb:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/markdown_web_browser/main/install.sh"
-    sha256: "2f808a76294954fb7270d57db3116770f62154579c791f6f2285824c4200bb3c"
+    sha256: "602eaee7ed924a994a2b6f2df86a90b32829d9a439238dbf6d23c4a1bc775420"
 
   ms:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/meta_skill/main/scripts/install.sh"
@@ -140,7 +140,7 @@ installers:
 
   omp:
     url: "https://omp.sh/install.sh"
-    sha256: "9d8aea7105ab30b46f048c3ba9216ae9f92375491b883e510059069dbf968a5f"
+    sha256: "1e3ca2e13ec43754bda29bc757cd184628cff099031bb8976da87fb88df0c8c1"
 
   opencode:
     url: "https://opencode.ai/install"
