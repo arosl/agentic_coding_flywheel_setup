@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="32fd9355a18bf4bd719b2d7b8e4206dc2638cf2a7f5f0423e537c86f2fae43a7"
+ACFS_MANIFEST_SHA256="12e123634004275ad0337fec904436d56b909aa93f3399793147ecbd7923eb79"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -27,7 +27,6 @@ ACFS_MODULES_IN_ORDER=(
   "lang.rust"
   "lang.go"
   "lang.nvm"
-  "tools.atuin"
   "tools.mcfly"
   "tools.mcfly_fzf"
   "tools.zoxide"
@@ -125,7 +124,6 @@ declare -gA ACFS_MODULE_PHASE=(
   ['lang.rust']="6"
   ['lang.go']="6"
   ['lang.nvm']="6"
-  ['tools.atuin']="6"
   ['tools.mcfly']="6"
   ['tools.mcfly_fzf']="6"
   ['tools.zoxide']="6"
@@ -207,7 +205,6 @@ declare -gA ACFS_MODULE_DEPS=(
   ['lang.rust']="base.system,users.ubuntu"
   ['lang.go']="base.system"
   ['lang.nvm']="base.system,users.ubuntu"
-  ['tools.atuin']="base.system,users.ubuntu"
   ['tools.mcfly']="base.system,users.ubuntu"
   ['tools.mcfly_fzf']="tools.mcfly,cli.modern,users.ubuntu"
   ['tools.zoxide']="base.system,users.ubuntu"
@@ -288,7 +285,6 @@ declare -gA ACFS_MODULE_FUNC=(
   ['lang.rust']="acfs_generated_install_lang_rust"
   ['lang.go']="acfs_generated_install_lang_go"
   ['lang.nvm']="acfs_generated_install_lang_nvm"
-  ['tools.atuin']="acfs_generated_install_tools_atuin"
   ['tools.mcfly']="acfs_generated_install_tools_mcfly"
   ['tools.mcfly_fzf']="acfs_generated_install_tools_mcfly_fzf"
   ['tools.zoxide']="acfs_generated_install_tools_zoxide"
@@ -370,7 +366,6 @@ declare -gA ACFS_MODULE_GENERATED=(
   ['lang.rust']="1"
   ['lang.go']="1"
   ['lang.nvm']="1"
-  ['tools.atuin']="1"
   ['tools.mcfly']="1"
   ['tools.mcfly_fzf']="1"
   ['tools.zoxide']="1"
@@ -452,7 +447,6 @@ declare -gA ACFS_MODULE_CATEGORY=(
   ['lang.rust']="lang"
   ['lang.go']="lang"
   ['lang.nvm']="lang"
-  ['tools.atuin']="tools"
   ['tools.mcfly']="tools"
   ['tools.mcfly_fzf']="tools"
   ['tools.zoxide']="tools"
@@ -534,7 +528,6 @@ declare -gA ACFS_MODULE_TAGS=(
   ['lang.rust']="critical,runtime"
   ['lang.go']="critical,runtime"
   ['lang.nvm']="critical,runtime"
-  ['tools.atuin']="recommended,shell-ux"
   ['tools.mcfly']="recommended,shell-ux"
   ['tools.mcfly_fzf']="recommended,shell-ux"
   ['tools.zoxide']="recommended,shell-ux"
@@ -616,7 +609,6 @@ declare -gA ACFS_MODULE_DEFAULT=(
   ['lang.rust']="1"
   ['lang.go']="1"
   ['lang.nvm']="1"
-  ['tools.atuin']="1"
   ['tools.mcfly']="1"
   ['tools.mcfly_fzf']="1"
   ['tools.zoxide']="1"
@@ -698,7 +690,6 @@ declare -gA ACFS_MODULE_DESC=(
   ['lang.rust']="Rust nightly + cargo"
   ['lang.go']="Go toolchain"
   ['lang.nvm']="nvm + latest Node.js"
-  ['tools.atuin']="Atuin CLI with guarded agent-safe shim"
   ['tools.mcfly']="mcfly shell history (pinned release)"
   ['tools.mcfly_fzf']="mcfly-fzf, fzf search of mcfly history on Ctrl-R (pinned release)"
   ['tools.zoxide']="Zoxide (better cd)"
@@ -787,7 +778,6 @@ grep -qsiE '\''^[[:space:]]*ClientAliveInterval[[:space:]]+[1-9]'\'' /etc/ssh/ss
   ['lang.rust']='test -x ~/.cargo/bin/cargo'
   ['lang.go']='command -v go'
   ['lang.nvm']='test -d ~/.nvm && ls ~/.nvm/versions/node/ 2>/dev/null | grep -q .'
-  ['tools.atuin']='test -x ~/.atuin/bin/atuin && test -x "${ACFS_BIN_DIR:-$HOME/.local/bin}/atuin" && grep -Fq "agent hook integration disabled by ACFS" "${ACFS_BIN_DIR:-$HOME/.local/bin}/atuin"'
   ['tools.mcfly']='"$HOME/.local/bin/mcfly" --version 2>/dev/null | grep -qx "mcfly 0.9.4"'
   ['tools.mcfly_fzf']='"$HOME/.local/bin/mcfly-fzf" --version 2>/dev/null | grep -qx "mcfly-fzf 0.1.3"'
   ['tools.zoxide']='command -v zoxide'
@@ -916,7 +906,6 @@ declare -gA ACFS_MODULE_INSTALLED_CHECK_RUN_AS=(
   ['lang.rust']="target_user"
   ['lang.go']="current"
   ['lang.nvm']="target_user"
-  ['tools.atuin']="target_user"
   ['tools.mcfly']="target_user"
   ['tools.mcfly_fzf']="target_user"
   ['tools.zoxide']="target_user"
@@ -995,7 +984,6 @@ declare -gA ACFS_MODULE_VERIFY_COUNT=(
   ['lang.rust']="2"
   ['lang.go']="1"
   ['lang.nvm']="1"
-  ['tools.atuin']="1"
   ['tools.mcfly']="1"
   ['tools.mcfly_fzf']="1"
   ['tools.zoxide']="1"
@@ -1274,7 +1262,6 @@ grep -qsiE '\''^[[:space:]]*ClientAliveInterval[[:space:]]+[1-9]'\'' /etc/ssh/ss
   ['lang.nvm.0']='export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 node --version'
-  ['tools.atuin.0']='~/.atuin/bin/atuin --version'
   ['tools.mcfly.0']='"$HOME/.local/bin/mcfly" --version'
   ['tools.mcfly_fzf.0']='"$HOME/.local/bin/mcfly-fzf" --version'
   ['tools.zoxide.0']='command -v zoxide'
@@ -1568,7 +1555,6 @@ declare -gA ACFS_MODULE_VERIFY_RUN_AS=(
   ['lang.rust']="target_user"
   ['lang.go']="root"
   ['lang.nvm']="target_user"
-  ['tools.atuin']="target_user"
   ['tools.mcfly']="target_user"
   ['tools.mcfly_fzf']="target_user"
   ['tools.zoxide']="target_user"
@@ -1659,7 +1645,6 @@ declare -gA ACFS_MODULE_OPTIONAL=(
   ['lang.rust']="0"
   ['lang.go']="0"
   ['lang.nvm']="0"
-  ['tools.atuin']="0"
   ['tools.mcfly']="0"
   ['tools.mcfly_fzf']="0"
   ['tools.zoxide']="0"
@@ -1730,7 +1715,6 @@ declare -gA ACFS_MODULE_VERIFIED_INSTALLER_TOOL=(
   ['lang.uv']="uv"
   ['lang.rust']="rust"
   ['lang.nvm']="nvm"
-  ['tools.atuin']="atuin"
   ['tools.zoxide']="zoxide"
   ['agents.claude']="claude"
   ['agents.antigravity']="antigravity"

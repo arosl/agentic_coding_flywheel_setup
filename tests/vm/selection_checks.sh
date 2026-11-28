@@ -196,23 +196,23 @@ fi
 
 harness_section "Test: --skip module"
 
-output=$(run_install --print-plan --skip tools.atuin) || {
-    harness_fail "--skip tools.atuin execution failed"
-    harness_capture_output "skip-atuin-output" "$output"
+output=$(run_install --print-plan --skip tools.mcfly_fzf) || {
+    harness_fail "--skip tools.mcfly_fzf execution failed"
+    harness_capture_output "skip-mcfly-fzf-output" "$output"
 }
 
-# Check that tools.atuin is NOT in the execution order (it may appear in "Skipped:" line)
-if echo "$output" | grep -E "^\s+[0-9]+\.\s+.*tools\.atuin" >/dev/null; then
-    harness_fail "--skip tools.atuin still in execution order"
+# Check that tools.mcfly_fzf is NOT in the execution order (it may appear in "Skipped:" line)
+if echo "$output" | grep -E "^\s+[0-9]+\.\s+.*tools\.mcfly_fzf" >/dev/null; then
+    harness_fail "--skip tools.mcfly_fzf still in execution order"
 else
-    harness_pass "--skip tools.atuin excluded from execution order"
+    harness_pass "--skip tools.mcfly_fzf excluded from execution order"
 fi
 
 # Verify the skip was acknowledged
-if echo "$output" | grep -qiE "skip.*tools.atuin|tools.atuin.*skip"; then
-    harness_pass "--skip tools.atuin acknowledged in output"
+if echo "$output" | grep -qiE "skip.*tools.mcfly_fzf|tools.mcfly_fzf.*skip"; then
+    harness_pass "--skip tools.mcfly_fzf acknowledged in output"
 else
-    harness_info "--skip tools.atuin not explicitly shown (may be expected)"
+    harness_info "--skip tools.mcfly_fzf not explicitly shown (may be expected)"
 fi
 
 # ============================================================

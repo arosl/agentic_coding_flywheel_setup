@@ -45,7 +45,6 @@ const VerifiedInstallerRunnerSchema = z.enum(["bash", "sh"], {
 });
 
 function isAllowedVerifiedInstallerEnv(tool: string, entry: string): boolean {
-  if (tool === "atuin") return entry === "ATUIN_NO_MODIFY_PATH=1";
   if (tool === "mcp_agent_mail") {
     return (
       entry === "AM_INSTALL_SKIP_MCP_SETUP=1" || entry === "AM_INSTALL_SKIP_REMOTE_HTTP_READINESS=1"

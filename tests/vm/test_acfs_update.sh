@@ -336,7 +336,7 @@ test_shell_only() {
     output=$(acfs-update --shell-only --dry-run --yes 2>&1) || true
 
     # Should mention shell tools
-    if echo "$output" | grep -qiE "shell|omz|zsh|atuin|zoxide"; then
+    if echo "$output" | grep -qiE "shell|omz|zsh|mcfly|zoxide"; then
         pass "--shell-only processes shell section"
     else
         fail "--shell-only missing shell output"

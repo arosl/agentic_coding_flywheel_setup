@@ -1003,119 +1003,15 @@ modules:
         [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
         node --version
 
-  - id: tools.atuin
-    description: Atuin CLI with guarded agent-safe shim
-    category: tools
-    phase: 6
-    run_as: target_user
-    optional: false
-    enabled_by_default: true
-    tags: [recommended, shell-ux]
-    dependencies:
-      - base.system
-    installed_check:
-      run_as: target_user
-      command: "test -x ~/.atuin/bin/atuin && test -x \"${ACFS_BIN_DIR:-$HOME/.local/bin}/atuin\" && grep -Fq \"agent hook integration disabled by ACFS\" \"${ACFS_BIN_DIR:-$HOME/.local/bin}/atuin\""
-    verified_installer:
-      tool: atuin
-      runner: sh
-      env: ["ATUIN_NO_MODIFY_PATH=1"]
-    install:
-      - |
-          # acfs-summary: install Atuin guard wrapper
-          real_bin="$HOME/.atuin/bin/atuin"
-          primary_dir="${ACFS_BIN_DIR:-$HOME/.local/bin}"
-          fallback_dir="$HOME/.local/bin"
-
-          write_atuin_guard_wrapper() {
-            local wrapper_path="${1:-}"
-            local real_bin_path="${2:-}"
-            local real_bin_q=""
-            local backup_path=""
-
-            [[ -n "$wrapper_path" && -n "$real_bin_path" && -x "$real_bin_path" ]] || return 1
-            printf -v real_bin_q "%q" "$real_bin_path"
-
-            if [[ -e "$wrapper_path" || -L "$wrapper_path" ]]; then
-              if [[ ! -L "$wrapper_path" ]] && grep -Fq "agent hook integration disabled by ACFS" "$wrapper_path" 2>/dev/null; then
-                :
-              else
-                backup_path="${wrapper_path}.acfs-backup.$(date +%s).$$"
-                mv "$wrapper_path" "$backup_path" 2>/dev/null || return 1
-              fi
-            fi
-
-            {
-              cat <<\ATUIN_ACFS_WRAPPER_HEAD
-          #!/usr/bin/env bash
-          set -euo pipefail
-
-          real_atuin_bin="${ATUIN_REAL_BIN:-}"
-          if [[ -z "$real_atuin_bin" ]]; then
-          ATUIN_ACFS_WRAPPER_HEAD
-              printf "    real_atuin_bin=%s\n" "$real_bin_q"
-              cat <<\ATUIN_ACFS_WRAPPER_TAIL
-          fi
-
-          if [[ ! -x "$real_atuin_bin" ]]; then
-              echo "atuin wrapper: real atuin binary not found at $real_atuin_bin" >&2
-              exit 127
-          fi
-
-          if [[ "${1:-}" == "hook" ]]; then
-              # atuin wrapper: agent hook integration disabled by ACFS
-              # Drain retained hook payloads so stale agent processes do not see EPIPE.
-              cat >/dev/null || true
-              exit 0
-          fi
-
-          _acfs_atuin_agent_context() {
-              local parent_comm=""
-
-              if [[ -n "${CODEX_CI:-}" || -n "${CODEX_THREAD_ID:-}" || -n "${CLAUDE_PROJECT_DIR:-}" || -n "${AGENT_NAME:-}" ]]; then
-                  return 0
-              fi
-
-              # Linux: read the parent name directly. `ps -p` still walks every /proc entry,
-              # which cost ~0.8 s per typed command on a 2,600-process host (trj, 2026-10-14).
-              if [[ -r "/proc/${PPID:-0}/comm" ]]; then
-                  IFS= read -r parent_comm < "/proc/${PPID:-0}/comm" || parent_comm=""
-              else
-                  parent_comm="$(ps -o comm= -p "${PPID:-0}" 2>/dev/null || true)"
-              fi
-              case "$parent_comm" in
-                  claude|codex|cod|cc|agy|antigravity|agy-locked|gmi|gemini|bun|node) return 0 ;;
-                  *) return 1 ;;
-              esac
-          }
-
-          if [[ "${1:-}" == "history" && ( "${2:-}" == "start" || "${2:-}" == "end" ) ]] && _acfs_atuin_agent_context; then
-              exit 0
-          fi
-
-          exec "$real_atuin_bin" "$@"
-          ATUIN_ACFS_WRAPPER_TAIL
-            } > "$wrapper_path"
-            chmod 0755 "$wrapper_path"
-          }
-
-          for dir in "$primary_dir" "$fallback_dir"; do
-            [[ -n "$dir" ]] || continue
-            mkdir -p "$dir"
-            write_atuin_guard_wrapper "$dir/atuin" "$real_bin"
-            [[ "$fallback_dir" != "$primary_dir" ]] || break
-          done
-    verify:
-      - ~/.atuin/bin/atuin --version
-
   # Shell history: mcfly records it, mcfly-fzf searches it with fzf on
   # Ctrl-R (the operator's ruling, 2026-11-27, acfs-wyzm). Neither project
   # publishes checksums or a pinnable installer, so each module pins its
   # release and the SHA-256 of each Linux tarball, as tools.lazygit does.
-  # update.sh's UPDATE_MCFLY_PINS carries the same pins for acfs update;
-  # tests/unit/test_mcfly_pins.sh fails when the two disagree. Both are
-  # static musl builds, so the same tarballs serve Ubuntu and Arch, and they
-  # go to ~/.local/bin, which acfs.zshrc puts on PATH.
+  # install.sh's hand-written tools phase runs these modules' generated
+  # functions. update.sh's UPDATE_MCFLY_PINS carries the same pins for acfs
+  # update, and tests/unit/test_mcfly_pins.sh fails when the two disagree.
+  # Both are static musl builds, so the same tarballs serve Ubuntu and Arch,
+  # and they go to ~/.local/bin, which acfs.zshrc puts on PATH.
   - id: tools.mcfly
     description: mcfly shell history (pinned release)
     category: tools

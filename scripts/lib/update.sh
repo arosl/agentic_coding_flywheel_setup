@@ -840,22 +840,13 @@ update_tool_binary_path() {
     local tool="$1"
     local primary_bin=""
     local user_bin=""
-    local target_user=""
-    local target_home=""
     local candidate=""
     local -a candidates=()
 
-    target_user="$(update_target_user)"
-    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
     user_bin="$(update_default_user_bin_dir 2>/dev/null || true)"
     primary_bin="$(update_preferred_user_bin_dir 2>/dev/null || true)"
 
     case "$tool" in
-        atuin)
-            [[ -n "$primary_bin" ]] && candidates+=("$primary_bin/atuin")
-            [[ -n "$user_bin" ]] && candidates+=("$user_bin/atuin")
-            [[ -n "$target_home" ]] && candidates+=("$target_home/.atuin/bin/atuin")
-            ;;
         zoxide)
             [[ -n "$primary_bin" ]] && candidates+=("$primary_bin/zoxide")
             [[ -n "$user_bin" ]] && candidates+=("$user_bin/zoxide")
@@ -887,7 +878,7 @@ update_tool_version_from_path() {
     }
 
     case "$tool" in
-        atuin|zoxide)
+        zoxide)
             "$binary_path" --version 2>/dev/null | awk '{print $2}' || echo "unknown"
             ;;
         *)
@@ -1289,9 +1280,6 @@ get_version() {
                 version="unknown"
             fi
             ;;
-        atuin)
-            version=$(update_tool_version_from_path "atuin" "$(update_tool_binary_path "atuin" 2>/dev/null || true)")
-            ;;
         zoxide)
             version=$(update_tool_version_from_path "zoxide" "$(update_tool_binary_path "zoxide" 2>/dev/null || true)")
             ;;
@@ -1622,243 +1610,6 @@ update_shell_tool_state_improved() {
     [[ -n "$after_version" && "$after_version" != "unknown" ]] || return 1
 
     [[ -z "$before_path" || "$after_path" != "$before_path" || "$after_version" != "$before_version" ]]
-}
-
-# A root run for another user (update_for_user) never writes the wrapper as
-# root (acfs-tquv). Root's steps there followed links the user put in that
-# bin dir: the move-aside put the user's file into whatever directory a link
-# at the backup name pointed to, the redirect wrote through a link swapped
-# in after the move, and the chowns handed over a hard-linked file or went
-# through a link above the bin dir. Here the user makes the directory
-# (update_user_mkdir), moves what isn't ACFS's wrapper aside with mv -T, and
-# writes the wrapper through update_user_write_file's temp file and rename,
-# so root neither writes there nor hands anything over. A link at either
-# name reaches only what the user could write.
-update_write_atuin_guard_wrapper_as_user() {
-    local wrapper_path="$1"
-    local real_bin="$2"
-    local bash_bin=""
-
-    bash_bin="$(update_system_binary_path bash 2>/dev/null || true)"
-    [[ -n "$bash_bin" ]] || return 1
-    update_user_mkdir "${wrapper_path%/*}" || return 1
-    update_run_in_target_context "" "$bash_bin" --noprofile --norc -c '
-        [[ -e "$1" || -L "$1" ]] || exit 0
-        if [[ -f "$1" && ! -L "$1" ]] && grep -Fq "agent hook integration disabled by ACFS" "$1"; then
-            exit 0
-        fi
-        mv -fT -- "$1" "$2"
-    ' _ "$wrapper_path" "${wrapper_path}.acfs-backup.$(date +%s).$$" >/dev/null 2>&1 || return 1
-    update_user_write_file "$wrapper_path" 755 "" <(update_atuin_guard_wrapper_text "$real_bin")
-}
-
-update_write_atuin_guard_wrapper() {
-    local wrapper_path="${1:-}"
-    local real_bin="${2:-}"
-    local backup_path=""
-
-    [[ -n "$wrapper_path" && -n "$real_bin" && -x "$real_bin" ]] || return 1
-
-    if update_for_user "$wrapper_path"; then
-        update_write_atuin_guard_wrapper_as_user "$wrapper_path" "$real_bin"
-        return
-    fi
-    # Outside that user's home, a wrapper of root's would put the user's
-    # atuin in root's PATH (acfs-r7nv).
-    if update_root_run_for_other_user; then
-        log_to_file "Not writing $wrapper_path as root: it is outside $(update_target_user 2>/dev/null || true)'s home"
-        return 1
-    fi
-
-    # A user's own run, or root's for root, writes by path.
-    mkdir -p "${wrapper_path%/*}" 2>/dev/null || true
-    if [[ -e "$wrapper_path" || -L "$wrapper_path" ]]; then
-        if [[ ! -L "$wrapper_path" ]] && grep -Fq "agent hook integration disabled by ACFS" "$wrapper_path" 2>/dev/null; then
-            :
-        else
-            backup_path="${wrapper_path}.acfs-backup.$(date +%s).$$"
-            mv "$wrapper_path" "$backup_path" 2>/dev/null || return 1
-        fi
-    fi
-
-    update_atuin_guard_wrapper_text "$real_bin" > "$wrapper_path"
-    chmod 0755 "$wrapper_path"
-}
-
-# update_atuin_guard_wrapper_text REAL_BIN: prints the wrapper that runs the
-# real atuin binary REAL_BIN.
-update_atuin_guard_wrapper_text() {
-    local real_bin_q=""
-    printf -v real_bin_q '%q' "$1"
-    cat <<'ATUIN_ACFS_WRAPPER_HEAD'
-#!/usr/bin/env bash
-set -euo pipefail
-
-real_atuin_bin="${ATUIN_REAL_BIN:-}"
-if [[ -z "$real_atuin_bin" ]]; then
-ATUIN_ACFS_WRAPPER_HEAD
-    printf '    real_atuin_bin=%s\n' "$real_bin_q"
-    cat <<'ATUIN_ACFS_WRAPPER_TAIL'
-fi
-
-if [[ ! -x "$real_atuin_bin" ]]; then
-    echo "atuin wrapper: real atuin binary not found at $real_atuin_bin" >&2
-    exit 127
-fi
-
-if [[ "${1:-}" == "hook" ]]; then
-    # atuin wrapper: agent hook integration disabled by ACFS
-    # A running agent can retain hook configuration after its config file is
-    # repaired. Consume the payload before exiting so the writer never sees
-    # EPIPE while that stale process winds down.
-    cat >/dev/null || true
-    exit 0
-fi
-
-_acfs_atuin_agent_context() {
-    local parent_comm=""
-
-    if [[ -n "${CODEX_CI:-}" || -n "${CODEX_THREAD_ID:-}" || -n "${CLAUDE_PROJECT_DIR:-}" || -n "${AGENT_NAME:-}" ]]; then
-        return 0
-    fi
-
-    # Linux: read the parent name directly. `ps -p` still walks every /proc entry,
-    # which cost ~0.8 s per typed command on a 2,600-process host (trj, 2026-10-14).
-    if [[ -r "/proc/${PPID:-0}/comm" ]]; then
-        IFS= read -r parent_comm < "/proc/${PPID:-0}/comm" || parent_comm=""
-    else
-        parent_comm="$(ps -o comm= -p "${PPID:-0}" 2>/dev/null || true)"
-    fi
-    case "$parent_comm" in
-        claude|codex|cod|cc|agy|antigravity|agy-locked|gmi|gemini|bun|node) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-if [[ "${1:-}" == "history" && ( "${2:-}" == "start" || "${2:-}" == "end" ) ]] && _acfs_atuin_agent_context; then
-    exit 0
-fi
-
-exec "$real_atuin_bin" "$@"
-ATUIN_ACFS_WRAPPER_TAIL
-}
-
-# The target user reads and writes the agents' configs (acfs-tquv), as
-# _update_dotfile_write_as_target writes ~/.profile: a root update for a user
-# read and wrote them as root, through a link the user put there. As the
-# user, a dotfiles link stays a link and its file is written, and a link to a
-# file the user can't write fails the cleanup.
-update_strip_atuin_agent_hooks_from_config() {
-    local config_path="${1:-}"
-    local current_json=""
-    local cleaned_json=""
-
-    [[ -f "$config_path" ]] || return 0
-    command -v jq >/dev/null 2>&1 || return 1
-
-    current_json="$(update_run_in_target_context "" cat -- "$config_path")" || return 1
-    cleaned_json="$(jq '
-        def is_atuin_agent_hook:
-          ((.command? // "") | type) == "string"
-          and ((.command? // "") | test("(^|[[:space:]])([^[:space:]]*/)?atuin[[:space:]]+hook[[:space:]]+(claude-code|codex|pi)([[:space:]]|$)"));
-        if (.hooks | type) == "object" then
-          .hooks |= with_entries(
-            if (.value | type) == "array" then
-              .value |= map(
-                if (.hooks | type) == "array" then
-                  .hooks |= map(select(is_atuin_agent_hook | not))
-                else . end
-              )
-              | .value |= map(select(((.hooks | type) != "array") or ((.hooks | length) > 0)))
-            else . end
-          )
-          | .hooks |= with_entries(select(((.value | type) != "array") or ((.value | length) > 0)))
-        else . end
-    ' <<<"$current_json")" || return 1
-
-    if [[ "$cleaned_json" != "$current_json" ]]; then
-        printf '%s\n' "$cleaned_json" | _update_dotfile_write_as_target "$config_path" || return 1
-        log_to_file "Removed Atuin agent hooks from $config_path"
-    fi
-}
-
-update_disable_atuin_agent_integrations() {
-    local target_home="${1:-}"
-    local pi_extension=""
-    local current_pi_extension=""
-    local desired_pi_extension=""
-
-    [[ -n "$target_home" && "$target_home" == /* && "$target_home" != "/" ]] || return 1
-
-    update_strip_atuin_agent_hooks_from_config "$target_home/.codex/hooks.json" || return 1
-    update_strip_atuin_agent_hooks_from_config "$target_home/.claude/settings.json" || return 1
-
-    pi_extension="$target_home/.pi/agent/extensions/atuin.ts"
-    if [[ -f "$pi_extension" ]]; then
-        current_pi_extension="$(update_run_in_target_context "" cat -- "$pi_extension")" || return 1
-        desired_pi_extension="$(cat <<'ATUIN_PI_DISABLED'
-/** Atuin integration intentionally disabled by ACFS. */
-export default function atuinDisabled(): void {
-	// Keep this no-op module so the upstream installer does not recreate hooks.
-}
-ATUIN_PI_DISABLED
-        )"
-        if [[ "$current_pi_extension" == "$desired_pi_extension" ]]; then
-            return 0
-        fi
-        printf '%s\n' "$desired_pi_extension" | _update_dotfile_write_as_target "$pi_extension" || return 1
-        log_to_file "Disabled Atuin pi extension: $pi_extension"
-    fi
-}
-
-update_repair_atuin_install() {
-    local target_user=""
-    local target_home=""
-    local preferred_src=""
-    local primary_dir=""
-    local user_bin=""
-    local installed_wrapper=false
-
-    target_user="$(update_target_user)"
-    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
-    [[ -n "$target_home" ]] && preferred_src="$target_home/.atuin/bin/atuin"
-    primary_dir="$(update_preferred_user_bin_dir 2>/dev/null || true)"
-    user_bin="$(update_default_user_bin_dir 2>/dev/null || true)"
-    local -a bin_dirs=()
-    local dir=""
-
-    [[ -n "$primary_dir" ]] && bin_dirs+=("$primary_dir")
-    if [[ -n "$user_bin" && "$user_bin" != "$primary_dir" ]]; then
-        bin_dirs+=("$user_bin")
-    fi
-
-    if [[ -x "$preferred_src" ]]; then
-        # No chown here (acfs-tquv): in a root run for the user, the user
-        # makes the directory and writes the wrapper. Root's chown -h of
-        # ~/.local/bin went through a link at ~/.local, onto /usr/bin say.
-        for dir in "${bin_dirs[@]}"; do
-            [[ -n "$dir" ]] || continue
-            if update_write_atuin_guard_wrapper "$dir/atuin" "$preferred_src" 2>/dev/null; then
-                installed_wrapper=true
-                log_to_file "Atuin guard wrapper installed: $dir/atuin -> $preferred_src"
-            else
-                log_to_file "Atuin guard wrapper not installed at $dir/atuin: $target_user could not write it there, or a link is below $target_home"
-            fi
-        done
-    fi
-
-    if [[ -x "$preferred_src" && "$installed_wrapper" != true ]]; then
-        return 1
-    fi
-
-    update_disable_atuin_agent_integrations "$target_home" || return 1
-
-    hash -r 2>/dev/null || true
-
-    local resolved_bin=""
-    resolved_bin="$(update_tool_binary_path "atuin" 2>/dev/null || true)"
-    [[ -n "$resolved_bin" && -x "$resolved_bin" ]] || return 1
-    "$resolved_bin" --version >/dev/null 2>&1
 }
 
 # update_link_into_bin_dir SOURCE LINK: makes LINK, in the target's bin dir,
@@ -3424,32 +3175,6 @@ cleanup_ast_grep_sg_launcher() {
         log_to_file "Moved sg launcher $launcher to $backup_path (acfs-zbrk)"
     else
         log_item "fail" "legacy cleanup" "could not move ast-grep's sg launcher aside from $launcher"
-    fi
-}
-
-# The atuin installer appends `eval "$(atuin init zsh)"` to ~/.zshrc, outside
-# the ACFS-managed loader (issue #359 item 3). Now that acfs.zshrc owns atuin
-# init, comment the unmanaged line out -- but only when the deployed managed
-# loader really carries the init, so atuin never ends up uninitialized. Only
-# the exact stock line is touched; a customized invocation is left alone.
-cleanup_unmanaged_atuin_init() {
-    local runtime_home=""
-    runtime_home="$(update_runtime_shell_home 2>/dev/null || true)"
-    [[ -n "$runtime_home" ]] || return 0
-    local zshrc="$runtime_home/.zshrc"
-    local deployed="$runtime_home/.acfs/zsh/acfs.zshrc"
-    [[ -f "$zshrc" && -f "$deployed" ]] || return 0
-    grep -q 'atuin init zsh' "$deployed" 2>/dev/null || return 0
-    grep -Eq '^[[:space:]]*eval "\$\(atuin init zsh\)"[[:space:]]*$' "$zshrc" 2>/dev/null || return 0
-
-    if update_is_read_only_mode; then
-        log_item "skip" "atuin init cleanup" "dry-run: would comment the unmanaged 'atuin init' line in ~/.zshrc (managed by acfs.zshrc now)"
-        return 0
-    fi
-
-    if _update_dotfile_sed_as_target "$zshrc" 's|^\([[:space:]]*\)eval "\$(atuin init zsh)"[[:space:]]*$|\1# eval "$(atuin init zsh)"  # disabled by ACFS: atuin init now lives in ~/.acfs/zsh/acfs.zshrc (#359)|' 2>/dev/null; then
-        log_item "ok" "atuin init cleanup" "commented the unmanaged 'atuin init' line in ~/.zshrc; the managed acfs.zshrc block owns it now"
-        log_to_file "Commented unmanaged atuin init line in $zshrc"
     fi
 }
 
@@ -9252,98 +8977,104 @@ update_zsh_plugins() {
     fi
 }
 
-# Update Atuin with its dedicated cargo-dist updater, falling back only when
-# older installations do not provide one.
-update_atuin() {
-    local atuin_bin=""
-    local atuin_update_bin=""
-    local target_home=""
-    local ver_after=""
-    atuin_bin="$(update_tool_binary_path "atuin" 2>/dev/null || true)"
-    if [[ -z "$atuin_bin" ]]; then
-        log_item "skip" "Atuin" "not installed"
+# Shell history (acfs-wyzm): mcfly records it and mcfly-fzf searches it on
+# Ctrl-R. These are the pinned releases and tarball SHA-256s of
+# acfs.manifest.yaml's tools.mcfly and tools.mcfly_fzf; neither project
+# publishes checksums. tests/unit/test_mcfly_pins.sh fails when the two
+# disagree, so change them together. One entry per command and machine:
+#   <command>|<uname -m>|<what the pinned build's --version prints>|<tarball URL>|<SHA-256>
+UPDATE_MCFLY_PINS=(
+    "mcfly|x86_64|mcfly 0.9.4|https://github.com/cantino/mcfly/releases/download/v0.9.4/mcfly-v0.9.4-x86_64-unknown-linux-musl.tar.gz|72d2c6fdaa111ac96c2cf725fc40e313e2856643482be58608911a09440313f1"
+    "mcfly|aarch64|mcfly 0.9.4|https://github.com/cantino/mcfly/releases/download/v0.9.4/mcfly-v0.9.4-aarch64-unknown-linux-musl.tar.gz|57eb23c3c40b3a7675dc1fe3b785501a6a41598b9b3cbe35d80f8d65267cf1cd"
+    "mcfly-fzf|x86_64|mcfly-fzf 0.1.3|https://github.com/bnprks/mcfly-fzf/releases/download/1.0.4/mcfly-fzf-1.0.4-x86_64-unknown-linux-musl.tar.gz|ac9c78008f071732c78d3181712d41274b12d4c1cf6b89da7258ab6e6aeb58c4"
+    "mcfly-fzf|aarch64|mcfly-fzf 0.1.3|https://github.com/bnprks/mcfly-fzf/releases/download/1.0.4/mcfly-fzf-1.0.4-aarch64-unknown-linux-musl.tar.gz|a950b0db73c2a92d150ba2fd7fbba92dfcea229f97fbb1392330428037dd2106"
+)
+
+# The script that brings ~/.local/bin/$1 to its pin: $2 is what the pinned
+# build's --version prints, $3 the tarball's URL, $4 its SHA-256. It prints
+# "current" when the installed binary already prints $2, "installed" once
+# it replaced it, and fails otherwise. The target user runs it, also in
+# root's run for that user: the binary in the user's home is the user's to
+# replace, so root never runs it, and a link the user put in ~/.local/bin
+# reaches only what the user can write. The new build goes to a temp file
+# beside the old one and is renamed over it, so a shell that runs the old
+# one keeps it.
+update_mcfly_install_script() {
+    cat <<'UPDATE_MCFLY_INSTALL'
+set -uo pipefail
+cmd="$1" want="$2" url="$3" sha="$4"
+bin_dir="$HOME/.local/bin"
+dest="$bin_dir/$cmd"
+if [[ -f "$dest" && -x "$dest" && "$("$dest" --version 2>/dev/null)" == "$want" ]]; then
+    echo current
+    exit 0
+fi
+mkdir -p -- "$bin_dir" || exit 1
+tgz="$(mktemp "${TMPDIR:-/tmp}/acfs-$cmd.XXXXXX")" || exit 1
+new="$(mktemp "$bin_dir/.acfs-$cmd.XXXXXX")" || { rm -f -- "$tgz"; exit 1; }
+trap 'rm -f -- "$tgz" "$new"' EXIT
+if ! curl -q -fsSL --proto '=https' --proto-redir '=https' --retry 3 \
+        --connect-timeout 30 --max-time 300 -o "$tgz" "$url"; then
+    echo "could not download $url" >&2
+    exit 1
+fi
+got="$(sha256sum -- "$tgz")" || exit 1
+got="${got%% *}"
+if [[ "$got" != "$sha" ]]; then
+    echo "checksum mismatch for $url: got $got, pinned $sha" >&2
+    exit 1
+fi
+tar -xzOf "$tgz" -- "$cmd" > "$new" && chmod 0755 -- "$new" || exit 1
+if [[ "$("$new" --version 2>/dev/null)" != "$want" ]]; then
+    echo "the build from $url does not print '$want'" >&2
+    exit 1
+fi
+mv -fT -- "$new" "$dest" || exit 1
+echo installed
+UPDATE_MCFLY_INSTALL
+}
+
+# mcfly, then mcfly-fzf: installs each where it is missing and replaces it
+# where it isn't the pinned build, as the target user. This is also how an
+# install from before acfs-wyzm, which had Atuin, gets them; its Atuin data
+# (~/.atuin, ~/.local/share/atuin, ~/.config/atuin) stays as it is.
+update_mcfly() {
+    local machine="" entry="" cmd="" arch="" want="" url="" sha="" result="" bash_bin=""
+    local -a fields=()
+
+    case "$(uname -m)" in
+        x86_64) machine="x86_64" ;;
+        aarch64|arm64) machine="aarch64" ;;
+        *)
+            log_item "skip" "mcfly" "no pinned release build for $(uname -m)"
+            return 0
+            ;;
+    esac
+    bash_bin="$(update_system_binary_path bash 2>/dev/null || true)"
+    if [[ -z "$bash_bin" ]]; then
+        log_item "fail" "mcfly" "bash not found"
         return 0
     fi
 
-    capture_version_before "atuin"
-    local needs_reinstall=false
-
-    target_home="$(update_target_home "$(update_target_user)" 2>/dev/null || true)"
-    [[ -n "$target_home" ]] && atuin_update_bin="$target_home/.atuin/bin/atuin-update"
-
-    if [[ -x "$atuin_update_bin" ]]; then
-        if run_cmd_attempt_with_retry "Atuin updater" "$atuin_update_bin"; then
-            if ! update_repair_atuin_install >/dev/null 2>&1; then
-                log_item "fail" "Atuin" "updated, but agent-integration cleanup failed"
-                return 1
-            fi
-            ver_after="$(get_version "atuin")"
-            if [[ -n "$ver_after" && "$ver_after" != "unknown" ]]; then
-                log_to_file "Atuin updater succeeded (version: $ver_after), skipping setup installer"
-            else
-                log_to_file "Atuin updater ran but version check was inconclusive; agent-aware setup fallback remains disabled"
-            fi
-        else
-            log_item "skip" "Atuin" "dedicated updater failed; agent-aware setup fallback is disabled"
-            return 0
+    for entry in "${UPDATE_MCFLY_PINS[@]}"; do
+        IFS='|' read -r -a fields <<< "$entry"
+        cmd="${fields[0]}" arch="${fields[1]}" want="${fields[2]}" url="${fields[3]}" sha="${fields[4]}"
+        [[ "$arch" == "$machine" ]] || continue
+        if update_is_read_only_mode; then
+            log_item "skip" "$cmd" "dry-run: would make ~/.local/bin/$cmd the pinned build ($want) if it isn't"
+            continue
         fi
-    # Compatibility path for releases that exposed self-update on the main CLI.
-    elif "$atuin_bin" --help 2>&1 | grep -q "self-update"; then
-        if run_cmd_attempt_with_retry "Atuin self-update" "$atuin_bin" self-update; then
-            if ! update_repair_atuin_install >/dev/null 2>&1; then
-                log_item "fail" "Atuin" "updated, but agent-integration cleanup failed"
-                return 1
-            fi
-            # If self-update succeeded, check whether version is now current;
-            # skip the heavier reinstall path to avoid a stalling curl download.
-            ver_after="$(get_version "atuin")"
-            if [[ -n "$ver_after" && "$ver_after" != "unknown" ]]; then
-                log_to_file "Atuin self-update succeeded (version: $ver_after), skipping reinstall"
-            else
-                # self-update ran but we can't determine version — fall through
-                log_to_file "Atuin self-update ran but version check inconclusive, trying reinstall"
-                needs_reinstall=true
-            fi
+        if result="$(update_run_in_target_context "" "$bash_bin" --noprofile --norc -c "$(update_mcfly_install_script)" \
+                _ "$cmd" "$want" "$url" "$sha" 2>>"${UPDATE_LOG_FILE:-/dev/null}")"; then
+            case "$result" in
+                current) log_item "ok" "$cmd" "$want, the pinned build" ;;
+                *) log_item "ok" "$cmd" "installed $want, the pinned build" ;;
+            esac
         else
-            log_to_file "Atuin self-update failed, trying reinstall"
-            needs_reinstall=true
+            log_item "fail" "$cmd" "could not install $want into ~/.local/bin; see the update log"
         fi
-    else
-        needs_reinstall=true
-    fi
-
-    if [[ "$needs_reinstall" == "true" ]]; then
-        if update_require_security; then
-            if declare -p KNOWN_INSTALLERS >/dev/null 2>&1 && [[ "${KNOWN_INSTALLERS[atuin]-}" == "https://setup.atuin.sh" ]]; then
-                log_item "skip" "Atuin" "refusing agent-aware setup installer"
-                return 0
-            fi
-            if ! ATUIN_NO_MODIFY_PATH=1 update_run_verified_installer_with_shell_repair "Atuin (reinstall)" "atuin" update_repair_atuin_install; then
-                :
-            fi
-        else
-            # Last resort: no checksum verification available
-            if [[ "$YES_MODE" == "true" ]]; then
-                log_item "skip" "Atuin" "checksum verification unavailable (missing security.sh/checksums.yaml)"
-            else
-                log_item "skip" "Atuin" "no self-update command, manual update recommended"
-                local curl_cmd="curl --connect-timeout 30 --max-time 300 -fsSL"
-                if command -v curl &>/dev/null && curl --help all 2>/dev/null | grep -q -- '--proto'; then
-                    curl_cmd="curl --proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 300 -fsSL"
-                fi
-                log_to_file "Atuin update (manual; review first):"
-                log_to_file "  ${curl_cmd} https://github.com/atuinsh/atuin/releases/latest/download/atuin-installer.sh -o /tmp/atuin.install.sh"
-                log_to_file "  sed -n '1,120p' /tmp/atuin.install.sh"
-                log_to_file "  ATUIN_NO_MODIFY_PATH=1 bash /tmp/atuin.install.sh"
-            fi
-            return 0
-        fi
-    fi
-
-    # Show version change without double-counting
-    if capture_version_after "atuin"; then
-        update_say "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[atuin]}" "${VERSION_AFTER[atuin]}"
-    fi
+    done
+    return 0
 }
 
 # Update Zoxide via reinstall (checksum verified)
@@ -9399,8 +9130,8 @@ update_shell() {
     update_p10k
     update_zsh_plugins
 
-    # Installer-based updates (Atuin, Zoxide)
-    update_atuin
+    # Pinned release builds (mcfly, mcfly-fzf) and installer-based (Zoxide)
+    update_mcfly
     update_zoxide
 
     # Keep deployed files in sync with repo (acfs.zshrc, update.sh, etc.)
@@ -9408,9 +9139,6 @@ update_shell() {
     sync_acfs_zprofile_paths
     sync_acfs_zsh_loader
     sync_acfs_zshrc
-    # Re-run after the sync so the first run that deploys an atuin-owning
-    # acfs.zshrc also retires the unmanaged ~/.zshrc init line (#359).
-    cleanup_unmanaged_atuin_init
     sync_acfs_deployed
     sync_acfs_global_wrapper
     sync_acfs_global_commands
@@ -9657,7 +9385,7 @@ CATEGORY OPTIONS (select what to update):
   --apt-only         Only update system packages (apt)
   --agents-only      Only update coding agents (Claude, Codex, Antigravity, omp, Grok)
   --cloud-only       Only update cloud CLIs (Wrangler, Supabase, Vercel, gh, gcloud)
-  --shell-only       Only update shell tools (OMZ, P10K, plugins, Atuin, Zoxide)
+  --shell-only       Only update shell tools (OMZ, P10K, plugins, mcfly, mcfly-fzf, Zoxide)
   --runtime-only     Only update runtimes (Bun, Rust, uv, Go)
   --stack-only       Only update Agent Flywheel stack tools
   --stack            Include Agent Flywheel stack tools (enabled by default)
@@ -9744,7 +9472,7 @@ WHAT EACH CATEGORY UPDATES:
             that opt-in replaces repository files, so preserve local edits first
   apt:      System packages via apt update && apt upgrade && apt autoremove
   shell:    Oh-My-Zsh, Powerlevel10k, zsh plugins (git pull)
-            Atuin, Zoxide (reinstall from upstream)
+            mcfly, mcfly-fzf (pinned release builds), Zoxide (reinstall from upstream)
   agents:   Claude Code (verified installer: checksums.yaml-pinned latest channel)
             Codex CLI (bun install -g --trust @openai/codex@latest)
             Antigravity CLI (agy update; installs agy-locked and maps gmi to agy)
@@ -10461,7 +10189,6 @@ main() {
     cleanup_legacy_git_safety_guard
     cleanup_legacy_br_alias
     cleanup_legacy_bv_alias
-    cleanup_unmanaged_atuin_init
     cleanup_ast_grep_sg_launcher
 
     # Run updates

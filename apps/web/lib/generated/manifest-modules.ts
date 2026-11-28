@@ -41,7 +41,7 @@ export interface ManifestProvenanceMetadata {
 
 export const manifestProvenance = {
   acfsVersion: "0.10.0",
-  manifestSha256: "32fd9355a18bf4bd719b2d7b8e4206dc2638cf2a7f5f0423e537c86f2fae43a7",
+  manifestSha256: "12e123634004275ad0337fec904436d56b909aa93f3399793147ecbd7923eb79",
   checksumsYamlSha256: "3685e2a8c867ab40da558b20601b414feae3cdd1fa3b0cd4bbff2d9fb16289b7",
 } as const satisfies ManifestProvenanceMetadata;
 
@@ -317,22 +317,6 @@ export const manifestModules: ManifestModuleMetadata[] = [
     tags: [
       "critical",
       "runtime",
-    ],
-    enabledByDefault: true,
-    optional: false,
-  },
-  {
-    id: "tools.atuin",
-    description: "Atuin CLI with guarded agent-safe shim",
-    category: "tools",
-    phase: 6,
-    dependencies: [
-      "base.system",
-      "users.ubuntu",
-    ],
-    tags: [
-      "recommended",
-      "shell-ux",
     ],
     enabledByDefault: true,
     optional: false,

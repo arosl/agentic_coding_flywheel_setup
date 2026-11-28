@@ -990,7 +990,7 @@ _acfs_clean_runner_env_allowed() {
     local component=""
 
         case "$assignment" in
-            ATUIN_NO_MODIFY_PATH=1|AM_INSTALL_SKIP_MCP_SETUP=1|AM_INSTALL_SKIP_REMOTE_HTTP_READINESS=1|RU_NON_INTERACTIVE=1)
+            AM_INSTALL_SKIP_MCP_SETUP=1|AM_INSTALL_SKIP_REMOTE_HTTP_READINESS=1|RU_NON_INTERACTIVE=1)
                 return 0
                 ;;
             RU_INSTALLER_NO_SELF_REFRESH=1)

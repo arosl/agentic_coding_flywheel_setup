@@ -495,7 +495,6 @@ describe("ModuleSchema", () => {
 
   test("allows only security-reviewed verified_installer environment contracts", () => {
     const allowedContracts = [
-      { tool: "atuin", entry: "ATUIN_NO_MODIFY_PATH=1" },
       { tool: "mcp_agent_mail", entry: "AM_INSTALL_SKIP_MCP_SETUP=1" },
       { tool: "mcp_agent_mail", entry: "AM_INSTALL_SKIP_REMOTE_HTTP_READINESS=1" },
       { tool: "ru", entry: "RU_NON_INTERACTIVE=1" },
@@ -581,6 +580,8 @@ describe("ModuleSchema", () => {
       { tool: "s2p", env: ["RU_VERSION=1.5.0-nhm.1"] },
       { tool: "s2p", env: ["RU_INSTALLER_NO_SELF_REFRESH=1"] },
       { tool: "mcp_agent_mail", env: ["ATUIN_NO_MODIFY_PATH=1"] },
+      // Atuin left ACFS (acfs-wyzm), and its contract with it.
+      { tool: "atuin", env: ["ATUIN_NO_MODIFY_PATH=1"] },
     ]) {
       expect(
         ModuleSchema.safeParse({

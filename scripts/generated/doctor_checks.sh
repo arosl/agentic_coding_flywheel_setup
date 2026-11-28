@@ -394,7 +394,6 @@ declare -a MANIFEST_CHECKS=(
     "lang.rust.2	Rust nightly + cargo	~/.cargo/bin/rustup show | grep -q nightly	required	target_user"
     "lang.go	Go toolchain	go version	required	root"
     "lang.nvm	nvm + latest Node.js	export NVM_DIR=\"\$HOME/.nvm\"\\n[ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"\\nnode --version	required	target_user"
-    "tools.atuin	Atuin CLI with guarded agent-safe shim	~/.atuin/bin/atuin --version	required	target_user"
     "tools.mcfly	mcfly shell history (pinned release)	\"\$HOME/.local/bin/mcfly\" --version	required	target_user"
     "tools.mcfly_fzf	mcfly-fzf, fzf search of mcfly history on Ctrl-R (pinned release)	\"\$HOME/.local/bin/mcfly-fzf\" --version	required	target_user"
     "tools.zoxide	Zoxide (better cd)	command -v zoxide	required	target_user"

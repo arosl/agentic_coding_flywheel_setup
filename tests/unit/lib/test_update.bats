@@ -1263,7 +1263,7 @@ EOF
     assert_failure
 }
 
-@test "update_tool_binary_path: prefers target atuin over current HOME" {
+@test "update_tool_binary_path: prefers target zoxide over current HOME" {
     local current_home
     local target_home
     current_home="$(create_temp_dir)"
@@ -1275,26 +1275,26 @@ EOF
     unset ACFS_BIN_DIR
     unset ACFS_STATE_FILE
     unset ACFS_HOME
-    mkdir -p "$current_home/.atuin/bin" "$target_home/.atuin/bin"
+    mkdir -p "$current_home/.local/bin" "$target_home/.local/bin"
 
-    cat > "$current_home/.atuin/bin/atuin" <<'EOF'
+    cat > "$current_home/.local/bin/zoxide" <<'EOF'
 #!/usr/bin/env bash
 echo "current-home"
 EOF
-    chmod +x "$current_home/.atuin/bin/atuin"
+    chmod +x "$current_home/.local/bin/zoxide"
 
-    cat > "$target_home/.atuin/bin/atuin" <<'EOF'
+    cat > "$target_home/.local/bin/zoxide" <<'EOF'
 #!/usr/bin/env bash
 echo "target-home"
 EOF
-    chmod +x "$target_home/.atuin/bin/atuin"
+    chmod +x "$target_home/.local/bin/zoxide"
 
-    run update_tool_binary_path "atuin"
+    run update_tool_binary_path "zoxide"
     assert_success
-    assert_output "$target_home/.atuin/bin/atuin"
+    assert_output "$target_home/.local/bin/zoxide"
 }
 
-@test "update_tool_binary_path: does not fall back to current HOME atuin for different unresolved target" {
+@test "update_tool_binary_path: does not fall back to current HOME zoxide for different unresolved target" {
     local current_home
     current_home="$(create_temp_dir)"
 
@@ -1304,19 +1304,19 @@ EOF
     unset ACFS_BIN_DIR
     unset ACFS_STATE_FILE
     unset ACFS_HOME
-    mkdir -p "$current_home/.atuin/bin"
+    mkdir -p "$current_home/.local/bin"
 
     getent() {
         return 2
     }
 
-    cat > "$current_home/.atuin/bin/atuin" <<'EOF'
+    cat > "$current_home/.local/bin/zoxide" <<'EOF'
 #!/usr/bin/env bash
-echo "wrong-home-atuin"
+echo "wrong-home-zoxide"
 EOF
-    chmod +x "$current_home/.atuin/bin/atuin"
+    chmod +x "$current_home/.local/bin/zoxide"
 
-    run update_tool_binary_path "atuin"
+    run update_tool_binary_path "zoxide"
     assert_failure
 }
 
@@ -1481,9 +1481,6 @@ EOF
     assert_success
 
     run grep -F 'update_run_verified_installer_or_existing_on_transient "Meta Skill" ms ms ms --easy-mode' "$update"
-    assert_success
-
-    run grep -F '"$target_home/.atuin/bin/atuin"' "$update"
     assert_success
 
     run rg -n '\$HOME/\.bun/bin/bun' "$update"
@@ -3297,391 +3294,177 @@ EOF
     assert_success
 }
 
-@test "update_atuin: falls back to reinstall after failed self-update" {
-    # The updater only trusts target-home installs (never a bare PATH entry),
-    # so the fake atuin lives where a real one would: ~/.atuin/bin.
-    local atuin_dir="$HOME/.atuin/bin"
-    mkdir -p "$atuin_dir"
-    export ACFS_UPDATE_RETRY_MAX_ATTEMPTS=1
-    export ACFS_UPDATE_RETRY_SLEEP_SECONDS=0
+# update_mcfly (acfs-wyzm): a served directory of release tarballs, a curl
+# that serves from it and logs each URL, the user's own run of the install
+# script (update_run_in_target_context, logged), and x86_64.
+_mcfly_update_setup() {
+    MCFLY_SERVE="$(create_temp_dir)"
+    MCFLY_STUBS="$(create_temp_dir)"
+    MCFLY_CURL_LOG="$HOME/curl.log"
+    MCFLY_AS_USER_LOG="$HOME/as-user.log"
+    export MCFLY_SERVE MCFLY_CURL_LOG
+    cat > "$MCFLY_STUBS/curl" <<'EOF'
+#!/bin/bash
+out="" url=""
+while (($#)); do
+    case "$1" in
+        -o) out="$2"; shift 2 ;;
+        -*) shift ;;
+        *) url="$1"; shift ;;
+    esac
+done
+printf '%s\n' "$url" >> "$MCFLY_CURL_LOG"
+[[ -f "$MCFLY_SERVE/${url##*/}" ]] || exit 22
+cat "$MCFLY_SERVE/${url##*/}" > "$out"
+EOF
+    chmod +x "$MCFLY_STUBS/curl"
+    update_run_in_target_context() {
+        shift
+        printf '%s\n' "${*: -4}" >> "$MCFLY_AS_USER_LOG"
+        PATH="$MCFLY_STUBS:$PATH" "$@"
+    }
+    uname() { if [[ "${1:-}" == "-m" ]]; then echo x86_64; else command uname "$@"; fi; }
     QUIET=true
     VERBOSE=false
     DRY_RUN=false
-    YES_MODE=false
     ABORT_ON_FAILURE=false
     UPDATE_LOG_FILE="$HOME/update.log"
     SUCCESS_COUNT=0
     FAIL_COUNT=0
     SKIP_COUNT=0
+    UPDATE_MCFLY_PINS=()
+}
 
-    cat > "$atuin_dir/atuin" <<'EOF'
-#!/usr/bin/env bash
-case "${1:-}" in
-  --help)
-    echo "self-update"
-    ;;
-  self-update)
-    echo "curl: (28) operation timed out" >&2
-    exit 1
-    ;;
-  --version)
-    echo "atuin 1.0.0"
-    ;;
-  *)
-    echo "atuin 1.0.0"
-    ;;
-esac
-EOF
-    chmod +x "$atuin_dir/atuin"
+# _mcfly_serve CMD PRINTS [PIN_SHA]: serves CMD.tar.gz, holding a build of
+# CMD whose --version prints PRINTS, and pins it for x86_64 as the build
+# that prints "$CMD-pinned", with its real SHA-256 or PIN_SHA.
+_mcfly_serve() {
+    local cmd="$1" prints="$2" pin_sha="${3:-}" dir sha
+    dir="$(create_temp_dir)"
+    printf '#!/bin/sh\necho "%s"\n' "$prints" > "$dir/$cmd"
+    chmod +x "$dir/$cmd"
+    tar -czf "$MCFLY_SERVE/$cmd.tar.gz" -C "$dir" "$cmd"
+    sha="$(sha256sum "$MCFLY_SERVE/$cmd.tar.gz")"
+    sha="${sha%% *}"
+    UPDATE_MCFLY_PINS+=("$cmd|x86_64|$cmd-pinned|https://example.invalid/releases/$cmd.tar.gz|${pin_sha:-$sha}")
+}
 
-    update_require_security() {
-        return 0
-    }
+@test "update_mcfly: the user installs mcfly and mcfly-fzf from the pins, and a second run finds them current" {
+    _mcfly_update_setup
+    _mcfly_serve mcfly "mcfly-pinned"
+    _mcfly_serve mcfly-fzf "mcfly-fzf-pinned"
 
-    update_run_verified_installer() {
-        : > "$HOME/atuin-reinstall-ran"
-        return 0
-    }
+    update_mcfly
 
-    update_atuin
+    [[ "$("$HOME/.local/bin/mcfly" --version)" == "mcfly-pinned" ]]
+    [[ "$("$HOME/.local/bin/mcfly-fzf" --version)" == "mcfly-fzf-pinned" ]]
+    [[ "$(stat -c '%a' "$HOME/.local/bin/mcfly")" == "755" ]]
+    [[ "$(wc -l < "$MCFLY_CURL_LOG")" -eq 2 ]]
+    [[ "$SUCCESS_COUNT" -eq 2 && "$FAIL_COUNT" -eq 0 ]]
+    grep -Fq "[ok] mcfly - installed mcfly-pinned" "$UPDATE_LOG_FILE"
+    # The user's run did it all, once per command.
+    grep -Fxq "mcfly mcfly-pinned https://example.invalid/releases/mcfly.tar.gz ${UPDATE_MCFLY_PINS[0]##*|}" "$MCFLY_AS_USER_LOG"
+    [[ -z "$(find "$HOME/.local/bin" -name '.acfs-*')" ]]
 
-    [[ -f "$HOME/atuin-reinstall-ran" ]]
-    [[ "$SUCCESS_COUNT" -eq 1 ]]
+    update_mcfly
+
+    [[ "$(wc -l < "$MCFLY_CURL_LOG")" -eq 2 ]]
+    [[ "$SUCCESS_COUNT" -eq 4 && "$FAIL_COUNT" -eq 0 ]]
+    grep -Fq "[ok] mcfly-fzf - mcfly-fzf-pinned, the pinned build" "$UPDATE_LOG_FILE"
+}
+
+@test "update_mcfly: replaces a build that isn't the pinned one" {
+    _mcfly_update_setup
+    _mcfly_serve mcfly "mcfly-pinned"
+    mkdir -p "$HOME/.local/bin"
+    printf '#!/bin/sh\necho "mcfly 0.8.0"\n' > "$HOME/.local/bin/mcfly"
+    chmod +x "$HOME/.local/bin/mcfly"
+
+    update_mcfly
+
+    [[ "$("$HOME/.local/bin/mcfly" --version)" == "mcfly-pinned" ]]
     [[ "$FAIL_COUNT" -eq 0 ]]
 }
 
-@test "update_atuin: prefers dedicated updater and skips setup installer" {
-    export ACFS_UPDATE_RETRY_MAX_ATTEMPTS=1
-    export ACFS_UPDATE_RETRY_SLEEP_SECONDS=0
-    export ACFS_BIN_DIR="$HOME/.local/bin"
-    QUIET=true
-    VERBOSE=false
-    DRY_RUN=false
-    YES_MODE=false
-    ABORT_ON_FAILURE=false
-    UPDATE_LOG_FILE="$HOME/update.log"
-    SUCCESS_COUNT=0
-    FAIL_COUNT=0
-    SKIP_COUNT=0
+@test "update_mcfly: a tarball that fails its checksum changes nothing" {
+    _mcfly_update_setup
+    _mcfly_serve mcfly "mcfly-pinned" "$(printf '%064d' 0)"
+    mkdir -p "$HOME/.local/bin"
+    printf '#!/bin/sh\necho "mcfly 0.8.0"\n' > "$HOME/.local/bin/mcfly"
+    chmod +x "$HOME/.local/bin/mcfly"
 
-    mkdir -p "$HOME/.atuin/bin" "$HOME/.local/bin"
-    cat > "$HOME/.atuin/bin/atuin" <<'EOF'
-#!/usr/bin/env bash
-echo "atuin 18.17.1"
-EOF
-    cat > "$HOME/.atuin/bin/atuin-update" <<EOF
-#!/usr/bin/env bash
-touch "$HOME/atuin-dedicated-updater-ran"
-EOF
-    chmod +x "$HOME/.atuin/bin/atuin" "$HOME/.atuin/bin/atuin-update"
+    update_mcfly
 
-    update_run_verified_installer() {
-        : > "$HOME/atuin-setup-installer-ran"
-        return 1
-    }
-
-    update_atuin
-
-    [[ -f "$HOME/atuin-dedicated-updater-ran" ]]
-    [[ ! -e "$HOME/atuin-setup-installer-ran" ]]
-    [[ "$FAIL_COUNT" -eq 0 ]]
+    [[ "$("$HOME/.local/bin/mcfly" --version)" == "mcfly 0.8.0" ]]
+    [[ "$FAIL_COUNT" -eq 1 ]]
+    grep -Fq "checksum mismatch for https://example.invalid/releases/mcfly.tar.gz" "$UPDATE_LOG_FILE"
+    [[ -z "$(find "$HOME/.local/bin" -name '.acfs-*')" ]]
 }
 
-@test "update_disable_atuin_agent_integrations: removes only Atuin harness hooks" {
-    mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.pi/agent/extensions"
-    cat > "$HOME/.codex/hooks.json" <<'EOF'
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "^Bash$",
-        "hooks": [
-          {"type": "command", "command": "dcg --mode strict"},
-          {"type": "command", "command": "atuin hook codex"}
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {"matcher": "^Bash$", "hooks": [{"type": "command", "command": "/home/test/.atuin/bin/atuin hook codex"}]}
-    ]
-  }
-}
-EOF
-    cat > "$HOME/.claude/settings.json" <<'EOF'
-{
-  "hooks": {
-    "PreToolUse": [
-      {"matcher": "Bash", "hooks": [{"type": "command", "command": "atuin hook claude-code"}]}
-    ],
-    "Notification": [
-      {"hooks": [{"type": "command", "command": "notify-send done"}]}
-    ]
-  }
-}
-EOF
-    cat > "$HOME/.pi/agent/extensions/atuin.ts" <<'EOF'
-import { execFile } from "node:child_process";
-export default function atuin(pi: any): void {
-  pi.on("tool_result", () => execFile("atuin", ["history", "start"]));
-}
-EOF
+@test "update_mcfly: refuses a pinned tarball whose build prints another version" {
+    _mcfly_update_setup
+    _mcfly_serve mcfly "mcfly 9.9.9"
 
-    run update_disable_atuin_agent_integrations "$HOME"
-    assert_success
+    update_mcfly
 
-    run jq -r '.hooks.PreToolUse[0].hooks[0].command' "$HOME/.codex/hooks.json"
-    assert_success
-    assert_output "dcg --mode strict"
-    run jq -e '[.. | objects | .command? // empty | select(test("atuin[[:space:]]+hook"))] | length == 0' "$HOME/.codex/hooks.json" "$HOME/.claude/settings.json"
-    assert_success
-    run jq -r '.hooks.Notification[0].hooks[0].command' "$HOME/.claude/settings.json"
-    assert_success
-    assert_output "notify-send done"
-    run grep -F "Atuin integration intentionally disabled by ACFS" "$HOME/.pi/agent/extensions/atuin.ts"
-    assert_success
-    run grep -F 'execFile(' "$HOME/.pi/agent/extensions/atuin.ts"
-    assert_failure
+    [[ ! -e "$HOME/.local/bin/mcfly" ]]
+    [[ "$FAIL_COUNT" -eq 1 ]]
+    grep -Fq "does not print 'mcfly-pinned'" "$UPDATE_LOG_FILE"
+    [[ -z "$(find "$HOME/.local/bin" -name '.acfs-*')" ]]
 }
 
-@test "update_repair_atuin_install: uses target atuin as shim source when HOME differs" {
-    local current_home
-    local target_home
-    current_home="$(create_temp_dir)"
-    target_home="$(create_temp_dir)"
+@test "update_mcfly: dry-run downloads and changes nothing" {
+    _mcfly_update_setup
+    _mcfly_serve mcfly "mcfly-pinned"
+    DRY_RUN=true
 
-    export HOME="$current_home"
-    export TARGET_HOME="$target_home"
-    unset TARGET_USER
-    export ACFS_BIN_DIR="$target_home/custom-bin"
-    mkdir -p "$current_home/.atuin/bin" "$target_home/.atuin/bin"
+    update_mcfly
 
-    cat > "$current_home/.atuin/bin/atuin" <<'EOF'
-#!/usr/bin/env bash
-echo "current-home"
-EOF
-    chmod +x "$current_home/.atuin/bin/atuin"
-
-    cat > "$target_home/.atuin/bin/atuin" <<'EOF'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then
-  echo "atuin 18.14.1"
-else
-  echo "target-home"
-fi
-EOF
-    chmod +x "$target_home/.atuin/bin/atuin"
-
-    run update_repair_atuin_install
-    assert_success
-
-    [[ -x "$ACFS_BIN_DIR/atuin" ]]
-    [[ -x "$target_home/.local/bin/atuin" ]]
-    [[ ! -L "$ACFS_BIN_DIR/atuin" ]]
-    [[ ! -L "$target_home/.local/bin/atuin" ]]
-
-    run "$ACFS_BIN_DIR/atuin" --version
-    assert_success
-    assert_output "atuin 18.14.1"
-
-    run "$ACFS_BIN_DIR/atuin" search cargo
-    assert_success
-    assert_output "target-home"
-
-    run env CODEX_THREAD_ID=test "$ACFS_BIN_DIR/atuin" history start
-    assert_success
-    assert_output ""
-
-    run bash -c 'printf "%*s" 131072 "" | "$1" hook install codex' _ "$ACFS_BIN_DIR/atuin"
-    assert_success
-    assert_output ""
+    [[ ! -e "$HOME/.local/bin/mcfly" && ! -e "$MCFLY_CURL_LOG" && ! -e "$MCFLY_AS_USER_LOG" ]]
+    [[ "$SKIP_COUNT" -eq 1 ]]
 }
 
-@test "update.sh's atuin repair hands nothing over, and only the target user touches the agents' configs (acfs-tquv)" {
-    local fn
-    for fn in update_repair_atuin_install update_write_atuin_guard_wrapper update_write_atuin_guard_wrapper_as_user; do
-        [[ "$(declare -f "$fn")" != *chown* ]]
-    done
-    [[ "$(declare -f update_write_atuin_guard_wrapper)" == *'if update_for_user "$wrapper_path"; then'* ]]
-    # Every use of a config's path is the -f test, the user's cat, the
-    # user's write or the log line: no redirect, cat or jq of update.sh's own.
-    [[ -z "$(declare -f update_strip_atuin_agent_hooks_from_config | grep -F '"$config_path"' |
-        grep -vE -- '-f "\$config_path"|update_run_in_target_context "" cat --|_update_dotfile_write_as_target|log_to_file' || true)" ]]
-    [[ -z "$(declare -f update_disable_atuin_agent_integrations | grep -F '"$pi_extension"' |
-        grep -vE -- '-f "\$pi_extension"|update_run_in_target_context "" cat --|_update_dotfile_write_as_target|log_to_file' || true)" ]]
+@test "update_mcfly: skips a machine that has no pinned build" {
+    _mcfly_update_setup
+    _mcfly_serve mcfly "mcfly-pinned"
+    uname() { echo riscv64; }
+
+    update_mcfly
+
+    [[ ! -e "$HOME/.local/bin/mcfly" && ! -e "$MCFLY_CURL_LOG" ]]
+    [[ "$SKIP_COUNT" -eq 1 && "$FAIL_COUNT" -eq 0 ]]
 }
 
-# The user's own atuin at ~/.local/bin/atuin, the real one in ~/.atuin/bin,
-# and a root run for that user (stub_sync_as_user).
-_atuin_wrapper_for_user() {
-    ATUIN_HOME="$(create_temp_dir)"
-    ATUIN_BIN="$ATUIN_HOME/.local/bin"
-    ATUIN_REAL="$ATUIN_HOME/.atuin/bin/atuin"
-    mkdir -p "$ATUIN_BIN" "${ATUIN_REAL%/*}"
-    printf '#!/bin/sh\necho real\n' > "$ATUIN_REAL"
-    chmod +x "$ATUIN_REAL"
-    printf '#!/bin/sh\necho mine\n' > "$ATUIN_BIN/atuin"
-    stub_sync_as_user "$ATUIN_HOME" "$ATUIN_HOME/as-user.log"
+@test "update_mcfly: root's own shell runs no build and writes nothing; the target user's run does" {
+    local body
+    body="$(declare -f update_mcfly)"
+    [[ "$body" == *'update_run_in_target_context "" "$bash_bin" --noprofile --norc -c "$(update_mcfly_install_script)"'* ]]
+    # It never builds a path in a home, so nothing it runs can reach one.
+    [[ "$body" != *'$HOME'* && "$body" != *target_home* && "$body" != *'${HOME'* ]]
 }
 
-@test "update_write_atuin_guard_wrapper run by root for a user: a link swapped in after the move-aside is replaced, not written through (acfs-tquv)" {
-    local outside
-    _atuin_wrapper_for_user
-    outside="$(create_temp_dir)/root-file"
-    printf "root's own\n" > "$outside"
-    # The user swaps a link in at the wrapper's name as soon as a mv, root's
-    # or the user's, leaves the name free.
-    ATUIN_SWAP_NAME="$ATUIN_BIN/atuin" ATUIN_SWAP_TARGET="$outside" ATUIN_SWAP_MARK="$ATUIN_HOME/swapped"
-    export ATUIN_SWAP_NAME ATUIN_SWAP_TARGET ATUIN_SWAP_MARK
-    mv() {
-        command mv "$@" || return
-        [[ -e "$ATUIN_SWAP_NAME" || -L "$ATUIN_SWAP_NAME" ]] && return 0
-        ln -s "$ATUIN_SWAP_TARGET" "$ATUIN_SWAP_NAME" && printf 'swapped\n' >> "$ATUIN_SWAP_MARK"
-    }
-    export -f mv
-
-    run update_write_atuin_guard_wrapper "$ATUIN_BIN/atuin" "$ATUIN_REAL"
-    unset -f mv
-    assert_success
-
-    # The link was swapped in, and then replaced.
-    [[ "$(cat "$ATUIN_SWAP_MARK")" == "swapped" ]]
-    run cat "$outside"
-    assert_output "root's own"
-    [[ -f "$ATUIN_BIN/atuin" && ! -L "$ATUIN_BIN/atuin" ]]
-    grep -Fq "agent hook integration disabled by ACFS" "$ATUIN_BIN/atuin"
-    [[ "$(stat -c '%a' "$ATUIN_BIN/atuin")" == "755" ]]
-    run cat "$ATUIN_BIN/atuin.acfs-backup.2025-01-01.$$"
-    assert_output --partial "echo mine"
-    # The user made the directory and moved the old file aside.
-    grep -Fxq "mkdir -p -- $ATUIN_BIN" "$ATUIN_HOME/as-user.log"
-    grep -Fq "_ $ATUIN_BIN/atuin $ATUIN_BIN/atuin.acfs-backup.2025-01-01.$$" "$ATUIN_HOME/as-user.log"
-    [[ -z "$(find "$ATUIN_BIN" -name '.acfs-sync.*')" ]]
-}
-
-@test "update_write_atuin_guard_wrapper run by root for a user never moves the user's file into a directory a link at the backup name points to (acfs-tquv)" {
-    local elsewhere
-    _atuin_wrapper_for_user
-    elsewhere="$(create_temp_dir)"
-    ln -s "$elsewhere" "$ATUIN_BIN/atuin.acfs-backup.2025-01-01.$$"
-
-    run update_write_atuin_guard_wrapper "$ATUIN_BIN/atuin" "$ATUIN_REAL"
-
-    [[ -z "$(ls -A "$elsewhere")" ]]
-    # GNU mv -T replaces the link with the user's file; uutils mv refuses
-    # it, and then no wrapper is written.
-    if [[ "$status" -eq 0 ]]; then
-        grep -Fq "agent hook integration disabled by ACFS" "$ATUIN_BIN/atuin"
-        run cat "$ATUIN_BIN/atuin.acfs-backup.2025-01-01.$$"
-        assert_output --partial "echo mine"
-    else
-        run cat "$ATUIN_BIN/atuin"
-        assert_output --partial "echo mine"
-    fi
-}
-
-@test "update_repair_atuin_install run by root for a user writes nothing below a link in the user's home (acfs-tquv)" {
-    local home elsewhere
-    home="$(create_temp_dir)"
-    elsewhere="$(create_temp_dir)"
-    mkdir -p "$home/.atuin/bin"
-    printf '#!/bin/sh\necho real\n' > "$home/.atuin/bin/atuin"
-    chmod +x "$home/.atuin/bin/atuin"
-    # ~/.local is a link to a directory of root's, /usr say.
-    ln -s "$elsewhere" "$home/.local"
-    export TARGET_HOME="$home" ACFS_BIN_DIR="$home/.local/bin"
-    UPDATE_LOG_FILE="$home/update.log"
-    stub_sync_as_user "$home" "$home/as-user.log"
-
-    run update_repair_atuin_install
-    assert_failure
-
-    [[ -z "$(ls -A "$elsewhere")" ]]
-    grep -Fq "Atuin guard wrapper not installed at $home/.local/bin/atuin" "$home/update.log"
-}
-
-@test "update_disable_atuin_agent_integrations reads and writes the agents' configs as the target user, and a dotfiles link stays a link (acfs-tquv)" {
-    local dotfiles f
-    dotfiles="$(create_temp_dir)"
-    mkdir -p "$HOME/.codex" "$HOME/.claude" "$HOME/.pi/agent/extensions"
-    printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"atuin hook claude-code"}]}]}}\n' > "$dotfiles/settings.json"
-    ln -s "$dotfiles/settings.json" "$HOME/.claude/settings.json"
-    printf '{"hooks":{"PreToolUse":[{"matcher":"^Bash$","hooks":[{"type":"command","command":"atuin hook codex"}]}]}}\n' > "$HOME/.codex/hooks.json"
-    printf 'export default function atuin(): void {}\n' > "$HOME/.pi/agent/extensions/atuin.ts"
-    stub_sync_as_user "$HOME" "$HOME/as-user.log"
-
-    run update_disable_atuin_agent_integrations "$HOME"
-    assert_success
-
-    [[ -L "$HOME/.claude/settings.json" ]]
-    for f in "$dotfiles/settings.json" "$HOME/.codex/hooks.json"; do
-        run jq -e '[.. | objects | .command? // empty | select(test("atuin[[:space:]]+hook"))] | length == 0' "$f"
-        assert_success
-    done
-    grep -Fq "Atuin integration intentionally disabled by ACFS" "$HOME/.pi/agent/extensions/atuin.ts"
-    for f in "$HOME/.codex/hooks.json" "$HOME/.claude/settings.json" "$HOME/.pi/agent/extensions/atuin.ts"; do
-        grep -Fxq "cat -- $f" "$HOME/as-user.log"
-        grep -Fxq "tee $f" "$HOME/as-user.log"
+@test "UPDATE_MCFLY_PINS: one https tarball and SHA-256 per command and machine" {
+    local entry cmd arch want url sha
+    local -a fields=()
+    [[ "${#UPDATE_MCFLY_PINS[@]}" -eq 4 ]]
+    for entry in "${UPDATE_MCFLY_PINS[@]}"; do
+        IFS='|' read -r -a fields <<< "$entry"
+        [[ "${#fields[@]}" -eq 5 ]]
+        cmd="${fields[0]}" arch="${fields[1]}" want="${fields[2]}" url="${fields[3]}" sha="${fields[4]}"
+        [[ "$cmd" == mcfly || "$cmd" == mcfly-fzf ]]
+        [[ "$arch" == x86_64 || "$arch" == aarch64 ]]
+        [[ "$want" == "$cmd "[0-9]* ]]
+        [[ "$url" == https://github.com/*"$arch"-unknown-linux-musl.tar.gz ]]
+        [[ "$sha" =~ ^[0-9a-f]{64}$ ]]
     done
 }
 
-@test "update_repair_atuin_install: normalizes custom and local shims" {
-    export ACFS_BIN_DIR="$HOME/custom-bin"
-    mkdir -p "$HOME/.atuin/bin"
-
-    cat > "$HOME/.atuin/bin/atuin" <<'EOF'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then
-  echo "atuin 18.14.1"
-else
-  echo "atuin 18.14.1"
-fi
-EOF
-    chmod +x "$HOME/.atuin/bin/atuin"
-
-    run update_repair_atuin_install
-    assert_success
-
-    [[ -x "$ACFS_BIN_DIR/atuin" ]]
-    [[ -x "$HOME/.local/bin/atuin" ]]
-    [[ ! -L "$ACFS_BIN_DIR/atuin" ]]
-    [[ ! -L "$HOME/.local/bin/atuin" ]]
-
-    run "$ACFS_BIN_DIR/atuin" --version
-    assert_success
-    assert_output "atuin 18.14.1"
-
-    run env CODEX_THREAD_ID=test "$HOME/.local/bin/atuin" history end atuin-agent-history-disabled
-    assert_success
-    assert_output ""
-}
-
-@test "update_repair_atuin_install: does not repair from current HOME for different unresolved target" {
-    local current_home
-    current_home="$(create_temp_dir)"
-
-    export HOME="$current_home"
-    export TARGET_USER="missinguser"
-    export TARGET_HOME="/"
-    export ACFS_BIN_DIR="$current_home/custom-bin"
-    mkdir -p "$current_home/.atuin/bin" "$ACFS_BIN_DIR"
-
-    getent() {
-        return 2
-    }
-
-    cat > "$current_home/.atuin/bin/atuin" <<'EOF'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then
-  echo "atuin 18.14.1"
-else
-  echo "wrong-home-atuin"
-fi
-EOF
-    chmod +x "$current_home/.atuin/bin/atuin"
-
-    run update_repair_atuin_install
-    assert_failure
-    [[ ! -e "$ACFS_BIN_DIR/atuin" ]]
+@test "update_shell: updates mcfly and no longer Atuin" {
+    local body
+    body="$(declare -f update_shell)"
+    [[ "$body" == *update_mcfly* ]]
+    [[ "$body" != *atuin* ]]
+    [[ -z "$(declare -F update_atuin cleanup_unmanaged_atuin_init update_repair_atuin_install)" ]]
 }
 
 @test "update_repair_zoxide_install: normalizes custom shim to target local bin" {
@@ -3817,142 +3600,27 @@ _bin_dir_repairs_for_user() {
     assert_failure
 }
 
-@test "update_write_atuin_guard_wrapper run by root for a user writes nothing outside that user's home (acfs-r7nv)" {
-    local outside
-    _atuin_wrapper_for_user
-    update_for_user() {
-        [[ "$1" == "$AS_USER_HOME/"* ]] || return 1
-        UPDATE_FOR_USER=tester
-        UPDATE_FOR_USER_HOME="$AS_USER_HOME"
-    }
-    update_root_run_for_other_user() { return 0; }
-    UPDATE_LOG_FILE="$ATUIN_HOME/update.log"
-    outside="$(create_temp_dir)"
-
-    run update_write_atuin_guard_wrapper "$outside/atuin" "$ATUIN_REAL"
-    assert_failure
-
-    [[ -z "$(ls -A "$outside")" ]]
-    grep -Fq "Not writing $outside/atuin as root: it is outside" "$ATUIN_HOME/update.log"
-}
-
-@test "acfs.zshrc: does not load Atuin shell hooks" {
+@test "acfs.zshrc starts mcfly and mcfly-fzf, and never Atuin (acfs-wyzm)" {
     local zshrc="$PROJECT_ROOT/acfs/zsh/acfs.zshrc"
 
-    run grep -F 'source "$HOME/.atuin/bin/env"' "$zshrc"
-    assert_failure
-
-    run grep -F 'eval "$("$_ACFS_ATUIN_BIN" init zsh)"' "$zshrc"
-    assert_failure
-
-    run grep -F 'atuin-search' "$zshrc"
-    assert_failure
-}
-
-@test "acfs.zshrc: keeps Atuin behind the guarded shim" {
-    local zshrc="$PROJECT_ROOT/acfs/zsh/acfs.zshrc"
-
-    run grep -F '_ACFS_ATUIN_BIN' "$zshrc"
-    assert_failure
-
-    run grep -F 'guarded shim in ~/.local/bin' "$zshrc"
+    run grep -F 'eval "$(mcfly init zsh)"' "$zshrc"
     assert_success
-
+    run grep -F 'eval "$(mcfly-fzf init zsh)"' "$zshrc"
+    assert_success
+    run grep -iE 'atuin' "$zshrc"
+    assert_failure
     run grep -F 'bindkey -e' "$zshrc"
     assert_success
 }
 
-@test "Atuin manifest metadata requires guarded shim" {
-    local manifest="$PROJECT_ROOT/acfs.manifest.yaml"
-    local manifest_index="$PROJECT_ROOT/scripts/generated/manifest_index.sh"
-    local install_tools="$PROJECT_ROOT/scripts/generated/install_tools.sh"
-    local web_manifest="$PROJECT_ROOT/apps/web/lib/generated/manifest-modules.ts"
-
-    run grep -F 'description: Atuin CLI with guarded agent-safe shim' "$manifest"
-    assert_success
-
-    run grep -F 'command: "test -x ~/.atuin/bin/atuin && test -x \"${ACFS_BIN_DIR:-$HOME/.local/bin}/atuin\"' "$manifest"
-    assert_success
-
-    run grep -F 'grep -Fq \"agent hook integration disabled by ACFS\" \"${ACFS_BIN_DIR:-$HOME/.local/bin}/atuin\"' "$manifest"
-    assert_success
-
-    run grep -F '# acfs-summary: install Atuin guard wrapper' "$manifest"
-    assert_success
-
-    run grep -F "['tools.atuin']=\"Atuin CLI with guarded agent-safe shim\"" "$manifest_index"
-    assert_success
-
-    run grep -F "agent hook integration disabled by ACFS" "$manifest_index"
-    assert_success
-
-    run grep -F 'dry-run: install: install Atuin guard wrapper' "$install_tools"
-    assert_success
-
-    run grep -F 'description: "Atuin CLI with guarded agent-safe shim"' "$web_manifest"
-    assert_success
-
-    run grep -F 'Atuin shell history (Ctrl-R superpowers)' "$manifest" "$manifest_index" "$web_manifest"
-    assert_failure
-}
-
-@test "Atuin guard wrappers recognize Antigravity agent contexts" {
-    local agent_contexts='claude|codex|cod|cc|agy|antigravity|agy-locked|gmi|gemini|bun|node'
-
-    run grep -F "$agent_contexts" "$PROJECT_ROOT/acfs.manifest.yaml"
-    assert_success
-
-    run grep -F "$agent_contexts" "$PROJECT_ROOT/install.sh"
-    assert_success
-
-    run grep -F "$agent_contexts" "$PROJECT_ROOT/scripts/generated/install_tools.sh"
-    assert_success
-
-    run grep -F "$agent_contexts" "$PROJECT_ROOT/scripts/lib/update.sh"
-    assert_success
-}
-
-@test "Atuin guard wrappers read the parent name from /proc, not a ps scan" {
-    # `ps -p` walks every /proc entry: ~0.8 s per typed command on a busy host.
+@test "No install path installs Atuin or writes its wrapper any more (acfs-wyzm)" {
     local f
-    for f in acfs.manifest.yaml install.sh scripts/generated/install_tools.sh scripts/lib/update.sh; do
-        run grep -F 'IFS= read -r parent_comm < "/proc/${PPID:-0}/comm"' "$PROJECT_ROOT/$f"
-        assert_success
+    for f in acfs.manifest.yaml install.sh scripts/generated/install_tools.sh scripts/generated/manifest_index.sh scripts/lib/update.sh apps/web/lib/generated/manifest-modules.ts; do
+        run grep -F 'agent hook integration disabled by ACFS' "$PROJECT_ROOT/$f"
+        assert_failure
+        run grep -E "tools\.atuin|acfs_run_verified_upstream_script_as_target_with_env \"atuin\"" "$PROJECT_ROOT/$f"
+        assert_failure
     done
-}
-
-@test "update_write_atuin_guard_wrapper: history hooks run for a shell parent, skip for an agent parent" {
-    local bin_dir="$HOME/bin" real="$HOME/real-atuin" wrapper="$HOME/bin/atuin"
-    mkdir -p "$bin_dir"
-    printf '#!/usr/bin/env bash\necho "REAL $*"\n' > "$real"
-    chmod +x "$real"
-
-    update_write_atuin_guard_wrapper "$wrapper" "$real"
-    [[ -x "$wrapper" ]]
-
-    local clean_env=(env -u CODEX_CI -u CODEX_THREAD_ID -u CLAUDE_PROJECT_DIR -u AGENT_NAME)
-
-    # Parent is a plain shell: the history hook reaches the real binary.
-    run bash -c '"$@"; true' _ "${clean_env[@]}" "$wrapper" history start -- ls
-    assert_success
-    assert_output "REAL history start -- ls"
-
-    # Agent env var: skipped without touching the real binary.
-    run env CLAUDE_PROJECT_DIR=/x "$wrapper" history end -- ls
-    assert_success
-    assert_output ""
-
-    # Parent process named like an agent (Linux comm comes from the exec'd name).
-    [[ -r /proc/self/comm ]] || skip "parent-name detection by comm is Linux-only"
-    ln -s "$(command -v bash)" "$bin_dir/claude"
-    run "$bin_dir/claude" -c '"$@"; true' _ "${clean_env[@]}" "$wrapper" history start -- ls
-    assert_success
-    assert_output ""
-
-    # Non-history commands always pass through.
-    run "$bin_dir/claude" -c '"$@"; true' _ "${clean_env[@]}" "$wrapper" search foo
-    assert_success
-    assert_output "REAL search foo"
 }
 
 @test "sync_acfs_zsh_loader: removes duplicate local override sourcing" {
@@ -4137,7 +3805,7 @@ EOF
     # The sed helper itself runs as the target user.
     grep -q 'update_run_in_target_context "" sed --follow-symlinks -i' <<<"$(declare -f _update_dotfile_sed_as_target)"
     for fn in cleanup_legacy_bv_alias cleanup_legacy_br_alias cleanup_ast_grep_sg_launcher \
-        cleanup_unmanaged_atuin_init sync_acfs_zsh_loader; do
+        sync_acfs_zsh_loader; do
         body="$(declare -f "$fn")"
         # Each edits through the helper or update_run_in_target_context ...
         grep -qE '_update_dotfile_sed_as_target|update_run_in_target_context' <<<"$body"
@@ -4162,22 +3830,6 @@ EOF
 
     run cat "$dotfiles/zshrc"
     assert_output 'source "$HOME/.acfs/zsh/acfs.zshrc"'
-}
-
-@test "cleanup_unmanaged_atuin_init: a dotfiles ~/.zshrc link stays a link, and its file's line is commented (acfs-48o3)" {
-    local dotfiles
-    dotfiles="$(create_temp_dir)"
-    mkdir -p "$HOME/.acfs/zsh"
-    printf 'eval "$(atuin init zsh)"\n' > "$HOME/.acfs/zsh/acfs.zshrc"
-    printf 'eval "$(atuin init zsh)"\n' > "$dotfiles/zshrc"
-    ln -s "$dotfiles/zshrc" "$HOME/.zshrc"
-
-    run cleanup_unmanaged_atuin_init
-    assert_success
-    [[ -L "$HOME/.zshrc" ]]
-
-    run cat "$dotfiles/zshrc"
-    assert_output --partial '# eval "$(atuin init zsh)"  # disabled by ACFS'
 }
 
 @test "cleanup_legacy_bv_alias: a dotfiles ~/.zshrc.local link stays a link, and its file loses the alias (acfs-48o3)" {
@@ -5610,8 +5262,6 @@ EOF
     run grep -F 'local -a candidates=()' "$update"
     assert_success
     run grep -F 'configured_bin="$(update_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$target_home" 2>/dev/null || true)"' "$update"
-    assert_success
-    run grep -F '[[ -n "$target_home" ]] && preferred_src="$target_home/.atuin/bin/atuin"' "$update"
     assert_success
     run grep -F "printf '/home/%s\n'" "$update"
     assert_failure
@@ -11814,12 +11464,13 @@ EOF
     run grep -F 'if ! acfs_should_skip_module "lang.go"; then' "$installer"
     assert_success
 
-    # Since upstream's #474, uv, atuin and zoxide (like Go above) skip only
-    # after acfs_should_skip_module verifies the module live, as the target.
+    # Since upstream's #474, uv, mcfly (acfs-wyzm's Atuin) and zoxide (like
+    # Go above) skip only after acfs_should_skip_module verifies the module
+    # live, as the target.
     run grep -F 'if acfs_should_skip_module "lang.uv"; then' "$installer"
     assert_success
 
-    run grep -F 'if acfs_should_skip_module "tools.atuin"; then' "$installer"
+    run grep -F 'if acfs_should_skip_module "$history_module"; then' "$installer"
     assert_success
 
     run grep -F 'if acfs_should_skip_module "tools.zoxide"; then' "$installer"
@@ -16897,71 +16548,6 @@ write_fake_ast_grep() {
     local main_body
     main_body="$(declare -f main)"
     [[ "$main_body" == *cleanup_ast_grep_sg_launcher*update_cargo_tools* ]]
-}
-
-# ============================================================
-# Unmanaged atuin init cleanup (issue #359 item 3)
-# ============================================================
-
-@test "cleanup_unmanaged_atuin_init: comments the stock line once the managed loader owns atuin" {
-    sed --version >/dev/null 2>&1 || skip "GNU sed required (fleet target)"
-
-    mkdir -p "$HOME/.acfs/zsh"
-    cat > "$HOME/.zshrc" <<'EOF'
-# user zshrc
-source "$HOME/.acfs/zsh/acfs.zshrc"
-eval "$(atuin init zsh)"
-EOF
-    cat > "$HOME/.acfs/zsh/acfs.zshrc" <<'EOF'
-if [[ -z "${ACFS_NO_ATUIN_INIT:-}" ]] && command -v atuin &>/dev/null; then
-  eval "$(atuin init zsh ${=ACFS_ATUIN_INIT_FLAGS:-})"
-fi
-EOF
-
-    update_runtime_shell_home() { printf '%s\n' "$HOME"; }
-
-    run cleanup_unmanaged_atuin_init
-    assert_success
-
-    run grep -c '^# eval "\$(atuin init zsh)"' "$HOME/.zshrc"
-    assert_output "1"
-    run grep -c '^eval "\$(atuin init zsh)"' "$HOME/.zshrc"
-    assert_output "0"
-    # The managed loader line is untouched.
-    run grep -c 'source "\$HOME/.acfs/zsh/acfs.zshrc"' "$HOME/.zshrc"
-    assert_output "1"
-}
-
-@test "cleanup_unmanaged_atuin_init: leaves ~/.zshrc alone when the managed loader lacks atuin init" {
-    mkdir -p "$HOME/.acfs/zsh"
-    cat > "$HOME/.zshrc" <<'EOF'
-eval "$(atuin init zsh)"
-EOF
-    printf '# no atuin here\n' > "$HOME/.acfs/zsh/acfs.zshrc"
-
-    update_runtime_shell_home() { printf '%s\n' "$HOME"; }
-
-    run cleanup_unmanaged_atuin_init
-    assert_success
-    run grep -c '^eval "\$(atuin init zsh)"' "$HOME/.zshrc"
-    assert_output "1"
-}
-
-@test "cleanup_unmanaged_atuin_init: preserves a customized atuin init invocation" {
-    mkdir -p "$HOME/.acfs/zsh"
-    cat > "$HOME/.zshrc" <<'EOF'
-eval "$(atuin init zsh --disable-up-arrow)"
-EOF
-    printf 'eval "$(atuin init zsh)"\n' > "$HOME/.acfs/zsh/acfs.zshrc"
-
-    update_runtime_shell_home() { printf '%s\n' "$HOME"; }
-
-    run cleanup_unmanaged_atuin_init
-    assert_success
-    run grep -c -- '--disable-up-arrow' "$HOME/.zshrc"
-    assert_output "1"
-    run grep -c '^#' "$HOME/.zshrc"
-    assert_output "0"
 }
 
 # ============================================================

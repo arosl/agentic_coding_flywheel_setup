@@ -110,11 +110,11 @@ test_only_modules_no_deps() {
 test_skip_modules() {
     local name="--skip removes modules from plan"
     reset_selection
-    SKIP_MODULES=("tools.atuin" "tools.zoxide")
+    SKIP_MODULES=("tools.mcfly_fzf" "tools.zoxide")
 
     if acfs_resolve_selection; then
         # Should not include skipped modules
-        if ! should_run_module "tools.atuin" && ! should_run_module "tools.zoxide"; then
+        if ! should_run_module "tools.mcfly_fzf" && ! should_run_module "tools.zoxide"; then
             # Should still include other default modules
             if should_run_module "lang.bun"; then
                 test_pass "$name"
@@ -142,11 +142,11 @@ test_skip_safety_violation() {
 test_phase_selection() {
     local name="--only-phase selects all modules in phase"
     reset_selection
-    ONLY_PHASES=("6")  # Phase 6: lang.*, tools.atuin, tools.zoxide, tools.ast_grep
+    ONLY_PHASES=("6")  # Phase 6: lang.*, tools.mcfly, tools.mcfly_fzf, tools.zoxide, tools.ast_grep
 
     if acfs_resolve_selection; then
         # Should include phase 6 modules
-        if should_run_module "lang.bun" && should_run_module "lang.rust" && should_run_module "tools.atuin"; then
+        if should_run_module "lang.bun" && should_run_module "lang.rust" && should_run_module "tools.mcfly"; then
             # Should also include dependencies (base.system is phase 1)
             if should_run_module "base.system"; then
                 test_pass "$name"

@@ -5431,7 +5431,7 @@ _acfs_clean_runner_env_allowed() {
     local component=""
 
     case "$assignment" in
-        ATUIN_NO_MODIFY_PATH=1|AM_INSTALL_SKIP_MCP_SETUP=1|AM_INSTALL_SKIP_REMOTE_HTTP_READINESS=1|RU_NON_INTERACTIVE=1)
+        AM_INSTALL_SKIP_MCP_SETUP=1|AM_INSTALL_SKIP_REMOTE_HTTP_READINESS=1|RU_NON_INTERACTIVE=1)
             return 0
             ;;
         RU_INSTALLER_NO_SELF_REFRESH=1)
@@ -9469,106 +9469,23 @@ install_languages_legacy_tools() {
         fi
     fi
 
-    # Atuin (install as target user)
-    # Check both the data directory and the binary location
-    if acfs_should_skip_module "tools.atuin"; then
-        log_detail "Atuin already installed"
-    else
-        log_detail "Installing Atuin for $TARGET_USER"
-        try_step "Installing Atuin" acfs_run_verified_upstream_script_as_target_with_env "atuin" "sh" "ATUIN_NO_MODIFY_PATH=1" || return 1
-    fi
-
-    if [[ -x "$TARGET_HOME/.atuin/bin/atuin" ]]; then
-        if run_as_target bash -c '
-            set -euo pipefail
-            real_bin="$HOME/.atuin/bin/atuin"
-            primary_dir="${ACFS_BIN_DIR:-$HOME/.local/bin}"
-            fallback_dir="$HOME/.local/bin"
-
-            write_atuin_guard_wrapper() {
-                local wrapper_path="${1:-}"
-                local real_bin_path="${2:-}"
-                local real_bin_q=""
-                local backup_path=""
-
-                [[ -n "$wrapper_path" && -n "$real_bin_path" && -x "$real_bin_path" ]] || return 1
-                printf -v real_bin_q "%q" "$real_bin_path"
-
-                if [[ -e "$wrapper_path" || -L "$wrapper_path" ]]; then
-                    if [[ ! -L "$wrapper_path" ]] && grep -Fq "agent hook integration disabled by ACFS" "$wrapper_path" 2>/dev/null; then
-                        :
-                    else
-                        backup_path="${wrapper_path}.acfs-backup.$(date +%s).$$"
-                        mv "$wrapper_path" "$backup_path" 2>/dev/null || return 1
-                    fi
-                fi
-
-                {
-                    cat <<\ATUIN_ACFS_WRAPPER_HEAD
-#!/usr/bin/env bash
-set -euo pipefail
-
-real_atuin_bin="${ATUIN_REAL_BIN:-}"
-if [[ -z "$real_atuin_bin" ]]; then
-ATUIN_ACFS_WRAPPER_HEAD
-                    printf "    real_atuin_bin=%s\n" "$real_bin_q"
-                    cat <<\ATUIN_ACFS_WRAPPER_TAIL
-fi
-
-if [[ ! -x "$real_atuin_bin" ]]; then
-    echo "atuin wrapper: real atuin binary not found at $real_atuin_bin" >&2
-    exit 127
-fi
-
-if [[ "${1:-}" == "hook" ]]; then
-    # atuin wrapper: agent hook integration disabled by ACFS
-    # Drain retained hook payloads so stale agent processes do not see EPIPE.
-    cat >/dev/null || true
-    exit 0
-fi
-
-_acfs_atuin_agent_context() {
-    local parent_comm=""
-
-    if [[ -n "${CODEX_CI:-}" || -n "${CODEX_THREAD_ID:-}" || -n "${CLAUDE_PROJECT_DIR:-}" || -n "${AGENT_NAME:-}" ]]; then
-        return 0
-    fi
-
-    # Linux: read the parent name directly. `ps -p` still walks every /proc entry,
-    # which cost ~0.8 s per typed command on a 2,600-process host (trj, 2026-10-14).
-    if [[ -r "/proc/${PPID:-0}/comm" ]]; then
-        IFS= read -r parent_comm < "/proc/${PPID:-0}/comm" || parent_comm=""
-    else
-        parent_comm="$(ps -o comm= -p "${PPID:-0}" 2>/dev/null || true)"
-    fi
-    case "$parent_comm" in
-        claude|codex|cod|cc|agy|antigravity|agy-locked|gmi|gemini|bun|node) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-if [[ "${1:-}" == "history" && ( "${2:-}" == "start" || "${2:-}" == "end" ) ]] && _acfs_atuin_agent_context; then
-    exit 0
-fi
-
-exec "$real_atuin_bin" "$@"
-ATUIN_ACFS_WRAPPER_TAIL
-                } > "$wrapper_path"
-                chmod 0755 "$wrapper_path"
-            }
-
-            for dir in "$primary_dir" "$fallback_dir"; do
-                [[ -n "$dir" ]] || continue
-                mkdir -p "$dir"
-                write_atuin_guard_wrapper "$dir/atuin" "$real_bin"
-                [[ "$fallback_dir" != "$primary_dir" ]] || break
-            done
-        ' >/dev/null 2>&1; then
-            log_detail "Atuin guard wrapper installed in $ACFS_BIN_DIR and ~/.local/bin"
-        else
-            log_detail "Skipping Atuin guard wrapper installation for $ACFS_BIN_DIR"
+    # Shell history: mcfly, then mcfly-fzf (acfs-wyzm), as the target user.
+    # The steps are the manifest modules' own (tools.mcfly, tools.mcfly_fzf),
+    # which pin each release and the SHA-256 of each tarball, so this runs
+    # their generated functions rather than a second copy of the pins.
+    local history_module="" history_func=""
+    for history_module in tools.mcfly tools.mcfly_fzf; do
+        if acfs_should_skip_module "$history_module"; then
+            log_detail "$history_module already installed"
+            continue
         fi
-    fi
+        history_func="acfs_generated_install_${history_module//./_}"
+        if ! declare -f "$history_func" >/dev/null 2>&1; then
+            log_error "$history_module: its generated installer is not loaded"
+            return 1
+        fi
+        try_step "Installing $history_module" "$history_func" || return 1
+    done
 
     # Zoxide - prefer apt to avoid GitHub API rate limits in CI
     # Check multiple possible locations

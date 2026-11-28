@@ -145,8 +145,8 @@ test_only_excludes_unrelated() {
     ONLY_MODULES=("agents.claude")
 
     if acfs_resolve_selection 2>/dev/null; then
-        # lang.rust and tools.atuin should not be included
-        if ! should_run_module "lang.rust" && ! should_run_module "tools.atuin"; then
+        # lang.rust and tools.mcfly should not be included
+        if ! should_run_module "lang.rust" && ! should_run_module "tools.mcfly"; then
             test_pass "$name"
             return
         fi
@@ -217,10 +217,10 @@ test_only_phase_unknown_fails() {
 test_skip_removes_module() {
     local name="--skip removes modules from plan"
     reset_selection
-    SKIP_MODULES=("tools.atuin")
+    SKIP_MODULES=("tools.mcfly_fzf")
 
     if acfs_resolve_selection 2>/dev/null; then
-        if ! should_run_module "tools.atuin"; then
+        if ! should_run_module "tools.mcfly_fzf"; then
             test_pass "$name"
             return
         fi
@@ -231,7 +231,7 @@ test_skip_removes_module() {
 test_skip_leaves_others() {
     local name="--skip leaves other modules"
     reset_selection
-    SKIP_MODULES=("tools.atuin")
+    SKIP_MODULES=("tools.mcfly_fzf")
 
     if acfs_resolve_selection 2>/dev/null; then
         if should_run_module "lang.bun"; then
